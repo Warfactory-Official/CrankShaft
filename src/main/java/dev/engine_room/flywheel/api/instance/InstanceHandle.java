@@ -1,0 +1,18 @@
+package dev.engine_room.flywheel.api.instance;
+
+import dev.engine_room.flywheel.api.backend.BackendImplemented;
+
+@BackendImplemented
+public interface InstanceHandle {
+    void setChanged();
+
+    void setDeleted();
+
+    void setVisible(boolean visible);
+
+    boolean isVisible();
+
+    /** Off-heap address of this instance's std140-packed slot; stable for its lifetime. Hidden /
+     *  deleted handles return a shared trash slot — writes there are harmless. */
+    long slabPtr();
+}

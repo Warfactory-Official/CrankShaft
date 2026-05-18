@@ -1,0 +1,23 @@
+{
+  "required": true,
+  "package": "dev.engine_room.flywheel.backend.mixin",
+  "refmap": "mixins.flywheel.refmap.json",
+  "compatibilityLevel": "JAVA_8",
+  "target": "@env(DEFAULT)",
+  "client": [
+    "MixinEntity",
+    "MixinFramebuffer",
+    "MixinGL15",
+    "MixinGL20",
+    "MixinGL30",
+    "MixinRenderGlobal",
+    "MixinRenderManager",
+    "MixinTileEntity",
+    "MixinTileEntityRendererDispatcher",
+    "MixinWorld"
+  ],
+  "mixins": [],
+  "server": [],
+  "setSourceFile": true,
+  "minVersion": "0.8.7"
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "modid": "${modId}",
+    "name": "${modName}",
+    "description": "Unofficial backport of Flywheel, an overhauled entity and block entity rendering API.",
+    "version": "${modVersion}",
+    "mcversion": "${minecraftVersion}",
+    "url": "https://github.com/Warfactory-Official/CrankShaft",
+    "updateUrl": "",
+    "authorList": [
+      "movblock"
+    ],
+    "credits": "Jozufozu and other Flywheel contributors for making the original mod.",
+    "logoFile": "",
+    "screenshots": [],
+    "dependencies": []
+  }
+]

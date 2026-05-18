@@ -1,0 +1,60 @@
+package dev.engine_room.flywheel.backend.compile.component;
+
+import dev.engine_room.flywheel.api.instance.InstanceType;
+import dev.engine_room.flywheel.api.layout.Layout;
+import dev.engine_room.flywheel.backend.glsl.generate.*;
+import dev.engine_room.flywheel.lib.math.MoreMath;
+import dev.engine_room.flywheel.lib.util.ResourceUtil;
+
+import java.util.ArrayList;
+
+public class BufferTextureInstanceComponent extends InstanceAssemblerComponent {
+    private static final String[] SWIZZLE_SELECTORS = { "x", "y", "z", "w" };
+
+    public BufferTextureInstanceComponent(InstanceType<?> type) {
+        super(type);
+    }
+
+    @Override
+    public String name() {
+        return ResourceUtil.rl("buffer_texture_instance_assembler").toString();
+    }
+
+    @Override
+    protected void generateUnpacking(GlslBuilder builder) {
+        var fnBody = new GlslBlock();
+
+        int texels = MoreMath.ceilingDiv(layout.byteSize(), 16);
+
+        fnBody.add(GlslStmt.raw("int base = " + UNPACK_ARG + " * " + texels + ";"));
+
+        for (int i = 0; i < texels; i++) {
+            fnBody.add(GlslStmt.raw("uvec4 u" + i + " = texelFetch(_flw_instances, base + " + i + ");"));
+        }
+
+        var unpackArgs = new ArrayList<GlslExpr>();
+        for (Layout.Element element : layout.elements()) {
+            unpackArgs.add(unpackElement(element));
+        }
+
+        fnBody.ret(GlslExpr.call(STRUCT_NAME, unpackArgs));
+
+        builder.uniform()
+                .type("usamplerBuffer")
+                .name("_flw_instances");
+        builder.blankLine();
+        builder.function()
+                .signature(FnSignature.create()
+                        .returnType(STRUCT_NAME)
+                        .name(UNPACK_FN_NAME)
+                        .arg("int", UNPACK_ARG)
+                        .build())
+                .body(fnBody);
+    }
+
+    @Override
+    protected GlslExpr access(int uintOffset) {
+        return GlslExpr.variable("u" + (uintOffset >> 2))
+                .swizzle(SWIZZLE_SELECTORS[uintOffset & 3]);
+    }
+}

@@ -1,0 +1,79 @@
+name: Release CrankShaft
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release-crankshaft-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Tag and publish CrankShaft
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: 9.5.0
+          # Releases consume the cache populated by build.yml on master pushes;
+          # they should not write back into the shared cache.
+          cache-read-only: true
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Resolve modVersion
+        shell: bash
+        run: |
+          set -euo pipefail
+          MOD_VERSION=$(grep -E '^\s*modVersion\s*=' version.properties | sed -E 's/^\s*modVersion\s*=\s*//; s/\r$//' | xargs || true)
+          if [[ -z "${MOD_VERSION}" ]]; then
+            echo "::error::modVersion is empty or missing in version.properties"; exit 1
+          fi
+          echo "MOD_VERSION=${MOD_VERSION}" >> "$GITHUB_ENV"
+          echo "TAG=v${MOD_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Verify tag is unused
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
+            echo "::error::Tag ${TAG} already exists on origin. Bump modVersion in version.properties before releasing."
+            exit 1
+          fi
+
+      - name: Create and push tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "CrankShaft ${MOD_VERSION}"
+          git push origin "${TAG}"
+
+      - name: Publish CrankShaft to Maven (warfactory)
+        if: github.repository == 'Warfactory-Official/CrankShaft'
+        env:
+          MAVEN_USER: ${{ secrets.MAVEN_USER }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+        run: |
+          ./gradlew \
+            publishCrankshaftPublicationToWarfactoryRepository \
+            --no-daemon \
+            --stacktrace

@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "package": "dev.engine_room.flywheel.backend.mixin.mod.renderlib",
+  "refmap": "mixins.flywheel.refmap.json",
+  "compatibilityLevel": "JAVA_8",
+  "target": "@env(MOD)",
+  "client": [
+    "MixinEntityRenderer",
+    "MixinTileEntityRenderer"
+  ],
+  "mixins": [],
+  "server": [],
+  "setSourceFile": true,
+  "minVersion": "0.8.7"
+}

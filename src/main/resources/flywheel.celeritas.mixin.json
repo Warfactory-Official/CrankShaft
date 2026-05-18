@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "dev.engine_room.flywheel.backend.mixin.mod.celeritas",
+  "refmap": "mixins.flywheel.refmap.json",
+  "compatibilityLevel": "JAVA_8",
+  "target": "@env(MOD)",
+  "client": [
+    "MixinCeleritasWorldRenderer"
+  ],
+  "mixins": [],
+  "server": [],
+  "setSourceFile": true,
+  "minVersion": "0.8.7"
+}

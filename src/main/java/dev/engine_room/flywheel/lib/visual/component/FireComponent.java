@@ -1,0 +1,169 @@
+package dev.engine_room.flywheel.lib.visual.component;
+
+import dev.engine_room.flywheel.api.material.Material;
+import dev.engine_room.flywheel.api.model.Model;
+import dev.engine_room.flywheel.api.vertex.MutableVertexList;
+import dev.engine_room.flywheel.api.visual.DynamicVisual;
+import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.lib.instance.InstanceTypes;
+import dev.engine_room.flywheel.lib.instance.TransformedInstance;
+import dev.engine_room.flywheel.lib.material.Materials;
+import dev.engine_room.flywheel.lib.material.SimpleMaterial;
+import dev.engine_room.flywheel.lib.model.QuadMesh;
+import dev.engine_room.flywheel.lib.model.SingleMeshModel;
+import dev.engine_room.flywheel.lib.util.LightTexture;
+import dev.engine_room.flywheel.lib.util.OverlayTexture;
+import dev.engine_room.flywheel.lib.util.RendererReloadCache;
+import dev.engine_room.flywheel.lib.visual.util.SmartRecycler;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.entity.Entity;
+import net.minecraft.util.ResourceLocation;
+import org.joml.Matrix4f;
+import org.joml.Vector4f;
+import org.joml.Vector4fc;
+
+/**
+ * A component that uses instances to render the fire animation on an entity.
+ */
+public final class FireComponent implements EntityComponent {
+    private static final ResourceLocation FIRE_0 = new ResourceLocation("minecraft", "blocks/fire_layer_0");
+    private static final ResourceLocation FIRE_1 = new ResourceLocation("minecraft", "blocks/fire_layer_1");
+
+    private static final Material FIRE_MATERIAL = SimpleMaterial.builderOf(Materials.CUTOUT_UNSHADED_BLOCK)
+            .backfaceCulling(false) // Disable backface because we want to be able to flip the model.
+            .build();
+
+    // Parameterize by the sprite's ResourceLocation rather than the sprite itself
+    // because TextureMap sprites are invalidated and re-allocated on every resource reload.
+    private static final RendererReloadCache<ResourceLocation, Model> FIRE_MODELS = new RendererReloadCache<>(loc -> {
+        TextureAtlasSprite sprite = Minecraft.getMinecraft().getTextureMapBlocks().getAtlasSprite(loc.toString());
+        return new SingleMeshModel(new FireMesh(sprite), FIRE_MATERIAL);
+    });
+
+    private final VisualizationContext context;
+    private final Entity entity;
+    private final Matrix4f scratch = new Matrix4f();
+    private final Matrix4f rowScratch = new Matrix4f();
+    private final SmartRecycler<Model, TransformedInstance> recycler;
+
+    public FireComponent(VisualizationContext context, Entity entity) {
+        this.context = context;
+        this.entity = entity;
+        this.recycler = new SmartRecycler<>(this::createInstance);
+    }
+
+    private TransformedInstance createInstance(Model model) {
+        TransformedInstance instance = context.instancerProvider()
+                .instancer(InstanceTypes.TRANSFORMED, model)
+                .createInstance();
+        instance.light(LightTexture.FULL_BRIGHT);
+        instance.overlay(OverlayTexture.NO_OVERLAY);
+        instance.setChanged();
+        return instance;
+    }
+
+    /**
+     * Update the fire instances. You'd typically call this in your visual's
+     * {@link dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual#beginFrame(DynamicVisual.Context) beginFrame} method.
+     *
+     * @param context The frame context.
+     */
+    @Override
+    public void beginFrame(DynamicVisual.Context context) {
+        recycler.resetCount();
+        if (entity.canRenderOnFire() && entity.isBurning()) {
+            setupInstances(context);
+        }
+        recycler.discardExtra();
+    }
+
+    private void setupInstances(DynamicVisual.Context ctx) {
+        float partialTick = ctx.partialTick();
+        double entityX = entity.lastTickPosX + (entity.posX - entity.lastTickPosX) * partialTick;
+        double entityY = entity.lastTickPosY + (entity.posY - entity.lastTickPosY) * partialTick;
+        double entityZ = entity.lastTickPosZ + (entity.posZ - entity.lastTickPosZ) * partialTick;
+        var renderOrigin = this.context.renderOrigin();
+
+        float scale = entity.width * 1.4F;
+        float maxHeight = entity.height / scale;
+        float width = 1;
+        float y = 0;
+        float z = 0;
+
+        scratch.identity()
+                .translate((float) (entityX - renderOrigin.getX()),
+                        (float) (entityY - renderOrigin.getY()),
+                        (float) (entityZ - renderOrigin.getZ()))
+                .scale(scale, scale, scale)
+                .rotateY((float) Math.toRadians(-ctx.camera().getYRot()))
+                .translate(0F, 0F, -0.3F + ((int) maxHeight) * 0.02F);
+
+        for (int i = 0; y < maxHeight; ++i) {
+            Model model = FIRE_MODELS.get(i % 2 == 0 ? FIRE_0 : FIRE_1);
+            rowScratch.set(scratch).scale(width, 1, 1).translate(0, y, z);
+            if (i / 2 % 2 == 0) {
+                // Vanilla flips the uv directly, but it's easier for us to flip the whole model.
+                rowScratch.scale(-1, 1, 1);
+            }
+            recycler.get(model).setTransform(rowScratch).setChanged();
+
+            y += 0.45F;
+            // Get narrower as we go up.
+            width *= 0.9F;
+            // Offset each one so they don't z-fight.
+            z += 0.03F;
+        }
+    }
+
+    @Override
+    public void delete() {
+        recycler.delete();
+    }
+
+    private record FireMesh(TextureAtlasSprite sprite) implements QuadMesh {
+        private static final float SQRT_2_OVER_2 = (float) (Math.sqrt(2) * 0.5);
+        private static final Vector4fc BOUNDING_SPHERE = new Vector4f(0, 0.5f, 0, SQRT_2_OVER_2);
+
+        @Override
+        public int vertexCount() {
+            return 4;
+        }
+
+        @Override
+        public void write(MutableVertexList vertexList) {
+            float u0 = sprite.getMinU();
+            float v0 = sprite.getMinV();
+            float u1 = sprite.getMaxU();
+            float v1 = sprite.getMaxV();
+            writeVertex(vertexList, 0, 0.5f, 0, u1, v1);
+            writeVertex(vertexList, 1, -0.5f, 0, u0, v1);
+            writeVertex(vertexList, 2, -0.5f, 1.4f, u0, v0);
+            writeVertex(vertexList, 3, 0.5f, 1.4f, u1, v0);
+        }
+
+        // Magic numbers taken from:
+        // net.minecraft.client.renderer.entity.EntityRenderDispatcher#fireVertex
+        private static void writeVertex(MutableVertexList vertexList, int i, float x, float y, float u, float v) {
+            vertexList.x(i, x);
+            vertexList.y(i, y);
+            vertexList.z(i, 0);
+            vertexList.r(i, 1);
+            vertexList.g(i, 1);
+            vertexList.b(i, 1);
+            vertexList.a(i, 1);
+            vertexList.u(i, u);
+            vertexList.v(i, v);
+            vertexList.light(i, LightTexture.FULL_BRIGHT);
+            vertexList.overlay(i, OverlayTexture.NO_OVERLAY);
+            vertexList.normalX(i, 0);
+            vertexList.normalY(i, 1);
+            vertexList.normalZ(i, 0);
+        }
+
+        @Override
+        public Vector4fc boundingSphere() {
+            return BOUNDING_SPHERE;
+        }
+    }
+}
