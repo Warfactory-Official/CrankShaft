@@ -1,6 +1,8 @@
 package dev.engine_room.flywheel.lib.compat;
 
 import dev.engine_room.flywheel.impl.FlwImpl;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.settings.GameSettings;
 import net.minecraftforge.fml.client.FMLClientHandler;
 import net.minecraftforge.fml.common.Loader;
 import org.jetbrains.annotations.Nullable;
@@ -22,14 +24,15 @@ public final class BiomeBlendCompat {
         if (Loader.isModLoaded("celeritas")) {
             return mustBind("org.taumc.celeritas.CeleritasVintage", "quality", "legacyBiomeBlendRadius");
         }
+        // Neonium also registers the `vintagium` modid so it must be checked first
+        if (Loader.isModLoaded("neonium")) {
+            return mustBind("io.neox.neonium.Neonium", "quality", "biomeBlendRadius");
+        }
         // Vintagium and Relictium both register as modid `vintagium`; probe each FQN.
         if (Loader.isModLoaded("vintagium")) {
             if ((s = tryBind("me.jellysquid.mods.sodium.client.SodiumClientMod", "quality", "biomeBlendRadius")) != null) return s;
             if ((s = tryBind("io.themade4.relictium.Relictium", "quality", "biomeBlendRadius")) != null) return s;
             throw new IllegalStateException("BiomeBlendCompat: vintagium modid loaded but no known fork class is on the classpath");
-        }
-        if (Loader.isModLoaded("neonium")) {
-            return mustBind("io.neox.neonium.Neonium", "quality", "biomeBlendRadius");
         }
         if (FMLClientHandler.instance().hasOptifine()) return bindOptifineSmoothBiomes();
         return () -> 0;
@@ -64,10 +67,8 @@ public final class BiomeBlendCompat {
     }
 
     private static IntSupplier bindOptifineSmoothBiomes() {
+        GameSettings settings = Minecraft.getMinecraft().gameSettings;
         try {
-            Class<?> mc = Class.forName("net.minecraft.client.Minecraft");
-            Object instance = mc.getMethod("getMinecraft").invoke(null);
-            Object settings = mc.getField("gameSettings").get(instance);
             Field field = settings.getClass().getField("ofSmoothBiomes");
             BooleanSupplier bs = asBooleanSupplier(settings, field);
             FlwImpl.LOGGER.info("BiomeBlendCompat bound to OptiFine ofSmoothBiomes");
