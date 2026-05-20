@@ -58,7 +58,7 @@ public final class BiomeBlendCompat {
             IntSupplier supplier = asIntSupplier(group, field);
             FlwImpl.LOGGER.info("BiomeBlendCompat bound to {}", accessorOwnerFqn);
             return supplier;
-        } catch (ReflectiveOperationException | LambdaConversionException e) {
+        } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("BiomeBlendCompat: " + accessorOwnerFqn + " is loaded but binding failed", e);
         }
     }
@@ -72,46 +72,18 @@ public final class BiomeBlendCompat {
             BooleanSupplier bs = asBooleanSupplier(settings, field);
             FlwImpl.LOGGER.info("BiomeBlendCompat bound to OptiFine ofSmoothBiomes");
             return () -> bs.getAsBoolean() ? 2 : 0;
-        } catch (ReflectiveOperationException | LambdaConversionException e) {
+        } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("BiomeBlendCompat: OptiFine present but binding failed", e);
         }
     }
 
-    private static IntSupplier asIntSupplier(Object captured, Field field)
-            throws IllegalAccessException, LambdaConversionException {
-        MethodHandles.Lookup lookup = MethodHandles.lookup();
-        MethodHandle getter = lookup.unreflectGetter(field);
-        Class<?> owner = field.getDeclaringClass();
-        CallSite cs = LambdaMetafactory.metafactory(
-                lookup,
-                "getAsInt",
-                MethodType.methodType(IntSupplier.class, owner),
-                MethodType.methodType(int.class),
-                getter,
-                MethodType.methodType(int.class));
-        try {
-            return (IntSupplier) cs.getTarget().invokeWithArguments(captured);
-        } catch (Throwable t) {
-            throw new AssertionError(t);
-        }
+    private static IntSupplier asIntSupplier(Object captured, Field field) throws IllegalAccessException {
+        MethodHandle getter = MethodHandles.lookup().unreflectGetter(field).bindTo(captured);
+        return MethodHandleProxies.asInterfaceInstance(IntSupplier.class, getter);
     }
 
-    private static BooleanSupplier asBooleanSupplier(Object captured, Field field)
-            throws IllegalAccessException, LambdaConversionException {
-        MethodHandles.Lookup lookup = MethodHandles.lookup();
-        MethodHandle getter = lookup.unreflectGetter(field);
-        Class<?> owner = field.getDeclaringClass();
-        CallSite cs = LambdaMetafactory.metafactory(
-                lookup,
-                "getAsBoolean",
-                MethodType.methodType(BooleanSupplier.class, owner),
-                MethodType.methodType(boolean.class),
-                getter,
-                MethodType.methodType(boolean.class));
-        try {
-            return (BooleanSupplier) cs.getTarget().invokeWithArguments(captured);
-        } catch (Throwable t) {
-            throw new AssertionError(t);
-        }
+    private static BooleanSupplier asBooleanSupplier(Object captured, Field field) throws IllegalAccessException {
+        MethodHandle getter = MethodHandles.lookup().unreflectGetter(field).bindTo(captured);
+        return MethodHandleProxies.asInterfaceInstance(BooleanSupplier.class, getter);
     }
 }
