@@ -166,6 +166,8 @@ val mixinRefMap = mixinTmpDir.map { it.file(prop("mixinConfigRefmap")) }
 val mixinSrg = mixinTmpDir.map { it.file("mixins.srg") }
 
 tasks.named<JavaCompile>("compileJava").configure {
+    outputs.file(mixinSrg).withPropertyName("mixinSrg")
+    outputs.file(mixinRefMap).withPropertyName("mixinRefMap")
     doFirst {
         val reobfSrgFile = (tasks.named("reobfJar").get() as ReobfuscatedJar)
             .srg.get().asFile.absolutePath
