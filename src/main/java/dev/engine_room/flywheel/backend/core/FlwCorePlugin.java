@@ -25,6 +25,9 @@ public class FlwCorePlugin implements IFMLLoadingPlugin, IEarlyMixinLoader {
                 new SodiumRenderGlobalTransformer(),
                 "me.jellysquid.mods.sodium.mixin.features.chunk_rendering.MixinRenderGlobal");
         MixinServiceLaunchWrapper.registerMixinClassTransformer(
+                new SodiumRenderGlobalTransformer(),
+                "org.embeddedt.vintagefix.mixin.bugfix.entity_disappearing.MixinRenderGlobal");
+        MixinServiceLaunchWrapper.registerMixinClassTransformer(
                 new CeleritasRenderGlobalTransformer(),
                 "org.taumc.celeritas.mixin.core.terrain.RenderGlobalMixin");
         MixinServiceLaunchWrapper.registerMixinClassTransformer(

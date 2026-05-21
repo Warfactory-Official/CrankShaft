@@ -5,10 +5,14 @@ import org.objectweb.asm.*;
 import top.outlands.foundation.IExplicitTransformer;
 
 /**
- * Targets {@code me.jellysquid.mods.sodium.mixin.features.chunk_rendering.MixinRenderGlobal}
- * (Neonium/Vintagium/Relictium share the FQN). Sodium-fork's rewrite of {@code renderEntities}
- * drops the for-each pattern {@link RenderGlobalTransformer} matches; route the first
- * surviving {@code Entity.shouldRenderInPass} through {@code VisualizationHelper.shouldRenderInPass}.
+ * Targets any mixin class whose {@code renderEntities} rewrite drops the vanilla for-each
+ * pattern {@link RenderGlobalTransformer} matches but still gates each entity through
+ * {@code Entity.shouldRenderInPass(int)}: routes the first such call through
+ * {@code VisualizationHelper.shouldRenderInPass}. Registered for
+ * {@code me.jellysquid.mods.sodium.mixin.features.chunk_rendering.MixinRenderGlobal}
+ * (Neonium/Vintagium/Relictium share the FQN) and
+ * {@code org.embeddedt.vintagefix.mixin.bugfix.entity_disappearing.MixinRenderGlobal}
+ * (only applied when neither Vintagium/Celeritas nor OptiFine is present, per VintageFix's own gating).
  */
 public class SodiumRenderGlobalTransformer implements IExplicitTransformer {
 

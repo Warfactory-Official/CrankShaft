@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.backend.core;
 import org.objectweb.asm.*;
 import org.spongepowered.asm.mixin.transformer.ClassInfo;
 import org.spongepowered.asm.mixin.transformer.ClassInfo.Traversal;
+import org.spongepowered.asm.transformers.MixinClassWriter;
 
 public final class VisualizerTransformer {
 
@@ -58,14 +59,17 @@ public final class VisualizerTransformer {
             if (kind == Kind.NONE) return basicClass;
         }
 
-        ClassWriter cw = new ClassWriter(cr, 0);
+        // JVMS §4.4: invokedynamic needs CONSTANT_MethodHandle (tag 15), which is only legal at major ≥ 51.
+        boolean pre52 = ((basicClass[6] & 0xFF) << 8 | (basicClass[7] & 0xFF)) < 52;
+        ClassWriter cw = new MixinClassWriter(cr, pre52 ? ClassWriter.COMPUTE_FRAMES : 0);
         Injector injector = new Injector(cw, kind, Type.getObjectType(internal));
-        cr.accept(injector, 0);
-        return injector.injected ? basicClass : cw.toByteArray();
+        cr.accept(injector, pre52 ? ClassReader.SKIP_FRAMES : 0);
+        return injector.present ? basicClass : cw.toByteArray();
     }
 
     private static final class Injector extends ClassVisitor {
-        boolean injected;
+        boolean present;
+
         private final Kind kind;
         private final Object bsmArg;
 
@@ -76,17 +80,29 @@ public final class VisualizerTransformer {
         }
 
         @Override
+        public void visit(int version, int access, String name, String sig, String superName, String[] interfaces) {
+            int major = version & 0xFFFF;
+            if (major < Opcodes.V1_8) {
+                version = Opcodes.V1_8;
+            }
+            super.visit(version, access, name, sig, superName, interfaces);
+        }
+
+        @Override
         public MethodVisitor visitMethod(int access, String mName, String mDesc, String sig, String[] excs) {
             if (FLW_METHOD_NAME.equals(mName)) {
-                injected = true;
+                if (!kind.descriptor.equals(mDesc)) {
+                    throw new IllegalStateException("Method name collision: " + FLW_METHOD_NAME + mDesc);
+                }
+                present = true;
             }
             return super.visitMethod(access, mName, mDesc, sig, excs);
         }
 
         @Override
         public void visitEnd() {
-            if (!injected) {
-                MethodVisitor mv = cv.visitMethod(Opcodes.ACC_PUBLIC, FLW_METHOD_NAME, kind.descriptor, null, null);
+            if (!present) {
+                MethodVisitor mv = cv.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_SYNTHETIC, FLW_METHOD_NAME, kind.descriptor, null, null);
                 mv.visitCode();
                 mv.visitInvokeDynamicInsn(FLW_METHOD_NAME, kind.descriptor, kind.bootstrap, bsmArg);
                 mv.visitInsn(Opcodes.ARETURN);

@@ -15,12 +15,8 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import java.nio.IntBuffer;
 
 /**
- * CrankShaft addition: swap vanilla {@code Framebuffer}'s depth attachment from a
+ * 1.12.2 workaround: swap vanilla {@code Framebuffer}'s depth attachment from a
  * {@code GL_RENDERBUFFER} to a {@code GL_TEXTURE_2D} so the HiZ cull pyramid can sample it.
- * 1.20+ MC already uses a depth texture; 1.12.2 doesn't. Loaded only when this jar is present.
- * External-mod compat audited 2026-05-12 across Neonium / RenderLib / Nothirium / Celeritas /
- * Optifine — all clean. Host-mod consumers that previously bound {@code depthBuffer} as a
- * renderbuffer must be updated to treat it as a texture.
  */
 @Mixin(Framebuffer.class)
 public abstract class MixinFramebuffer {
