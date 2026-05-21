@@ -1,7 +1,7 @@
 package dev.engine_room.flywheel.backend.mixin;
 
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
-import dev.engine_room.flywheel.lib.visualization.VisualizationHelper;
+import dev.engine_room.flywheel.impl.extension.EntityExtension;
 import net.minecraft.client.renderer.entity.RenderManager;
 import net.minecraft.entity.Entity;
 import org.spongepowered.asm.mixin.Mixin;
@@ -20,7 +20,7 @@ public abstract class MixinRenderManager {
                                                    float yaw, float partialTicks, boolean noTransforms,
                                                    CallbackInfo ci) {
         if (VisualizationManager.supportsVisualization(entity.world)
-                && VisualizationHelper.skipVanillaRender(entity)) {
+                && ((EntityExtension) entity).flw$skipVanillaRender()) {
             ci.cancel();
         }
     }

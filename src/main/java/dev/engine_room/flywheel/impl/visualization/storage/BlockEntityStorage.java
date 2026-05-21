@@ -4,8 +4,8 @@ import dev.engine_room.flywheel.api.backend.RenderContext;
 import dev.engine_room.flywheel.api.task.Plan;
 import dev.engine_room.flywheel.api.visual.BlockEntityVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.impl.extension.TileEntityExtension;
 import dev.engine_room.flywheel.lib.task.SimplePlan;
-import dev.engine_room.flywheel.lib.visualization.VisualizationHelper;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.tileentity.TileEntity;
@@ -29,7 +29,7 @@ public class BlockEntityStorage extends Storage<TileEntity> {
             return false;
         }
 
-        if (!VisualizationHelper.canVisualize(blockEntity)) {
+        if (!((TileEntityExtension) blockEntity).flw$canVisualize()) {
             return false;
         }
 
@@ -49,12 +49,10 @@ public class BlockEntityStorage extends Storage<TileEntity> {
     @Override
     @Nullable
     protected BlockEntityVisual<?> createRaw(VisualizationContext visualizationContext, TileEntity obj, float partialTick) {
-        var visualizer = VisualizationHelper.getVisualizer(obj);
-        if (visualizer == null) {
+        var visual = ((TileEntityExtension) obj).flw$createVisual(visualizationContext, partialTick);
+        if (visual == null) {
             return null;
         }
-
-        var visual = visualizer.createVisual(visualizationContext, obj, partialTick);
 
         // 1.12.2: workers call createRaw concurrently during Storage.recreateAllPlan;
         // Long2ObjectOpenHashMap is not thread-safe.

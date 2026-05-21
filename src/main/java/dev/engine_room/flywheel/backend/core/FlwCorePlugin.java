@@ -1,11 +1,13 @@
 package dev.engine_room.flywheel.backend.core;
 
 import net.minecraft.launchwrapper.Launch;
+import net.minecraftforge.common.config.Configuration;
 import net.minecraftforge.fml.relauncher.IFMLLoadingPlugin;
 import org.spongepowered.asm.service.mojang.MixinServiceLaunchWrapper;
 import zone.rong.mixinbooter.Context;
 import zone.rong.mixinbooter.IEarlyMixinLoader;
 
+import java.io.File;
 import java.util.List;
 
 @IFMLLoadingPlugin.MCVersion("1.12.2")
@@ -39,7 +41,8 @@ public class FlwCorePlugin implements IFMLLoadingPlugin, IEarlyMixinLoader {
     public List<String> getMixinConfigs() {
         return List.of(
                 "flywheel.mixin.json",
-                "flywheel.nooptifine.mixin.json"
+                "flywheel.nooptifine.mixin.json",
+                "flywheel.datamanager.mixin.json"
         );
     }
 
@@ -47,8 +50,24 @@ public class FlwCorePlugin implements IFMLLoadingPlugin, IEarlyMixinLoader {
     public boolean shouldMixinConfigQueue(Context context) {
         return switch (context.mixinConfig()) {
             case "flywheel.nooptifine.mixin.json" -> !context.isModPresent("optifine");
+            case "flywheel.datamanager.mixin.json" -> dataManagerRewriteEnabled();
             default -> true;
         };
+    }
+
+    // FlwConfig loads in preInit, long after mixin queueing, so this key is owned here and read
+    // LoliASM-style: forge Configuration works fine at coremod time, and get-or-create materializes
+    // the key on first launch. FlwConfig round-trips it untouched.
+    private static boolean dataManagerRewriteEnabled() {
+        Configuration cfg = new Configuration(new File(Launch.minecraftHome, "config/flywheel.cfg"));
+        boolean enabled = cfg.getBoolean("dataManagerRewrite", "client", true,
+                "Replace vanilla EntityDataManager's locked HashMap storage with a lock-free flat array. "
+                        + "Synced entity flag reads (isInvisible/isChild/...) dominate the render path at high "
+                        + "entity counts. Requires a game restart to take effect.");
+        if (cfg.hasChanged()) {
+            cfg.save();
+        }
+        return enabled;
     }
 
     @Override

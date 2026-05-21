@@ -1,7 +1,7 @@
 package dev.engine_room.flywheel.backend.mixin;
 
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
-import dev.engine_room.flywheel.lib.visualization.VisualizationHelper;
+import dev.engine_room.flywheel.impl.extension.TileEntityExtension;
 import net.minecraft.client.renderer.tileentity.TileEntityRendererDispatcher;
 import net.minecraft.tileentity.TileEntity;
 import org.spongepowered.asm.mixin.Mixin;
@@ -24,7 +24,7 @@ public abstract class MixinTileEntityRendererDispatcher {
     private void flw$skipVisualizedTileEntity3(TileEntity te, float partialTicks, int destroyStage,
                                                         CallbackInfo ci) {
         if (VisualizationManager.supportsVisualization(te.getWorld())
-                && VisualizationHelper.skipVanillaRender(te)) {
+                && ((TileEntityExtension) te).flw$skipVanillaRender()) {
             ci.cancel();
         }
     }

@@ -151,40 +151,22 @@ public final class VisualizationHelper {
     // 1.12.2: lookup goes through the per-class flw$visualizer() override injected by
     // VisualizerTransformer; VisualizerRegistry is consulted only as the source of truth for
     // the MutableCallSite target. Reading off the instance lets HotSpot inline the constant load.
+    /** @deprecated pulling the visualizer out re-dispatches megamorphically through its interface;
+     *  use the injected per-class accessors instead ({@code flw$canVisualize},
+     *  {@code flw$skipVanillaRender}, {@code flw$createVisual}). */
+    @Deprecated
     @SuppressWarnings("unchecked")
     @Nullable
     public static <T extends TileEntity> BlockEntityVisualizer<? super T> getVisualizer(T blockEntity) {
         return (BlockEntityVisualizer<? super T>) ((TileEntityExtension) blockEntity).flw$visualizer();
     }
 
+    /** @deprecated see {@link #getVisualizer(TileEntity)}. */
+    @Deprecated
     @SuppressWarnings("unchecked")
     @Nullable
     public static <T extends Entity> EntityVisualizer<? super T> getVisualizer(T entity) {
         return (EntityVisualizer<? super T>) ((EntityExtension) entity).flw$visualizer();
-    }
-
-    public static <T extends TileEntity> boolean canVisualize(T blockEntity) {
-        return getVisualizer(blockEntity) != null;
-    }
-
-    public static <T extends Entity> boolean canVisualize(T entity) {
-        return getVisualizer(entity) != null;
-    }
-
-    public static <T extends TileEntity> boolean skipVanillaRender(T blockEntity) {
-        BlockEntityVisualizer<? super T> visualizer = getVisualizer(blockEntity);
-        if (visualizer == null) {
-            return false;
-        }
-        return visualizer.skipVanillaRender(blockEntity);
-    }
-
-    public static <T extends Entity> boolean skipVanillaRender(T entity) {
-        EntityVisualizer<? super T> visualizer = getVisualizer(entity);
-        if (visualizer == null) {
-            return false;
-        }
-        return visualizer.skipVanillaRender(entity);
     }
 
     // Frame-invariant cache. Primed at HEAD of each per-frame BE/entity render entry point —
@@ -199,19 +181,23 @@ public final class VisualizationHelper {
         cachedSupportsVisualization = VisualizationManager.supportsVisualization(level);
     }
 
-    // Installed via RenderGlobalLoopGuardTransformer.
+    // Installed via RenderGlobalLoopGuardTransformer. The skip checks here and below go through the
+    // per-class flw$skipVanillaRender override injected by VisualizerTransformer: the registered
+    // visualizer is bound behind a per-class indy constant so its predicate inlines — one virtual call
+    // instead of two megamorphic itable hops (flw$visualizer lookup + predicate.test), which dominate
+    // these guards at high entity counts.
     public static boolean shouldSkipEntity(Entity entity) {
-        return cachedSupportsVisualization && skipVanillaRender(entity);
+        return cachedSupportsVisualization && ((EntityExtension) entity).flw$skipVanillaRender();
     }
 
     public static boolean shouldSkipTileEntity(TileEntity te) {
-        return cachedSupportsVisualization && skipVanillaRender(te);
+        return cachedSupportsVisualization && ((TileEntityExtension) te).flw$skipVanillaRender();
     }
 
     // Installed via CeleritasRenderGlobalTransformer.
     public static boolean shouldRender(RenderManager renderManager, Entity entity, ICamera camera,
                                        double camX, double camY, double camZ) {
-        if (cachedSupportsVisualization && skipVanillaRender(entity)) {
+        if (cachedSupportsVisualization && ((EntityExtension) entity).flw$skipVanillaRender()) {
             return false;
         }
         return renderManager.shouldRender(entity, camera, camX, camY, camZ);
@@ -219,7 +205,7 @@ public final class VisualizationHelper {
 
     // Installed via SodiumRenderGlobalTransformer.
     public static boolean shouldRenderInPass(Entity entity, int pass) {
-        if (cachedSupportsVisualization && skipVanillaRender(entity)) {
+        if (cachedSupportsVisualization && ((EntityExtension) entity).flw$skipVanillaRender()) {
             return false;
         }
         return entity.shouldRenderInPass(pass);
@@ -228,7 +214,7 @@ public final class VisualizationHelper {
     // Installed via RenderLibBoundingBoxCacheTransformer. Unconditional cast: the dispatched
     // call site is statically known to take an Entity.
     public static void updateCachedBoundingBoxEntity(IBoundingBoxCache cache, double partialTicks) {
-        if (cachedSupportsVisualization && skipVanillaRender((Entity) cache)) {
+        if (cachedSupportsVisualization && ((EntityExtension) cache).flw$skipVanillaRender()) {
             return;
         }
         cache.updateCachedBoundingBox(partialTicks);
@@ -236,7 +222,7 @@ public final class VisualizationHelper {
 
     // See updateCachedBoundingBoxEntity.
     public static void updateCachedBoundingBoxTile(IBoundingBoxCache cache, double partialTicks) {
-        if (cachedSupportsVisualization && skipVanillaRender((TileEntity) cache)) {
+        if (cachedSupportsVisualization && ((TileEntityExtension) cache).flw$skipVanillaRender()) {
             return;
         }
         cache.updateCachedBoundingBox(partialTicks);
@@ -249,12 +235,12 @@ public final class VisualizationHelper {
             return false;
         }
 
-        BlockEntityVisualizer<? super T> visualizer = getVisualizer(blockEntity);
-        if (visualizer == null) {
+        TileEntityExtension ext = (TileEntityExtension) blockEntity;
+        if (!ext.flw$canVisualize()) {
             return false;
         }
 
         manager.blockEntities().queueAdd(blockEntity);
-        return visualizer.skipVanillaRender(blockEntity);
+        return ext.flw$skipVanillaRender();
     }
 }
