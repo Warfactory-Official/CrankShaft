@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.gl.shader.GlProgram;
 import dev.engine_room.flywheel.backend.gl.shader.GlShader;
 import dev.engine_room.flywheel.backend.gl.shader.ShaderType;
+import dev.engine_room.flywheel.backend.glsl.GlslProfile;
 import dev.engine_room.flywheel.backend.glsl.GlslVersion;
 import dev.engine_room.flywheel.backend.glsl.ShaderSources;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
@@ -29,7 +30,11 @@ import java.util.function.Function;
 public class Compile<K> {
 
     public ShaderCompiler<K> shader(GlslVersion glslVersion, ShaderType shaderType) {
-        return new ShaderCompiler<>(glslVersion, shaderType);
+        return new ShaderCompiler<>(glslVersion, GlslProfile.CORE, shaderType);
+    }
+
+    public ShaderCompiler<K> shader(GlslVersion glslVersion, GlslProfile profile, ShaderType shaderType) {
+        return new ShaderCompiler<>(glslVersion, profile, shaderType);
     }
 
     public ProgramStitcher<K> program() {
@@ -38,6 +43,7 @@ public class Compile<K> {
 
     public static class ShaderCompiler<K> {
         private final GlslVersion glslVersion;
+        private final GlslProfile profile;
         private final ShaderType shaderType;
         private final List<BiFunction<K, ShaderSources, SourceComponent>> fetchers = new ArrayList<>();
         private BiConsumer<K, Compilation> compilationCallbacks = ($, $$) -> {
@@ -45,7 +51,12 @@ public class Compile<K> {
         private Function<K, String> nameMapper = Object::toString;
 
         public ShaderCompiler(GlslVersion glslVersion, ShaderType shaderType) {
+            this(glslVersion, GlslProfile.CORE, shaderType);
+        }
+
+        public ShaderCompiler(GlslVersion glslVersion, GlslProfile profile, ShaderType shaderType) {
             this.glslVersion = glslVersion;
+            this.profile = profile;
             this.shaderType = shaderType;
         }
 
@@ -127,7 +138,7 @@ public class Compile<K> {
 
             Consumer<Compilation> cb = ctx -> compilationCallbacks.accept(key, ctx);
             var name = nameMapper.apply(key);
-            var out = compiler.compile(glslVersion, shaderType, name, cb, components);
+            var out = compiler.compile(glslVersion, profile, shaderType, name, cb, components);
 
             long end = System.nanoTime();
 

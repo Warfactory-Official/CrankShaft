@@ -17,6 +17,7 @@ import net.minecraft.client.renderer.texture.TextureMap;
 import net.minecraft.init.Biomes;
 import net.minecraft.init.Blocks;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.util.BlockRenderLayer;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3i;
@@ -61,10 +62,19 @@ public final class BlockModels {
         IBakedModel model = Minecraft.getMinecraft().getBlockRendererDispatcher().getModelForState(state);
         Mesh mesh = bakeMesh(model, state);
         if (mesh == null) return EmptyModel.INSTANCE;
-        Material material = SimpleMaterial.builderOf(Materials.CUTOUT)
+        Material material = SimpleMaterial.builderOf(baseMaterialFor(state.getBlock().getRenderLayer()))
                 .texture(TextureMap.LOCATION_BLOCKS_TEXTURE)
                 .build();
         return new SingleMeshModel(mesh, material);
+    }
+
+    private static Material baseMaterialFor(BlockRenderLayer layer) {
+        return switch (layer) {
+            case SOLID -> Materials.SOLID_BLOCK;
+            case CUTOUT_MIPPED -> Materials.CUTOUT_MIPPED_BLOCK;
+            case CUTOUT -> Materials.CUTOUT_BLOCK;
+            case TRANSLUCENT -> Materials.TRANSLUCENT_BLOCK;
+        };
     }
 
     @Nullable

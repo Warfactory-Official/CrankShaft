@@ -8,7 +8,6 @@ import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.gl.GlTextureUnit;
 import dev.engine_room.flywheel.backend.gl.shader.GlProgram;
 import dev.engine_room.flywheel.backend.gl.shader.ShaderType;
-import dev.engine_room.flywheel.backend.glsl.GlslVersion;
 import dev.engine_room.flywheel.backend.glsl.ShaderSources;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.util.ResourceLocation;
@@ -33,11 +32,7 @@ public class OitPrograms {
                         .withResource(FULLSCREEN))
                 .link(COMPILE.shader(GlCompat.MAX_GLSL_VERSION, ShaderType.FRAGMENT)
                         .nameMapper(rl -> "fullscreen/" + ResourceUtil.toDebugFileNameNoExtension(rl))
-                        .onCompile((rl, compilation) -> {
-                            if (GlCompat.MAX_GLSL_VERSION.compareTo(GlslVersion.V400) < 0) {
-                                compilation.define("fma(a, b, c) ((a) * (b) + (c))");
-                            }
-                        })
+                        .onCompile((rl, compilation) -> compilation.polyfillFmaIfMissing())
                         .withResource(s -> s))
                 .postLink((key, program) -> {
                     program.bind();

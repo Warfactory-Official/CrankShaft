@@ -54,11 +54,13 @@ final class MeshAccumulator {
         Bucket bucket = buckets.computeIfAbsent(material, m -> new Bucket());
         bucket.ensure(4);
 
-        // Normal from cross-product of two edge diagonals — matches Forge's own derivation
-        // path in VertexLighterFlat.processQuad when a quad has no precomputed normal.
+        // (p2-p0) × (p3-p1) for the outward normal. Forge's VertexLighterFlat uses the inverse
+        // (chunk renderer reads quad.getFace() for brightness, not the computed normal — wrong
+        // sign there is invisible). Flywheel's diffuse(normal) does read it, so wrong sign flips
+        // top/bottom face brightness.
         scratchE1.set(positions[3][0] - positions[1][0], positions[3][1] - positions[1][1], positions[3][2] - positions[1][2]);
         scratchE2.set(positions[2][0] - positions[0][0], positions[2][1] - positions[0][1], positions[2][2] - positions[0][2]);
-        scratchE1.cross(scratchE2, scratchNormal);
+        scratchE2.cross(scratchE1, scratchNormal);
         if (scratchNormal.lengthSquared() > 0F) scratchNormal.normalize();
         if (normalMatrix != null) {
             scratchNormal.mul(normalMatrix);

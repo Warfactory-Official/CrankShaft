@@ -2,6 +2,7 @@ package dev.engine_room.vanillin;
 
 import dev.engine_room.flywheel.Tags;
 import dev.engine_room.flywheel.api.Flywheel;
+import dev.engine_room.vanillin.oit.OitDemoRegistration;
 import dev.engine_room.vanillin.visuals.BellVisual;
 import net.minecraftforge.fml.common.Loader;
 import net.minecraftforge.fml.common.Mod;
@@ -27,6 +28,7 @@ public final class Vanillin {
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
         VanillaVisuals.init();
+        OitDemoRegistration.preInit(event);
         VanillinFlwConfig.INSTANCE.load(event.getModConfigurationDirectory().toPath());
         LOGGER.info("Vanillate loaded");
     }

@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.backend.compile.core;
 
 import dev.engine_room.flywheel.backend.gl.shader.GlShader;
 import dev.engine_room.flywheel.backend.gl.shader.ShaderType;
+import dev.engine_room.flywheel.backend.glsl.GlslProfile;
 import dev.engine_room.flywheel.backend.glsl.GlslVersion;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
 
@@ -15,14 +16,18 @@ public class ShaderCache {
     }
 
     public GlShader compile(GlslVersion glslVersion, ShaderType shaderType, String name, Consumer<Compilation> callback, List<SourceComponent> sourceComponents) {
-        var key = new ShaderKey(glslVersion, shaderType, name);
+        return compile(glslVersion, GlslProfile.CORE, shaderType, name, callback, sourceComponents);
+    }
+
+    public GlShader compile(GlslVersion glslVersion, GlslProfile profile, ShaderType shaderType, String name, Consumer<Compilation> callback, List<SourceComponent> sourceComponents) {
+        var key = new ShaderKey(glslVersion, profile, shaderType, name);
         var cached = inner.get(key);
         if (cached != null) {
             return cached.unwrap();
         }
 
         Compilation ctx = new Compilation();
-        ctx.version(glslVersion);
+        ctx.version(glslVersion, profile);
         ctx.define(shaderType.define);
 
         callback.accept(ctx);
@@ -59,6 +64,6 @@ public class ShaderCache {
         included.addAll(component.included());
     }
 
-    private record ShaderKey(GlslVersion glslVersion, ShaderType shaderType, String name) {
+    private record ShaderKey(GlslVersion glslVersion, GlslProfile profile, ShaderType shaderType, String name) {
     }
 }

@@ -3,17 +3,24 @@ package dev.engine_room.flywheel.lib.material;
 import dev.engine_room.flywheel.api.material.*;
 import net.minecraft.util.ResourceLocation;
 
+// 1.12.2 block-material defaults: CHUNK lighting + SMOOTH light shader. SimpleMaterial.Builder's
+// modern-MC defaults (ENTITY + SMOOTH_WHEN_EMBEDDED) under-light sides/bottoms.
+
 public final class Materials {
     private static final ResourceLocation ENCHANTED_GLINT_ITEM = new ResourceLocation("textures/misc/enchanted_item_glint.png");
     private static final ResourceLocation ENCHANTED_GLINT_ENTITY = ENCHANTED_GLINT_ITEM;
 
     public static final Material SOLID_BLOCK = SimpleMaterial.builder()
+            .cardinalLightingMode(CardinalLightingMode.CHUNK)
+            .light(LightShaders.SMOOTH)
             .build();
     public static final Material SOLID_UNSHADED_BLOCK = SimpleMaterial.builderOf(SOLID_BLOCK)
             .cardinalLightingMode(CardinalLightingMode.OFF)
             .build();
 
     public static final Material CUTOUT_MIPPED_BLOCK = SimpleMaterial.builder()
+            .cardinalLightingMode(CardinalLightingMode.CHUNK)
+            .light(LightShaders.SMOOTH)
             .cutout(CutoutShaders.HALF)
             .build();
     public static final Material CUTOUT_MIPPED_UNSHADED_BLOCK = SimpleMaterial.builderOf(CUTOUT_MIPPED_BLOCK)
@@ -21,6 +28,8 @@ public final class Materials {
             .build();
 
     public static final Material CUTOUT_BLOCK = SimpleMaterial.builder()
+            .cardinalLightingMode(CardinalLightingMode.CHUNK)
+            .light(LightShaders.SMOOTH)
             .cutout(CutoutShaders.ONE_TENTH)
             .mipmap(false)
             .build();
@@ -29,6 +38,8 @@ public final class Materials {
             .build();
 
     public static final Material TRANSLUCENT_BLOCK = SimpleMaterial.builder()
+            .cardinalLightingMode(CardinalLightingMode.CHUNK)
+            .light(LightShaders.SMOOTH)
             .transparency(Transparency.ORDER_INDEPENDENT)
             .build();
     public static final Material TRANSLUCENT_UNSHADED_BLOCK = SimpleMaterial.builderOf(TRANSLUCENT_BLOCK)
@@ -36,6 +47,8 @@ public final class Materials {
             .build();
 
     public static final Material TRIPWIRE_BLOCK = SimpleMaterial.builder()
+            .cardinalLightingMode(CardinalLightingMode.CHUNK)
+            .light(LightShaders.SMOOTH)
             .cutout(CutoutShaders.ONE_TENTH)
             .transparency(Transparency.ORDER_INDEPENDENT)
             .build();

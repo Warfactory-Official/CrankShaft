@@ -71,6 +71,10 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
         initializationQueue.clear();
     }
 
+    /** Default no-op; backends with an OIT pipeline override. */
+    public void renderOit(LightStorage lightStorage, EnvironmentStorage environmentStorage) {
+    }
+
     public void onRenderOriginChanged() {
         instancers.values()
                 .forEach(AbstractInstancer::clear);

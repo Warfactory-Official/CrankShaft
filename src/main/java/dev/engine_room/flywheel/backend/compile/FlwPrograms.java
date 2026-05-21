@@ -9,6 +9,7 @@ import net.minecraft.client.resources.IResourceManager;
 import net.minecraft.util.ResourceLocation;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.jspecify.annotations.Nullable;
 
 import java.util.List;
 
@@ -19,6 +20,8 @@ public final class FlwPrograms {
 
     public static ShaderSources SOURCES;
 
+    private static @Nullable ChunkOitPrograms chunkOitPrograms;
+
     private FlwPrograms() {
     }
 
@@ -26,6 +29,10 @@ public final class FlwPrograms {
         // Reset the programs in case the ubershader load fails.
         InstancingPrograms.setInstance(null);
         IndirectPrograms.setInstance(null);
+        if (chunkOitPrograms != null) {
+            chunkOitPrograms.delete();
+            chunkOitPrograms = null;
+        }
 
         var sources = new ShaderSources(manager);
         SOURCES = sources;
@@ -38,6 +45,17 @@ public final class FlwPrograms {
         InstancingPrograms.reload(sources, vertexComponents, fragmentComponents);
         IndirectPrograms.reload(sources, vertexComponents, fragmentComponents);
 
+        try {
+            chunkOitPrograms = ChunkOitPrograms.create(sources);
+        } catch (RuntimeException e) {
+            LOGGER.error("Failed to compile chunk OIT programs; vanilla translucent chunks will not interleave with Flywheel-OIT geometry this session", e);
+            chunkOitPrograms = null;
+        }
+
         NoiseTextures.reload(manager);
+    }
+
+    public static @Nullable ChunkOitPrograms chunkOitPrograms() {
+        return chunkOitPrograms;
     }
 }

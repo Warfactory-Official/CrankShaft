@@ -129,7 +129,9 @@ public final class MaterialRenderState {
             GlStateManager.enableBlend();
             GlStateManager.tryBlendFuncSeparate(GlStateManager.SourceFactor.DST_COLOR, GlStateManager.DestFactor.SRC_COLOR, GlStateManager.SourceFactor.ONE, GlStateManager.DestFactor.ZERO);
         }
-        case TRANSLUCENT -> {
+        case TRANSLUCENT, ORDER_INDEPENDENT -> {
+            // ORDER_INDEPENDENT merges with TRANSLUCENT here for the non-OIT consumers (OF backend,
+            // stock without OIT). The OIT pipeline drives via setupOit() and never reaches this case.
             GlStateManager.enableBlend();
             GlStateManager.tryBlendFuncSeparate(GlStateManager.SourceFactor.SRC_ALPHA, GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA, GlStateManager.SourceFactor.ONE, GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA);
         }

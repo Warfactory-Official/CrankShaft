@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.backend.mixin;
 
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
+import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.engine.SectionPos;
 import dev.engine_room.flywheel.impl.RenderContextImpl;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
@@ -15,6 +16,7 @@ import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.client.renderer.culling.ICamera;
 import net.minecraft.entity.Entity;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.util.BlockRenderLayer;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.EnumSkyBlock;
 import net.minecraft.world.World;
@@ -23,7 +25,9 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.Map;
 
@@ -112,6 +116,36 @@ public abstract class MixinRenderGlobal {
     private void flw$afterEntities(Entity renderViewEntity, ICamera camera, float partialTicks,
                                             CallbackInfo ci) {
         VisualizationHelper.dispatchAfterEntities(world);
+    }
+
+    // TAIL of the public 4-arg overload so we cover both EntityRenderer's direct call and any
+    // forge mod that hits the same entry point.
+    @Inject(method = "renderBlockLayer(Lnet/minecraft/util/BlockRenderLayer;DILnet/minecraft/entity/Entity;)I",
+            at = @At("TAIL"), require = 1)
+    private void flw$afterTranslucent(BlockRenderLayer layer, double partialTicks, int pass, Entity entity,
+                                      CallbackInfoReturnable<Integer> cir) {
+        if (layer != BlockRenderLayer.TRANSLUCENT) {
+            return;
+        }
+        VisualizationHelper.dispatchAfterTranslucent(world);
+    }
+
+    // Suppress vanilla's translucent chunk draw when chunk-OIT replay will re-issue the same VBOs
+    // through the OIT pipeline (renderOit, fired by the TAIL inject above).
+    @Redirect(method = "renderBlockLayer(Lnet/minecraft/util/BlockRenderLayer;DILnet/minecraft/entity/Entity;)I",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/RenderGlobal;renderBlockLayer(Lnet/minecraft/util/BlockRenderLayer;)V"),
+            require = 1)
+    private void flw$maybeSkipTranslucentDraw(RenderGlobal self, BlockRenderLayer layer) {
+        // Suppress vanilla TRANSLUCENT when chunk-OIT will actually replay it.
+        // ChunkTranslucentOit.replay redraws these chunks through the OIT pipeline when
+        // renderOit fires at the TAIL inject above.
+        if (layer == BlockRenderLayer.TRANSLUCENT && FlwPrograms.chunkOitPrograms() != null
+                && VisualizationManager.supportsVisualization(world)) {
+            return;
+        }
+        // AT-widened to public so we can call the original draw helper directly.
+        self.renderBlockLayer(layer);
     }
 
     @Inject(method = "drawBlockDamageTexture", at = @At("HEAD"), require = 1)

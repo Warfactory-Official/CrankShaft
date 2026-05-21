@@ -301,6 +301,12 @@ public class VisualizationManagerImpl implements VisualizationManager {
         lateInit().engine.render(context);
     }
 
+    private void renderOit(RenderContext context) {
+        // No syncUntil — afterTranslucent fires after the same frame's afterEntities which
+        // already drained the plan.
+        lateInit().engine.renderOit(context);
+    }
+
     private void renderCrumbling(RenderContext context, Long2ObjectMap<SortedSet<DestroyBlockProgress>> destructionProgress) {
         if (destructionProgress.isEmpty()) {
             return;
@@ -405,6 +411,11 @@ public class VisualizationManagerImpl implements VisualizationManager {
         @Override
         public void afterEntities(RenderContext ctx) {
             render(ctx);
+        }
+
+        @Override
+        public void afterTranslucent(RenderContext ctx) {
+            renderOit(ctx);
         }
 
         @Override

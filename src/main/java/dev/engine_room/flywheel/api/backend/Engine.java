@@ -65,6 +65,13 @@ public interface Engine {
     void render(RenderContext context);
 
     /**
+     * Run the order-independent transparency chain. Called after the vanilla TRANSLUCENT chunk
+     * layer so flywheel translucents interleave correctly by depth with vanilla water/glass.
+     * Engines that don't OIT may no-op.
+     */
+    void renderOit(RenderContext context);
+
+    /**
      * Render the given instances as a crumbling overlay.
      *
      * <p>This method is guaranteed to be called after {@link #render} for the current

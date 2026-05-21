@@ -5,6 +5,7 @@ import dev.engine_room.flywheel.api.visual.Effect;
 import dev.engine_room.flywheel.api.visualization.BlockEntityVisualizer;
 import dev.engine_room.flywheel.api.visualization.CrumblingPosRedirector;
 import dev.engine_room.flywheel.api.visualization.EntityVisualizer;
+import dev.engine_room.flywheel.api.visualization.VisualManager;
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
 import dev.engine_room.flywheel.impl.extension.EntityExtension;
 import dev.engine_room.flywheel.impl.extension.TileEntityExtension;
@@ -28,8 +29,7 @@ import java.util.TreeSet;
 
 /**
  * Convenience wrappers around the per-level {@link VisualizationManager}. All {@code queue*}
- * methods inherit {@link dev.engine_room.flywheel.api.visualization.VisualManager VisualManager}'s
- * threading contract: <b>main thread only</b>. See {@code VisualManager}'s javadoc.
+ * methods inherit {@link VisualManager}'s threading contract: <b>main thread only</b>.
  */
 public final class VisualizationHelper {
     private static final Comparator<DestroyBlockProgress> CRUMBLING_ORDER =
@@ -51,6 +51,15 @@ public final class VisualizationHelper {
         RenderContext ctx = manager.currentFrameContext();
         if (ctx == null) return;
         manager.renderDispatcher().afterEntities(ctx);
+    }
+
+    /** Dispatched at the TAIL of vanilla {@code renderBlockLayer(TRANSLUCENT, ...)}. */
+    public static void dispatchAfterTranslucent(@Nullable World level) {
+        VisualizationManager manager = VisualizationManager.get(level);
+        if (manager == null) return;
+        RenderContext ctx = manager.currentFrameContext();
+        if (ctx == null) return;
+        manager.renderDispatcher().afterTranslucent(ctx);
     }
 
     /**

@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.gl.shader.GlShader;
 import dev.engine_room.flywheel.backend.gl.shader.ShaderType;
+import dev.engine_room.flywheel.backend.glsl.GlslProfile;
 import dev.engine_room.flywheel.backend.glsl.GlslVersion;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
 import dev.engine_room.flywheel.backend.glsl.SourceFile;
@@ -15,6 +16,7 @@ import org.lwjgl.opengl.GL20;
 import java.io.File;
 import java.io.FileWriter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -52,9 +54,17 @@ public class Compilation {
     }
 
     public void version(GlslVersion version) {
+        version(version, GlslProfile.CORE);
+    }
+
+    public void version(GlslVersion version, GlslProfile profile) {
         fullSource.append("#version ")
-                .append(version.version)
-                .append('\n');
+                .append(version.version);
+        if (!profile.token.isEmpty()) {
+            fullSource.append(' ')
+                    .append(profile.token);
+        }
+        fullSource.append('\n');
     }
 
     public void enableExtension(String ext) {
@@ -81,6 +91,21 @@ public class Compilation {
         fullSource.append("#define ")
                 .append(key)
                 .append('\n');
+    }
+
+    /**
+     * Emit the {@code fma(a, b, c)} polyfill when the GPU's max GLSL version doesn't provide it as
+     * a builtin (added in 400) and the shader hasn't opted into {@code GL_ARB_gpu_shader5}.
+     */
+    public void polyfillFmaIfMissing() {
+        polyfillFmaIfMissing(List.of());
+    }
+
+    public void polyfillFmaIfMissing(Collection<String> enabledExtensions) {
+        if (GlCompat.MAX_GLSL_VERSION.compareTo(GlslVersion.V400) < 0
+                && !enabledExtensions.contains("GL_ARB_gpu_shader5")) {
+            define("fma(a, b, c) ((a) * (b) + (c))");
+        }
     }
 
     public void appendComponent(SourceComponent component) {

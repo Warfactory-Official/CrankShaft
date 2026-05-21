@@ -80,6 +80,9 @@ public interface VisualizationManager {
          */
         void afterEntities(RenderContext ctx);
 
+        /** Dispatched at the TAIL of the vanilla TRANSLUCENT chunk layer. */
+        void afterTranslucent(RenderContext ctx);
+
         /**
          * Render crumbling block entities.
          *

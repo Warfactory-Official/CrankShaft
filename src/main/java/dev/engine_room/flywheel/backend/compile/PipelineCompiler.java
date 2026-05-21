@@ -17,7 +17,6 @@ import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.gl.GlTextureUnit;
 import dev.engine_room.flywheel.backend.gl.shader.GlProgram;
 import dev.engine_room.flywheel.backend.gl.shader.ShaderType;
-import dev.engine_room.flywheel.backend.glsl.GlslVersion;
 import dev.engine_room.flywheel.backend.glsl.ShaderSources;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
 import dev.engine_room.flywheel.backend.glsl.generate.FnSignature;
@@ -87,11 +86,7 @@ public final class PipelineCompiler {
                             return "pipeline/" + pipeline.compilerMarker() + "/" + instance + "/" + material + "_" + context + debug;
                         })
                         .requireExtensions(extensions)
-                        .onCompile((rl, compilation) -> {
-                            if (GlCompat.MAX_GLSL_VERSION.compareTo(GlslVersion.V400) < 0 && !extensions.contains("GL_ARB_gpu_shader5")) {
-                                compilation.define("fma(a, b, c) ((a) * (b) + (c))");
-                            }
-                        })
+                        .onCompile((rl, compilation) -> compilation.polyfillFmaIfMissing(extensions))
                         .onCompile((key, comp) -> key.contextShader()
                                 .onCompile(comp))
                         .onCompile((key, comp) -> FlwConfig.INSTANCE.lightSmoothness()
@@ -129,11 +124,7 @@ public final class PipelineCompiler {
                         })
                         .requireExtensions(extensions)
                         .enableExtension("GL_ARB_conservative_depth")
-                        .onCompile((rl, compilation) -> {
-                            if (GlCompat.MAX_GLSL_VERSION.compareTo(GlslVersion.V400) < 0 && !extensions.contains("GL_ARB_gpu_shader5")) {
-                                compilation.define("fma(a, b, c) ((a) * (b) + (c))");
-                            }
-                        })
+                        .onCompile((rl, compilation) -> compilation.polyfillFmaIfMissing(extensions))
                         .onCompile((key, comp) -> key.contextShader()
                                 .onCompile(comp))
                         .onCompile((key, comp) -> FlwConfig.INSTANCE.lightSmoothness()

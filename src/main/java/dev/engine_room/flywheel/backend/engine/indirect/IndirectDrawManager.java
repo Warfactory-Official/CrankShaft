@@ -4,6 +4,8 @@ import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.backend.Samplers;
+import dev.engine_room.flywheel.backend.compile.ChunkOitPrograms;
+import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
 import dev.engine_room.flywheel.backend.compile.PipelineCompiler;
 import dev.engine_room.flywheel.backend.engine.*;
@@ -142,7 +144,12 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             group.submitSolid();
         }
 
-        // Let's avoid invoking the oit chain if we don't have anything to do
+        MaterialRenderState.reset();
+        TextureBinder.resetLightAndOverlay();
+    }
+
+    @Override
+    public void renderOit(LightStorage lightStorage, EnvironmentStorage environmentStorage) {
         boolean useOit = false;
         for (var group : cullingGroups.values()) {
             if (group.hasOitDraws()) {
@@ -150,35 +157,54 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                 break;
             }
         }
-
-        if (useOit) {
-            oitFramebuffer.prepare();
-
-            oitFramebuffer.depthRange();
-
-            for (var group : cullingGroups.values()) {
-                group.submitTransparent(PipelineCompiler.OitMode.DEPTH_RANGE);
-            }
-
-            oitFramebuffer.renderTransmittance();
-
-            for (var group : cullingGroups.values()) {
-                group.submitTransparent(PipelineCompiler.OitMode.GENERATE_COEFFICIENTS);
-            }
-
-            oitFramebuffer.renderDepthFromTransmittance();
-
-            // Need to bind this again because we just drew a full screen quad for OIT.
-            vertexArray.bindForDraw();
-
-            oitFramebuffer.accumulate();
-
-            for (var group : cullingGroups.values()) {
-                group.submitTransparent(PipelineCompiler.OitMode.EVALUATE);
-            }
-
-            oitFramebuffer.composite();
+        ChunkOitPrograms chunkOit = FlwPrograms.chunkOitPrograms();
+        // Only route chunks when there is actually a visible translucent chunk to replay; an empty
+        // list means MixinRenderGlobal suppressed nothing, so skipping the whole OIT chain on an
+        // otherwise-empty scene loses nothing.
+        boolean routeChunks = chunkOit != null && ChunkTranslucentOit.hasVisibleTranslucentChunks();
+        if (!useOit && !routeChunks) {
+            return;
         }
+
+        TextureBinder.bindLightAndOverlay();
+        vertexArray.bindForDraw();
+        lightBuffers.bind();
+        matrixBuffer.bind();
+        Uniforms.bindAll();
+
+        oitFramebuffer.prepare();
+
+        oitFramebuffer.depthRange();
+        for (var group : cullingGroups.values()) {
+            group.submitTransparent(PipelineCompiler.OitMode.DEPTH_RANGE);
+        }
+        if (routeChunks) {
+            ChunkTranslucentOit.replay(chunkOit, PipelineCompiler.OitMode.DEPTH_RANGE);
+            vertexArray.bindForDraw();
+        }
+
+        oitFramebuffer.renderTransmittance();
+        for (var group : cullingGroups.values()) {
+            group.submitTransparent(PipelineCompiler.OitMode.GENERATE_COEFFICIENTS);
+        }
+        if (routeChunks) {
+            ChunkTranslucentOit.replay(chunkOit, PipelineCompiler.OitMode.GENERATE_COEFFICIENTS);
+            vertexArray.bindForDraw();
+        }
+
+        oitFramebuffer.renderDepthFromTransmittance();
+        vertexArray.bindForDraw();
+
+        oitFramebuffer.accumulate();
+        for (var group : cullingGroups.values()) {
+            group.submitTransparent(PipelineCompiler.OitMode.EVALUATE);
+        }
+        if (routeChunks) {
+            ChunkTranslucentOit.replay(chunkOit, PipelineCompiler.OitMode.EVALUATE);
+            vertexArray.bindForDraw();
+        }
+
+        oitFramebuffer.composite();
 
         MaterialRenderState.reset();
         TextureBinder.resetLightAndOverlay();
@@ -214,6 +240,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         matrixBuffer.delete();
 
         oitFramebuffer.delete();
+        ChunkTranslucentOit.deleteVao();
     }
 
     @Override

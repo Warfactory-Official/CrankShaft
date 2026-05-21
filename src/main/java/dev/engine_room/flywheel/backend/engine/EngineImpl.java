@@ -106,6 +106,16 @@ public class EngineImpl implements Engine {
     }
 
     @Override
+    public void renderOit(RenderContext context) {
+        try (var state = GlStateTracker.getRestoreState()) {
+            drawManager.renderOit(lightStorage, environmentStorage);
+        } catch (Exception e) {
+            FlwBackend.LOGGER.error("Falling back", e);
+            triggerFallback();
+        }
+    }
+
+    @Override
     public void renderCrumbling(RenderContext context, List<CrumblingBlock> crumblingBlocks) {
         try (var state = GlStateTracker.getRestoreState()) {
             drawManager.renderCrumbling(crumblingBlocks);

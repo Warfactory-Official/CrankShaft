@@ -5,7 +5,9 @@ import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.backend.Samplers;
+import dev.engine_room.flywheel.backend.compile.ChunkOitPrograms;
 import dev.engine_room.flywheel.backend.compile.ContextShader;
+import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
 import dev.engine_room.flywheel.backend.compile.PipelineCompiler;
 import dev.engine_room.flywheel.backend.engine.*;
@@ -109,28 +111,56 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
 
         submitDraws();
 
-        if (!oitDraws.isEmpty()) {
-            oitFramebuffer.prepare();
+        MaterialRenderState.reset();
+        TextureBinder.resetLightAndOverlay();
+    }
 
-            oitFramebuffer.depthRange();
-
-            submitOitDraws(PipelineCompiler.OitMode.DEPTH_RANGE);
-
-            oitFramebuffer.renderTransmittance();
-
-            submitOitDraws(PipelineCompiler.OitMode.GENERATE_COEFFICIENTS);
-
-            oitFramebuffer.renderDepthFromTransmittance();
-
-            // Need to bind this again because we just drew a full screen quad for OIT.
-            vao.bindForDraw();
-
-            oitFramebuffer.accumulate();
-
-            submitOitDraws(PipelineCompiler.OitMode.EVALUATE);
-
-            oitFramebuffer.composite();
+    @Override
+    public void renderOit(LightStorage lightStorage, EnvironmentStorage environmentStorage) {
+        ChunkOitPrograms chunkOit = FlwPrograms.chunkOitPrograms();
+        // Only route chunks when there is actually a visible translucent chunk to replay; an empty
+        // list means MixinRenderGlobal suppressed nothing, so skipping the whole OIT chain on an
+        // otherwise-empty scene loses nothing.
+        boolean routeChunks = chunkOit != null && ChunkTranslucentOit.hasVisibleTranslucentChunks();
+        if (oitDraws.isEmpty() && !routeChunks) {
+            return;
         }
+
+        // We fire at afterTranslucent (after the filter loop populated renderContainer.renderChunks
+        // and before vanilla's own chunk draw — that draw is suppressed in MixinRenderGlobal).
+        Uniforms.bindAll();
+        vao.bindForDraw();
+        TextureBinder.bindLightAndOverlay();
+        light.bind();
+
+        oitFramebuffer.prepare();
+
+        oitFramebuffer.depthRange();
+        submitOitDraws(PipelineCompiler.OitMode.DEPTH_RANGE);
+        if (routeChunks) {
+            ChunkTranslucentOit.replay(chunkOit, PipelineCompiler.OitMode.DEPTH_RANGE);
+            // chunk replay leaves the program bound and unbinds GL_ARRAY_BUFFER — rebind our VAO.
+            vao.bindForDraw();
+        }
+
+        oitFramebuffer.renderTransmittance();
+        submitOitDraws(PipelineCompiler.OitMode.GENERATE_COEFFICIENTS);
+        if (routeChunks) {
+            ChunkTranslucentOit.replay(chunkOit, PipelineCompiler.OitMode.GENERATE_COEFFICIENTS);
+            vao.bindForDraw();
+        }
+
+        oitFramebuffer.renderDepthFromTransmittance();
+        vao.bindForDraw();
+
+        oitFramebuffer.accumulate();
+        submitOitDraws(PipelineCompiler.OitMode.EVALUATE);
+        if (routeChunks) {
+            ChunkTranslucentOit.replay(chunkOit, PipelineCompiler.OitMode.EVALUATE);
+            vao.bindForDraw();
+        }
+
+        oitFramebuffer.composite();
 
         MaterialRenderState.reset();
         TextureBinder.resetLightAndOverlay();
@@ -202,6 +232,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         light.delete();
 
         oitFramebuffer.delete();
+        ChunkTranslucentOit.deleteVao();
 
         super.delete();
     }
