@@ -38,6 +38,7 @@ public final class Vanillin {
     // can't resolve it until init. Defer apply() so late registrations are wired in one pass.
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
+        VanillaVisuals.registerAtlases();
         if (Loader.isModLoaded("futuremc")) {
             VanillaVisuals.blockEntity(BellTileEntity.class)
                     .factory(BellVisual::new)

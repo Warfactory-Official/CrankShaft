@@ -1,14 +1,18 @@
 package dev.engine_room.flywheel.backend.engine;
 
 import dev.engine_room.flywheel.backend.Samplers;
+import dev.engine_room.flywheel.lib.util.OverlayTexture;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.OpenGlHelper;
+import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.util.ResourceLocation;
 import org.lwjgl.opengl.GL13;
 
 public class TextureBinder {
+    private static DynamicTexture overlayTexture;
+    private static int cachedLightmapTex;
 
     public static void bind(ResourceLocation resourceLocation) {
         // 1.12.2: TextureManager.getTexture(rl) returns null for textures not yet loaded, so the
@@ -20,22 +24,38 @@ public class TextureBinder {
     }
 
     public static void bindLightAndOverlay() {
-        int lightmapTex = getActiveLightmapTexture();
+        // Samplers.OVERLAY (T1) is the same GL unit vanilla binds the lightmap to, so read the
+        // lightmap id before we clobber that unit and cache it (the lightmap texture is stable for
+        // the session). Read BEFORE lazily creating the overlay texture: DynamicTexture's ctor binds
+        // the new texture on whatever unit is active, which may be this one.
+        int lightmapUnit = OpenGlHelper.lightmapTexUnit - GL13.GL_TEXTURE0;
+        int bound = GlStateManager.textureState[lightmapUnit].textureName;
+        int overlayTex = overlayTextureId();
+        if (bound != overlayTex) {
+            cachedLightmapTex = bound;
+        }
+
+        Samplers.OVERLAY.makeActive();
+        GlStateManager.bindTexture(overlayTex);
         Samplers.LIGHT.makeActive();
-        GlStateManager.bindTexture(lightmapTex);
+        GlStateManager.bindTexture(cachedLightmapTex);
     }
 
     public static void resetLightAndOverlay() {
+        // Restore the lightmap on T1: vanilla passes after us (e.g. pass-1 entities following the OIT
+        // hook) sample that unit without re-running enableLightmap.
+        Samplers.OVERLAY.makeActive();
+        GlStateManager.bindTexture(cachedLightmapTex);
+        // Leave T0 active, as MaterialRenderState.reset() did before this call.
+        Samplers.DIFFUSE.makeActive();
     }
 
-    private static int getActiveLightmapTexture() {
-        // 1.12.2 EntityRenderer.updateLightmap() binds the live lightmap DynamicTexture at
-        // OpenGlHelper.lightmapTexUnit (typically GL_TEXTURE1) every tick. The binding lives in
-        // GlStateManager.textureState[unit].textureName (public field, length-8 array indexed by
-        // unit offset from GL_TEXTURE0). Reading the cache directly avoids the
-        // setActiveTexture + glGetInteger(GL_TEXTURE_BINDING_2D) + restore round-trip; lightmap
-        // unit is always within the [0,8) low-unit window the cache covers.
-        int lightmapUnit = OpenGlHelper.lightmapTexUnit - GL13.GL_TEXTURE0;
-        return GlStateManager.textureState[lightmapUnit].textureName;
+    private static int overlayTextureId() {
+        if (overlayTexture == null) {
+            overlayTexture = new DynamicTexture(16, 16);
+            OverlayTexture.fillTextureData(overlayTexture.getTextureData());
+            overlayTexture.updateDynamicTexture();
+        }
+        return overlayTexture.getGlTextureId();
     }
 }

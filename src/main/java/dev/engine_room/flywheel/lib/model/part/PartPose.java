@@ -26,9 +26,9 @@ public record PartPose(float x, float y, float z, float xRot, float yRot, float 
 
     public static PartPose fromRenderer(ModelRenderer r) {
         return new PartPose(
-                r.rotationPointX * ModelBaseConverter.DEFAULT_SCALE,
-                r.rotationPointY * ModelBaseConverter.DEFAULT_SCALE,
-                r.rotationPointZ * ModelBaseConverter.DEFAULT_SCALE,
+                r.offsetX + r.rotationPointX * ModelBaseConverter.DEFAULT_SCALE,
+                r.offsetY + r.rotationPointY * ModelBaseConverter.DEFAULT_SCALE,
+                r.offsetZ + r.rotationPointZ * ModelBaseConverter.DEFAULT_SCALE,
                 r.rotateAngleX, r.rotateAngleY, r.rotateAngleZ);
     }
 }

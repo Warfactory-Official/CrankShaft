@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.lib.model.part;
 
+import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.instance.InstancerProvider;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
@@ -44,14 +45,28 @@ public final class InstanceTree {
     }
 
     public static InstanceTree create(InstancerProvider provider, ModelTree modelTree) {
+        return create(provider, modelTree, 0);
+    }
+
+    /** {@code bias} orders this tree's instancers relative to others (e.g. an emissive eyes overlay at a
+     *  higher bias draws after the body). */
+    public static InstanceTree create(InstancerProvider provider, ModelTree modelTree, int bias) {
+        return create(provider, modelTree, bias, InstanceTypes.TRANSFORMED);
+    }
+
+    /** {@code instanceType} chooses the per-instance attribute layout — pass {@link InstanceTypes#UV_TRANSFORMED}
+     *  for atlas variants. It MUST produce a {@link TransformedInstance} subtype; the tree's pose/light/overlay/
+     *  color path operates through that interface. */
+    public static InstanceTree create(InstancerProvider provider, ModelTree modelTree, int bias,
+                                      InstanceType<? extends TransformedInstance> instanceType) {
         InstanceTree[] children = new InstanceTree[modelTree.childCount()];
         for (int i = 0; i < modelTree.childCount(); i++) {
-            children[i] = create(provider, modelTree.child(i));
+            children[i] = create(provider, modelTree.child(i), bias, instanceType);
         }
 
         Model model = modelTree.model();
         TransformedInstance instance = model != null
-                ? provider.instancer(InstanceTypes.TRANSFORMED, model).createInstance()
+                ? provider.instancer(instanceType, model, bias).createInstance()
                 : null;
 
         return new InstanceTree(modelTree, instance, children);
@@ -60,6 +75,13 @@ public final class InstanceTree {
     @Nullable
     public TransformedInstance instance() {
         return instance;
+    }
+
+    /** This node's composed world-space (render-origin-relative) matrix from the last
+     *  {@link #propagateAnimation}. CrankShaft: lets a layer attach geometry to one posed bone (a held
+     *  item on the arm) without replaying the transform chain. Read-only — do not mutate the body's buffer. */
+    public Matrix4fc poseMatrix() {
+        return poseMatrix;
     }
 
     public PartPose initialPose() {
@@ -145,6 +167,13 @@ public final class InstanceTree {
 
     /** Skip drawing only this node; children still render. */
     public void skipDraw(boolean skipDraw) {
+        // Revealing a node only flips its visibility flag; its slab pose is whatever was last pushed while
+        // visible. A constant-pose bone (copyTransformIfChanged never flags it) would otherwise draw at a
+        // stale world position until the root next moves. Mark it changed so the next propagateAnimation
+        // re-pushes the current world matrix on the reveal frame.
+        if (this.skipDraw && !skipDraw) {
+            changed = true;
+        }
         this.skipDraw = skipDraw;
         updateVisible();
     }
@@ -243,16 +272,67 @@ public final class InstanceTree {
         changed = true;
     }
 
-    /** Copy pose from a vanilla ModelRenderer. Position fields are converted from model units
-     *  to world units via ModelBaseConverter.DEFAULT_SCALE. */
+    /** Recursively copy transforms from a structurally-identical {@code src} tree. */
+    public void copyPoseFrom(InstanceTree src) {
+        copyTransform(src);
+        for (int i = 0; i < children.length; i++) {
+            children[i].copyPoseFrom(src.children[i]);
+        }
+    }
+
+    /** Copy {@code src}'s composed pose matrices straight into this tree's instances, bypassing local
+     *  recomposition. Valid for overlay trees that share bone transforms with the body (inflated copies
+     *  of the same model): no matrix multiplies, and per-root baby transforms carry over for free. */
+    public void copyComposedFrom(InstanceTree src) {
+        if (!visible) {
+            return;
+        }
+        poseMatrix.set(src.poseMatrix);
+        if (instance != null && !skipDraw) {
+            instance.setTransform(poseMatrix);
+            instance.setChanged();
+        }
+        for (int i = 0; i < children.length; i++) {
+            children[i].copyComposedFrom(src.children[i]);
+        }
+    }
+
+    /** Copy pose from a vanilla ModelRenderer. {@code rotationPoint} is model-units→world-units
+     *  (×DEFAULT_SCALE); {@code offset} (raw world units, used e.g. by the witch nose while drinking) folds
+     *  into the same pre-rotation translate, matching {@code ModelRenderer.render}'s offset+rotationPoint order. */
     public void copyTransform(ModelRenderer r) {
-        x = r.rotationPointX * ModelBaseConverter.DEFAULT_SCALE;
-        y = r.rotationPointY * ModelBaseConverter.DEFAULT_SCALE;
-        z = r.rotationPointZ * ModelBaseConverter.DEFAULT_SCALE;
+        x = r.offsetX + r.rotationPointX * ModelBaseConverter.DEFAULT_SCALE;
+        y = r.offsetY + r.rotationPointY * ModelBaseConverter.DEFAULT_SCALE;
+        z = r.offsetZ + r.rotationPointZ * ModelBaseConverter.DEFAULT_SCALE;
         xRot = r.rotateAngleX;
         yRot = r.rotateAngleY;
         zRot = r.rotateAngleZ;
         changed = true;
+    }
+
+    /** Like {@link #copyTransform(ModelRenderer)} but leaves the pose (and the {@code changed} flag)
+     *  untouched when every component is within {@code eps} of the current value, and returns whether
+     *  the pose actually changed. CrankShaft: tick-domain dirty tracking for animated entity bones, so
+     *  unmoving bones don't re-upload. {@code eps == 0} compares exactly; a larger {@code eps} freezes
+     *  sub-threshold motion (distance LOD). */
+    public boolean copyTransformIfChanged(ModelRenderer r, float eps) {
+        float nx = r.offsetX + r.rotationPointX * ModelBaseConverter.DEFAULT_SCALE;
+        float ny = r.offsetY + r.rotationPointY * ModelBaseConverter.DEFAULT_SCALE;
+        float nz = r.offsetZ + r.rotationPointZ * ModelBaseConverter.DEFAULT_SCALE;
+        if (Math.abs(nx - x) <= eps && Math.abs(ny - y) <= eps && Math.abs(nz - z) <= eps
+                && Math.abs(r.rotateAngleX - xRot) <= eps
+                && Math.abs(r.rotateAngleY - yRot) <= eps
+                && Math.abs(r.rotateAngleZ - zRot) <= eps) {
+            return false;
+        }
+        x = nx;
+        y = ny;
+        z = nz;
+        xRot = r.rotateAngleX;
+        yRot = r.rotateAngleY;
+        zRot = r.rotateAngleZ;
+        changed = true;
+        return true;
     }
 
     public void delete() {

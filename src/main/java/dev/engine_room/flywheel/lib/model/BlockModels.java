@@ -9,6 +9,7 @@ import dev.engine_room.flywheel.lib.memory.MemoryBlock;
 import dev.engine_room.flywheel.lib.util.OverlayTexture;
 import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import dev.engine_room.flywheel.lib.vertex.FullVertexView;
+import net.minecraft.block.Block;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.block.model.BakedQuad;
@@ -24,6 +25,8 @@ import net.minecraft.util.math.Vec3i;
 import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.WorldType;
 import net.minecraft.world.biome.Biome;
+import net.minecraftforge.client.ForgeHooksClient;
+import net.minecraftforge.client.MinecraftForgeClient;
 import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
@@ -34,8 +37,37 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class BlockModels {
+    public static final BlockMaterialFunction DEFAULT_MATERIAL_FUNCTION = BlockModels::defaultMaterial;
+
+    private static final BlockRenderLayer[] LAYERS = BlockRenderLayer.values();
+    private static final Material[] DEFAULT_MATERIALS;
+
+    static {
+        DEFAULT_MATERIALS = new Material[LAYERS.length * 2];
+        bind(BlockRenderLayer.SOLID, Materials.SOLID_BLOCK, Materials.SOLID_UNSHADED_BLOCK);
+        bind(BlockRenderLayer.CUTOUT_MIPPED, Materials.CUTOUT_MIPPED_BLOCK, Materials.CUTOUT_MIPPED_UNSHADED_BLOCK);
+        bind(BlockRenderLayer.CUTOUT, Materials.CUTOUT_BLOCK, Materials.CUTOUT_UNSHADED_BLOCK);
+        bind(BlockRenderLayer.TRANSLUCENT, Materials.TRANSLUCENT_BLOCK, Materials.TRANSLUCENT_UNSHADED_BLOCK);
+    }
+
+    private static void bind(BlockRenderLayer layer, Material shaded, Material unshaded) {
+        int base = layer.ordinal() * 2;
+        DEFAULT_MATERIALS[base] = withBlockAtlas(unshaded);
+        DEFAULT_MATERIALS[base + 1] = withBlockAtlas(shaded);
+    }
+
+    private static Material withBlockAtlas(Material base) {
+        return SimpleMaterial.builderOf(base)
+                .texture(TextureMap.LOCATION_BLOCKS_TEXTURE)
+                .build();
+    }
+
+    private static Material defaultMaterial(BlockRenderLayer layer, boolean shaded) {
+        return DEFAULT_MATERIALS[layer.ordinal() * 2 + (shaded ? 1 : 0)];
+    }
+
     private static final RendererReloadCache<IBlockState, Model> MODEL_CACHE =
-            new RendererReloadCache<>(BlockModels::bakeForState);
+            new RendererReloadCache<>(state -> get(state, DEFAULT_MATERIAL_FUNCTION));
 
     // Fake IBlockAccess returning plains-biome and air everywhere so biome-driven tints
     // (grass, leaves) collapse to a single plains color per state. One cache entry per
@@ -58,34 +90,50 @@ public final class BlockModels {
         return MODEL_CACHE.get(state);
     }
 
-    private static Model bakeForState(IBlockState state) {
+    public static Model get(IBlockState state, BlockMaterialFunction materialFunc) {
         IBakedModel model = Minecraft.getMinecraft().getBlockRendererDispatcher().getModelForState(state);
-        Mesh mesh = bakeMesh(model, state);
-        if (mesh == null) return EmptyModel.INSTANCE;
-        Material material = SimpleMaterial.builderOf(baseMaterialFor(state.getBlock().getRenderLayer()))
-                .texture(TextureMap.LOCATION_BLOCKS_TEXTURE)
-                .build();
-        return new SingleMeshModel(mesh, material);
-    }
+        Block block = state.getBlock();
 
-    private static Material baseMaterialFor(BlockRenderLayer layer) {
-        return switch (layer) {
-            case SOLID -> Materials.SOLID_BLOCK;
-            case CUTOUT_MIPPED -> Materials.CUTOUT_MIPPED_BLOCK;
-            case CUTOUT -> Materials.CUTOUT_BLOCK;
-            case TRANSLUCENT -> Materials.TRANSLUCENT_BLOCK;
-        };
-    }
+        List<Model.ConfiguredMesh> meshes = new ArrayList<>();
+        BlockRenderLayer originalLayer = MinecraftForgeClient.getRenderLayer();
+        try {
+            List<BakedQuad> shadedBucket = new ArrayList<>();
+            List<BakedQuad> unshadedBucket = new ArrayList<>();
+            for (BlockRenderLayer layer : LAYERS) {
+                if (!block.canRenderInLayer(state, layer)) continue;
+                ForgeHooksClient.setRenderLayer(layer);
 
-    @Nullable
-    private static Mesh bakeMesh(IBakedModel model, IBlockState state) {
-        List<BakedQuad> allQuads = new ArrayList<>();
-        for (EnumFacing dir : ModelUtil.DIRECTIONS) {
-            allQuads.addAll(model.getQuads(state, dir, 42L));
+                shadedBucket.clear();
+                unshadedBucket.clear();
+                for (EnumFacing dir : ModelUtil.DIRECTIONS) {
+                    // Mirrors upstream's fixed bake seed; vanilla 1.12.2 uses getPositionRandom/0L instead.
+                    for (BakedQuad quad : model.getQuads(state, dir, 42L)) {
+                        (quad.shouldApplyDiffuseLighting() ? shadedBucket : unshadedBucket).add(quad);
+                    }
+                }
+
+                emitBucket(meshes, materialFunc, layer, true, shadedBucket, state);
+                emitBucket(meshes, materialFunc, layer, false, unshadedBucket, state);
+            }
+        } finally {
+            ForgeHooksClient.setRenderLayer(originalLayer);
         }
 
-        int vertexCount = allQuads.size() * 4;
-        if (vertexCount == 0) return null;
+        if (meshes.isEmpty()) return EmptyModel.INSTANCE;
+        return new SimpleModel(meshes);
+    }
+
+    private static void emitBucket(List<Model.ConfiguredMesh> out, BlockMaterialFunction materialFunc,
+                                   BlockRenderLayer layer, boolean shaded, List<BakedQuad> quads, IBlockState state) {
+        if (quads.isEmpty()) return;
+        Material material = materialFunc.apply(layer, shaded);
+        if (material == null) return;
+        Mesh mesh = bakeMeshFromQuads(quads, state, layer, shaded);
+        out.add(new Model.ConfiguredMesh(material, mesh));
+    }
+
+    private static Mesh bakeMeshFromQuads(List<BakedQuad> quads, IBlockState state, BlockRenderLayer layer, boolean shaded) {
+        int vertexCount = quads.size() * 4;
 
         MemoryBlock memoryBlock = MemoryBlock.mallocTracked(vertexCount * FullVertexView.STRIDE);
         FullVertexView meshVertices = new FullVertexView();
@@ -101,7 +149,7 @@ public final class BlockModels {
             IntBuffer intBuffer = byteBuffer.asIntBuffer();
 
             int vertex = 0;
-            for (BakedQuad quad : allQuads) {
+            for (BakedQuad quad : quads) {
                 int[] vertexData = quad.getVertexData();
                 int stride = vertexData.length / 4;
                 EnumFacing face = quad.getFace();
@@ -142,6 +190,6 @@ public final class BlockModels {
             }
         }
 
-        return new SimpleQuadMesh(meshVertices, "BlockModel[" + state + "]");
+        return new SimpleQuadMesh(meshVertices, "BlockModel[" + state + ",layer=" + layer + (shaded ? ",shaded" : ",unshaded") + "]");
     }
 }

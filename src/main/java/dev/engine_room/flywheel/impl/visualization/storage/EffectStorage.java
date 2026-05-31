@@ -3,6 +3,9 @@ package dev.engine_room.flywheel.impl.visualization.storage;
 import dev.engine_room.flywheel.api.visual.Effect;
 import dev.engine_room.flywheel.api.visual.EffectVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.lib.queues.MpscUnboundedXaddArrayQueue;
+
+import java.util.Queue;
 
 public class EffectStorage extends Storage<Effect> {
     @Override
@@ -13,5 +16,10 @@ public class EffectStorage extends Storage<Effect> {
     @Override
     public boolean willAccept(Effect obj) {
         return true;
+    }
+
+    @Override
+    public Queue<Transaction<Effect>> getTransactionQueue() {
+        return new MpscUnboundedXaddArrayQueue<>(1024);
     }
 }

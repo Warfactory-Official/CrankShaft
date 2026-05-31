@@ -8,6 +8,7 @@ import net.minecraft.entity.Entity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import org.joml.FrustumIntersection;
+import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
@@ -84,6 +85,14 @@ public abstract class AbstractEntityVisual<T extends Entity> extends AbstractVis
 
     public boolean isVisible(FrustumIntersection frustum) {
         return entity.ignoreFrustumCheck || visibilityTester.check(frustum);
+    }
+
+    protected void translateToInterpolatedPosition(Matrix4f dest, float partialTick) {
+        var origin = renderOrigin();
+        double px = entity.lastTickPosX + (entity.posX - entity.lastTickPosX) * partialTick;
+        double py = entity.lastTickPosY + (entity.posY - entity.lastTickPosY) * partialTick;
+        double pz = entity.lastTickPosZ + (entity.posZ - entity.lastTickPosZ) * partialTick;
+        dest.translation((float) (px - origin.getX()), (float) (py - origin.getY()), (float) (pz - origin.getZ()));
     }
 
     protected int computePackedLight(float partialTick) {

@@ -97,6 +97,31 @@ public final class InstanceTypes {
             .cullShader(ResourceUtil.rl("instance/cull/clip_transformed.glsl"))
             .build();
 
+    /** {@link TransformedInstance} + a per-instance atlas UV-region (offsetU, offsetV, scaleU, scaleV). All
+     *  variants sharing one atlas texture collapse to one instancer; the sub-rect is per-instance. Reuses
+     *  {@code cull/transformed.glsl} (it reads only {@code i.pose}, never {@code uvRegion}). */
+    public static final InstanceType<UvTransformedInstance> UV_TRANSFORMED = SimpleInstanceType.builder(UvTransformedInstance::new)
+            .layout(LayoutBuilder.create()
+                    .vector("color", FloatRepr.NORMALIZED_UNSIGNED_BYTE, 4)
+                    .vector("overlay", IntegerRepr.SHORT, 2)
+                    .vector("light", FloatRepr.UNSIGNED_SHORT, 2)
+                    .matrix("pose", FloatRepr.FLOAT, 4)
+                    .vector("uvRegion", FloatRepr.FLOAT, 4)
+                    .build())
+            .seed(ptr -> {
+                MemoryUtil.memPutInt(ptr, 0xFFFFFFFF);
+                ExtraMemoryOps.put2x16(ptr + 4, OverlayTexture.NO_OVERLAY);
+                ExtraMemoryOps.putMatrix4f(ptr + 12, IDENTITY_M4);
+                // uvRegion default MUST be the identity remap (0,0,1,1); a zero-fill collapses every UV to a point.
+                MemoryUtil.memPutFloat(ptr + 76, 0.0f);
+                MemoryUtil.memPutFloat(ptr + 80, 0.0f);
+                MemoryUtil.memPutFloat(ptr + 84, 1.0f);
+                MemoryUtil.memPutFloat(ptr + 88, 1.0f);
+            })
+            .vertexShader(ResourceUtil.rl("instance/transformed_uv.vert"))
+            .cullShader(ResourceUtil.rl("instance/cull/transformed.glsl"))
+            .build();
+
     public static final InstanceType<ShadowInstance> SHADOW = SimpleInstanceType.builder(ShadowInstance::new)
             .layout(LayoutBuilder.create()
                     .vector("pos", FloatRepr.FLOAT, 3)

@@ -117,6 +117,21 @@ public final class ShadowComponent implements EntityComponent {
         double entityX = entity.lastTickPosX + (entity.posX - entity.lastTickPosX) * partialTick;
         double entityY = entity.lastTickPosY + (entity.posY - entity.lastTickPosY) * partialTick;
         double entityZ = entity.lastTickPosZ + (entity.posZ - entity.lastTickPosZ) * partialTick;
+        // Fade from the render-view entity (player) feet, matching vanilla RenderManager.getDistanceToCamera
+        // (viewerPos) — NOT the rendered camera, which differs in third-person/freecam. 256 = 16² ⇒ fades to
+        // nothing by 16 blocks, as vanilla.
+        Entity viewer = ctx.camera().getEntity();
+        double camX = viewer.lastTickPosX + (viewer.posX - viewer.lastTickPosX) * partialTick;
+        double camY = viewer.lastTickPosY + (viewer.posY - viewer.lastTickPosY) * partialTick;
+        double camZ = viewer.lastTickPosZ + (viewer.posZ - viewer.lastTickPosZ) * partialTick;
+        double dx = entityX - camX;
+        double dy = entityY - camY;
+        double dz = entityZ - camZ;
+        float distanceFade = (float) (1.0 - (dx * dx + dy * dy + dz * dz) / 256.0);
+        if (distanceFade <= 0.0F) {
+            return;
+        }
+        float fadedStrength = strength * distanceFade;
         float castDistance = Math.min(strength * 2, radius);
         int minXPos = MathHelper.floor(entityX - radius);
         int maxXPos = MathHelper.floor(entityX + radius);
@@ -132,14 +147,14 @@ public final class ShadowComponent implements EntityComponent {
 
                 for (int y = minYPos; y <= maxYPos; ++y) {
                     pos.setPos(x, y, z);
-                    float strengthGivenYFalloff = strength - (float) (entityY - pos.getY()) * 0.5F;
-                    setupInstance(chunk, (float) entityX, (float) entityZ, strengthGivenYFalloff);
+                    float strengthGivenYFalloff = fadedStrength - (float) (entityY - pos.getY()) * 0.5F;
+                    setupInstance(chunk, entityX, entityZ, strengthGivenYFalloff);
                 }
             }
         }
     }
 
-    private void setupInstance(Chunk chunk, float entityX, float entityZ, float strength) {
+    private void setupInstance(Chunk chunk, double entityX, double entityZ, float strength) {
         int rawBrightness = level.getLight(pos);
         if (rawBrightness <= 3) return;
 
@@ -169,7 +184,9 @@ public final class ShadowComponent implements EntityComponent {
 
         instances.get().write(
                 (float) minX, (float) minY, (float) minZ,
-                entityX - renderOrigin.getX(), entityZ - renderOrigin.getZ(),
+                // Subtract the origin in double before casting (like the body's getVisualPosition); casting
+                // the full world coord first drifts the shadow off the entity by pixels at large coordinates.
+                (float) (entityX - renderOrigin.getX()), (float) (entityZ - renderOrigin.getZ()),
                 (float) (maxX - minX), (float) (maxZ - minZ),
                 alpha, this.radius
         ).setChanged();

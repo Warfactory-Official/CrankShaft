@@ -4,7 +4,7 @@ void flw_instanceVertex(in FlwInstance i) {
     flw_vertexPos.xyz = flw_vertexPos.xyz * vec3(i.size.x, 1., i.size.y) + i.pos;
 
     // Uvs are calculated based on the distance to the entity.
-    flw_vertexTexCoord = (flw_vertexPos.xz - i.entityPosXZ) * 0.5 / i.radius + 0.5;
+    flw_vertexTexCoord = (i.entityPosXZ - flw_vertexPos.xz) * 0.5 / i.radius + 0.5;
 
     flw_vertexColor.a = i.alpha;
 }

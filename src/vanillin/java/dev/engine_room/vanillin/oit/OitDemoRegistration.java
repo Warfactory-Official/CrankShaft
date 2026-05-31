@@ -97,10 +97,12 @@ public final class OitDemoRegistration {
     }
 
     // Blocks render ENTITYBLOCK_ANIMATED (no chunk geometry); map every state to a real vanilla
-    // MRL so the model registry baking pass doesn't log "missing blockstate" warnings. Never
-    // consulted at draw time.
+    // MRL so the model registry baking pass doesn't fail with MissingVariantException. Never
+    // consulted at draw time. 1.12.2 vanilla split stained_glass into per-color blockstate
+    // files (white_stained_glass.json etc.) so there's no single "stained_glass#color=white";
+    // glass#normal is a guaranteed-present single-state vanilla blockstate.
     private static final ModelResourceLocation PLACEHOLDER =
-            new ModelResourceLocation("minecraft:stained_glass", "color=white");
+            new ModelResourceLocation("minecraft:glass", "normal");
 
     @SubscribeEvent
     public static void registerModels(ModelRegistryEvent event) {

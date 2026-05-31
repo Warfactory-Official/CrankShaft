@@ -9,9 +9,14 @@ import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.WorldClient;
 import net.minecraft.command.CommandBase;
 import net.minecraft.command.ICommandSender;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityList;
+import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.ResourceLocation;
@@ -28,8 +33,10 @@ import java.util.*;
 @SideOnly(Side.CLIENT)
 public final class CommandFlywheel extends CommandBase implements IClientCommand {
 
-    private static final List<String> TOP_LEVEL = List.of("backend", "smoothness", "limitupdates", "debug", "list", "toggle", "reload");
+    private static final List<String> TOP_LEVEL = List.of("backend", "smoothness", "limitupdates", "debug", "list", "toggle", "reload", "stress");
     private static final List<String> DEBUG_SUBS = List.of("shader", "crumbling", "frustum", "pauseUpdates", "lightSections", "info");
+    private static final List<String> STRESS_SUBS = List.of("spawn", "clear");
+    private static final List<String> STRESS_COUNTS = List.of("100", "1000", "10000");
     private static final List<String> ON_OFF_SUBS = List.of("on", "off");
     private static final List<String> FRUSTUM_SUBS = List.of("capture", "unpause");
     private static final List<String> TOGGLE_STATES = List.of("on", "off");
@@ -39,6 +46,11 @@ public final class CommandFlywheel extends CommandBase implements IClientCommand
     private static final LightSmoothness[] LIGHT_SMOOTHNESS_VALUES =
             LightSmoothness.values();
 
+    private static final int STRESS_MAX = 100_000;
+    // Negative range so locally-spawned ghost ids can never collide with server-assigned entity ids.
+    private static int nextStressId = -1_000_000_000;
+    private static final IntArrayList STRESS_IDS = new IntArrayList();
+
     @Override public String getName() { return "flywheel"; }
     @Override public int getRequiredPermissionLevel() { return 0; }
     @Override public boolean checkPermission(MinecraftServer server, ICommandSender sender) { return true; }
@@ -46,7 +58,7 @@ public final class CommandFlywheel extends CommandBase implements IClientCommand
 
     @Override
     public String getUsage(ICommandSender sender) {
-        return "/flywheel <backend|smoothness|limitupdates|debug|list|toggle|reload>";
+        return "/flywheel <backend|smoothness|limitupdates|debug|list|toggle|reload|stress>";
     }
 
     @Override
@@ -63,6 +75,7 @@ public final class CommandFlywheel extends CommandBase implements IClientCommand
             case "list":         handleList(sender);                     break;
             case "toggle":       handleToggle(sender, tail(args));       break;
             case "reload":       handleReload(sender);                   break;
+            case "stress":       handleStress(sender, tail(args));       break;
             default:             send(sender, "Unknown subcommand: " + args[0]);
         }
     }
@@ -330,6 +343,101 @@ public final class CommandFlywheel extends CommandBase implements IClientCommand
         send(sender, "Renderers reloaded.");
     }
 
+    private static void handleStress(ICommandSender sender, String[] args) {
+        if (args.length == 0) {
+            send(sender, "/flywheel stress <spawn|clear>  (tracked: " + STRESS_IDS.size() + ")");
+            return;
+        }
+        switch (args[0].toLowerCase(Locale.ROOT)) {
+            case "spawn": handleStressSpawn(sender, tail(args)); break;
+            case "clear": handleStressClear(sender);             break;
+            default:      send(sender, "Unknown stress subcommand: " + args[0]);
+        }
+    }
+
+    private static void handleStressSpawn(ICommandSender sender, String[] args) {
+        if (args.length == 0) {
+            send(sender, "/flywheel stress spawn <count> [type] [spacing]");
+            return;
+        }
+        int count;
+        try { count = Integer.parseInt(args[0]); }
+        catch (NumberFormatException e) {
+            send(sender, "Invalid count: " + args[0]);
+            return;
+        }
+        if (count < 1 || count > STRESS_MAX) {
+            send(sender, "Count out of range (1-" + STRESS_MAX + "): " + count);
+            return;
+        }
+        ResourceLocation type = new ResourceLocation(args.length >= 2 ? args[1] : "minecraft:pig");
+        double spacing = 2.0D;
+        if (args.length >= 3) {
+            try { spacing = Double.parseDouble(args[2]); }
+            catch (NumberFormatException e) {
+                send(sender, "Invalid spacing: " + args[2]);
+                return;
+            }
+        }
+        Minecraft mc = Minecraft.getMinecraft();
+        WorldClient world = mc.world;
+        if (world == null) {
+            send(sender, "No world loaded.");
+            return;
+        }
+        // Client-side ghosts: no server entity, no AI/physics — load lands purely on the render path,
+        // and the addEntityToWorld -> RenderGlobal.onEntityAdded route feeds them to the visualizers.
+        // Cube grid centered on the player so large counts still fit in the frustum.
+        int side = (int) Math.ceil(Math.cbrt(count));
+        int layerSize = side * side;
+        double half = (side - 1) * spacing * 0.5D;
+        double baseX = mc.player.posX;
+        double baseY = mc.player.posY;
+        double baseZ = mc.player.posZ;
+        for (int i = 0; i < count; i++) {
+            Entity entity = EntityList.createEntityByIDFromName(type, world);
+            if (entity == null) {
+                send(sender, "Unknown entity type: " + type);
+                return;
+            }
+            float yaw = world.rand.nextFloat() * 360.0F - 180.0F;
+            entity.setLocationAndAngles(
+                    baseX - half + (i % side) * spacing,
+                    baseY + (i / layerSize) * spacing,
+                    baseZ - half + (i / side % side) * spacing,
+                    yaw, 0.0F);
+            if (entity instanceof EntityLivingBase living) {
+                living.renderYawOffset = yaw;
+                living.prevRenderYawOffset = yaw;
+                living.rotationYawHead = yaw;
+                living.prevRotationYawHead = yaw;
+            }
+            entity.forceSpawn = true;
+            // Forge's tick kill-switch: skips onUpdate (whose collideWithNearbyEntities push scan is O(n·m)
+            // at high densities) while ticksExisted still advances for time-driven idle animation.
+            entity.updateBlocked = true;
+            int id = nextStressId--;
+            world.addEntityToWorld(id, entity);
+            STRESS_IDS.add(id);
+        }
+        send(sender, "Spawned " + count + " client-side " + type + " (tracked: " + STRESS_IDS.size()
+                + "). Remove with /flywheel stress clear.");
+    }
+
+    private static void handleStressClear(ICommandSender sender) {
+        WorldClient world = Minecraft.getMinecraft().world;
+        int removed = 0;
+        if (world != null) {
+            for (int i = 0; i < STRESS_IDS.size(); i++) {
+                if (world.removeEntityFromWorld(STRESS_IDS.getInt(i)) != null) {
+                    removed++;
+                }
+            }
+        }
+        STRESS_IDS.clear();
+        send(sender, "Removed " + removed + " stress entities.");
+    }
+
     private static DebugMode parseDebugMode(String name) {
         String norm = name.toLowerCase(Locale.ROOT);
         for (DebugMode m : DEBUG_MODES) {
@@ -359,6 +467,7 @@ public final class CommandFlywheel extends CommandBase implements IClientCommand
             if (args[0].equalsIgnoreCase("backend"))      return getListOfStringsMatchingLastWord(args, backendIds());
             if (args[0].equalsIgnoreCase("smoothness"))   return getListOfStringsMatchingLastWord(args, lightSmoothnessNames());
             if (args[0].equalsIgnoreCase("limitupdates")) return getListOfStringsMatchingLastWord(args, ON_OFF);
+            if (args[0].equalsIgnoreCase("stress"))       return getListOfStringsMatchingLastWord(args, STRESS_SUBS);
         }
         if (args.length == 3) {
             if (args[0].equalsIgnoreCase("debug") && args[1].equalsIgnoreCase("shader")) {
@@ -378,6 +487,12 @@ public final class CommandFlywheel extends CommandBase implements IClientCommand
             if (args[0].equalsIgnoreCase("toggle")) {
                 return getListOfStringsMatchingLastWord(args, TOGGLE_STATES);
             }
+            if (args[0].equalsIgnoreCase("stress") && args[1].equalsIgnoreCase("spawn")) {
+                return getListOfStringsMatchingLastWord(args, STRESS_COUNTS);
+            }
+        }
+        if (args.length == 4 && args[0].equalsIgnoreCase("stress") && args[1].equalsIgnoreCase("spawn")) {
+            return getListOfStringsMatchingLastWord(args, EntityList.getEntityNameList());
         }
         return Collections.emptyList();
     }

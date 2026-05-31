@@ -150,6 +150,14 @@ public final class Materials {
             .shaders(StandardMaterialShaders.GLINT_2)
             .build();
 
+    public static final Material GLINT_ARMOR = SimpleMaterial.builderOf(GLINT)
+            .shaders(StandardMaterialShaders.GLINT_ARMOR)
+            .build();
+
+    public static final Material GLINT_ARMOR_2 = SimpleMaterial.builderOf(GLINT)
+            .shaders(StandardMaterialShaders.GLINT_ARMOR_2)
+            .build();
+
     public static final Material TRANSLUCENT_ENTITY = SimpleMaterial.builder()
             .transparency(Transparency.TRANSLUCENT)
             .cutout(CutoutShaders.ONE_TENTH)
