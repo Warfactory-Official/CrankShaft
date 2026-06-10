@@ -66,6 +66,9 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
                 initialize(init.key(), instancer);
             } else {
                 instancers.remove(init.key());
+                // CrankShaft: instance data lives in native slab pages allocated before init,
+                // so dropping the instancer without clearing would leak them.
+                instancer.clear();
             }
         }
         initializationQueue.clear();

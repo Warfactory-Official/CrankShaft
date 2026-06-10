@@ -85,7 +85,15 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
         // Instancers may have been emptied in the above call, now remove them here.
         instancers.values()
-                .removeIf(instancer -> instancer.instanceCount() == 0);
+                .removeIf(instancer -> {
+                    if (instancer.instanceCount() > 0) {
+                        return false;
+                    }
+                    // CrankShaft: also sweeps instancers that never joined a culling group;
+                    // free their native pages. No-op for ones flushInstancers just deleted.
+                    instancer.clear();
+                    return true;
+                });
 
         meshPool.flush();
 

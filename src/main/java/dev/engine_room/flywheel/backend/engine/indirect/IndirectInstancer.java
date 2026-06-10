@@ -184,6 +184,7 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
             if (transient_) {
                 FlwMemoryTracker.free(slabPtr);
                 FlwMemoryTracker._freeCpuMemory(PAGE_SIZE * parent.instanceStride);
+                transient_ = false;
             }
         }
 
@@ -513,7 +514,7 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
             draw.delete();
         }
 
-        for (InstancePage<I> page : pages.get()) {
+        for (InstancePage<I> page : pages.getAndSet(pageArray(0))) {
             page.dispose();
         }
 
