@@ -10,11 +10,13 @@ import dev.engine_room.flywheel.lib.instance.TransformedInstance;
 import dev.engine_room.flywheel.lib.item.ItemModels;
 import dev.engine_room.flywheel.lib.visual.AbstractEntityVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
+import dev.engine_room.flywheel.lib.visual.component.NameTagComponent;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.block.model.IBakedModel;
 import net.minecraft.client.renderer.block.model.ItemCameraTransforms;
 import net.minecraft.client.renderer.block.model.ModelManager;
 import net.minecraft.client.renderer.block.model.ModelResourceLocation;
+import net.minecraft.client.renderer.entity.RenderManager;
 import net.minecraft.entity.item.EntityItemFrame;
 import net.minecraft.item.ItemMap;
 import net.minecraft.item.ItemStack;
@@ -34,6 +36,7 @@ public class ItemFrameVisual extends AbstractEntityVisual<EntityItemFrame> imple
     private Model itemModel;
     private ModelResourceLocation lastFrameLocation;
     private ItemStack lastItemStack;
+    private NameTagComponent nameTag;
 
     public ItemFrameVisual(VisualizationContext ctx, EntityItemFrame entity, float partialTick) {
         super(ctx, entity, partialTick);
@@ -56,11 +59,50 @@ public class ItemFrameVisual extends AbstractEntityVisual<EntityItemFrame> imple
     @Override
     public void beginFrame(DynamicVisual.Context ctx) {
         if (!isVisible(ctx.frustum())) {
+            // The label pops with the frame like vanilla's frustum cull.
+            if (nameTag != null) {
+                nameTag.delete();
+            }
             return;
         }
         SmartAnimatedTextureCompat.touch(frameModel);
         SmartAnimatedTextureCompat.touch(itemModel);
+        updateNameTag(ctx.partialTick());
         animate(ctx.partialTick());
+    }
+
+    // RenderItemFrame.renderName: the held item's display name while pointed at, within label range.
+    private void updateNameTag(float partialTick) {
+        String text = null;
+        RenderManager renderManager = Minecraft.getMinecraft().getRenderManager();
+        if (renderManager.pointedEntity == entity && Minecraft.isGuiEnabled()) {
+            ItemStack stack = entity.getDisplayedItem();
+            if (!stack.isEmpty() && stack.hasDisplayName()) {
+                double distSq = entity.getDistanceSq(renderManager.renderViewEntity);
+                float range = entity.isSneaking() ? 32.0F : 64.0F;
+                if (distSq < range * range) {
+                    text = stack.getDisplayName();
+                }
+            }
+        }
+        if (text == null) {
+            if (nameTag != null) {
+                nameTag.delete();
+            }
+            return;
+        }
+        if (nameTag == null) {
+            nameTag = new NameTagComponent(visualizationContext);
+        }
+        var origin = renderOrigin();
+        double px = entity.lastTickPosX + (entity.posX - entity.lastTickPosX) * partialTick;
+        double py = entity.lastTickPosY + (entity.posY - entity.lastTickPosY) * partialTick;
+        double pz = entity.lastTickPosZ + (entity.posZ - entity.lastTickPosZ) * partialTick;
+        nameTag.beginFrame(text, false,
+                (float) (px - origin.getX()),
+                (float) (py - origin.getY()) + entity.height + 0.5F,
+                (float) (pz - origin.getZ()),
+                computePackedLight(partialTick));
     }
 
     private void animate(float partialTick) {
@@ -154,6 +196,9 @@ public class ItemFrameVisual extends AbstractEntityVisual<EntityItemFrame> imple
     protected void _delete() {
         frame.delete();
         item.delete();
+        if (nameTag != null) {
+            nameTag.delete();
+        }
     }
 
     // Item frames live at the block they're nailed to, not at posY + eyeHeight.

@@ -14,12 +14,21 @@ import dev.engine_room.flywheel.lib.model.part.PartPose;
 import dev.engine_room.flywheel.lib.texture.VariantAtlas;
 import dev.engine_room.flywheel.lib.util.OverlayTexture;
 import dev.engine_room.flywheel.lib.visual.component.FireComponent;
+import dev.engine_room.flywheel.lib.visual.component.LeashComponent;
+import dev.engine_room.flywheel.lib.visual.component.NameTagComponent;
 import dev.engine_room.flywheel.lib.visual.component.ShadowComponent;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.model.ModelBase;
 import net.minecraft.client.model.ModelRenderer;
+import net.minecraft.client.renderer.entity.RenderManager;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityLiving;
 import net.minecraft.entity.EntityLivingBase;
+import net.minecraft.scoreboard.Team;
 import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.text.TextFormatting;
+import org.jspecify.annotations.Nullable;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
 
@@ -60,6 +69,8 @@ public abstract class AbstractLivingEntityVisual<T extends EntityLivingBase, M e
     private final float shadowRadius;
     private FireComponent fire;
     private ShadowComponent shadow;
+    private LeashComponent leash;
+    private NameTagComponent nameTag;
     private int lastLight = Integer.MIN_VALUE;
     private int lastOverlay = -1;
     private int lastColor = 0;
@@ -116,7 +127,7 @@ public abstract class AbstractLivingEntityVisual<T extends EntityLivingBase, M e
                 for (int i = 0, n = layers.size(); i < n; i++) {
                     layers.get(i).setVisible(false);
                 }
-                // Hidden entities fall back to vanilla, which draws their fire/shadow; drop ours to avoid doubling.
+                // Hidden entities fall back to vanilla, which draws their fire/shadow/leash; drop ours to avoid doubling.
                 if (fire != null) {
                     fire.delete();
                     fire = null;
@@ -125,10 +136,39 @@ public abstract class AbstractLivingEntityVisual<T extends EntityLivingBase, M e
                     shadow.delete();
                     shadow = null;
                 }
+                if (leash != null) {
+                    leash.delete();
+                    leash = null;
+                }
+                if (nameTag != null) {
+                    nameTag.delete();
+                    nameTag = null;
+                }
             }
             return;
         }
+        // The leash updates ahead of the frustum gate: vanilla draws the rope when EITHER end is
+        // visible (RenderLiving.shouldRender ORs in the holder's bbox), so it must track while the
+        // mob is off-screen but the holder isn't.
+        if (entity instanceof EntityLiving living) {
+            if (living.getLeashHolder() == null) {
+                if (leash != null) {
+                    leash.delete();
+                    leash = null;
+                }
+            } else {
+                if (leash == null) {
+                    leash = new LeashComponent(visualizationContext, living);
+                }
+                leash.beginFrame(ctx.partialTick());
+            }
+        }
         if (!isVisible(ctx.frustum())) {
+            // The label pops with the entity like vanilla's frustum cull — a name can be wider than
+            // the visibility pad and would otherwise linger frozen at the screen edge.
+            if (nameTag != null) {
+                nameTag.delete();
+            }
             // Un-hiding waits here too: the reveal below reseeds the slots (identity pose at the render
             // origin), so a culled entity must stay hidden until updatePose can actually run.
             return;
@@ -159,6 +199,7 @@ public abstract class AbstractLivingEntityVisual<T extends EntityLivingBase, M e
             shadow = new ShadowComponent(visualizationContext, entity).radius(shadowRadius);
         }
         shadow.beginFrame(ctx);
+        updateNameTag(ctx);
         Vec3d cam = ctx.camera().getPosition();
         double distSq = distanceSquared(cam.x, cam.y, cam.z);
         reposeEps = distSq <= FULL_DETAIL_DIST_SQ ? 0.0F
@@ -317,6 +358,14 @@ public abstract class AbstractLivingEntityVisual<T extends EntityLivingBase, M e
                 f = 1.0F;
             }
             dest.rotateZ((float) Math.toRadians(f * getDeathMaxRotation()));
+        } else if (entity.hasCustomName()) {
+            // hasCustomName gate skips vanilla's per-frame regex strip for the unnamed common case;
+            // vanilla's player cape clause is moot (players are never instanced).
+            String s = TextFormatting.getTextWithoutFormattingCodes(entity.getName());
+            if ("Dinnerbone".equals(s) || "Grumm".equals(s)) {
+                dest.translate(0.0F, entity.height + 0.1F, 0.0F);
+                dest.rotateZ((float) Math.PI);
+            }
         }
     }
 
@@ -378,6 +427,79 @@ public abstract class AbstractLivingEntityVisual<T extends EntityLivingBase, M e
 
     /** Whether to fall back to vanilla this frame. Override for variants the visual can't represent; pair the
      *  same condition with {@code skipVanillaRender} so vanilla draws it. */
+    private void updateNameTag(DynamicVisual.Context ctx) {
+        String text = nameTagText();
+        if (text == null) {
+            if (nameTag != null) {
+                // Keep the component (a crosshair flick toggles pointed names often); just drop its instances.
+                nameTag.delete();
+            }
+            return;
+        }
+        if (nameTag == null) {
+            nameTag = new NameTagComponent(visualizationContext);
+        }
+        float partialTick = ctx.partialTick();
+        var origin = renderOrigin();
+        double px = entity.lastTickPosX + (entity.posX - entity.lastTickPosX) * partialTick;
+        double py = entity.lastTickPosY + (entity.posY - entity.lastTickPosY) * partialTick;
+        double pz = entity.lastTickPosZ + (entity.posZ - entity.lastTickPosZ) * partialTick;
+        boolean sneaking = entity.isSneaking();
+        nameTag.beginFrame(text, sneaking,
+                (float) (px - origin.getX()),
+                (float) (py - origin.getY()) + entity.height + 0.5F - (sneaking ? 0.25F : 0.0F),
+                (float) (pz - origin.getZ()),
+                computePackedLight(partialTick));
+    }
+
+    /** The label to draw above the entity, or null. Mirrors {@code RenderLiving.canRenderName} plus
+     *  the distance gates in {@code renderName}/{@code renderLivingLabel}. */
+    @Nullable
+    protected String nameTagText() {
+        RenderManager renderManager = Minecraft.getMinecraft().getRenderManager();
+        // Cheap-first: almost no entities are named or always-tagged.
+        if (!(entity.getAlwaysRenderNameTagForRender()
+                || (entity.hasCustomName() && entity == renderManager.pointedEntity))) {
+            return null;
+        }
+        if (!canRenderName(renderManager)) {
+            return null;
+        }
+        double distSq = entity.getDistanceSq(renderManager.renderViewEntity);
+        float range = entity.isSneaking() ? 32.0F : 64.0F;
+        if (distSq >= range * range) {
+            return null;
+        }
+        return entity.getDisplayName().getFormattedText();
+    }
+
+    // RenderLivingBase.canRenderName: the team branch returns directly, bypassing the gui/ridden gates.
+    private boolean canRenderName(RenderManager renderManager) {
+        EntityPlayerSP player = Minecraft.getMinecraft().player;
+        boolean visible = !entity.isInvisibleToPlayer(player);
+        if (entity != player) {
+            Team team = entity.getTeam();
+            if (team != null) {
+                Team playerTeam = player.getTeam();
+                switch (team.getNameTagVisibility()) {
+                    case ALWAYS:
+                        return visible;
+                    case NEVER:
+                        return false;
+                    case HIDE_FOR_OTHER_TEAMS:
+                        return playerTeam == null ? visible
+                                : team.isSameTeam(playerTeam) && (team.getSeeFriendlyInvisiblesEnabled() || visible);
+                    case HIDE_FOR_OWN_TEAM:
+                        return playerTeam == null ? visible : !team.isSameTeam(playerTeam) && visible;
+                    default:
+                        return true;
+                }
+            }
+        }
+        return Minecraft.isGuiEnabled() && entity != renderManager.renderViewEntity && visible
+                && !entity.isBeingRidden();
+    }
+
     protected boolean shouldHide() {
         return entity.isInvisible() || (entity.isChild() && !instancesBabies());
     }
@@ -436,6 +558,12 @@ public abstract class AbstractLivingEntityVisual<T extends EntityLivingBase, M e
         }
         if (shadow != null) {
             shadow.delete();
+        }
+        if (leash != null) {
+            leash.delete();
+        }
+        if (nameTag != null) {
+            nameTag.delete();
         }
         for (int i = 0, n = layers.size(); i < n; i++) {
             layers.get(i).delete();

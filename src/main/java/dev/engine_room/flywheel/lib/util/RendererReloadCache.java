@@ -34,8 +34,18 @@ public final class RendererReloadCache<T, U> implements Function<T, U> {
         map.clear();
     }
 
+    // CrankShaft: reload generation, bumped alongside the cache clears. Render-thread only.
+    // Lets callers memoize a reload-dependent scalar against an int compare instead of paying
+    // a single-entry cache's map lookup per query.
+    private static int reloadCount = 0;
+
+    public static int reloadCount() {
+        return reloadCount;
+    }
+
     @ApiStatus.Internal
     public static void onReloadLevelRenderer() {
+        reloadCount++;
         for (RendererReloadCache<?, ?> cache : ALL) {
             cache.clear();
         }

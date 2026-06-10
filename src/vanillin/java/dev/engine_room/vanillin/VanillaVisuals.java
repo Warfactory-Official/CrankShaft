@@ -10,7 +10,12 @@ import dev.engine_room.vanillin.visuals.*;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.item.*;
 import net.minecraft.entity.monster.EntityZombie;
+import net.minecraft.entity.projectile.*;
+import net.minecraft.init.Items;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 import dev.engine_room.flywheel.api.material.Material;
+import dev.engine_room.flywheel.lib.item.ItemModels;
 import dev.engine_room.flywheel.lib.visual.ArmorModels;
 import dev.engine_room.flywheel.lib.visual.BipedEntityModel;
 import dev.engine_room.flywheel.lib.visual.BipedLivingEntityVisual;
@@ -131,6 +136,26 @@ public final class VanillaVisuals {
                 .build()
                 .skipVanillaRender(ItemVisual::isSupported)
                 .apply(STABLE);
+
+        entity(EntityXPOrb.class).factory(ExperienceOrbVisual::new).apply(EXPERIMENTAL);
+
+        thrownItem(EntitySnowball.class, Items.SNOWBALL, false);
+        thrownItem(EntityEnderPearl.class, Items.ENDER_PEARL, false);
+        thrownItem(EntityEnderEye.class, Items.ENDER_EYE, true);
+        thrownItem(EntityEgg.class, Items.EGG, false);
+        thrownItem(EntityExpBottle.class, Items.EXPERIENCE_BOTTLE, false);
+        thrownItem(EntityFireworkRocket.class, Items.FIREWORKS, false);
+        entity(EntityPotion.class)
+                .factory((ctx, e, pt) -> new ThrownItemVisual<>(ctx, e, pt, EntityPotion::getPotion, false))
+                .skipVanillaRender(e -> ItemModels.isSupported(e.getPotion()))
+                .apply(EXPERIMENTAL);
+
+        entity(EntitySmallFireball.class).factory((ctx, e, pt) -> new FireballVisual(ctx, e, pt, 0.5F)).apply(EXPERIMENTAL);
+        entity(EntityLargeFireball.class).factory((ctx, e, pt) -> new FireballVisual(ctx, e, pt, 2.0F)).apply(EXPERIMENTAL);
+        entity(EntityDragonFireball.class).factory(FireballVisual::dragon).apply(EXPERIMENTAL);
+
+        entity(EntityTippedArrow.class).factory(ArrowVisual::tipped).apply(EXPERIMENTAL);
+        entity(EntitySpectralArrow.class).factory(ArrowVisual::spectral).apply(EXPERIMENTAL);
 
         bipedLivingEntity(EntityZombie.class, new BipedEntityModel<>(ModelZombie::new), "textures/entity/zombie/zombie.png", "zombie", 0.5F, 1.0F, 90.0F);
         bipedLivingEntity(EntitySkeleton.class, new BipedEntityModel<>(ModelSkeleton::new), "textures/entity/skeleton/skeleton.png", "skeleton", 0.5F, 1.0F, 90.0F);
@@ -307,6 +332,14 @@ public final class VanillaVisuals {
 
     public static <T extends Entity> EntityVisualizerBuilder<T> entity(Class<T> type) {
         return new EntityVisualizerBuilder<>(CONFIGURATOR, type);
+    }
+
+    private static <T extends Entity> void thrownItem(Class<T> type, Item item, boolean fullbright) {
+        ItemStack stack = new ItemStack(item);
+        entity(type)
+                .factory((ctx, e, pt) -> new ThrownItemVisual<>(ctx, e, pt, en -> stack, fullbright))
+                .skipVanillaRender(ThrownItemVisual.supported(stack))
+                .apply(EXPERIMENTAL);
     }
 
     public static <T extends EntityLivingBase, M extends ModelBase> void livingEntity(

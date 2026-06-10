@@ -122,6 +122,66 @@ public final class InstanceTypes {
             .cullShader(ResourceUtil.rl("instance/cull/transformed.glsl"))
             .build();
 
+    /** Camera-facing sprite: position anchor + uniform size + atlas UV-region. Orientation comes from
+     *  the view matrix in the vertex shader, so billboards never write a pose. */
+    public static final InstanceType<BillboardInstance> BILLBOARD = SimpleInstanceType.builder(BillboardInstance::new)
+            .layout(LayoutBuilder.create()
+                    .vector("color", FloatRepr.NORMALIZED_UNSIGNED_BYTE, 4)
+                    .vector("overlay", IntegerRepr.SHORT, 2)
+                    .vector("light", FloatRepr.UNSIGNED_SHORT, 2)
+                    .vector("position", FloatRepr.FLOAT, 3)
+                    .scalar("size", FloatRepr.FLOAT)
+                    .vector("uvRegion", FloatRepr.FLOAT, 4)
+                    .build())
+            .seed(ptr -> {
+                MemoryUtil.memPutInt(ptr, 0xFFFFFFFF);
+                ExtraMemoryOps.put2x16(ptr + 4, OverlayTexture.NO_OVERLAY);
+                // size stays 0 — seeded slots collapse to a point until first posed.
+                // uvRegion default MUST be the identity remap (0,0,1,1); a zero-fill collapses every UV to a point.
+                MemoryUtil.memPutFloat(ptr + 28, 0.0f);
+                MemoryUtil.memPutFloat(ptr + 32, 0.0f);
+                MemoryUtil.memPutFloat(ptr + 36, 1.0f);
+                MemoryUtil.memPutFloat(ptr + 40, 1.0f);
+            })
+            .vertexShader(ResourceUtil.rl("instance/billboard.vert"))
+            .cullShader(ResourceUtil.rl("instance/cull/billboard.glsl"))
+            .build();
+
+    /** One nameplate element: a unit quad placed in label-local font pixels and billboarded about the
+     *  shared anchor in the vertex shader. The zero-filled seed ({@code size} 0) keeps unposed slots
+     *  degenerate. */
+    public static final InstanceType<GlyphInstance> GLYPH = SimpleInstanceType.builder(GlyphInstance::new)
+            .layout(LayoutBuilder.create()
+                    .vector("color", FloatRepr.NORMALIZED_UNSIGNED_BYTE, 4)
+                    .vector("light", FloatRepr.UNSIGNED_SHORT, 2)
+                    .vector("anchor", FloatRepr.FLOAT, 3)
+                    .vector("offset", FloatRepr.FLOAT, 2)
+                    .vector("size", FloatRepr.FLOAT, 2)
+                    .scalar("shear", FloatRepr.FLOAT)
+                    .vector("uvRegion", FloatRepr.FLOAT, 4)
+                    .build())
+            .seed(ptr -> {
+            })
+            .vertexShader(ResourceUtil.rl("instance/glyph.vert"))
+            .cullShader(ResourceUtil.rl("instance/cull/glyph.glsl"))
+            .build();
+
+    /** One leash rope: the vertex shader evaluates vanilla's rope curve from {@code start}/{@code delta};
+     *  segment fractions, ribbon offsets and parity colors are baked in the mesh. The zero-filled seed
+     *  ({@code scale} 0) keeps unposed slots degenerate. */
+    public static final InstanceType<LeashInstance> LEASH = SimpleInstanceType.builder(LeashInstance::new)
+            .layout(LayoutBuilder.create()
+                    .vector("light", FloatRepr.UNSIGNED_SHORT, 2)
+                    .scalar("scale", FloatRepr.FLOAT)
+                    .vector("start", FloatRepr.FLOAT, 3)
+                    .vector("delta", FloatRepr.FLOAT, 3)
+                    .build())
+            .seed(ptr -> {
+            })
+            .vertexShader(ResourceUtil.rl("instance/leash.vert"))
+            .cullShader(ResourceUtil.rl("instance/cull/leash.glsl"))
+            .build();
+
     public static final InstanceType<ShadowInstance> SHADOW = SimpleInstanceType.builder(ShadowInstance::new)
             .layout(LayoutBuilder.create()
                     .vector("pos", FloatRepr.FLOAT, 3)

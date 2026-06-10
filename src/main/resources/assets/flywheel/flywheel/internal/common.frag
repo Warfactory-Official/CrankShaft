@@ -112,6 +112,8 @@ void _flw_main() {
     #endif
 
     float diffuseFactor = _flw_diffuseFactor();
+    // 1.12.2: vanilla clamps tint×light jointly via GL_COLOR_MATERIAL, washing the tint out on saturated
+    // up-faces (e.g. sheep wool tops); we keep upstream's post-clamp tint.
     color.rgb *= diffuseFactor;
 
     if (flw_material.useOverlay) {

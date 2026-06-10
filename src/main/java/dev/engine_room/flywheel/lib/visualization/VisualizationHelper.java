@@ -185,7 +185,8 @@ public final class VisualizationHelper {
     // per-class flw$skipVanillaRender override injected by VisualizerTransformer: the registered
     // visualizer is bound behind a per-class indy constant so its predicate inlines — one virtual call
     // instead of two megamorphic itable hops (flw$visualizer lookup + predicate.test), which dominate
-    // these guards at high entity counts.
+    // these guards at high entity counts. Name labels and leash ropes render as instances
+    // (NameTagComponent / LeashComponent), so skipped entities owe vanilla nothing.
     public static boolean shouldSkipEntity(Entity entity) {
         return cachedSupportsVisualization && ((EntityExtension) entity).flw$skipVanillaRender();
     }

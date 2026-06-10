@@ -12,6 +12,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(RenderManager.class)
 public abstract class MixinRenderManager {
 
+    // Backstop for callers that bypass the renderEntities loop guards (outline pass, direct
+    // renderEntityStatic calls from mods). Name labels and leash ropes render as instances
+    // (NameTagComponent / LeashComponent), so the cancel owes vanilla nothing.
     @Inject(method = "renderEntity(Lnet/minecraft/entity/Entity;DDDFFZ)V",
             at = @At("HEAD"),
             cancellable = true,
