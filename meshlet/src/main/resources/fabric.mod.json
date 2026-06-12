@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "flywheel_mesh",
+  "version": "${version}",
+  "name": "Flywheel Mesh",
+  "description": "GL mesh-shader terrain backend for CrankShaft/Flywheel. Nvidium-derived (LGPL-3.0-only).",
+  "license": "LGPL-3.0-only",
+  "environment": "client",
+  "depends": {
+    "minecraft": "*"
+  }
+}

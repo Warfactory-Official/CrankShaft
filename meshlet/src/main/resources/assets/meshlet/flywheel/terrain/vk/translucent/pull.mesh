@@ -1,0 +1,90 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+// Copyright (C) 2023-2026 Cortex and Nvidium contributors
+// Copyright (C) 2026 movblock (modifications: the decode-once vertex pull of the VK translucent OIT stage)
+// Derivative work of Nvidium assets/nvidium/shaders/terrain/translucent/mesh.glsl (the emit half).
+#extension GL_EXT_mesh_shader : require
+
+// The pull half of the decode-once translucent path: gather.comp already decoded + folded + sub-pixel-culled every
+// surviving quad into the flat cache, so this mesh shader is a trivial vertex pull -- read the cache, re-project with
+// ModelView/Proj (frame-constant, cheap), emit. Mesh-only (no task): one flat vkCmdDrawMeshTasksIndirectEXT with
+// groupCountX = ceil(maxQuads/16); the trailing (over-dispatched) workgroups clamp to the real quad count and emit
+// nothing. Feeds the SAME flw_chunk_oit producer interface the old task+mesh stage did, so the fragment is unchanged.
+layout(local_size_x = 64) in;
+layout(triangles, max_vertices = 64, max_primitives = 32) out;
+
+#include "meshlet:terrain/vk/translucent/cache.glsl"
+
+layout(set = 0, binding = 2, std430) readonly buffer CachedVerts {
+    CachedVert cachedVerts[];
+};
+layout(set = 0, binding = 3, std430) readonly buffer QuadFade {
+    float quadFade[];
+};
+layout(set = 0, binding = 4, std430) readonly buffer DrawCommand {
+    uint groupCountX;
+    uint groupCountY;
+    uint groupCountZ;
+    uint drawQuadCount; // the gather's exact surviving-quad count -- bounds the over-dispatched workgroups
+};
+layout(set = 0, binding = 16, std140) uniform Projection {
+    mat4 ProjMat;
+};
+layout(set = 0, binding = 21, std140) uniform ChunkSection {
+    mat4 ModelViewMat;
+};
+
+// Output interface -- byte-identical to the old translucent mesh so flw_chunk_oit.fsh reads it unchanged. DEPTH_RANGE
+// builds the lite variant (position + cutout alpha + eye Z only), matching the old mesh's _FLW_DEPTH_RANGE.
+#ifdef _FLW_DEPTH_RANGE
+layout(location = 0) out float flw_vertexAlpha[];
+layout(location = 1) out vec2 texCoord0[];
+layout(location = 9) out float flw_oitViewZ[];
+#else
+layout(location = 0) out vec4 vertexColor[];
+layout(location = 1) out vec2 texCoord0[];
+layout(location = 4) out float sphericalVertexDistance[];
+layout(location = 5) out float cylindricalVertexDistance[];
+layout(location = 9) out float flw_oitViewZ[];
+layout(location = 13) out float flw_chunkVisibility[];
+#endif
+
+const uint QUADS_PER_MESH_WG = 16u;
+const uint TEXTURE_MAX_COORD = 1u << 15u;
+const uint TEXTURE_MAX_VALUE = TEXTURE_MAX_COORD - 1u;
+
+void main() {
+    uint wgQuadBase = gl_WorkGroupID.x * QUADS_PER_MESH_WG;
+    uint total = drawQuadCount;
+    uint quadsInWg = wgQuadBase < total ? min(QUADS_PER_MESH_WG, total - wgQuadBase) : 0u;
+    // Uniform: total is a uniform SSBO read, so every invocation computes the same output sizes (EXT requirement).
+    SetMeshOutputsEXT(quadsInWg * 4u, quadsInWg * 2u);
+
+    uint i = gl_LocalInvocationIndex;
+    if (i < quadsInWg * 4u) {
+        uint quad = wgQuadBase + (i >> 2u);
+        CachedVert cv = cachedVerts[quad * 4u + (i & 3u)];
+        vec3 pos = vec3(cv.px, cv.py, cv.pz);
+        vec4 viewPos = ModelViewMat * vec4(pos, 1.0);
+        gl_MeshVerticesEXT[i].gl_Position = ProjMat * viewPos;
+        flw_oitViewZ[i] = viewPos.z;
+        texCoord0[i] = vec2(uvec2(cv.uv, cv.uv >> 16u) & TEXTURE_MAX_VALUE) / float(TEXTURE_MAX_COORD);
+#ifdef _FLW_DEPTH_RANGE
+        flw_vertexAlpha[i] = unpackHalf2x16(cv.colorBA).y; // colorBA = packHalf(b, a) -> .y = alpha
+#else
+        vertexColor[i] = vec4(unpackHalf2x16(cv.colorRG), unpackHalf2x16(cv.colorBA));
+        sphericalVertexDistance[i] = length(pos);
+        cylindricalVertexDistance[i] = max(length(pos.xz), abs(pos.y));
+        flw_chunkVisibility[i] = quadFade[quad];
+#endif
+    }
+
+    // Both triangles of a quad always survive (the gather already compacted the culled ones out), so the primitive
+    // slot is simply 2*localQuad + intra-quad index -- no per-primitive compaction.
+    uint p = gl_LocalInvocationIndex;
+    if (p < quadsInWg * 2u) {
+        uint v0 = (p >> 1u) * 4u;
+        gl_PrimitiveTriangleIndicesEXT[p] = (p & 1u) == 0u
+                ? uvec3(v0, v0 + 1u, v0 + 2u)
+                : uvec3(v0, v0 + 2u, v0 + 3u);
+    }
+}

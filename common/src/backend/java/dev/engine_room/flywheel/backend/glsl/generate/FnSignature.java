@@ -1,0 +1,81 @@
+package dev.engine_room.flywheel.backend.glsl.generate;
+
+import com.google.common.collect.ImmutableList;
+import dev.engine_room.flywheel.lib.util.Pair;
+import org.jspecify.annotations.Nullable;
+
+import java.util.Collection;
+import java.util.stream.Collectors;
+
+public record FnSignature(String returnType, String name, ImmutableList<Pair<String, String>> args) {
+    public static Builder create() {
+        return new Builder();
+    }
+
+    public static FnSignature of(String returnType, String name) {
+        return FnSignature.create()
+                          .returnType(returnType)
+                          .name(name)
+                          .build();
+    }
+
+    public static FnSignature ofVoid(String name) {
+        return new FnSignature("void", name, ImmutableList.of());
+    }
+
+    public Collection<? extends GlslExpr> createArgExpressions() {
+        return args.stream()
+                   .map(Pair::getSecond)
+                   .map(GlslExpr::variable)
+                   .collect(Collectors.toList());
+    }
+
+    public boolean isVoid() {
+        return "void".equals(returnType);
+    }
+
+    public String fullDeclaration() {
+        return returnType + ' ' + name + '(' + args.stream()
+                                                   .map(p -> p.getFirst() + ' ' + p.getSecond())
+                                                   .collect(Collectors.joining(", ")) + ')';
+    }
+
+    public String signatureDeclaration() {
+        return returnType + ' ' + name + '(' + args.stream()
+                                                   .map(Pair::getFirst)
+                                                   .collect(Collectors.joining(", ")) + ')';
+    }
+
+    public static class Builder {
+        private final ImmutableList.Builder<Pair<String, String>> args = ImmutableList.builder();
+        @Nullable
+        private String returnType;
+        @Nullable
+        private String name;
+
+        public Builder returnType(String returnType) {
+            this.returnType = returnType;
+            return this;
+        }
+
+        public Builder name(String name) {
+            this.name = name;
+            return this;
+        }
+
+        public Builder arg(String type, String name) {
+            args.add(Pair.of(type, name));
+            return this;
+        }
+
+        public FnSignature build() {
+            if (returnType == null) {
+                throw new IllegalStateException("returnType not set");
+            }
+            if (name == null) {
+                throw new IllegalStateException("name not set");
+            }
+            return new FnSignature(returnType, name, args.build());
+        }
+    }
+}

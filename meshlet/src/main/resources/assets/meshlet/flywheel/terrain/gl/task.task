@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+// Copyright (C) 2023-2026 Cortex and Nvidium contributors
+// Copyright (C) 2026 movblock (modifications: the GL_NV port + CrankShaft integration)
+// Derivative work of Nvidium assets/nvidium/shaders/terrain/task.glsl.
+
+#extension GL_NV_mesh_shader : require
+#extension GL_NV_gpu_shader5 : require
+#extension GL_NV_shader_buffer_load : require
+
+layout(local_size_x = 1) in;
+
+#include "meshlet:terrain/gl/scene.glsl"
+#include "meshlet:terrain/gl/section_data.glsl"
+#include "meshlet:terrain/gl/vertex_format/sodium_vertex_format.glsl" // Vertex type for the payload's geoBase pointer
+#include "meshlet:terrain/gl/task_payload.glsl"
+// NV-bindless: region-input (SSBO 0) + section-fade-vis (SSBO 11) are device pointers in the scene UBO (binding 7),
+// read as u_regionInput / u_sectionFadeVis. Geometry (12) + compactSections (7, SSBO namespace) stay bound below.
+#include "meshlet:terrain/gl/scene_ubo.glsl"
+
+// Bindless geometry pointer table (SSBO 12): one Vertex* device pointer per region slot into Sodium's live
+// CompactChunkVertex arena (Nvidium occlusion/scene.glsl stores its single terrainData pointer the same typed way).
+// The task resolves THIS region's pointer once and forwards it via the payload (geoBase), so the mesh stage skips the
+// per-mesh-workgroup binding-12 load -- flatten of the geometryPtrs[slot] indirection. (The mesh no longer declares it.)
+layout(std430, binding = 12) restrict readonly buffer GeometryPointers {
+    restrict Vertex *geometryPtrs[];
+};
+
+// Compacted visible section slots per region: compactSections[slot*256 + i] = in-region section id.
+// Written by the emit-half alongside the DrawMeshTasksIndirectCommandNV stream.
+layout(std430, binding = 7) restrict readonly buffer CompactSections {
+    uint compactSections[];
+};
+
+taskNV out TerrainTask { TERRAIN_TASK_PAYLOAD_FIELDS } payload;
+
+void main() {
+    // Region + in-region index recovered from gl_WorkGroupID.x. The emit-half wrote firstTask = slot << 8, and a single
+    // glMultiDrawMeshTasksIndirectNV(0, regionCount, 8) launches each region's task WGs with gl_WorkGroupID.x in
+    // [slot<<8, slot<<8 + count) -- so slot = gl_WorkGroupID.x >> 8 and the compactSections index = gl_WorkGroupID.x &
+    // 0xFF. No per-region uniform, no per-region rebind (geometry + origin are read by slot from bound region-indexed
+    // buffers). first is unbounded; GL_MAX_DRAW_MESH_TASKS_COUNT_NV bounds only count (<= 256). slot rides the payload
+    // to the mesh stage (which can't see this task's gl_WorkGroupID) for the geometry-pointer + origin lookups.
+    uint slot = gl_WorkGroupID.x >> 8u;
+    uint localIndex = gl_WorkGroupID.x & 0xFFu;
+
+    uvec4 in4 = u_regionInput[slot];
+    uint regionId = in4.z;
+    if (regionId == 0xFFFFFFFFu) {
+        gl_TaskCountNV = 0u;
+        return;
+    }
+
+    uint sectionId = compactSections[slot * REGION_SIZE + localIndex];
+    SectionFields f = decodeSection(regionId, sectionId);
+
+    // Camera-direction backface cull: drop the section's facings whose outward normal points away from the
+    // camera (the 6 axis facings; UNASSIGNED always kept). camRel = section block origin - camera, the same
+    // camera-relative space the mesh stage projects in (sectionChunkOrigin*16 - cameraBlockPos - cameraPos).
+    vec3 camRel = vec3(sectionChunkOrigin(in4, sectionId)) * 16.0
+            - vec3(cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
+    uint camMask = cameraVisibleFacingMask(camRel);
+
+    // Per-facing arena partition. Sodium's CompactChunkVertex arena stores a section's geometry partitioned
+    // into up to 7 per-facing groups (each a distinct contiguous sub-range), NOT one flat run from baseVertex
+    // (CrankShaft terrain_command_builder.comp:171-216 / Nvidium populateTasks). Precompute, per facing i, the
+    // running ARENA quad offset (over EVERY facing with geometry -- masked-out ones still consume arena space,
+    // mirroring runBaseVertex += vertexCount) and the running VISIBLE quad index (over DRAWN facings only -- the
+    // index space `gii` lives in). The mesh shader maps a sequential gii back to its facing via these bins.
+    uint arenaQuad = 0u;    // cumulative arena quad offset (vertexCount/4 over all geometry-present facings j<i)
+    uint visibleQuad = 0u;  // cumulative visible quad index (vertexCount/4 over drawn facings j<i)
+    for (uint i = 0u; i < FACING_COUNT; i++) {
+        payload.facingArenaQuadStart[i] = arenaQuad;
+        payload.facingVisibleQuadStart[i] = visibleQuad;
+        uint quads = f.vertexCount[i] >> 2u; // 4 vertices per quad
+        arenaQuad += quads;                  // arena advances over masked-out facings too (zero-vertex adds 0)
+        if (facingDrawn(f, i, camMask)) {
+            visibleQuad += quads;            // visible index only counts drawn (camera-visible) facings
+        }
+    }
+    uint quadCount = visibleQuad; // == sectionQuadCount(f, camMask): total drawn quads
+
+    payload.baseVertex = f.baseVertex;
+    payload.quadCount = quadCount;
+    payload.sectionId = sectionId;
+    payload.slot = slot; // the mesh stage reads regionInput[slot] for the origin (it can't recover slot itself)
+    payload.geoBase = geometryPtrs[slot]; // resolve the arena address once here; the mesh casts it to a Vertex*
+    // Section-wide chunk-load fade (region-id-keyed); the fragment mixes settled colour toward fog by this.
+    payload.chunkVisibility = u_sectionFadeVis[regionId * REGION_SIZE + sectionId];
+
+    // Opaque: 2 invocations per quad (one triangle each), 32 invocations per mesh workgroup.
+    gl_TaskCountNV = (quadCount * 2u + 31u) / 32u;
+}

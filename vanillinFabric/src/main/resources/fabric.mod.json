@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "vanillin",
+  "version": "${version}",
+  "name": "Vanillate",
+  "description": "Vanilla content visuals (chests, minecarts, ...) rendered through the CrankShaft instanced engine.",
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "dev.engine_room.vanillin.VanillinFabric"
+    ]
+  },
+  "depends": {
+    "minecraft": "~26.2",
+    "fabricloader": ">=0.19.3",
+    "flywheel": "*"
+  }
+}

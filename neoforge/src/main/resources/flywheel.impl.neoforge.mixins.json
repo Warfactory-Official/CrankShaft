@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "minVersion": "0.8.7",
+  "package": "dev.engine_room.flywheel.impl.mixin.neoforge",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "LevelExtractorMixin",
+    "LevelRendererMixin",
+    "WeatherEffectRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "minVersion": "0.8.7",
+  "package": "dev.engine_room.flywheel.impl.mixin.fabric",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "LevelExtractorMixin",
+    "LevelRendererMixin",
+    "MinecraftMixin",
+    "SystemReportMixin",
+    "WeatherEffectRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

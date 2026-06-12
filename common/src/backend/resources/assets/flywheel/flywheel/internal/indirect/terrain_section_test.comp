@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: MIT
+// Shift register: bit0 = this frame, bit1 = last frame; occluded freezes, absent clears, off-screen shifts 0 in.
+// Conservative texel-gather HiZ
+
+#include "flywheel:internal/indirect/hiz_aabb.glsl"
+
+layout(local_size_x = 256) in;
+
+layout(std140, binding = 8) uniform TerrainHiZUniforms {
+    mat4 viewProjection;
+    vec4 cameraPosAndPad;       // .xyz = cameraWorldPos - cameraBlockPos (fractional)
+    ivec4 cameraBlockPosAndPad;
+};
+
+#ifdef _FLW_VK
+layout(std430, binding = 0) restrict readonly buffer RegionInputBuf { uvec4 regionInput[]; };
+layout(std430, binding = 1) restrict readonly buffer SectionDataBuf { uvec4 sectionData0[]; };
+layout(std430, binding = 2) restrict readonly buffer RegionVisBuf { uint regionVis[]; };
+layout(std430, binding = 3) restrict buffer SectionVisBuf { uint sectionVis[]; };
+layout(std430, binding = 6) restrict readonly buffer GeometryMaskBuf { uint geometryMask[]; };
+// phase: 0 = single-phase shift; 1 = vs carried pyramid -> bit0; 2 = re-test vs FRESH pyramid -> bit1 (mesh tier).
+layout(std140, binding = 9) uniform TerrainRegionCount { uint regionCount; uint phase; uint _rcPad1; uint _rcPad2; };
+#else
+layout(std140, binding = 7) uniform TerrainSceneUbo {
+    restrict readonly uvec4 *regionInput;
+    restrict readonly uvec4 *sectionData0;      // 3 uvec4 / section, region-id-keyed
+    restrict readonly uint *regionVis;          // [slot] (read; gates freezing)
+    restrict uint *sectionVis;                  // [regionId<<8 | s] shift register (read-modify-write)
+    restrict writeonly uvec2 *commandWords;     // command stream (unused here)
+    restrict uvec2 *regionCommandCount;         // per-slot counts (unused here)
+    restrict readonly uint *geometryMask;       // 8 uint / region; index = regionId*GEOMETRY_MASK_WORDS + (s>>5)
+    uint regionCount;                           // visible-region count (replaces regionInput.length())
+};
+#endif
+layout(binding = 10) uniform sampler2D hizPyramid;
+
+#ifndef _FLW_VK
+const uint phase = 0u; // GL/bindless path: single-phase (temporal shift) only; the two-phase driver is Vulkan-only.
+#endif
+
+const uint REGION_SIZE = 256u; // sections per CrankShaft region (8 x 4 x 8)
+const uint GEOMETRY_MASK_WORDS = REGION_SIZE / 32u;
+
+ivec3 unpackOriginChunkXZ(uint packed0) {
+    return ivec3(int(packed0 << 16) >> 16, 0, int(packed0) >> 16);
+}
+int unpackOriginChunkY(uint packed1) {
+    return int(packed1 << 16) >> 16;
+}
+struct SectionFields {
+    uint sliceMask;
+    uint vertexCount[7];
+    bool empty;
+};
+SectionFields decodeSection(uint regionId, uint s) {
+    uint base = regionId * (REGION_SIZE * 3u) + s * 3u;
+    uvec4 b1 = sectionData0[base + 1u];
+    uvec4 b2 = sectionData0[base + 2u];
+    SectionFields f;
+    f.sliceMask = b1.x;
+    f.vertexCount[0] = b1.y;
+    f.vertexCount[1] = b1.z;
+    f.vertexCount[2] = b1.w;
+    f.vertexCount[3] = b2.x;
+    f.vertexCount[4] = b2.y;
+    f.vertexCount[5] = b2.z;
+    f.vertexCount[6] = b2.w;
+    f.empty = (b1.y | b1.z | b1.w | b2.x | b2.y | b2.z | b2.w) == 0u;
+    return f;
+}
+
+// Sodium LocalSectionIndex is XZY-packed: x=(s>>5)&7, y=s&3, z=(s>>2)&7.
+ivec3 sectionRelativeBlocks(uint s) {
+    uint sx = (s >> 5u) & 0x7u;
+    uint sy = s & 0x3u;
+    uint sz = (s >> 2u) & 0x7u;
+    return ivec3(sx, sy, sz) * 16;
+}
+
+void store(uint visIndex, bool present, bool visible) {
+    if (phase == 0u) {
+        if (!present) {
+            sectionVis[visIndex] = 0u;
+            return;
+        }
+        uint lastData = sectionVis[visIndex] & 0xFFu;
+        sectionVis[visIndex] = ((lastData << 1u) | (visible ? 1u : 0u)) & 0xFFu;
+    } else if (phase == 1u) {
+        sectionVis[visIndex] = (present && visible) ? 1u : 0u;
+    } else if ((sectionVis[visIndex] & 1u) == 0u) {
+        sectionVis[visIndex] = (present && visible) ? 2u : 0u;
+    }
+}
+
+void main() {
+    uint slot = gl_WorkGroupID.x;
+    if (slot >= regionCount) {
+        return;
+    }
+    uvec4 in4 = regionInput[slot];
+    if (in4.z == 0xFFFFFFFFu) {
+        return;
+    }
+    uint s = gl_LocalInvocationID.x;
+    uint regionId = in4.z;
+    uint visIndex = (regionId << 8u) | s;
+
+    // Occluded: phase 0 FREEZES history (Pass-A relies on stale); phase 1 CLEARS; phase 2 keeps phase-1's result.
+    if (regionVis[slot] == 0u) {
+        if (phase == 1u) {
+            sectionVis[visIndex] = 0u;
+        }
+        return;
+    }
+
+    uint geometryWord = geometryMask[regionId * GEOMETRY_MASK_WORDS + (s >> 5u)];
+    bool present = (geometryWord & (1u << (s & 31u))) != 0u;
+    if (present) {
+        SectionFields f = decodeSection(regionId, s);
+        present = !(f.empty || f.sliceMask == 0u);
+    }
+    if (!present) {
+        store(visIndex, false, false);
+        return;
+    }
+
+    ivec3 originChunk = unpackOriginChunkXZ(in4.x);
+    originChunk.y = unpackOriginChunkY(in4.y);
+    vec3 camDelta = vec3(cameraBlockPosAndPad.xyz);
+    vec3 cornerBase = vec3(originChunk * 16) + vec3(sectionRelativeBlocks(s)) - camDelta;
+
+    vec3 mins = cornerBase - _FLW_HIZ_ADD_BLOCKS;
+    vec3 maxs = cornerBase + vec3(16.0) + _FLW_HIZ_ADD_BLOCKS;
+
+    vec2 viewSize = vec2(cameraPosAndPad.w, float(cameraBlockPosAndPad.w));
+    store(visIndex, true, _flw_hizAabbVisible(mins, maxs, cameraPosAndPad.xyz, viewProjection, viewSize, hizPyramid));
+}

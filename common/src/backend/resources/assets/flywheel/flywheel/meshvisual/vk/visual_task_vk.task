@@ -1,0 +1,105 @@
+// VK_EXT_mesh_shader twin of meshvisual/visual_task.task: one task workgroup covers a K-batch of logical mesh
+// workgroups (K = _flw_taskBatch, MUST match command_builder_vk.comp) -- batching keeps the indirect command's
+// task count inside maxTaskWorkGroupCount AND cuts task-launch overhead K-fold on the welded path. The 2D grid
+// the builder splits oversized counts into is linearized here (y * numWorkGroups.x + x); overshoot pad
+// workgroups emit zero children. Unwelded meshlets are frustum + HiZ culled per meshlet (meshlet_cull_vk),
+// one candidate per LANE per round with subgroup-ballot compaction -- the host pins requiredSubgroupSize = 32
+// on the task stage (VkMeshPipeline), so the 32-invocation workgroup is exactly one subgroup.
+layout(local_size_x = 32) in;
+
+const uint _FLW_TRIS_PER_MESHLET = 64u;
+const uint _FLW_MAX_VERTS = uint(_FLW_MV_MAX_VERTS);
+const uint _FLW_MAX_PRIMS = uint(_FLW_MV_MAX_PRIMS);
+
+// Logical mesh workgroups this command needs + the task batch size -- BOTH must match command_builder_vk.comp.
+uint _flw_neededWgs(MeshDrawCommand cmd, uint triCount, uint vertCount) {
+    if (vertCount <= _FLW_MAX_VERTS && triCount <= _FLW_MAX_PRIMS) {
+        uint perWg = min(_FLW_MAX_VERTS / max(vertCount, 3u), _FLW_MAX_PRIMS / triCount);
+        return (cmd.instanceCount + perWg - 1u) / perWg;
+    }
+    uint meshletsPerInstance = (triCount + _FLW_TRIS_PER_MESHLET - 1u) / _FLW_TRIS_PER_MESHLET;
+    return cmd.instanceCount * meshletsPerInstance;
+}
+
+uint _flw_taskBatch(uint needed) {
+    return clamp((needed + uint(_FLW_MV_MAX_WG_X) - 1u) / uint(_FLW_MV_MAX_WG_X), 16u, 64u);
+}
+
+void main() {
+    uint drawIndex = _flw_baseDraw + uint(gl_DrawID);
+    MeshDrawCommand cmd = _flw_drawCommands[drawIndex];
+
+    uint triCount = cmd.indexCount / 3u;
+    uint vertCount = cmd.vertexCount;
+    if (triCount == 0u) {
+        EmitMeshTasksEXT(0u, 1u, 1u);
+        return;
+    }
+
+    uint needed = _flw_neededWgs(cmd, triCount, vertCount);
+    uint k = _flw_taskBatch(needed);
+    uint taskWgs = (needed + k - 1u) / k;
+    // Linearize the builder's 2D grid; pad workgroups of the last row emit nothing.
+    uint wg = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    if (wg >= taskWgs) {
+        EmitMeshTasksEXT(0u, 1u, 1u);
+        return;
+    }
+    uint base = wg * k;
+    uint coverage = min(k, needed - base);
+    uint lane = gl_LocalInvocationID.x;
+    if (lane == 0u) {
+        payload.drawIndex = drawIndex;
+    }
+
+    if (vertCount <= _FLW_MAX_VERTS && triCount <= _FLW_MAX_PRIMS) {
+        // Welded: whole small instances packed per mesh workgroup, already frustum + HiZ culled per-instance by
+        // the cull compute -- nothing to cull at meshlet grain, just fan out the batch.
+        if (lane == 0u) {
+            payload.arg0 = base;
+        }
+        EmitMeshTasksEXT(coverage, 1u, 1u);
+        return;
+    }
+
+    // Unwelded: one 64-tri meshlet of one instance per logical workgroup, one candidate per LANE per round
+    // (k <= 64 -> at most 2 rounds), survivors ballot-compacted into the remap. boundsAddr == 0 (bounds not
+    // built yet) -> fail-open: fan out the whole batch unculled through the remap.
+    uint meshletsPerInstance = (triCount + _FLW_TRIS_PER_MESHLET - 1u) / _FLW_TRIS_PER_MESHLET;
+    uint survivors = 0u;
+    if (_flw_boundsAddr == uint64_t(0u)) {
+        for (uint j = lane; j < coverage; j += 32u) {
+            payload.remap[j] = base + j;
+        }
+        survivors = coverage;
+    } else {
+        _FlwMeshletBoundsRef boundsRef = _FlwMeshletBoundsRef(_flw_boundsAddr);
+        for (uint j0 = 0u; j0 < coverage; j0 += 32u) {
+            uint j = j0 + lane;
+            uint logical = base + j;
+            bool vis = false;
+            if (j < coverage) {
+                uint instBase = logical / meshletsPerInstance;
+                uint meshlet = logical - instBase * meshletsPerInstance;
+
+                FlwInstance instance = _flw_unpackInstance(_flw_instanceIndices[cmd.baseInstance + instBase]);
+
+                vec4 s = boundsRef.v[cmd.meshletBase + meshlet];
+                vec3 center = s.xyz;
+                float radius = s.w;
+                flw_transformBoundingSphere(instance, center, radius);
+                if (cmd.matrixIndex > 0u) {
+                    transformBoundingSphere(_flw_matrices[cmd.matrixIndex].pose, center, radius);
+                }
+
+                vis = _flw_meshletVisible(center, radius);
+            }
+            uvec4 ballot = subgroupBallot(vis);
+            if (vis) {
+                payload.remap[survivors + subgroupBallotExclusiveBitCount(ballot)] = logical;
+            }
+            survivors += subgroupBallotBitCount(ballot);
+        }
+    }
+    EmitMeshTasksEXT(survivors, 1u, 1u);
+}

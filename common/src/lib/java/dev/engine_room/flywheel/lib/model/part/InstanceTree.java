@@ -1,0 +1,521 @@
+package dev.engine_room.flywheel.lib.model.part;
+
+import com.mojang.blaze3d.vertex.PoseStack;
+import dev.engine_room.flywheel.api.instance.InstancerProvider;
+import dev.engine_room.flywheel.api.model.Model;
+import dev.engine_room.flywheel.lib.instance.InstanceTypes;
+import dev.engine_room.flywheel.lib.instance.TransformedInstance;
+import dev.engine_room.flywheel.lib.transform.Affine;
+import dev.engine_room.flywheel.lib.transform.TransformStack;
+import net.minecraft.client.model.geom.ModelPart;
+import net.minecraft.client.model.geom.PartPose;
+import org.jetbrains.annotations.ApiStatus;
+import org.joml.Matrix4f;
+import org.joml.Matrix4fc;
+import org.joml.Quaternionf;
+import org.joml.Vector3fc;
+import org.jspecify.annotations.Nullable;
+
+import java.util.NoSuchElementException;
+import java.util.function.Consumer;
+import java.util.function.ObjIntConsumer;
+
+public final class InstanceTree {
+    private final ModelTree source;
+    @Nullable
+    private final TransformedInstance instance;
+    private final InstanceTree[] children;
+
+    private final Matrix4f poseMatrix;
+
+    private float x;
+    private float y;
+    private float z;
+    private float xRot;
+    private float yRot;
+    private float zRot;
+    private float xScale;
+    private float yScale;
+    private float zScale;
+    private boolean visible = true;
+    private boolean skipDraw = false;
+
+    private boolean changed;
+
+    private InstanceTree(ModelTree source, @Nullable TransformedInstance instance, InstanceTree[] children) {
+        this.source = source;
+        this.instance = instance;
+        this.children = children;
+
+        // Port's TransformedInstance is slab-in-place: it has no aliased `pose` matrix field to mutate.
+        poseMatrix = new Matrix4f();
+
+        resetPose();
+    }
+
+    public static InstanceTree create(InstancerProvider provider, ModelTree meshTree) {
+        InstanceTree[] children = new InstanceTree[meshTree.childCount()];
+        for (int i = 0; i < meshTree.childCount(); i++) {
+            children[i] = create(provider, meshTree.child(i));
+        }
+
+        Model model = meshTree.model();
+        TransformedInstance instance;
+        if (model != null) {
+            instance = provider.instancer(InstanceTypes.TRANSFORMED, model)
+                               .createInstance();
+        } else {
+            instance = null;
+        }
+
+        return new InstanceTree(meshTree, instance, children);
+    }
+
+    @Nullable
+    public TransformedInstance instance() {
+        return instance;
+    }
+
+    public PartPose initialPose() {
+        return source.initialPose();
+    }
+
+    public int childCount() {
+        return children.length;
+    }
+
+    public InstanceTree child(int index) {
+        return children[index];
+    }
+
+    public String childName(int index) {
+        return source.childName(index);
+    }
+
+    public int childIndex(String name) {
+        return source.childIndex(name);
+    }
+
+    public boolean hasChild(String name) {
+        return childIndex(name) >= 0;
+    }
+
+    @Nullable
+    public InstanceTree child(String name) {
+        int index = childIndex(name);
+
+        if (index < 0) {
+            return null;
+        }
+
+        return child(index);
+    }
+
+    public InstanceTree childOrThrow(String name) {
+        InstanceTree child = child(name);
+
+        if (child == null) {
+            throw new NoSuchElementException("Can't find part " + name);
+        }
+
+        return child;
+    }
+
+    public void traverse(Consumer<? super TransformedInstance> consumer) {
+        if (instance != null) {
+            consumer.accept(instance);
+        }
+        for (InstanceTree child : children) {
+            child.traverse(consumer);
+        }
+    }
+
+    @ApiStatus.Experimental
+    public void traverse(int i, ObjIntConsumer<? super TransformedInstance> consumer) {
+        if (instance != null) {
+            consumer.accept(instance, i);
+        }
+        for (InstanceTree child : children) {
+            child.traverse(i, consumer);
+        }
+    }
+
+    @ApiStatus.Experimental
+    public void traverse(int i, int j, ObjIntIntConsumer<? super TransformedInstance> consumer) {
+        if (instance != null) {
+            consumer.accept(instance, i, j);
+        }
+        for (InstanceTree child : children) {
+            child.traverse(i, j, consumer);
+        }
+    }
+
+    public void translateAndRotate(Affine<?> affine, Quaternionf tempQuaternion) {
+        affine.translate(x / 16.0F, y / 16.0F, z / 16.0F);
+
+        if (xRot != 0.0F || yRot != 0.0F || zRot != 0.0F) {
+            affine.rotate(tempQuaternion.rotationZYX(zRot, yRot, xRot));
+        }
+
+        if (xScale != ModelPart.DEFAULT_SCALE || yScale != ModelPart.DEFAULT_SCALE || zScale != ModelPart.DEFAULT_SCALE) {
+            affine.scale(xScale, yScale, zScale);
+        }
+    }
+
+    public void translateAndRotate(PoseStack poseStack, Quaternionf tempQuaternion) {
+        translateAndRotate(TransformStack.of(poseStack), tempQuaternion);
+    }
+
+    public void translateAndRotate(Matrix4f pose) {
+        pose.translate(x / 16.0F, y / 16.0F, z / 16.0F);
+
+        if (xRot != 0.0F || yRot != 0.0F || zRot != 0.0F) {
+            pose.rotateZYX(zRot, yRot, xRot);
+        }
+
+        if (xScale != ModelPart.DEFAULT_SCALE || yScale != ModelPart.DEFAULT_SCALE || zScale != ModelPart.DEFAULT_SCALE) {
+            pose.scale(xScale, yScale, zScale);
+        }
+    }
+
+    /**
+     * Update the instances in this tree, assuming initialPose changes.
+     *
+     * <p>This is the preferred method for entity visuals, or if you're not sure which you need.
+     *
+     * @param initialPose The root transformation matrix.
+     */
+    public void updateInstances(Matrix4fc initialPose) {
+        propagateAnimation(initialPose, true);
+    }
+
+    /**
+     * Update the instances in this tree, assuming initialPose doesn't change between invocations.
+     *
+     * <p>This is the preferred method for block entity visuals.
+     *
+     * @param initialPose The root transformation matrix.
+     */
+    public void updateInstancesStatic(Matrix4fc initialPose) {
+        propagateAnimation(initialPose, false);
+    }
+
+    /**
+     * Propagate pose transformations to this tree and all its children.
+     *
+     * @param initialPose The root transformation matrix.
+     * @param force       Whether to force the update even if this node's transformations haven't changed.
+     */
+    public void propagateAnimation(Matrix4fc initialPose, boolean force) {
+        if (!visible) {
+            return;
+        }
+
+        if (changed || force) {
+            poseMatrix.set(initialPose);
+            translateAndRotate(poseMatrix);
+            force = true;
+
+            if (instance != null) {
+                instance.setTransform(poseMatrix)
+                        .setChanged();
+            }
+        }
+
+        for (InstanceTree child : children) {
+            child.propagateAnimation(poseMatrix, force);
+        }
+
+        changed = false;
+    }
+
+    /**
+     * Set the visibility of this tree and all its children, recursively.
+     *
+     * @param visible Whether to make this tree visible.
+     */
+    public void visible(boolean visible) {
+        this.visible = visible;
+
+        updateVisible();
+
+        // I think you'll get weird behavior if you mark a parent invisible and then mark its child visible.
+        // Not sure if there's a good way to solve that, though.
+        for (InstanceTree child : children) {
+            child.visible(visible);
+        }
+    }
+
+    /**
+     * Set the visibility of this specific node in the tree.
+     *
+     * @param skipDraw Whether this node should skip rendering.
+     */
+    public void skipDraw(boolean skipDraw) {
+        this.skipDraw = skipDraw;
+
+        updateVisible();
+    }
+
+    private void updateVisible() {
+        if (instance != null) {
+            instance.setVisible(visible && !skipDraw);
+        }
+    }
+
+    public boolean visible() {
+        return visible;
+    }
+
+    public boolean skipDraw() {
+        return skipDraw;
+    }
+
+    public float xPos() {
+        return x;
+    }
+
+    public float yPos() {
+        return y;
+    }
+
+    public float zPos() {
+        return z;
+    }
+
+    public float xRot() {
+        return xRot;
+    }
+
+    public float yRot() {
+        return yRot;
+    }
+
+    public float zRot() {
+        return zRot;
+    }
+
+    public float xScale() {
+        return xScale;
+    }
+
+    public float yScale() {
+        return yScale;
+    }
+
+    public float zScale() {
+        return zScale;
+    }
+
+    public void xPos(float x) {
+        this.x = x;
+        setChanged();
+    }
+
+    public void yPos(float y) {
+        this.y = y;
+        setChanged();
+    }
+
+    public void zPos(float z) {
+        this.z = z;
+        setChanged();
+    }
+
+    public void pos(float x, float y, float z) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        setChanged();
+    }
+
+    public void xRot(float xRot) {
+        this.xRot = xRot;
+        setChanged();
+    }
+
+    public void yRot(float yRot) {
+        this.yRot = yRot;
+        setChanged();
+    }
+
+    public void zRot(float zRot) {
+        this.zRot = zRot;
+        setChanged();
+    }
+
+    public void rotation(float xRot, float yRot, float zRot) {
+        this.xRot = xRot;
+        this.yRot = yRot;
+        this.zRot = zRot;
+        setChanged();
+    }
+
+    public void xScale(float xScale) {
+        this.xScale = xScale;
+        setChanged();
+    }
+
+    public void yScale(float yScale) {
+        this.yScale = yScale;
+        setChanged();
+    }
+
+    public void zScale(float zScale) {
+        this.zScale = zScale;
+        setChanged();
+    }
+
+    public void scale(float xScale, float yScale, float zScale) {
+        this.xScale = xScale;
+        this.yScale = yScale;
+        this.zScale = zScale;
+        setChanged();
+    }
+
+    public void offsetPos(float xOffset, float yOffset, float zOffset) {
+        x += xOffset;
+        y += yOffset;
+        z += zOffset;
+        setChanged();
+    }
+
+    public void offsetXPos(float xOffset) {
+        x += xOffset;
+        setChanged();
+    }
+
+    public void offsetYPos(float yOffset) {
+        y += yOffset;
+        setChanged();
+    }
+
+    public void offsetZPos(float zOffset) {
+        z += zOffset;
+        setChanged();
+    }
+
+    public void offsetPos(Vector3fc offset) {
+        offsetPos(offset.x(), offset.y(), offset.z());
+    }
+
+    public void offsetRotation(float xOffset, float yOffset, float zOffset) {
+        xRot += xOffset;
+        yRot += yOffset;
+        zRot += zOffset;
+        setChanged();
+    }
+
+    public void offsetXRot(float xOffset) {
+        xRot += xOffset;
+        setChanged();
+    }
+
+    public void offsetYRot(float yOffset) {
+        yRot += yOffset;
+        setChanged();
+    }
+
+    public void offsetZRot(float zOffset) {
+        zRot += zOffset;
+        setChanged();
+    }
+
+    public void offsetRotation(Vector3fc offset) {
+        offsetRotation(offset.x(), offset.y(), offset.z());
+    }
+
+    public void offsetScale(float xOffset, float yOffset, float zOffset) {
+        xScale += xOffset;
+        yScale += yOffset;
+        zScale += zOffset;
+        setChanged();
+    }
+
+    public void offsetXScale(float xOffset) {
+        xScale += xOffset;
+        setChanged();
+    }
+
+    public void offsetYScale(float yOffset) {
+        yScale += yOffset;
+        setChanged();
+    }
+
+    public void offsetZScale(float zOffset) {
+        zScale += zOffset;
+        setChanged();
+    }
+
+    public void offsetScale(Vector3fc offset) {
+        offsetScale(offset.x(), offset.y(), offset.z());
+    }
+
+    public PartPose storePose() {
+        return PartPose.offsetAndRotation(x, y, z, xRot, yRot, zRot);
+    }
+
+    public void loadPose(PartPose pose) {
+        // 26.2 PartPose is a 9-float record carrying scale; read it (matching vanilla ModelPart.loadPose)
+        // instead of upstream's hard-coded DEFAULT_SCALE, so 26.2 can bake scale into an initialPose.
+        x = pose.x();
+        y = pose.y();
+        z = pose.z();
+        xRot = pose.xRot();
+        yRot = pose.yRot();
+        zRot = pose.zRot();
+        xScale = pose.xScale();
+        yScale = pose.yScale();
+        zScale = pose.zScale();
+        setChanged();
+    }
+
+    public void resetPose() {
+        loadPose(source.initialPose());
+    }
+
+    public void copyTransform(InstanceTree tree) {
+        x = tree.x;
+        y = tree.y;
+        z = tree.z;
+        xRot = tree.xRot;
+        yRot = tree.yRot;
+        zRot = tree.zRot;
+        xScale = tree.xScale;
+        yScale = tree.yScale;
+        zScale = tree.zScale;
+        setChanged();
+    }
+
+    public void copyTransform(ModelPart modelPart) {
+        x = modelPart.x;
+        y = modelPart.y;
+        z = modelPart.z;
+        xRot = modelPart.xRot;
+        yRot = modelPart.yRot;
+        zRot = modelPart.zRot;
+        xScale = modelPart.xScale;
+        yScale = modelPart.yScale;
+        zScale = modelPart.zScale;
+        setChanged();
+    }
+
+    private void setChanged() {
+        changed = true;
+    }
+
+    public void delete() {
+        if (instance != null) {
+            instance.delete();
+        }
+        for (InstanceTree child : children) {
+            child.delete();
+        }
+    }
+
+    @ApiStatus.Experimental
+    @FunctionalInterface
+    public interface ObjIntIntConsumer<T> {
+        void accept(T t, int i, int j);
+    }
+}

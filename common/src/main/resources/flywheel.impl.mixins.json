@@ -1,0 +1,37 @@
+{
+  "required": true,
+  "minVersion": "0.8.7",
+  "package": "dev.engine_room.flywheel.impl.mixin",
+  "plugin": "dev.engine_room.flywheel.impl.FlwImplMixinPlugin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "BlockEntityTypeMixin",
+    "ClientChunkCacheMixin",
+    "CloudRendererMixin",
+    "EntityTypeMixin",
+    "GlCommandEncoderMixin",
+    "GlTextureMixin",
+    "GlyphStitcherMixin",
+    "LevelMixin",
+    "LevelRendererFabulousLayersMixin",
+    "LevelRendererTransparencyMixin",
+    "MixinChunkSectionsToRender",
+    "PreparedFrameMixin",
+    "RenderTypeFeatureRendererMixin",
+    "VulkanBackendMixin",
+    "VulkanCommandEncoderMixin",
+    "VulkanGpuBufferMixin",
+    "VulkanGpuTextureMixin",
+    "VulkanRenderPassMixin",
+    "VulkanTransientMemoryMixin",
+    "VulkanUtilsMixin",
+    "visualmanage.BlockEntityMixin",
+    "visualmanage.LevelChunkMixin",
+    "visualmanage.LevelExtractorMixin",
+    "visualmanage.LevelRendererOutlineMixin",
+    "visualmanage.SectionCompilerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

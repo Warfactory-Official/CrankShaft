@@ -1,0 +1,184 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+// Copyright (C) 2026 Cortex and Nvidium contributors
+// Copyright (C) 2026 movblock
+#extension GL_NV_gpu_shader5 : require
+#extension GL_NV_shader_buffer_load : require
+
+layout(local_size_x = 256) in;
+
+#include "meshlet:terrain/gl/scene.glsl"
+#include "meshlet:terrain/gl/translucent_scene_ubo.glsl"
+
+layout(std430, binding = 7) restrict writeonly buffer CompactSections {
+    uint compactSections[];
+};
+layout(std430, binding = 13) restrict writeonly buffer CompactGeom {
+    uint compactGeom[];
+};
+layout(std430, binding = 14) restrict readonly buffer LiveMask {
+    uint liveMask[];
+};
+layout(binding = 10) uniform sampler2D hizPyramid;
+
+const float SECTION_ADD_BLOCKS = 0.1;
+const uint MAX_COMMANDS_PER_STREAM = REGION_SIZE;
+
+const uint REGION_COMMAND_WORDS = 2560u;
+const uint FADING_WORD_OFFSET = 1280u;
+
+const uint COMPACT_PER_REGION = 512u;
+const uint COMPACT_STREAM_STRIDE = 256u;
+
+shared uint sSettledCount;
+shared uint sFadingCount;
+
+struct TranslucentSection {
+    uint baseVertex;
+    uint sumVertexCount;
+};
+TranslucentSection decodeSection(uint regionId, uint s) {
+    uint base = regionId * (REGION_SIZE * 3u) + s * 3u;
+    uvec4 b0 = u_sectionData0[base + 0u];
+    uvec4 b1 = u_sectionData0[base + 1u];
+    uvec4 b2 = u_sectionData0[base + 2u];
+    TranslucentSection t;
+    t.baseVertex = b0.y;
+    t.sumVertexCount = b1.y + b1.z + b1.w + b2.x + b2.y + b2.z + b2.w;
+    return t;
+}
+
+ivec3 unpackOriginChunkXZ(uint packed0) {
+    return ivec3(int(packed0 << 16) >> 16, 0, int(packed0) >> 16);
+}
+int unpackOriginChunkY(uint packed1) {
+    return int(packed1 << 16) >> 16;
+}
+ivec3 sectionRelativeBlocks(uint s) {
+    uint sx = (s >> 5u) & 0x7u;
+    uint sy = s & 0x3u;
+    uint sz = (s >> 2u) & 0x7u;
+    return ivec3(sx, sy, sz) * 16;
+}
+
+bool sectionVisible(ivec3 originChunk, uint s) {
+    vec3 camDelta = vec3(cameraBlockPosAndPad.xyz);
+    vec3 cornerBase = vec3(originChunk * 16) + vec3(sectionRelativeBlocks(s)) - camDelta;
+    vec3 mins = cornerBase - SECTION_ADD_BLOCKS;
+    vec3 maxs = cornerBase + vec3(16.0) + SECTION_ADD_BLOCKS;
+
+    vec3 cam = cameraPosAndPad.xyz;
+    if (all(greaterThanEqual(cam + SECTION_ADD_BLOCKS, mins))
+            && all(lessThanEqual(cam - SECTION_ADD_BLOCKS, maxs))) {
+        return true;
+    }
+
+    mat4 viewProj = viewProjection;
+    vec2 uvMin = vec2(1e30);
+    vec2 uvMax = vec2(-1e30);
+    float nearDepth = 0.0;
+    for (uint c = 0u; c < 8u; c++) {
+        vec3 corner = vec3(
+            ((c & 1u) == 0u) ? mins.x : maxs.x,
+            ((c & 2u) == 0u) ? mins.y : maxs.y,
+            ((c & 4u) == 0u) ? mins.z : maxs.z
+        );
+        vec4 clip = viewProj * vec4(corner, 1.0);
+        if (clip.w <= 1e-6) {
+            return true;
+        }
+        vec3 ndc = clip.xyz / clip.w;
+        uvMin = min(uvMin, ndc.xy * 0.5 + 0.5);
+        uvMax = max(uvMax, ndc.xy * 0.5 + 0.5);
+        nearDepth = max(nearDepth, ndc.z);
+    }
+
+    if (uvMax.x < 0.0 || uvMin.x > 1.0 || uvMax.y < 0.0 || uvMin.y > 1.0) {
+        return false;
+    }
+    uvMin = clamp(uvMin, vec2(0.0), vec2(1.0));
+    uvMax = clamp(uvMax, vec2(0.0), vec2(1.0));
+
+    vec2 viewSize = vec2(cameraPosAndPad.w, float(cameraBlockPosAndPad.w));
+    ivec4 rect = ivec4(vec4(uvMin, uvMax) * viewSize.xyxy + vec4(0.5, 0.5, -0.5, -0.5));
+    if (any(lessThan(rect.zw, rect.xy))) {
+        return false;
+    }
+    rect = min(rect, ivec4(viewSize.xyxy) - 1) >> 1;
+    ivec2 extent = rect.zw - rect.xy;
+    int level = max(findMSB(max(extent.x, extent.y)), 0);
+    level += any(greaterThan((rect.zw >> level) - (rect.xy >> level), ivec2(1))) ? 1 : 0;
+    level = min(level, textureQueryLevels(hizPyramid) - 1);
+
+    ivec4 bounds = rect >> level;
+
+    float d00 = texelFetch(hizPyramid, bounds.xy, level).r;
+    float d10 = texelFetch(hizPyramid, bounds.zy, level).r;
+    float d01 = texelFetch(hizPyramid, bounds.xw, level).r;
+    float d11 = texelFetch(hizPyramid, bounds.zw, level).r;
+    float occluder = min(min(d00, d10), min(d01, d11));
+
+    return nearDepth >= occluder;
+}
+
+void writeCommand(uint slot, uint streamWordOffset, uint count, uint first) {
+    uint baseWord = slot * REGION_COMMAND_WORDS + streamWordOffset;
+    u_meshTaskCommands[baseWord + 0u] = count;
+    u_meshTaskCommands[baseWord + 1u] = first;
+}
+
+void main() {
+    uint slot = gl_WorkGroupID.x;
+    if (slot >= u_regionCount) {
+        return;
+    }
+    uvec4 in4 = u_regionInput[slot];
+    uint regionId = in4.z;
+    if (regionId == 0xFFFFFFFFu || u_regionVis[slot] == 0u) {
+        if (gl_LocalInvocationID.x == 0u) {
+            writeCommand(slot, 0u, 0u, slot << 8u);
+            writeCommand(slot, FADING_WORD_OFFSET, 0u, (1u << 24) | (slot << 8u));
+        }
+        return;
+    }
+
+    if (gl_LocalInvocationID.x == 0u) {
+        sSettledCount = 0u;
+        sFadingCount = 0u;
+    }
+    barrier();
+
+    uint s = gl_LocalInvocationID.x;
+    TranslucentSection t = decodeSection(regionId, s);
+    bool live = (liveMask[slot * 8u + (s >> 5u)] & (1u << (s & 31u))) != 0u;
+    if (t.sumVertexCount != 0u && live) {
+        ivec3 originChunk = unpackOriginChunkXZ(in4.x);
+        originChunk.y = unpackOriginChunkY(in4.y);
+        if (sectionVisible(originChunk, s)) {
+            uint quadCount = t.sumVertexCount >> 2u;
+            if (u_translucentVis[regionId * REGION_SIZE + s] < 1.0) {
+                uint wi = atomicAdd(sFadingCount, 1u);
+                if (wi < MAX_COMMANDS_PER_STREAM) {
+                    uint idx = slot * COMPACT_PER_REGION + COMPACT_STREAM_STRIDE + wi;
+                    compactSections[idx] = s;
+                    compactGeom[idx * 2u + 0u] = t.baseVertex;
+                    compactGeom[idx * 2u + 1u] = quadCount;
+                }
+            } else {
+                uint wi = atomicAdd(sSettledCount, 1u);
+                if (wi < MAX_COMMANDS_PER_STREAM) {
+                    uint idx = slot * COMPACT_PER_REGION + wi;
+                    compactSections[idx] = s;
+                    compactGeom[idx * 2u + 0u] = t.baseVertex;
+                    compactGeom[idx * 2u + 1u] = quadCount;
+                }
+            }
+        }
+    }
+
+    barrier();
+    if (gl_LocalInvocationID.x == 0u) {
+        writeCommand(slot, 0u, min(sSettledCount, MAX_COMMANDS_PER_STREAM), slot << 8u);
+        writeCommand(slot, FADING_WORD_OFFSET, min(sFadingCount, MAX_COMMANDS_PER_STREAM),
+                (1u << 24) | (slot << 8u));
+    }
+}

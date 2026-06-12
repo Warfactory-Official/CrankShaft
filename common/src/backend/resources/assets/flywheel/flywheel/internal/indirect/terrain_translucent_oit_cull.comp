@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: MIT
+// CrankShaft terrain -- translucent OIT section cull + indirect-command compaction (candidate-based, single-frame).
+// One thread per translucent candidate; HiZ vs the FRESH post-opaque pyramid; occluded never replayed. VK-only.
+
+#include "flywheel:internal/indirect/hiz_aabb.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(std140, binding = 8) uniform TerrainHiZUniforms {
+    mat4 viewProjection;
+    vec4 cameraPosAndPad;
+    ivec4 cameraBlockPosAndPad;
+};
+layout(std140, binding = 9) uniform TranslucentCullCount { uint candidateCount; uint _pad0; uint _pad1; uint _pad2; };
+
+// Candidate: 10 uints -- origin xyz, section s, baseVertex, indexCount, geoAddr lo/hi, fade, pad.
+layout(std430, binding = 0) restrict readonly buffer CandidateBuf { uint candidate[]; };
+layout(std430, binding = 4) restrict writeonly buffer CommandBuf { uint command[]; };
+layout(std430, binding = 5) restrict buffer CountBuf { uint drawCount; };
+layout(std430, binding = 6) restrict writeonly buffer DrawDataBuf { uint drawData[]; };
+
+layout(binding = 10) uniform sampler2D hizPyramid;
+
+const uint CANDIDATE_STRIDE = 10u;
+const uint COMMAND_STRIDE = 5u;
+const uint DRAW_DATA_STRIDE = 8u;
+
+ivec3 sectionRelativeBlocks(uint s) {
+    return ivec3((s >> 5u) & 0x7u, s & 0x3u, (s >> 2u) & 0x7u) * 16;
+}
+
+bool sectionVisible(ivec3 originChunk, uint s) {
+    vec3 camDelta = vec3(cameraBlockPosAndPad.xyz);
+    vec3 cornerBase = vec3(originChunk * 16) + vec3(sectionRelativeBlocks(s)) - camDelta;
+    vec3 mins = cornerBase - _FLW_HIZ_ADD_BLOCKS;
+    vec3 maxs = cornerBase + vec3(16.0) + _FLW_HIZ_ADD_BLOCKS;
+
+    vec2 viewSize = vec2(cameraPosAndPad.w, float(cameraBlockPosAndPad.w));
+    return _flw_hizAabbVisible(mins, maxs, cameraPosAndPad.xyz, viewProjection, viewSize, hizPyramid);
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= candidateCount) {
+        return;
+    }
+    uint base = i * CANDIDATE_STRIDE;
+    ivec3 originChunk = ivec3(int(candidate[base + 0u]), int(candidate[base + 1u]), int(candidate[base + 2u]));
+    uint s = candidate[base + 3u];
+    if (!sectionVisible(originChunk, s)) {
+        return;
+    }
+
+    uint dst = atomicAdd(drawCount, 1u);
+    uint cb = dst * COMMAND_STRIDE;
+    command[cb + 0u] = candidate[base + 5u];
+    command[cb + 1u] = 1u;
+    command[cb + 2u] = 0u;
+    command[cb + 3u] = candidate[base + 4u];
+    command[cb + 4u] = dst;                   // firstInstance -> gl_InstanceIndex in the bindless producer
+
+    uint db = dst * DRAW_DATA_STRIDE;
+    drawData[db + 0u] = candidate[base + 0u];
+    drawData[db + 1u] = candidate[base + 1u];
+    drawData[db + 2u] = candidate[base + 2u];
+    drawData[db + 3u] = candidate[base + 8u];
+    drawData[db + 4u] = candidate[base + 6u];
+    drawData[db + 5u] = candidate[base + 7u];
+}

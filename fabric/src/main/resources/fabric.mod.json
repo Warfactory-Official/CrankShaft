@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "flywheel",
+  "version": "${version}",
+  "name": "CrankShaft",
+  "description": "Dual-backend (raw OpenGL + raw Vulkan) instanced rendering engine.",
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "main": [
+      "dev.engine_room.flywheel.impl.FlywheelFabricCommon"
+    ],
+    "client": [
+      "dev.engine_room.flywheel.impl.FlywheelFabric"
+    ]
+  },
+  "mixins": [
+    "flywheel.impl.mixins.json",
+    "flywheel.impl.fabric.mixins.json",
+    "flywheel.impl.sodium.mixins.json",
+    "flywheel.backend.mixins.json"
+  ],
+  "accessWidener": "crankshaft.accesswidener",
+  "depends": {
+    "minecraft": "~26.2",
+    "fabricloader": ">=0.19.3",
+    "fabric-api": ">=0.153.0+26.2"
+  },
+  "suggests": {
+    "sodium": ">=0.9.1+mc26.2 <0.10.0"
+  },
+  "breaks": {
+    "sodium": [
+      "<0.9.1+mc26.2",
+      ">=0.10.0"
+    ]
+  }
+}

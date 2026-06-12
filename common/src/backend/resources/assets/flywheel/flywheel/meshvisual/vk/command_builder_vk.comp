@@ -1,0 +1,48 @@
+layout(local_size_x = 64) in;
+
+layout(std430, binding = _FLW_DRAW_BUFFER_BINDING) restrict readonly buffer _FlwDrawBuffer {
+    MeshDrawCommand _flw_drawCommands[];
+};
+
+layout(std430, binding = 15) restrict writeonly buffer _FlwMeshTaskBuffer {
+    uint _flw_meshTaskCmds[];
+};
+
+layout(push_constant) uniform _FlwBuilderPush {
+    uint _flw_drawCount;
+};
+
+// _FLW_MV_MAX_* injected from VkCaps by the assembler; one define source, so packing agrees with visual_main_vk.mesh.
+const uint _FLW_TRIS_PER_MESHLET = 64u;
+const uint _FLW_MAX_VERTS = uint(_FLW_MV_MAX_VERTS);
+const uint _FLW_MAX_PRIMS = uint(_FLW_MV_MAX_PRIMS);
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= _flw_drawCount) {
+        return;
+    }
+
+    MeshDrawCommand cmd = _flw_drawCommands[i];
+
+    uint triCount = cmd.indexCount / 3u;
+    uint vertCount = cmd.vertexCount;
+    uint needed;
+    if (triCount == 0u) {
+        needed = 0u;
+    } else if (vertCount <= _FLW_MAX_VERTS && triCount <= _FLW_MAX_PRIMS) {
+        uint instancesPerWorkgroup = min(_FLW_MAX_VERTS / max(vertCount, 3u), _FLW_MAX_PRIMS / triCount);
+        needed = (cmd.instanceCount + instancesPerWorkgroup - 1u) / instancesPerWorkgroup;
+    } else {
+        uint meshletsPerInstance = (triCount + _FLW_TRIS_PER_MESHLET - 1u) / _FLW_TRIS_PER_MESHLET;
+        needed = cmd.instanceCount * meshletsPerInstance;
+    }
+
+    // Task K-batching (MUST match visual_task_vk.task's _flw_taskBatch); keeps WGs under maxTaskWorkGroupCount[0].
+    const uint maxX = uint(_FLW_MV_MAX_WG_X);
+    uint k = clamp((needed + maxX - 1u) / maxX, 16u, 64u);
+    uint taskWgs = (needed + k - 1u) / k;
+    _flw_meshTaskCmds[i * 3u + 0u] = min(taskWgs, maxX);
+    _flw_meshTaskCmds[i * 3u + 1u] = (taskWgs + maxX - 1u) / maxX;
+    _flw_meshTaskCmds[i * 3u + 2u] = 1u;
+}

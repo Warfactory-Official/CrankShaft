@@ -1,0 +1,120 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+// Copyright (C) 2023-2026 Cortex and Nvidium contributors
+// Copyright (C) 2026 movblock
+
+
+#include "meshlet:terrain/vk/translucent/section_data.glsl"
+
+layout(local_size_x = 32) in;
+
+layout(set = 0, binding = 7, std430) writeonly buffer CompactSections {
+    uint compactSections[];
+};
+
+layout(set = 0, binding = 8, std430) writeonly buffer MeshCommands {
+    uint cmdWords[];
+};
+
+layout(set = 0, binding = 14, std430) readonly buffer LiveMask {
+    uint liveMask[];
+};
+
+#include "meshlet:terrain/vk/hiz_uniforms.glsl"
+layout(set = 0, binding = 10) uniform sampler2D hizPyramid;
+
+const float SECTION_ADD_BLOCKS = 0.1;
+
+shared uint visibleCount;
+
+bool sectionVisible(ivec3 secChunkOrigin) {
+    vec3 camDelta = vec3(cameraBlockPosAndPad.xyz);
+    vec3 cornerBase = vec3(secChunkOrigin * 16) - camDelta;
+    vec3 mins = cornerBase - SECTION_ADD_BLOCKS;
+    vec3 maxs = cornerBase + vec3(16.0) + SECTION_ADD_BLOCKS;
+
+    vec3 cam = cameraPosAndPad.xyz;
+    if (all(greaterThanEqual(cam + SECTION_ADD_BLOCKS, mins)) && all(lessThanEqual(cam - SECTION_ADD_BLOCKS, maxs))) {
+        return true;
+    }
+
+    vec2 uvMin = vec2(1e30);
+    vec2 uvMax = vec2(-1e30);
+    float nearDepth = 0.0;
+    for (uint c = 0u; c < 8u; c++) {
+        vec3 corner = vec3(
+            ((c & 1u) == 0u) ? mins.x : maxs.x,
+            ((c & 2u) == 0u) ? mins.y : maxs.y,
+            ((c & 4u) == 0u) ? mins.z : maxs.z);
+        vec4 clip = viewProjection * vec4(corner, 1.0);
+        if (clip.w <= 1e-6) {
+            return true;
+        }
+        vec3 ndc = clip.xyz / clip.w;
+        uvMin = min(uvMin, ndc.xy * 0.5 + 0.5);
+        uvMax = max(uvMax, ndc.xy * 0.5 + 0.5);
+        nearDepth = max(nearDepth, ndc.z);
+    }
+
+    if (uvMax.x < 0.0 || uvMin.x > 1.0 || uvMax.y < 0.0 || uvMin.y > 1.0) {
+        return false;
+    }
+    uvMin = clamp(uvMin, vec2(0.0), vec2(1.0));
+    uvMax = clamp(uvMax, vec2(0.0), vec2(1.0));
+
+    vec2 viewSize = vec2(cameraPosAndPad.w, float(cameraBlockPosAndPad.w));
+    ivec4 rect = ivec4(vec4(uvMin, uvMax) * viewSize.xyxy + vec4(0.5, 0.5, -0.5, -0.5));
+    if (any(lessThan(rect.zw, rect.xy))) {
+        return false;
+    }
+    rect = min(rect, ivec4(viewSize.xyxy) - 1) >> 1;
+    ivec2 extent = rect.zw - rect.xy;
+    int level = max(findMSB(max(extent.x, extent.y)), 0);
+    level += any(greaterThan((rect.zw >> level) - (rect.xy >> level), ivec2(1))) ? 1 : 0;
+    level = min(level, textureQueryLevels(hizPyramid) - 1);
+
+    ivec4 bounds = rect >> level;
+
+    float d00 = texelFetch(hizPyramid, bounds.xy, level).r;
+    float d10 = texelFetch(hizPyramid, bounds.zy, level).r;
+    float d01 = texelFetch(hizPyramid, bounds.xw, level).r;
+    float d11 = texelFetch(hizPyramid, bounds.zw, level).r;
+    float occluder = min(min(d00, d10), min(d01, d11));
+
+    return nearDepth >= occluder;
+}
+
+void main() {
+    uint slot = gl_WorkGroupID.x;
+
+    if (gl_LocalInvocationIndex == 0u) {
+        visibleCount = 0u;
+    }
+    barrier();
+
+    uint regionId = regionInput[slot].z;
+    if (regionId != 0xFFFFFFFFu) {
+        for (uint k = 0u; k < 8u; k++) {
+            uint s = gl_LocalInvocationIndex * 8u + k;
+            bool live = (liveMask[slot * 8u + (s >> 5u)] & (1u << (s & 31u))) != 0u;
+            if (live && decodeSection(regionId, s).totalVerts > 0u
+                    && sectionVisible(sectionChunkOrigin(regionInput[slot], s))) {
+                uint i = atomicAdd(visibleCount, 1u);
+                compactSections[slot * REGION_SIZE + i] = s;
+            }
+        }
+    }
+    barrier();
+
+    if (gl_LocalInvocationIndex == 0u) {
+        uint vc = visibleCount;
+        uint base = slot * 8u;
+        cmdWords[base + 0u] = vc;
+        cmdWords[base + 1u] = 1u;
+        cmdWords[base + 2u] = 1u;
+        cmdWords[base + 3u] = slot << 8u;
+        cmdWords[base + 4u] = vc;
+        cmdWords[base + 5u] = 0u;
+        cmdWords[base + 6u] = 0u;
+        cmdWords[base + 7u] = 0u;
+    }
+}

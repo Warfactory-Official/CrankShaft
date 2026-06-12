@@ -1,0 +1,63 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+// Copyright (C) 2026 Cortex and Nvidium contributors
+// Copyright (C) 2026 movblock
+
+#extension GL_NV_gpu_shader5 : require
+#extension GL_NV_shader_buffer_load : require
+
+layout(local_size_x = 32) in;
+
+#include "meshlet:terrain/gl/scene.glsl"
+#include "meshlet:terrain/gl/section_data.glsl"
+#include "meshlet:terrain/gl/scene_ubo.glsl"
+
+layout(std430, binding = 7) restrict writeonly buffer CompactSections {
+    uint compactSections[];
+};
+
+shared uint visibleCount;
+
+void main() {
+    uint slot = gl_WorkGroupID.x;
+    if (slot >= u_regionCount) {
+        return;
+    }
+
+    if (gl_LocalInvocationID.x == 0u) {
+        visibleCount = 0u;
+    }
+    barrier();
+
+    uvec4 in4 = u_regionInput[slot];
+    uint regionId = in4.z;
+
+    if (regionId == 0xFFFFFFFFu) {
+        if (gl_LocalInvocationID.x == 0u) {
+            u_meshTaskCommands[slot] = uvec2(0u, slot << 8u);
+            u_regionCommandCount[slot] = uvec2(0u, 0u);
+        }
+        return;
+    }
+
+    for (uint k = 0u; k < 8u; k++) {
+        uint s = gl_LocalInvocationID.x + k * 32u;
+        uint visIndex = (regionId << SECTION_ID_REGION_SHIFT) | s;
+        if ((u_sectionVis[visIndex] & 1u) != 1u) {
+            continue;
+        }
+        SectionFields f = decodeSection(regionId, s);
+        vec3 camRel = vec3(sectionChunkOrigin(in4, s)) * 16.0
+                - vec3(cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
+        if (sectionQuadCount(f, cameraVisibleFacingMask(camRel)) == 0u) {
+            continue;
+        }
+        uint i = atomicAdd(visibleCount, 1u);
+        compactSections[slot * REGION_SIZE + i] = s;
+    }
+
+    barrier();
+    if (gl_LocalInvocationID.x == 0u) {
+        u_meshTaskCommands[slot] = uvec2(visibleCount, slot << 8u);
+        u_regionCommandCount[slot] = uvec2(visibleCount, 0u);
+    }
+}

@@ -1,0 +1,187 @@
+// VK_EXT_mesh_shader twin of meshvisual/visual_main.mesh: the same welded/unwelded two-path decode, sized to the
+// DEVICE's output caps (_FLW_MV_MAX_VERTS/_FLW_MV_MAX_PRIMS, injected by the assembler from VkCaps -- 256v
+// everywhere; 512p where advertised (NVIDIA), 256p floor otherwise; a missing define fails the compile), driven
+// by the K-batched task stage's payload (visual_task_vk.task), emitting the SAME MeshVertexOut interface the
+// shared visual.frag / visual_oit.frag consume (explicit location 0 block).
+layout(local_size_x = 32) in;
+layout(triangles, max_vertices = _FLW_MV_MAX_VERTS, max_primitives = _FLW_MV_MAX_PRIMS) out;
+
+layout(location = 0) out MeshVertexOut {
+    vec2 texCoord;
+#ifdef _FLW_MV_F16_VARYINGS
+    // f16 varying trim (VK, VkCaps.MESH_F16_VARYINGS_NEGOTIATED: storageInputOutput16 + shaderFloat16). Quality-
+    // neutral, same as GL. MUST match the shared visual.frag / visual_oit.frag in block.
+    f16vec4 color;
+    f16vec2 light;
+    f16vec3 normal;
+#else
+    vec4 color;
+    vec2 light;
+    vec3 normal;            // world/render-origin space (== light-direction space), for the directional diffuse
+#endif
+    vec3 worldPos;          // render-origin-relative world position; the fragment derives smooth light + fog from it
+    // Overlay texel u8:u8 | cutout index << 16 (see visual_main.mesh): one word of per-vertex output space.
+    flat uint overlayCutout;
+    flat uint packedMaterial; // draw command's packedMaterialProperties (cardinalLightingMode / useLight / ...)
+#ifdef _FLW_MV_CLIP
+    // Clip-type routing, compact ABI (see visual_main.mesh): only compiled for clip-writing types; MUST match
+    // the fragment's.
+    vec2 clipData;
+#endif
+#ifdef _FLW_BINDLESS
+    flat uint texIndex; // draw command's bindless material texture slot (global table, set 1)
+#endif
+#ifdef _FLW_DEBUG
+    flat uvec2 debugIds; // (instance id, mesh base vertex) for the INSTANCE_ID/MODEL_ID debug views
+#endif
+} v_out[];
+
+#ifdef _FLW_BINDLESS
+uint _flw_cmdTexIndex; // per-workgroup (one command per mesh workgroup), set once in main
+#endif
+#ifdef _FLW_DEBUG
+uint _flw_debugInstanceId; // set before each _flw_emitVertex (varies per packed instance on the welded path)
+uint _flw_debugModelId;    // per-workgroup (cmd.vertexOffset), set once in main
+#endif
+
+const uint _FLW_TRIS_PER_MESHLET = 64u;
+const uint _FLW_MAX_VERTS = uint(_FLW_MV_MAX_VERTS);
+const uint _FLW_MAX_PRIMS = uint(_FLW_MV_MAX_PRIMS);
+
+// Welded path: each packed instance unpacked exactly ONCE (was once per OUTPUT VERTEX -- ~vertCount x
+// redundant instance loads + unpack ALU). Sized to the max packing; the perWg formula clamps vertCount
+// at 3 (here, the task, and the command builder identically), so instCount <= MAX_VERTS/3 always.
+shared FlwInstance _flw_packedInstances[_FLW_MAX_VERTS / 3u];
+#ifdef _FLW_DEBUG
+shared uint _flw_debugInstanceIds[_FLW_MAX_VERTS / 3u];
+#endif
+
+void _flw_emitVertex(uint outV, FlwInstance instance, uint matrixIndex, uint packedMaterial, uint packedFogAndCutout) {
+    flw_instanceVertex(instance);
+    // Spliced per-material vertex shader (glint UV scroll et al.), BEFORE the embed transform like the vertex paths.
+    flw_materialVertex();
+
+    // One branch replaces the MDI path's separate embedded variant.
+    if (matrixIndex > 0u) {
+        mat4 embedPose;
+        mat3 embedNormal;
+        _flw_unpackMatrices(_flw_matrices[matrixIndex], embedPose, embedNormal);
+        flw_vertexPos = embedPose * flw_vertexPos;
+        flw_vertexNormal = embedNormal * flw_vertexNormal;
+    }
+
+    // Clip via Mojang's bob-included ProjMat (26.2: bob is in the projection, not the camera).
+    vec4 viewPos = _flw_mvModelView * flw_vertexPos;
+    gl_MeshVerticesEXT[outV].gl_Position = ProjMat * viewPos;
+    v_out[outV].texCoord = flw_vertexTexCoord;
+#ifdef _FLW_MV_F16_VARYINGS
+    v_out[outV].color = f16vec4(flw_vertexColor);
+    v_out[outV].light = f16vec2(flw_vertexLight);
+    v_out[outV].normal = f16vec3(normalize(flw_vertexNormal));
+#else
+    v_out[outV].color = flw_vertexColor;
+    v_out[outV].light = flw_vertexLight;
+    v_out[outV].normal = normalize(flw_vertexNormal);
+#endif
+    v_out[outV].worldPos = flw_vertexPos.xyz;
+    v_out[outV].overlayCutout = (uint(flw_vertexOverlay.x) & 0xFFu) | ((uint(flw_vertexOverlay.y) & 0xFFu) << 8u)
+            | ((packedFogAndCutout & 0xFFFFu) << 16u);
+    v_out[outV].packedMaterial = packedMaterial;
+#ifdef _FLW_MV_CLIP
+    v_out[outV].clipData = _flw_clipData;
+#endif
+#ifdef _FLW_BINDLESS
+    v_out[outV].texIndex = _flw_cmdTexIndex;
+#endif
+#ifdef _FLW_DEBUG
+    v_out[outV].debugIds = uvec2(_flw_debugInstanceId, _flw_debugModelId);
+#endif
+}
+
+void main() {
+    // The task stage covers a K-batch of logical mesh workgroups and frustum+HiZ-culls the unwelded ones; this
+    // stage's gl_WorkGroupID.x is its CHILD index within the emitting task workgroup. Welded: logical = arg0 +
+    // child; unwelded: logical = remap[child] (survivors only).
+    uint drawIndex = payload.drawIndex;
+    MeshDrawCommand cmd = _flw_drawCommands[drawIndex];
+    #ifdef _FLW_BINDLESS
+    _flw_cmdTexIndex = cmd.packedTexIndices & 0xFFFFu;
+    #endif
+    #ifdef _FLW_DEBUG
+    _flw_debugModelId = cmd.vertexOffset;
+    #endif
+
+    uint triCount = cmd.indexCount / 3u;
+    uint vertCount = cmd.vertexCount;
+    uint lane = gl_LocalInvocationID.x;
+
+    if (vertCount <= _FLW_MAX_VERTS && triCount <= _FLW_MAX_PRIMS) {
+        uint perWg = min(_FLW_MAX_VERTS / max(vertCount, 3u), _FLW_MAX_PRIMS / triCount);
+        uint instBase = (payload.arg0 + gl_WorkGroupID.x) * perWg;
+        uint instCount = min(perWg, cmd.instanceCount - instBase);
+        uint totalVerts = instCount * vertCount;
+        uint totalPrims = instCount * triCount;
+
+        SetMeshOutputsEXT(totalVerts, totalPrims);
+
+        for (uint k = lane; k < instCount; k += 32u) {
+            uint instanceIndex = _flw_instanceIndices[cmd.baseInstance + instBase + k];
+            _flw_packedInstances[k] = _flw_unpackInstance(instanceIndex);
+            #ifdef _FLW_DEBUG
+            _flw_debugInstanceIds[k] = instanceIndex;
+            #endif
+        }
+        barrier();
+
+        for (uint outV = lane; outV < totalVerts; outV += 32u) {
+            uint k = outV / vertCount;
+            uint localV = outV - k * vertCount;
+            #ifdef _FLW_DEBUG
+            _flw_debugInstanceId = _flw_debugInstanceIds[k];
+            #endif
+            _flw_loadVertex(cmd.vertexOffset + localV);
+            _flw_emitVertex(outV, _flw_packedInstances[k], cmd.matrixIndex, cmd.packedMaterialProperties, cmd.packedFogAndCutout);
+        }
+
+        for (uint outP = lane; outP < totalPrims; outP += 32u) {
+            uint k = outP / triCount;
+            uint localT = outP - k * triCount;
+            uint vertBase = k * vertCount;
+            uint base = cmd.firstIndex + localT * 3u;
+            gl_PrimitiveTriangleIndicesEXT[outP] = uvec3(vertBase + _flw_meshIndex(base + 0u),
+                                                         vertBase + _flw_meshIndex(base + 1u),
+                                                         vertBase + _flw_meshIndex(base + 2u));
+        }
+    } else {
+        uint meshletsPerInstance = (triCount + _FLW_TRIS_PER_MESHLET - 1u) / _FLW_TRIS_PER_MESHLET;
+        uint logical = payload.remap[gl_WorkGroupID.x];
+        uint instBase = logical / meshletsPerInstance;
+        uint triOffset = (logical - instBase * meshletsPerInstance) * _FLW_TRIS_PER_MESHLET;
+        uint trisHere = min(_FLW_TRIS_PER_MESHLET, triCount - triOffset);
+
+        SetMeshOutputsEXT(trisHere * 3u, trisHere);
+
+        uint instanceIndex = _flw_instanceIndices[cmd.baseInstance + instBase];
+        FlwInstance instance = _flw_unpackInstance(instanceIndex);
+        #ifdef _FLW_DEBUG
+        _flw_debugInstanceId = instanceIndex;
+        #endif
+
+        for (uint kk = 0u; kk < 2u; kk++) {
+            uint tl = lane * 2u + kk;
+            if (tl >= trisHere) {
+                break;
+            }
+            uint triInInstance = triOffset + tl;
+            uint outV = tl * 3u;
+
+            for (uint j = 0u; j < 3u; j++) {
+                uint localIdx = _flw_meshIndex(cmd.firstIndex + triInInstance * 3u + j);
+                _flw_loadVertex(cmd.vertexOffset + localIdx);
+                _flw_emitVertex(outV + j, instance, cmd.matrixIndex, cmd.packedMaterialProperties, cmd.packedFogAndCutout);
+            }
+
+            gl_PrimitiveTriangleIndicesEXT[tl] = uvec3(outV + 0u, outV + 1u, outV + 2u);
+        }
+    }
+}

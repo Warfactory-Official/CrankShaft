@@ -1,0 +1,250 @@
+// SPDX-License-Identifier: MIT
+
+layout(local_size_x = 256) in;
+
+layout(std140, binding = 8) uniform TerrainHiZUniforms {
+    mat4 viewProjection;
+    vec4 cameraPosAndPad;
+    ivec4 cameraBlockPosAndPad;
+};
+
+const uint FACING_COUNT = 7u; // ModelQuadFacing.COUNT
+const uint REGION_SIZE = 256u; // sections per CrankShaft region (8 x 4 x 8)
+const uint COMMAND_STRIDE = 20u;
+const uint MAX_COMMANDS_PER_REGION_MAIN = FACING_COUNT * REGION_SIZE; // 7 * 256 = 1792
+const uint MAX_TEMPORAL_COMMANDS_PER_REGION = MAX_COMMANDS_PER_REGION_MAIN; // 1792
+const uint TEMPORAL_WORD_OFFSET = MAX_COMMANDS_PER_REGION_MAIN * 5u;
+const uint REGION_COMMAND_WORDS = (MAX_COMMANDS_PER_REGION_MAIN + MAX_TEMPORAL_COMMANDS_PER_REGION) * 5u;
+
+// Scene UBO (7): 7 terrain device pointers + region count (Nvidium scheme; order matches runComputeTailForPass).
+#ifdef _FLW_VK
+layout(std430, binding = 0) restrict readonly buffer RegionInputBuf { uvec4 regionInput[]; };
+layout(std430, binding = 1) restrict readonly buffer SectionDataBuf { uvec4 sectionData0[]; };
+layout(std430, binding = 2) restrict readonly buffer RegionVisBuf { uint regionVis[]; };
+layout(std430, binding = 3) restrict readonly buffer SectionVisBuf { uint sectionVis[]; };
+layout(std430, binding = 4) restrict writeonly buffer CommandBuf { uint commandWords[]; };
+layout(std430, binding = 5) restrict buffer DrawCountBuf { uint drawCountMain; uint drawCountTemporal; };
+layout(std430, binding = 6) restrict readonly buffer RegionGeoBuf { uvec2 regionGeo[]; };
+layout(std430, binding = 7) restrict writeonly buffer DrawDataBuf { uvec4 drawData[]; };
+layout(std140, binding = 9) uniform TerrainRegionCount { uint regionCount; uint phase; uint _rcPad1; uint _rcPad2; };
+#else
+layout(std140, binding = 7) uniform TerrainSceneUbo {
+    restrict readonly uvec4 *regionInput;
+    restrict readonly uvec4 *sectionData0;      // 3 uvec4 / section, region-id-keyed
+    restrict readonly uint *regionVis;
+    restrict readonly uint *sectionVis;
+    restrict writeonly uint *commandWords;      // [main: MAX_COMMANDS_PER_REGION_MAIN*5 u32][temporal]
+    restrict uvec2 *regionCommandCount;
+    restrict readonly uint *geometryMask;
+    uint regionCount;                           // visible-region count (replaces regionInput.length())
+};
+#endif
+
+#ifndef _FLW_VK
+const uint phase = 0u; // GL/bindless path: single-phase (temporal-shift split) only; two-phase is Vulkan-only.
+#endif
+
+#ifndef _FLW_VK
+shared uint mainCount;
+shared uint temporalCount;
+#endif
+
+struct SectionFields {
+    uint baseElement;
+    uint baseVertex;
+    uint sliceMask;
+    uint facingLo; // low 32 of the 56-bit facingList (faces for groups 0..3)
+    uint facingHi; // high 24 of the facingList (faces for groups 4..6, top byte = isLocalIndex)
+    uint vertexCount[7];
+};
+SectionFields decodeSection(uint regionId, uint s) {
+    // REGION-ID-KEYED (persistent SSBO): base = regionId*(REGION_SIZE*3u)+s*3u; slot-keyed addressing reads stale data.
+    uint base = regionId * (REGION_SIZE * 3u) + s * 3u;
+    uvec4 b0 = sectionData0[base + 0u];
+    uvec4 b1 = sectionData0[base + 1u];
+    uvec4 b2 = sectionData0[base + 2u];
+    SectionFields f;
+    f.baseElement = b0.x;
+    f.baseVertex = b0.y;
+    f.facingLo = b0.z;
+    f.facingHi = b0.w;
+    f.sliceMask = b1.x;
+    f.vertexCount[0] = b1.y;
+    f.vertexCount[1] = b1.z;
+    f.vertexCount[2] = b1.w;
+    f.vertexCount[3] = b2.x;
+    f.vertexCount[4] = b2.y;
+    f.vertexCount[5] = b2.z;
+    f.vertexCount[6] = b2.w;
+    return f;
+}
+
+uint facingByte(SectionFields f, uint i) {
+    return i < 4u ? (f.facingLo >> (i * 8u)) & 0xFFu
+                  : (f.facingHi >> ((i - 4u) * 8u)) & 0xFFu;
+}
+
+#ifdef _FLW_VK
+void emitGlobal(uint g, uint firstIndex, uint baseVertex, uint indexCount, uvec4 in4, uint regionId, uint slot) {
+    uint baseWord = g * 5u;
+    commandWords[baseWord + 0u] = indexCount;
+    commandWords[baseWord + 1u] = 1u;
+    commandWords[baseWord + 2u] = firstIndex;   // byte offset into the shared quad index
+    commandWords[baseWord + 3u] = baseVertex;
+    commandWords[baseWord + 4u] = g;            // baseInstance = the drawData index
+    int ox = int(in4.x << 16) >> 16;
+    int oz = int(in4.x) >> 16;
+    int oy = int(in4.y << 16) >> 16;
+    drawData[g * 2u + 0u] = uvec4(uint(ox), uint(oy), uint(oz), regionId << 8u);
+    drawData[g * 2u + 1u] = uvec4(regionGeo[slot], 0u, 0u);
+}
+#else
+void emitCommand(uint slot, bool isTemporal, uint wi, uint firstIndex, uint baseVertex, uint indexCount) {
+    uint regionBase = slot * REGION_COMMAND_WORDS;
+    uint baseWord = isTemporal ? (regionBase + TEMPORAL_WORD_OFFSET + wi * 5u)
+                               : (regionBase + wi * 5u);
+    commandWords[baseWord + 0u] = indexCount;
+    commandWords[baseWord + 1u] = 1u;
+    commandWords[baseWord + 2u] = firstIndex;   // byte offset into the shared quad index
+    commandWords[baseWord + 3u] = baseVertex;
+    commandWords[baseWord + 4u] = 0u;
+}
+#endif
+
+void main() {
+    uint slot = gl_WorkGroupID.x;
+    if (slot >= regionCount) {
+        return;
+    }
+    uvec4 in4 = regionInput[slot];
+    if (in4.z == 0xFFFFFFFFu) {
+        return;
+    }
+    uint regionId = in4.z;
+
+    // Region occluded: section_test froze the shift register; zero both counts and bail before per-section work.
+    if (regionVis[slot] == 0u) {
+#ifndef _FLW_VK
+        if (gl_LocalInvocationID.x == 0u) {
+            regionCommandCount[slot] = uvec2(0u, 0u);
+        }
+#endif
+        return;
+    }
+
+#ifdef _FLW_VK
+    uvec2 geo = regionGeo[slot];
+    if ((geo.x | geo.y) == 0u) {
+        return;
+    }
+#else
+    if (gl_LocalInvocationID.x == 0u) {
+        mainCount = 0u;
+        temporalCount = 0u;
+    }
+    barrier();
+#endif
+
+    uint s = gl_LocalInvocationID.x;
+    uint visIndex = (regionId << 8u) | s;
+    uint sv = sectionVis[visIndex] & 0xFFu;
+
+    // phase 1: bit0 -> MAIN; phase 2: bit1 -> TEMPORAL; phase 0 (GL): bit0 -> MAIN unless newly-visible.
+    // Lanes diverge on emit; the final barrier + lane-0 count write is unconditional.
+    bool emit;
+    bool newlyVisible;
+    if (phase == 1u) {
+        emit = (sv & 1u) == 1u;
+        newlyVisible = false;
+    } else if (phase == 2u) {
+        emit = (sv & 2u) != 0u;
+        newlyVisible = true;
+    } else {
+        emit = (sv & 1u) == 1u;
+        newlyVisible = (sv & 3u) == 1u;
+    }
+    if (emit) {
+        SectionFields f = decodeSection(regionId, s);
+
+    // Backface cull of facing-runs (bits = ModelQuadFacing ordinal; UNASSIGNED kept); mirrors the CPU oracle.
+    ivec3 secChunk = ivec3(int(in4.x << 16) >> 16, int(in4.y << 16) >> 16, int(in4.x) >> 16)
+            + ivec3((int(s) >> 5) & 0x7, int(s) & 0x3, (int(s) >> 2) & 0x7); // LocalSectionIndex XZY 3/2/3
+    vec3 camRel = vec3(secChunk) * 16.0 - vec3(cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
+    uint camMask = 1u << 6u;
+    if (camRel.x <   0.0) camMask |= 1u << 0u;
+    if (camRel.y <   0.0) camMask |= 1u << 1u;
+    if (camRel.z <   0.0) camMask |= 1u << 2u;
+    if (camRel.x > -16.0) camMask |= 1u << 3u;
+    if (camRel.y > -16.0) camMask |= 1u << 4u;
+    if (camRel.z > -16.0) camMask |= 1u << 5u;
+    uint slices = camMask & f.sliceMask;
+    if (slices != 0u) {
+
+        uint groupVertexCount = 0u;
+        uint runBaseVertex = f.baseVertex;
+        uint firstIndex = f.baseElement;
+        uint lastMaskBit = 0u;
+
+        for (uint i = 0u; i <= FACING_COUNT; i++) {
+            uint maskBit = 0u;
+            uint vertexCount = 0u;
+            if (i < FACING_COUNT) {
+                vertexCount = f.vertexCount[i];
+                if (vertexCount != 0u) {
+                    uint facing = facingByte(f, i);
+                    maskBit = (slices >> facing) & 1u;
+                }
+            }
+            // Sodium addSharedIndexedDrawCommands: a zero-vertex facing does NOT break a run -- skip without flushing.
+            if (i < FACING_COUNT && vertexCount == 0u) {
+                continue;
+            }
+
+            if (maskBit == 0u) {
+                if (lastMaskBit == 1u) {
+                    uint indexCount = (groupVertexCount >> 2u) * 6u;
+#ifdef _FLW_VK
+                    uint cap = regionCount * MAX_COMMANDS_PER_REGION_MAIN;
+                    if (newlyVisible) {
+                        uint wi = atomicAdd(drawCountTemporal, 1u);
+                        if (wi < cap) {
+                            emitGlobal(cap + wi, firstIndex, runBaseVertex, indexCount, in4, regionId, slot);
+                        }
+                    } else {
+                        uint wi = atomicAdd(drawCountMain, 1u);
+                        if (wi < cap) {
+                            emitGlobal(wi, firstIndex, runBaseVertex, indexCount, in4, regionId, slot);
+                        }
+                    }
+#else
+                    if (newlyVisible) {
+                        uint wi = atomicAdd(temporalCount, 1u);
+                        if (wi < MAX_TEMPORAL_COMMANDS_PER_REGION) {
+                            emitCommand(slot, true, wi, firstIndex, runBaseVertex, indexCount);
+                        }
+                    } else {
+                        uint wi = atomicAdd(mainCount, 1u);
+                        if (wi < MAX_COMMANDS_PER_REGION_MAIN) {
+                            emitCommand(slot, false, wi, firstIndex, runBaseVertex, indexCount);
+                        }
+                    }
+#endif
+                    runBaseVertex += groupVertexCount;
+                    groupVertexCount = 0u;
+                }
+                runBaseVertex += vertexCount;
+            } else {
+                groupVertexCount += vertexCount;
+            }
+            lastMaskBit = maskBit;
+        }
+    }
+    }
+
+#ifndef _FLW_VK
+    barrier();
+    if (gl_LocalInvocationID.x == 0u) {
+        regionCommandCount[slot] = uvec2(mainCount, temporalCount);
+    }
+#endif
+}

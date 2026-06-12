@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+// Copyright (C) 2023-2026 Cortex and Nvidium contributors
+// Copyright (C) 2026 movblock
+#extension GL_NV_gpu_shader5 : require
+#extension GL_NV_shader_buffer_load : require
+
+layout(local_size_x = 256) in;
+
+#include "meshlet:terrain/gl/scene.glsl"
+#include "meshlet:terrain/gl/vertex_format/sodium_vertex_format.glsl"
+#include "meshlet:terrain/gl/translucent_scene_ubo.glsl"
+#include "meshlet:terrain/gl/translucent_cache.glsl"
+
+layout(binding = 2) uniform sampler2D Sampler2;
+
+layout(std430, binding = 7) restrict readonly buffer CompactSections {
+    uint compactSections[];
+};
+layout(std430, binding = 13) restrict readonly buffer CompactGeom {
+    uint compactGeom[];
+};
+layout(std430, binding = 12) restrict readonly buffer GeometryPointers {
+    restrict Vertex *geometryPtrs[];
+};
+
+layout(std430, binding = 10) restrict writeonly buffer CachedVerts {
+    CachedVert cachedVerts[];
+};
+layout(std430, binding = 11) restrict writeonly buffer QuadFade {
+    float quadFade[];
+};
+layout(std430, binding = 15) restrict buffer DrawIndirect {
+    uint drawVertexCount;
+    uint drawPad[3];
+};
+
+const uint REGION_COMMAND_WORDS = 2560u;
+const uint FADING_WORD_OFFSET = 1280u;
+const uint COMPACT_PER_REGION = 512u;
+const uint COMPACT_STREAM_STRIDE = 256u;
+
+void main() {
+    uint slot = gl_WorkGroupID.x;
+    if (slot >= u_regionCount) {
+        return;
+    }
+    uvec4 in4 = u_regionInput[slot];
+    uint regionId = in4.z;
+    if (regionId == 0xFFFFFFFFu || u_regionVis[slot] == 0u) {
+        return;
+    }
+
+    vec2 screenSize = vec2(cameraPosAndPad.w, float(cameraBlockPosAndPad.w));
+    restrict Vertex *geo = geometryPtrs[slot];
+    uint lane = gl_LocalInvocationID.x;
+
+    for (uint stream = 0u; stream < 2u; stream++) {
+        uint count = u_meshTaskCommands[slot * REGION_COMMAND_WORDS + stream * FADING_WORD_OFFSET];
+        for (uint i = 0u; i < count; i++) {
+            uint idx = slot * COMPACT_PER_REGION + stream * COMPACT_STREAM_STRIDE + i;
+            uint sectionId = compactSections[idx];
+            uint baseVertex = compactGeom[idx * 2u + 0u];
+            uint quadCount = compactGeom[idx * 2u + 1u];
+            float fade = stream == 0u ? 1.0 : u_translucentVis[regionId * REGION_SIZE + sectionId];
+            vec3 sectionOriginBlocks = vec3(sectionChunkOrigin(in4, sectionId)) * 16.0
+                    - vec3(cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
+
+            for (uint q = lane; q < quadCount; q += 256u) {
+                uint quadVertexBase = baseVertex + q * 4u;
+
+                vec3 pos[4];
+                vec4 col[4];
+                uint uvw[4];
+                vec2 smin = vec2(1e30);
+                vec2 smax = vec2(-1e30);
+                bool behind = false;
+                for (uint k = 0u; k < 4u; k++) {
+                    Vertex vert = geo[quadVertexBase + k];
+                    vec3 p = decodeVertexPosition(vert) + sectionOriginBlocks;
+                    pos[k] = p;
+                    uvw[k] = vert.uv;
+                    uvec4 cc = (uvec4(vert.color) >> uvec4(0u, 8u, 16u, 24u)) & 0xFFu;
+                    col[k] = (vec4(cc) / 255.0) * textureLod(Sampler2, decodeLightUV(vert), 0.0);
+
+                    vec4 clip = viewProjection * vec4(p, 1.0);
+                    if (clip.w <= 0.0) {
+                        behind = true;
+                    } else {
+                        vec2 sp = (clip.xy / clip.w * 0.5 + 0.5) * screenSize;
+                        smin = min(smin, sp);
+                        smax = max(smax, sp);
+                    }
+                }
+
+                const float bias = 0.01;
+                if (!behind && screenSize.x > 0.0 && all(equal(round(smin - bias), round(smax + bias)))) {
+                    continue;
+                }
+
+                uint outQuad = atomicAdd(drawVertexCount, 6u) / 6u;
+                quadFade[outQuad] = fade;
+                for (uint k = 0u; k < 4u; k++) {
+                    cachedVerts[outQuad * 4u + k] = CachedVert(pos[k].x, pos[k].y, pos[k].z, uvw[k],
+                            packHalf2x16(col[k].rg), packHalf2x16(col[k].ba));
+                }
+            }
+        }
+    }
+}

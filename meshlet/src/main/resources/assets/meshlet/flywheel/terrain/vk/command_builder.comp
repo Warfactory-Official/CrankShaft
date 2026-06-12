@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+// Copyright (C) 2026 Cortex and Nvidium contributors
+// Copyright (C) 2026 movblock
+
+layout(local_size_x = 32) in;
+
+#include "meshlet:terrain/vk/section_data.glsl"
+
+
+layout(set = 0, binding = 2, std430) readonly buffer RegionVis {
+    uint regionVis[];
+};
+
+layout(set = 0, binding = 3, std430) readonly buffer SectionVis {
+    uint sectionVis[];
+};
+
+layout(set = 0, binding = 6, std140) uniform TerrainRegionCount {
+    uint regionCount;
+    uint phase;
+    uint _rcPad1;
+    uint _rcPad2;
+};
+
+layout(set = 0, binding = 7, std430) writeonly buffer CompactSections {
+    uint compactSections[];
+};
+
+layout(set = 0, binding = 8, std430) writeonly buffer MeshCommands {
+    uint cmdWords[];
+};
+
+shared uint visibleCount;
+
+void writeCommand(uint slot, uint count) {
+    uint w = slot * 8u;
+    cmdWords[w + 0u] = count;
+    cmdWords[w + 1u] = 1u;
+    cmdWords[w + 2u] = 1u;
+    cmdWords[w + 3u] = slot << 8u;
+    cmdWords[w + 4u] = count;
+    cmdWords[w + 5u] = 0u;
+    cmdWords[w + 6u] = 0u;
+    cmdWords[w + 7u] = 0u;
+}
+
+void main() {
+    uint slot = gl_WorkGroupID.x;
+    if (slot >= regionCount) {
+        return;
+    }
+
+    if (gl_LocalInvocationID.x == 0u) {
+        visibleCount = 0u;
+    }
+    barrier();
+
+    uvec4 in4 = regionInput[slot];
+    uint regionId = in4.z;
+
+    if (regionId == 0xFFFFFFFFu) {
+        if (gl_LocalInvocationID.x == 0u) {
+            writeCommand(slot, 0u);
+        }
+        return;
+    }
+
+    for (uint k = 0u; k < 8u; k++) {
+        uint s = gl_LocalInvocationID.x + k * 32u;
+        uint visIndex = (regionId << SECTION_ID_REGION_SHIFT) | s;
+        uint phaseBit = (phase == 2u) ? 2u : 1u;
+        if ((sectionVis[visIndex] & phaseBit) == 0u) {
+            continue;
+        }
+        SectionFields f = decodeSection(regionId, s);
+        vec3 camRel = vec3(sectionChunkOrigin(in4, s)) * 16.0
+                - vec3(cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
+        if (sectionQuadCount(f, cameraVisibleFacingMask(camRel)) == 0u) {
+            continue;
+        }
+        uint i = atomicAdd(visibleCount, 1u);
+        compactSections[slot * REGION_SIZE + i] = s;
+    }
+
+    barrier();
+    if (gl_LocalInvocationID.x == 0u) {
+        writeCommand(slot, visibleCount);
+    }
+}

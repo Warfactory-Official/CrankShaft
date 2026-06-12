@@ -1,0 +1,52 @@
+package dev.engine_room.flywheel.api.internal;
+
+import dev.engine_room.flywheel.api.backend.Backend;
+import dev.engine_room.flywheel.api.layout.LayoutBuilder;
+import dev.engine_room.flywheel.api.registry.IdRegistry;
+import dev.engine_room.flywheel.api.visualization.BlockEntityVisualizer;
+import dev.engine_room.flywheel.api.visualization.EntityVisualizer;
+import dev.engine_room.flywheel.api.visualization.VisualizationManager;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * Reflective seam letting the platform-agnostic {@code api} sourceset reach {@code impl} classes
+ * without a compile-time dependency; loaded by {@link DependencyInjection} against the impl class on the runtime classpath.
+ */
+public interface FlwApiLink {
+    FlwApiLink INSTANCE = DependencyInjection.load(FlwApiLink.class, "dev.engine_room.flywheel.impl.FlwApiLinkImpl");
+
+    <T> IdRegistry<T> createIdRegistry();
+
+    Backend getCurrentBackend();
+
+    boolean isBackendOn();
+
+    Backend getOffBackend();
+
+    Backend getDefaultBackend();
+
+    LayoutBuilder createLayoutBuilder();
+
+    boolean supportsVisualization(@Nullable LevelAccessor level);
+
+    @Nullable
+    VisualizationManager getVisualizationManager(@Nullable LevelAccessor level);
+
+    VisualizationManager getVisualizationManagerOrThrow(@Nullable LevelAccessor level);
+
+    @Nullable
+    <T extends BlockEntity> BlockEntityVisualizer<? super T> getVisualizer(BlockEntityType<T> type);
+
+    @Nullable
+    <T extends Entity> EntityVisualizer<? super T> getVisualizer(EntityType<T> type);
+
+    <T extends BlockEntity> void setVisualizer(BlockEntityType<T> type,
+                                               @Nullable BlockEntityVisualizer<? super T> visualizer);
+
+    <T extends Entity> void setVisualizer(EntityType<T> type, @Nullable EntityVisualizer<? super T> visualizer);
+}

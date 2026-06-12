@@ -1,0 +1,48 @@
+layout(local_size_x = 64) in;
+
+layout(std430, binding = _FLW_DRAW_BUFFER_BINDING) restrict readonly buffer _FlwDrawBuffer {
+    MeshDrawCommand _flw_drawCommands[];
+};
+
+struct MeshTaskCommand {
+    uint count;
+    uint first;
+};
+
+layout(std430, binding = 15) restrict writeonly buffer _FlwMeshTaskBuffer {
+    MeshTaskCommand _flw_meshTaskCommands[];
+};
+
+uniform uint _flw_drawCount;
+uniform uint _flw_writeOffset;
+
+const uint _FLW_TRIS_PER_MESHLET = 64u;
+const uint _FLW_MAX_VERTS = 256u;        // NV mesh output caps (Turing+)
+const uint _FLW_MAX_PRIMS = 512u;
+const uint _FLW_MAX_TASK_COUNT = 65535u; // GL_MAX_DRAW_MESH_TASKS_COUNT_NV guaranteed floor
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= _flw_drawCount) {
+        return;
+    }
+
+    MeshDrawCommand cmd = _flw_drawCommands[i];
+
+    uint triCount = cmd.indexCount / 3u;
+    uint vertCount = cmd.vertexCount;
+    uint needed;
+    if (triCount == 0u) {
+        needed = 0u;
+    } else if (vertCount <= _FLW_MAX_VERTS && triCount <= _FLW_MAX_PRIMS) {
+        uint instancesPerWorkgroup = min(_FLW_MAX_VERTS / max(vertCount, 3u), _FLW_MAX_PRIMS / triCount);
+        needed = (cmd.instanceCount + instancesPerWorkgroup - 1u) / instancesPerWorkgroup;
+    } else {
+        uint meshletsPerInstance = (triCount + _FLW_TRIS_PER_MESHLET - 1u) / _FLW_TRIS_PER_MESHLET;
+        needed = cmd.instanceCount * meshletsPerInstance;
+    }
+
+    uint k = clamp((needed + _FLW_MAX_TASK_COUNT - 1u) / _FLW_MAX_TASK_COUNT, 16u, 64u);
+    _flw_meshTaskCommands[_flw_writeOffset + i].count = (needed + k - 1u) / k;
+    _flw_meshTaskCommands[_flw_writeOffset + i].first = 0u;
+}

@@ -1,0 +1,71 @@
+// SPDX-License-Identifier: MIT
+// Conservative texel-gather HiZ
+
+#include "flywheel:internal/indirect/hiz_aabb.glsl"
+
+layout(local_size_x = 64) in;
+
+// Terrain-owned UBO (8), self-contained: the terrain path bypasses EngineImpl.render; frame uniforms may be stale.
+layout(std140, binding = 8) uniform TerrainHiZUniforms {
+    mat4 viewProjection;      // matrices.projection() * matrices.modelView()
+    vec4 cameraPosAndPad;     // .xyz = cameraWorldPos - cameraBlockPos (fractional, for inside-AABB test)
+    ivec4 cameraBlockPosAndPad; // .xyz = floor(cameraWorldPos) (block coords); corners subtract this
+};
+
+// regionInput slot = 4 u32: (originChunkX lo16 | Z hi16, originChunkY lo16, regionId, pad).
+#ifdef _FLW_VK
+layout(std430, binding = 0) restrict readonly buffer RegionInputBuf { uvec4 regionInput[]; };
+layout(std430, binding = 2) restrict writeonly buffer RegionVisBuf { uint regionVis[]; };
+layout(std140, binding = 9) uniform TerrainRegionCount { uint regionCount; uint _rcPad0; uint _rcPad1; uint _rcPad2; };
+#else
+layout(std140, binding = 7) uniform TerrainSceneUbo {
+    restrict readonly uvec4 *regionInput;       // [slot].xyzw as above
+    restrict readonly uvec4 *sectionData;       // 3 uvec4 / section, region-id-keyed (unused here)
+    restrict writeonly uint *regionVis;         // [slot]
+    restrict uint *sectionVis;                  // shift register (unused here)
+    restrict writeonly uvec2 *commandWords;     // command stream (unused here)
+    restrict uvec2 *regionCommandCount;         // per-slot counts (unused here)
+    restrict readonly uint *geometryMask;       // region-id-keyed present mask (unused here)
+    uint regionCount;                           // visible-region count (replaces regionInput.length())
+};
+#endif
+
+layout(binding = 10) uniform sampler2D hizPyramid;
+
+ivec3 unpackOriginChunkXZ(uint packed0) {
+    return ivec3(int(packed0 << 16) >> 16, 0, int(packed0) >> 16);
+}
+int unpackOriginChunkY(uint packed1) {
+    return int(packed1 << 16) >> 16;
+}
+ivec3 regionSizeSections() {
+    return ivec3(8, 4, 8);
+}
+
+void store(uint slot, bool visible) {
+    regionVis[slot] = visible ? 1u : 0u;
+}
+
+void main() {
+    uint slot = gl_GlobalInvocationID.x;
+    if (slot >= regionCount) {
+        return;
+    }
+
+    uvec4 in4 = regionInput[slot];
+    if (in4.z == 0xFFFFFFFFu) {
+        store(slot, false);
+        return;
+    }
+
+    ivec3 originChunk = unpackOriginChunkXZ(in4.x);
+    originChunk.y = unpackOriginChunkY(in4.y);
+
+    vec3 camDelta = vec3(cameraBlockPosAndPad.xyz);
+    vec3 start = vec3(originChunk * 16) - camDelta - _FLW_HIZ_ADD_BLOCKS;
+    vec3 sizeBlocks = vec3(regionSizeSections() * 16);
+    vec3 end = start + sizeBlocks + (_FLW_HIZ_ADD_BLOCKS * 2.0);
+
+    vec2 viewSize = vec2(cameraPosAndPad.w, float(cameraBlockPosAndPad.w));
+    store(slot, _flw_hizAabbVisible(start, end, cameraPosAndPad.xyz, viewProjection, viewSize, hizPyramid));
+}

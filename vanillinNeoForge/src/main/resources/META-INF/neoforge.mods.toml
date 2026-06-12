@@ -1,0 +1,30 @@
+modLoader = "javafml"
+# The loader version doesn't matter; the NeoForge/Minecraft version ranges gate compatibility.
+loaderVersion = "[0,)"
+license = "MIT"
+
+[[mods]]
+modId = "vanillin"
+version = "${version}"
+displayName = "Vanillate"
+description = "Vanilla content visuals (chests, minecarts, ...) rendered through the CrankShaft instanced engine."
+displayTest = "IGNORE_ALL_VERSION"
+
+[[dependencies.vanillin]]
+modId = "minecraft"
+type = "required"
+versionRange = "[26.2,26.3)"
+side = "CLIENT"
+
+[[dependencies.vanillin]]
+modId = "neoforge"
+type = "required"
+versionRange = "[26.2.0.7-beta,26.3)"
+side = "CLIENT"
+
+# Vanillate is a content addon: it registers visualizers into the CrankShaft engine, which must be present.
+[[dependencies.vanillin]]
+modId = "flywheel"
+type = "required"
+versionRange = "[0,)"
+side = "CLIENT"

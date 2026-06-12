@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+// Copyright (C) 2023-2026 Cortex and Nvidium contributors
+// Copyright (C) 2026 movblock
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 256) in;
+
+#include "meshlet:terrain/vk/translucent/section_data.glsl"
+#include "meshlet:terrain/vk/vertex_format.glsl"
+#include "meshlet:terrain/vk/translucent/cache.glsl"
+
+#include "meshlet:terrain/vk/hiz_uniforms.glsl"
+layout(set = 0, binding = 2, std430) readonly buffer CompactSections {
+    uint compactSections[];
+};
+layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer GeoRef {
+    Vertex verts[];
+};
+layout(set = 0, binding = 3, std430) readonly buffer GeoAddrTable {
+    uint64_t geoAddr[];
+};
+layout(set = 0, binding = 4, std430) readonly buffer TranslucentVis {
+    float translucentVis[];
+};
+layout(set = 0, binding = 8, std430) readonly buffer MeshCommands {
+    uint cmdWords[];
+};
+layout(set = 0, binding = 12) uniform sampler2D Sampler2;
+
+layout(set = 0, binding = 16, std430) writeonly buffer CachedVerts {
+    CachedVert cachedVerts[];
+};
+layout(set = 0, binding = 17, std430) writeonly buffer QuadFade {
+    float quadFade[];
+};
+layout(set = 0, binding = 18, std430) buffer DrawCommand {
+    uint groupCountX;
+    uint groupCountY;
+    uint groupCountZ;
+    uint drawQuadCount;
+};
+
+const uint MESH_TASK_WORDS = 8u;
+
+void main() {
+    uint slot = gl_WorkGroupID.x;
+    uint regionId = regionInput[slot].z;
+    if (regionId == 0xFFFFFFFFu) {
+        return;
+    }
+    uint visible = cmdWords[slot * MESH_TASK_WORDS + 0u];
+    vec2 screenSize = vec2(cameraPosAndPad.w, float(cameraBlockPosAndPad.w));
+    vec3 camera = vec3(cameraBlockPosAndPad.xyz) + cameraPosAndPad.xyz;
+    GeoRef geo = GeoRef(geoAddr[slot]);
+    uint lane = gl_LocalInvocationID.x;
+
+    for (uint i = 0u; i < visible; i++) {
+        uint sectionId = compactSections[slot * REGION_SIZE + i];
+        SectionFields f = decodeSection(regionId, sectionId);
+        uint quadCount = f.totalVerts >> 2u;
+        float fade = translucentVis[regionId * REGION_SIZE + sectionId];
+        vec3 sectionOriginBlocks = vec3(sectionChunkOrigin(regionInput[slot], sectionId)) * 16.0 - camera;
+
+        for (uint q = lane; q < quadCount; q += 256u) {
+            uint quadVertexBase = f.baseVertex + q * 4u;
+
+            vec3 pos[4];
+            vec4 col[4];
+            uint uvw[4];
+            vec2 smin = vec2(1e30);
+            vec2 smax = vec2(-1e30);
+            bool behind = false;
+            for (uint k = 0u; k < 4u; k++) {
+                Vertex vert = geo.verts[quadVertexBase + k];
+                vec3 p = decodeVertexPosition(vert) + sectionOriginBlocks;
+                pos[k] = p;
+                uvw[k] = vert.uv;
+                col[k] = unpackUnorm4x8(vert.color) * textureLod(Sampler2, decodeLightUV(vert), 0.0);
+
+                vec4 clip = viewProjection * vec4(p, 1.0);
+                if (clip.w <= 0.0) {
+                    behind = true;
+                } else {
+                    vec2 sp = (clip.xy / clip.w * 0.5 + 0.5) * screenSize;
+                    smin = min(smin, sp);
+                    smax = max(smax, sp);
+                }
+            }
+
+            const float bias = 0.01;
+            if (!behind && screenSize.x > 0.0 && all(equal(round(smin - bias), round(smax + bias)))) {
+                continue;
+            }
+
+            uint outQuad = atomicAdd(drawQuadCount, 1u);
+            quadFade[outQuad] = fade;
+            for (uint k = 0u; k < 4u; k++) {
+                cachedVerts[outQuad * 4u + k] = CachedVert(pos[k].x, pos[k].y, pos[k].z, uvw[k],
+                        packHalf2x16(col[k].rg), packHalf2x16(col[k].ba));
+            }
+        }
+    }
+}

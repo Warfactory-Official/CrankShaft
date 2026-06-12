@@ -1,0 +1,43 @@
+modLoader = "javafml"
+loaderVersion = "[0,)"
+license = "MIT"
+
+[[mods]]
+modId = "flywheel"
+version = "${version}"
+displayName = "CrankShaft"
+description = "Dual-backend (raw OpenGL + raw Vulkan) instanced rendering engine."
+displayTest = "IGNORE_ALL_VERSION"
+
+[[mixins]]
+config = "flywheel.impl.mixins.json"
+
+[[mixins]]
+config = "flywheel.impl.neoforge.mixins.json"
+
+[[mixins]]
+config = "flywheel.impl.sodium.mixins.json"
+
+[[mixins]]
+config = "flywheel.backend.mixins.json"
+
+[[accessTransformers]]
+file = "META-INF/accesstransformer.cfg"
+
+[[dependencies.flywheel]]
+modId = "minecraft"
+type = "required"
+versionRange = "[26.2,26.3)"
+side = "CLIENT"
+
+[[dependencies.flywheel]]
+modId = "neoforge"
+type = "required"
+versionRange = "[26.2.0.7-beta,26.3)"
+side = "CLIENT"
+
+[[dependencies.flywheel]]
+modId = "sodium"
+type = "optional"
+versionRange = "[0.9.1+mc26.2,0.10.0)"
+side = "CLIENT"

@@ -1,0 +1,129 @@
+// SPDX-License-Identifier: MIT
+// SETTLED (vis==1.0) and FADING (vis<1.0) streams; GL-bindless-only (VK uses terrain_translucent_oit_cull.comp).
+
+#include "flywheel:internal/indirect/hiz_aabb.glsl"
+
+// Field order mirrors the opaque cull scene UBO; region_test reads regionInput@0 / regionVis@16 identically.
+layout(local_size_x = 256) in;
+
+layout(std140, binding = 8) uniform TerrainHiZUniforms {
+    mat4 viewProjection;        // matrices.projection() * matrices.modelView()
+    vec4 cameraPosAndPad;
+    ivec4 cameraBlockPosAndPad;
+};
+
+layout(std140, binding = 7) uniform TerrainSceneUbo {
+    restrict readonly uvec4 *regionInput;
+    restrict readonly uvec4 *sectionData0;      // 3 uvec4 / section, region-id-keyed (TRANSLUCENT mirror)
+    restrict readonly uint *regionVis;
+    restrict readonly float *translucentVis;    // [regionId*256 + s]; 1.0 = settled, <1.0 = mid-fade
+    restrict writeonly uint *commandWords;      // [slot * REGION_COMMAND_WORDS + stream offset + cmd * 5]
+    restrict uvec2 *regionCommandCount;         // [slot] = (settledCount, fadingCount)
+    restrict readonly uint *unused48;
+    uint regionCount;                           // visible-region count (replaces regionInput.length())
+};
+layout(binding = 10) uniform sampler2D hizPyramid;
+
+const uint REGION_SIZE = 256u; // sections per CrankShaft region (8 x 4 x 8)
+const uint COMMAND_STRIDE_WORDS = 5u;
+const uint MAX_COMMANDS_PER_STREAM = REGION_SIZE;
+const uint FADING_WORD_OFFSET = MAX_COMMANDS_PER_STREAM * COMMAND_STRIDE_WORDS;
+const uint REGION_COMMAND_WORDS = MAX_COMMANDS_PER_STREAM * 2u * COMMAND_STRIDE_WORDS;
+
+shared uint sSettledCount;
+shared uint sFadingCount;
+
+struct TranslucentSection {
+    uint baseVertex;
+    uint sumVertexCount;
+};
+TranslucentSection decodeSection(uint regionId, uint s) {
+    uint base = regionId * (REGION_SIZE * 3u) + s * 3u;
+    uvec4 b0 = sectionData0[base + 0u];
+    uvec4 b1 = sectionData0[base + 1u];
+    uvec4 b2 = sectionData0[base + 2u];
+    TranslucentSection t;
+    t.baseVertex = b0.y;
+    t.sumVertexCount = b1.y + b1.z + b1.w + b2.x + b2.y + b2.z + b2.w;
+    return t;
+}
+
+ivec3 unpackOriginChunkXZ(uint packed0) {
+    return ivec3(int(packed0 << 16) >> 16, 0, int(packed0) >> 16);
+}
+int unpackOriginChunkY(uint packed1) {
+    return int(packed1 << 16) >> 16;
+}
+ivec3 sectionRelativeBlocks(uint s) {
+    uint sx = (s >> 5u) & 0x7u;
+    uint sy = s & 0x3u;
+    uint sz = (s >> 2u) & 0x7u;
+    return ivec3(sx, sy, sz) * 16;
+}
+
+bool sectionVisible(ivec3 originChunk, uint s) {
+    vec3 camDelta = vec3(cameraBlockPosAndPad.xyz);
+    vec3 cornerBase = vec3(originChunk * 16) + vec3(sectionRelativeBlocks(s)) - camDelta;
+    vec3 mins = cornerBase - _FLW_HIZ_ADD_BLOCKS;
+    vec3 maxs = cornerBase + vec3(16.0) + _FLW_HIZ_ADD_BLOCKS;
+
+    vec2 viewSize = vec2(cameraPosAndPad.w, float(cameraBlockPosAndPad.w));
+    return _flw_hizAabbVisible(mins, maxs, cameraPosAndPad.xyz, viewProjection, viewSize, hizPyramid);
+}
+
+void emitCommand(uint slot, uint streamWordOffset, uint wi, uint indexCount, uint baseVertex) {
+    uint baseWord = slot * REGION_COMMAND_WORDS + streamWordOffset + wi * COMMAND_STRIDE_WORDS;
+    commandWords[baseWord + 0u] = indexCount;
+    commandWords[baseWord + 1u] = 1u;
+    commandWords[baseWord + 2u] = 0u;
+    commandWords[baseWord + 3u] = baseVertex;
+    commandWords[baseWord + 4u] = 0u;
+}
+
+void main() {
+    uint slot = gl_WorkGroupID.x;
+    if (slot >= regionCount) {
+        return;
+    }
+    uvec4 in4 = regionInput[slot];
+    uint regionId = in4.z;
+    if (regionId == 0xFFFFFFFFu || regionVis[slot] == 0u) {
+        if (gl_LocalInvocationID.x == 0u) {
+            regionCommandCount[slot] = uvec2(0u, 0u);
+        }
+        return;
+    }
+
+    if (gl_LocalInvocationID.x == 0u) {
+        sSettledCount = 0u;
+        sFadingCount = 0u;
+    }
+    barrier();
+
+    uint s = gl_LocalInvocationID.x;
+    TranslucentSection t = decodeSection(regionId, s);
+    if (t.sumVertexCount != 0u) {
+        ivec3 originChunk = unpackOriginChunkXZ(in4.x);
+        originChunk.y = unpackOriginChunkY(in4.y);
+        if (sectionVisible(originChunk, s)) {
+            uint indexCount = (t.sumVertexCount >> 2u) * 6u;
+            // Route by resident fade: settled (vis == 1.0) avoids the per-vertex SSBO fetch in its producer.
+            if (translucentVis[regionId * REGION_SIZE + s] < 1.0) {
+                uint wi = atomicAdd(sFadingCount, 1u);
+                if (wi < MAX_COMMANDS_PER_STREAM) {
+                    emitCommand(slot, FADING_WORD_OFFSET, wi, indexCount, t.baseVertex);
+                }
+            } else {
+                uint wi = atomicAdd(sSettledCount, 1u);
+                if (wi < MAX_COMMANDS_PER_STREAM) {
+                    emitCommand(slot, 0u, wi, indexCount, t.baseVertex);
+                }
+            }
+        }
+    }
+
+    barrier();
+    if (gl_LocalInvocationID.x == 0u) {
+        regionCommandCount[slot] = uvec2(sSettledCount, sFadingCount);
+    }
+}

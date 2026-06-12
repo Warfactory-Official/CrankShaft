@@ -1,0 +1,22 @@
+modLoader = "javafml"
+loaderVersion = "[0,)"
+license = "LGPL-3.0-only"
+
+[[mods]]
+modId = "flywheel_mesh"
+version = "${version}"
+displayName = "Flywheel Mesh"
+description = "GL mesh-shader terrain backend for CrankShaft/Flywheel. Nvidium-derived (LGPL-3.0-only)."
+displayTest = "IGNORE_ALL_VERSION"
+
+[[dependencies.flywheel_mesh]]
+modId = "minecraft"
+type = "required"
+versionRange = "[0,)"
+side = "CLIENT"
+
+[[dependencies.flywheel_mesh]]
+modId = "neoforge"
+type = "required"
+versionRange = "[0,)"
+side = "CLIENT"

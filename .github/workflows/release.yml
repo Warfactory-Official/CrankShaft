@@ -1,0 +1,77 @@
+name: Release CrankShaft
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-crankshaft-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Publish tagged release
+    runs-on: ubuntu-latest
+    if: github.repository == 'Warfactory-Official/CrankShaft'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: 9.5.0
+          # Releases consume the cache populated by build.yml on 26.2 pushes;
+          # they should not write back into the shared cache.
+          cache-read-only: true
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      # The tag names the coordinate, but gradle.properties decides it. If the two disagree the run publishes
+      # something the tag does not describe, so this fails instead of guessing which side is right.
+      - name: Verify tag matches gradle.properties
+        shell: bash
+        run: |
+          set -euo pipefail
+          read_prop() {
+            grep -E "^\s*$1\s*=" gradle.properties | sed -E "s/^\s*$1\s*=\s*//; s/\r$//" | xargs || true
+          }
+          MOD_VERSION=$(read_prop mod_version)
+          MC_VERSION=$(read_prop minecraft_version)
+          if [[ -z "${MOD_VERSION}" ]]; then
+            echo "::error::mod_version is empty or missing in gradle.properties"; exit 1
+          fi
+          if [[ -z "${MC_VERSION}" ]]; then
+            echo "::error::minecraft_version is empty or missing in gradle.properties"; exit 1
+          fi
+          EXPECTED="v${MOD_VERSION}+mc${MC_VERSION}"
+          if [[ "${GITHUB_REF_NAME}" != "${EXPECTED}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match gradle.properties, which builds ${EXPECTED}. Bump mod_version or retag; do not publish a coordinate the tag does not name."
+            exit 1
+          fi
+          echo "Publishing dev.engine_room:crankshaft:${MOD_VERSION}+mc${MC_VERSION}"
+
+      - name: Publish CrankShaft to Maven (warfactory)
+        env:
+          MAVEN_USER: ${{ secrets.MAVEN_USER }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+          MAVEN_URL: https://repo.warfactory.co/releases
+        run: |
+          ./gradlew \
+            -Pbuild.release \
+            :fabric:publishMavenJarPublicationToWarfactoryRepository \
+            :neoforge:publishMavenJarPublicationToWarfactoryRepository \
+            --no-daemon \
+            --stacktrace

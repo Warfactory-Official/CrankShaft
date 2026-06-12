@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "minVersion": "0.8.7",
+  "package": "dev.engine_room.flywheel.backend.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "GlStateManagerMixin",
+    "LightingMixin",
+    "OptionsMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

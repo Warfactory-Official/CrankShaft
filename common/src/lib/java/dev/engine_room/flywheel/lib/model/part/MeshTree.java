@@ -1,0 +1,143 @@
+package dev.engine_room.flywheel.lib.model.part;
+
+import com.mojang.blaze3d.vertex.PoseStack;
+import dev.engine_room.flywheel.api.model.Mesh;
+import dev.engine_room.flywheel.lib.memory.MemoryBlock;
+import dev.engine_room.flywheel.lib.model.SimpleQuadMesh;
+import dev.engine_room.flywheel.lib.util.OverlayTexture;
+import dev.engine_room.flywheel.lib.util.RendererReloadCache;
+import dev.engine_room.flywheel.lib.vertex.PosTexNormalVertexView;
+import dev.engine_room.flywheel.lib.vertex.VertexView;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.model.geom.EntityModelSet;
+import net.minecraft.client.model.geom.ModelLayerLocation;
+import net.minecraft.client.model.geom.ModelPart;
+import net.minecraft.client.model.geom.PartPose;
+import net.minecraft.util.LightCoordsUtil;
+import org.jspecify.annotations.Nullable;
+
+import java.util.Arrays;
+import java.util.Map;
+import java.util.NoSuchElementException;
+
+public final class MeshTree {
+    private static final ThreadLocal<ThreadLocalObjects> THREAD_LOCAL_OBJECTS = ThreadLocal.withInitial(
+            ThreadLocalObjects::new);
+    private static final PoseStack.Pose IDENTITY_POSE = new PoseStack().last();
+    private static final RendererReloadCache<ModelLayerLocation, MeshTree> CACHE = new RendererReloadCache<>(
+            MeshTree::convert);
+
+    @Nullable
+    private final Mesh mesh;
+    private final PartPose initialPose;
+    private final MeshTree[] children;
+    private final String[] childNames;
+
+    private MeshTree(@Nullable Mesh mesh, PartPose initialPose, MeshTree[] children, String[] childNames) {
+        this.mesh = mesh;
+        this.initialPose = initialPose;
+        this.children = children;
+        this.childNames = childNames;
+    }
+
+    public static MeshTree of(ModelLayerLocation layer) {
+        return CACHE.get(layer);
+    }
+
+    private static MeshTree convert(ModelLayerLocation layer) {
+        EntityModelSet entityModels = Minecraft.getInstance()
+                                               .getEntityModels();
+        ModelPart modelPart = entityModels.bakeLayer(layer);
+
+        return convert(modelPart, THREAD_LOCAL_OBJECTS.get());
+    }
+
+    private static MeshTree convert(ModelPart modelPart, ThreadLocalObjects objects) {
+        // ModelPart.children is private vanilla state, exposed to common via the AT/accesswidener
+        // (neoforge accesstransformer.cfg + crankshaft.accesswidener) instead of a FlwLibLink seam.
+        Map<String, ModelPart> modelPartChildren = modelPart.children;
+
+        String[] childNames = modelPartChildren.keySet()
+                                               .toArray(String[]::new);
+        Arrays.sort(childNames);
+
+        MeshTree[] children = new MeshTree[childNames.length];
+        for (int i = 0; i < childNames.length; i++) {
+            children[i] = convert(modelPartChildren.get(childNames[i]), objects);
+        }
+
+        return new MeshTree(compile(modelPart, objects), modelPart.getInitialPose(), children, childNames);
+    }
+
+    @Nullable
+    private static Mesh compile(ModelPart modelPart, ThreadLocalObjects objects) {
+        if (modelPart.isEmpty()) {
+            return null;
+        }
+
+        // ModelPart.compile is private -- emits only this part's cubes at the given pose (no children, no
+        // translateAndRotate), which is exactly what we want per node. Widened via AT/accesswidener.
+        VertexWriter vertexWriter = objects.vertexWriter;
+        modelPart.compile(IDENTITY_POSE, vertexWriter, LightCoordsUtil.FULL_BRIGHT, OverlayTexture.NO_OVERLAY,
+                0xFFFFFFFF);
+        MemoryBlock data = vertexWriter.copyDataAndReset();
+
+        VertexView vertexView = new PosTexNormalVertexView();
+        vertexView.load(data);
+        return new SimpleQuadMesh(vertexView, "source=MeshTree");
+    }
+
+    @Nullable
+    public Mesh mesh() {
+        return mesh;
+    }
+
+    public PartPose initialPose() {
+        return initialPose;
+    }
+
+    public int childCount() {
+        return children.length;
+    }
+
+    public MeshTree child(int index) {
+        return children[index];
+    }
+
+    public String childName(int index) {
+        return childNames[index];
+    }
+
+    public int childIndex(String name) {
+        return Arrays.binarySearch(childNames, name);
+    }
+
+    public boolean hasChild(String name) {
+        return childIndex(name) >= 0;
+    }
+
+    @Nullable
+    public MeshTree child(String name) {
+        int index = childIndex(name);
+
+        if (index < 0) {
+            return null;
+        }
+
+        return child(index);
+    }
+
+    public MeshTree childOrThrow(String name) {
+        MeshTree child = child(name);
+
+        if (child == null) {
+            throw new NoSuchElementException("Can't find part " + name);
+        }
+
+        return child;
+    }
+
+    private static class ThreadLocalObjects {
+        public final VertexWriter vertexWriter = new VertexWriter();
+    }
+}

@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+// Copyright (C) 2023-2026 Cortex and Nvidium contributors
+// Copyright (C) 2026 movblock (modifications: the VK_EXT_mesh_shader port + CrankShaft integration)
+// Derivative work of Nvidium assets/nvidium/shaders/terrain/task.glsl.
+
+#extension GL_EXT_mesh_shader : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 1) in;
+
+#include "meshlet:terrain/vk/section_data.glsl"
+#include "meshlet:terrain/vk/payload.glsl"
+
+// DRAW pipeline, set 0. regionInput@0, sectionData@1, TerrainHiZUniforms@5 come from section_data.glsl.
+
+// compactSections (set 0, b2): compactSections[slot*256 + i] = in-region section id (emit-half output).
+layout(set = 0, binding = 2, std430) readonly buffer CompactSections {
+    uint compactSections[];
+};
+
+// Per-slot Sodium-arena DEVICE ADDRESS table (set 0, b3): one uint64 per slot = BDA of this region's live
+// CompactChunkVertex arena. The task resolves THIS region's address once and forwards it via the payload
+// (geoAddr); the mesh casts it to GeoRef.
+layout(set = 0, binding = 3, std430) readonly buffer GeoAddrTable {
+    uint64_t geoAddrTable[];
+};
+
+// Section-wide chunk-load fade (set 0, b4), region-id-keyed; default 1.0 = settled.
+layout(set = 0, binding = 4, std430) readonly buffer FadeVis {
+    float fadeVis[];
+};
+
+void main() {
+    // EXT has no NV firstTask: one multidraw command slot per region selects the region via gl_DrawID, and
+    // vkCmdDrawMeshTasksIndirectEXT launched groupCountX = visibleCount task WGs, so the in-region index is
+    // gl_WorkGroupID.x. The mesh stage (which can't see this task's IDs) gets slot + geoAddr via the payload.
+    uint slot = uint(gl_DrawID);
+    uint localIndex = gl_WorkGroupID.x;
+
+    uvec4 in4 = regionInput[slot];
+    uint regionId = in4.z;
+    if (regionId == 0xFFFFFFFFu) {
+        EmitMeshTasksEXT(0u, 1u, 1u);
+        return;
+    }
+
+    uint sectionId = compactSections[slot * REGION_SIZE + localIndex];
+    SectionFields f = decodeSection(regionId, sectionId);
+
+    // Camera-direction backface cull: drop the section's facings whose outward normal points away from the
+    // camera (the 6 axis facings; UNASSIGNED always kept). camRel = section block origin - camera, the same
+    // camera-relative space the mesh stage projects in (sectionChunkOrigin*16 - cameraBlockPos - cameraPos).
+    vec3 camRel = vec3(sectionChunkOrigin(in4, sectionId)) * 16.0
+            - vec3(cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
+    uint camMask = cameraVisibleFacingMask(camRel);
+
+    // Per-facing arena partition. Sodium's CompactChunkVertex arena stores a section's geometry partitioned
+    // into up to 7 per-facing groups (each a distinct contiguous sub-range), NOT one flat run from baseVertex
+    // (CrankShaft terrain_command_builder.comp / Nvidium populateTasks). Precompute, per facing i, the
+    // running ARENA quad offset (over EVERY facing with geometry -- masked-out ones still consume arena space,
+    // mirroring runBaseVertex += vertexCount) and the running VISIBLE quad index (over DRAWN facings only --
+    // the index space `gii` lives in). The mesh shader maps a sequential gii back to its facing via these bins.
+    uint arenaQuad = 0u;    // cumulative arena quad offset (vertexCount/4 over all geometry-present facings j<i)
+    uint visibleQuad = 0u;  // cumulative visible quad index (vertexCount/4 over drawn facings j<i)
+    for (uint i = 0u; i < FACING_COUNT; i++) {
+        payload.facingArenaQuadStart[i] = arenaQuad;
+        payload.facingVisibleQuadStart[i] = visibleQuad;
+        uint quads = f.vertexCount[i] >> 2u; // 4 vertices per quad
+        arenaQuad += quads;                  // arena advances over masked-out facings too (zero-vertex adds 0)
+        if (facingDrawn(f, i, camMask)) {
+            visibleQuad += quads;            // visible index only counts drawn (camera-visible) facings
+        }
+    }
+    uint quadCount = visibleQuad; // == sectionQuadCount(f, camMask): total drawn quads
+
+    payload.baseVertex = f.baseVertex;
+    payload.quadCount = quadCount;
+    payload.sectionId = sectionId;
+    payload.slot = slot; // the mesh stage reads regionInput[slot] for the origin (it can't recover slot itself)
+    payload.geoAddr = geoAddrTable[slot]; // resolve the arena BDA once here; the mesh casts it to GeoRef
+    // Section-wide chunk-load fade (region-id-keyed); the fragment mixes settled colour toward fog by this.
+    payload.chunkVisibility = fadeVis[regionId * REGION_SIZE + sectionId];
+
+    // Opaque: 2 invocations per quad (one triangle each), 32 invocations per mesh workgroup. Final uniform
+    // statement: EmitMeshTasksEXT launches ceil(quadCount*2/32) = ceil(quadCount/16) mesh workgroups.
+    EmitMeshTasksEXT((quadCount * 2u + 31u) / 32u, 1u, 1u);
+}

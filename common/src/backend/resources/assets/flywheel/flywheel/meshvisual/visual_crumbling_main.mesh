@@ -1,0 +1,66 @@
+layout(local_size_x = 32) in;
+layout(triangles, max_vertices = 192, max_primitives = 64) out;
+
+layout(location = 0) out MeshVertexOut {
+    vec2 texCoord;
+    vec4 color;
+    vec2 light;
+    vec3 normal;
+    vec3 worldPos;
+    flat uint overlayCutout; // overlay texel u8:u8 (see visual_main.mesh); cutout bits unused -- crumbling never dispatches a cutout
+    flat uint packedMaterial;
+#ifdef _FLW_DEBUG
+    flat uvec2 debugIds; // (instance id, mesh base vertex) for the INSTANCE_ID/MODEL_ID debug views
+#endif
+} v_out[];
+
+uniform uint _flw_crumblingInstance;     // object uint offset (instancer.local2ObjectUintOffset)
+uniform uint _flw_crumblingFirstIndex;
+uniform uint _flw_crumblingVertexOffset;
+uniform uint _flw_crumblingTriCount;
+uniform uint _flw_crumblingPackedMaterial;
+
+const uint _FLW_TRIS_PER_MESHLET = 64u;
+
+void main() {
+    uint triBase = gl_WorkGroupID.x * _FLW_TRIS_PER_MESHLET;
+    uint trisHere = min(_FLW_TRIS_PER_MESHLET, _flw_crumblingTriCount - triBase);
+    if (gl_LocalInvocationID.x == 0u) {
+        gl_PrimitiveCountNV = trisHere;
+    }
+
+    FlwInstance instance = _flw_unpackInstance(_flw_crumblingInstance);
+
+    for (uint k = 0u; k < 2u; k++) {
+        uint tl = gl_LocalInvocationID.x * 2u + k;
+        if (tl >= trisHere) {
+            break;
+        }
+        uint tri = triBase + tl;
+        uint outV = tl * 3u;
+
+        for (uint j = 0u; j < 3u; j++) {
+            uint localIdx = _flw_meshIndices[_flw_crumblingFirstIndex + tri * 3u + j];
+            _flw_loadVertex(_flw_crumblingVertexOffset + localIdx);
+            flw_instanceVertex(instance);
+
+            vec4 viewPos = _flw_mvModelView * flw_vertexPos;
+            uint ov = outV + j;
+            gl_MeshVerticesNV[ov].gl_Position = ProjMat * viewPos;
+            v_out[ov].texCoord = flw_vertexTexCoord;
+            v_out[ov].color = flw_vertexColor;
+            v_out[ov].light = flw_vertexLight;
+            v_out[ov].normal = normalize(flw_vertexNormal);
+            v_out[ov].worldPos = flw_vertexPos.xyz;
+            v_out[ov].overlayCutout = (uint(flw_vertexOverlay.x) & 0xFFu) | ((uint(flw_vertexOverlay.y) & 0xFFu) << 8u);
+            v_out[ov].packedMaterial = _flw_crumblingPackedMaterial;
+#ifdef _FLW_DEBUG
+            v_out[ov].debugIds = uvec2(_flw_crumblingInstance, _flw_crumblingVertexOffset);
+#endif
+        }
+
+        gl_PrimitiveIndicesNV[outV + 0u] = outV + 0u;
+        gl_PrimitiveIndicesNV[outV + 1u] = outV + 1u;
+        gl_PrimitiveIndicesNV[outV + 2u] = outV + 2u;
+    }
+}

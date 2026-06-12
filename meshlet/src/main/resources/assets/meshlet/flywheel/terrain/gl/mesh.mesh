@@ -1,0 +1,201 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+// Copyright (C) 2023-2025 Cortex and Nvidium contributors
+// Copyright (C) 2026 movblock (modifications: the GL_NV port + CrankShaft integration)
+// Derivative work of Nvidium assets/nvidium/shaders/terrain/mesh.glsl.
+
+#extension GL_NV_mesh_shader : require
+#extension GL_NV_gpu_shader5 : require
+#extension GL_NV_shader_buffer_load : require
+// Subgroup ops for the per-quad sub-pixel ("degenerate") cull + triangle compaction (on NVIDIA the 32-lane warp ==
+// the subgroup == this 32-invocation workgroup). Nvidium uses the same set in terrain/mesh.glsl.
+#extension GL_KHR_shader_subgroup_basic : require       // subgroupElect
+#extension GL_KHR_shader_subgroup_ballot : require      // subgroupBallot + bit-count compaction (warp ballot)
+#extension GL_KHR_shader_subgroup_shuffle : require     // subgroupShuffleXor (cooperative fetch + bbox union)
+// Force loop unrolling (Nvidium convention) so the 2-corner fetch + the facing search stay in registers instead of
+// spilling a rolled-loop local array to local memory -- a stride-1 local load before every arena fetch.
+#pragma optionNV(unroll all)
+
+layout(local_size_x = 32) in;
+layout(triangles, max_vertices = 64, max_primitives = 32) out;
+
+#include "meshlet:terrain/gl/scene.glsl"
+#include "meshlet:terrain/gl/task_payload.glsl"
+#include "meshlet:terrain/gl/vertex_format/sodium_vertex_format.glsl"
+// NV-bindless: region-input (SSBO 0) is a device pointer in the scene UBO (binding 7), read as u_regionInput.
+#include "meshlet:terrain/gl/scene_ubo.glsl"
+
+// Bindless geometry (item 2, flattened): the per-region arena base address into Sodium's live CompactChunkVertex
+// arena (made resident host-side via NV_shader_buffer_load) is resolved ONCE by the task -- it reads the binding-12
+// pointer table and forwards this region's address through the payload (geoBase), so the mesh no longer loads
+// binding 12 per workgroup. main() casts geoBase back to a `Vertex*`; a single `base[i]` deref is ONE struct load
+// (matching Nvidium's `Vertex*` terrainData). NV_gpu_shader5 (already required) provides the pointer types + deref.
+
+// Region input (scene UBO, binding 7, u_regionInput): the mesh reads u_regionInput[payload.slot] to reconstruct this
+// region's chunk origin (scene.glsl unpackRegionChunkOrigin) -- replaces the per-region origin UBO (a single multidraw
+// can't rebind it). The task hands `slot` down via the payload (the mesh can't recover it).
+
+taskNV in TerrainTask { TERRAIN_TASK_PAYLOAD_FIELDS } payload;
+
+// Interface to terrain/gl/frag.frag. Two consecutive vec2 per-vertex outputs (uv, lightUv) pack/alias ambiguously
+// across the NV mesh->frag boundary (scrambles the interpolated UVs while gl_Position stays intact); Nvidium's
+// terrain interpolants deliberately avoid that. Pack both UVs into one vec4 (xy = atlas, zw = lightmap) and start at
+// location 1 (Nvidium terrain/mesh.glsl convention) so the custom block can't alias the builtin per-vertex slot.
+// The per-face/per-section CONSTANTS (alpha-cutoff id, chunk-load fade, the barycentric winding bit) ride
+// gl_PrimitiveID -- a per-PRIMITIVE channel the fragment reads with NO extension (perprimitiveNV would need
+// GL_NV_mesh_shader in the fragment profile, which driver 610.62 rejects). Layout: bit0 = winding,
+// bits 2-3 = cutoffId, bits 4-15 = fade quantized to 12 bits (1/4095 steps -- imperceptible for the fade).
+#ifdef MESHLET_BARYCENTRIC
+// Barycentric distant path (Gap C): the fragment re-fetches the 3 vertices itself, so the mesh emits only a flat
+// arena ref (identical for all 4 corners -> any provoking vertex yields it) + the small fog distances -- no
+// per-vertex atlas/light/colour interpolants. Cuts mesh-output (ISBE) bandwidth where distant terrain is
+// mesh-output bound.
+layout(location = 1) out PerVertex {
+    flat uvec2 quadRef;  // x = visible-region slot, y = quadVertexBase (arena vertex index of corner 0)
+    vec2 fog;            // x = spherical dist, y = cylindrical dist
+} v_out[];
+#else
+layout(location = 1) out PerVertex {
+    vec4 uvLight;   // xy = atlas uv, zw = lightmap uv (sampled per-fragment)
+    vec3 colour;    // vertex tint (AO baked)
+    vec2 fog;       // x = spherical dist, y = cylindrical dist
+} v_out[];
+#endif
+
+Vertex fetchVertex(restrict Vertex *base, uint vertexIndex) {
+    return base[vertexIndex]; // one struct load; the arena's stride-20 layout IS sizeof(Vertex), so no 5x scalar fetch
+}
+
+void emitTriangle(uint primId, uint v0, uint v1, uint v2) {
+    gl_PrimitiveIndicesNV[primId * 3u + 0u] = v0;
+    gl_PrimitiveIndicesNV[primId * 3u + 1u] = v1;
+    gl_PrimitiveIndicesNV[primId * 3u + 2u] = v2;
+}
+
+// 16 quads per mesh workgroup -> 64 verts / 32 prims (the NV opaque meshlet size).
+const uint QUADS_PER_MESH_WG = 16u;
+
+void main() {
+    uint quadCount = payload.quadCount;
+    uint baseVertex = payload.baseVertex;
+    uint sectionId = payload.sectionId;
+    uint slot = payload.slot;
+
+    // Section world origin in blocks, camera-relative -- matches terrain_solid.vsh + the region_test cull, which apply
+    // viewProjection * (worldBlocks - cameraWorld). writeHiZUniforms stores cameraPos = camPos - floor(camPos) (the
+    // POSITIVE sub-block fraction) and cameraBlockPos = floor(camPos), so the camera-relative offset SUBTRACTS both.
+    // Adding the fraction instead double-counts it -> a per-block sawtooth that resets at every integer block boundary.
+    // Region origin comes from u_regionInput[slot] (scene UBO pointer) -- no per-region UBO 10 rebind under one multidraw.
+    ivec3 chunkOrigin = sectionChunkOrigin(u_regionInput[slot], sectionId);
+    vec3 sectionOriginBlocks = vec3(chunkOrigin) * 16.0 - vec3(cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
+
+    // This mesh workgroup owns a 16-quad slice of the section; the task spawned
+    // ceil(quadCount*2/32) = ceil(quadCount/16) child workgroups.
+    uint wgQuadBase = gl_WorkGroupID.x * QUADS_PER_MESH_WG;
+    uint localPair = gl_LocalInvocationIndex >> 1u;    // 0..15: quad within this workgroup
+    uint gii = wgQuadBase + localPair;                 // absolute quad index within the section
+    bool tri1 = (gl_LocalInvocationIndex & 1u) == 1u;  // false = tri (0,1,2), true = tri (0,2,3)
+
+    // gl_PrimitiveCountNV is set AFTER compaction (by the elected lane). Screen pixel size (host writes it into the
+    // HiZ UBO .w pads) drives the per-quad sub-pixel cull.
+    vec2 screenSize = vec2(cameraPosAndPad.w, float(cameraBlockPosAndPad.w));
+    uint outVertexBase = localPair * 4u;
+
+    // No early return: every lane must reach the subgroup ops below (they require uniform control flow). The two lanes
+    // of a pair share gii, so they are in-range together; out-of-range lanes carry an empty bbox + draw = false.
+    bool inRange = gii < quadCount;
+
+    // Cooperative 2-lane fetch (Gap A): the even lane fetches + emits the quad's verts 0,1; the odd lane verts 2,3.
+    // Both lanes now issue bindless arena loads (vs the even lane doing all 4 while the odd idled), so twice as many
+    // latency-bound loads are in flight per warp -- directly attacking the dominant Long-Scoreboard stall. Each lane
+    // accumulates the screen bbox of ITS two verts; the butterfly shuffle below unions the pair into the full quad
+    // bbox. Writes are disjoint (even -> slots 0,1; odd -> slots 2,3) and the vert data is only read post-shader by
+    // fixed-function assembly, so no cross-lane hazard / barrier is needed (same as the prior shared-emit path).
+    vec2 sminLocal = vec2(1e30);
+    vec2 smaxLocal = vec2(-1e30);
+    bool behindLocal = false;
+    // Per-primitive constants carried to the compaction block (draw implies inRange sets them).
+    uint cutoffId = 0u;
+    if (inRange) {
+        // Per-facing arena re-base: map the sequential visible quad gii to its facing's contiguous arena sub-range
+        // (Sodium partitions a section's arena per facing; masked-out facings have zero visible width).
+        uint facing = 0u;
+        for (uint i = 0u; i < FACING_COUNT; i++) {
+            if (payload.facingVisibleQuadStart[i] <= gii
+                    && (i + 1u == FACING_COUNT || payload.facingVisibleQuadStart[i + 1u] > gii)) {
+                facing = i;
+            }
+        }
+        uint quadInArena = payload.facingArenaQuadStart[facing] + (gii - payload.facingVisibleQuadStart[facing]);
+        uint quadVertexBase = baseVertex + quadInArena * 4u;
+        // Arena base pointer resolved + forwarded by the task (flatten of the per-workgroup binding-12 load).
+        restrict Vertex *geoBase = payload.geoBase;
+
+        // The 2 quad corners this lane owns: even (tri0) -> 0,1 ; odd (tri1) -> 2,3. A ternary select (not a local
+        // array) keeps k in a register even if the loop were left rolled -- avoiding a local-memory spill.
+        uint c0 = tri1 ? 2u : 0u;
+        uint c1 = tri1 ? 3u : 1u;
+        for (uint j = 0u; j < 2u; j++) {
+            uint k = (j == 0u) ? c0 : c1;
+            Vertex vert = fetchVertex(geoBase, quadVertexBase + k);
+            vec3 worldPos = decodeVertexPosition(vert) + sectionOriginBlocks;
+            vec4 clip = viewProjection * vec4(worldPos, 1.0);
+            uint outIdx = outVertexBase + k;
+            gl_MeshVerticesNV[outIdx].gl_Position = clip;
+#ifdef MESHLET_BARYCENTRIC
+            // Emit NO atlas/light/colour interpolants -- the fragment re-fetches this quad's vertices via the arena
+            // ref + gl_BaryCoordNV. The ref is the same for all 4 corners (whole quad), so flat provoking is exact.
+            // Fog distances stay per-vertex (small) to avoid a fragment-side MVP-inverse position reconstruction.
+            v_out[outIdx].quadRef = uvec2(slot, quadVertexBase);
+            v_out[outIdx].fog = vec2(length(worldPos), max(length(worldPos.xz), abs(worldPos.y)));
+#else
+            v_out[outIdx].uvLight = vec4(decodeVertexUV(vert), decodeLightUV(vert));
+            v_out[outIdx].colour = decodeVertexColour(vert).rgb;
+            cutoffId = decodeAlphaCutoffId(vert); // per-face -> both lanes decode the same value
+            // worldPos is camera-relative (== terrain_solid.vsh's `pos`): fog distances are pure geometry.
+            v_out[outIdx].fog = vec2(length(worldPos), max(length(worldPos.xz), abs(worldPos.y)));
+#endif
+            if (clip.w <= 0.0) {
+                behindLocal = true; // near-plane straddle -> projection unreliable, never cull
+            } else {
+                vec2 sp = (clip.xy / clip.w * 0.5 + 0.5) * screenSize;
+                sminLocal = min(sminLocal, sp);
+                smaxLocal = max(smaxLocal, sp);
+            }
+        }
+    }
+
+    // Union the pair's two partial screen bboxes via a butterfly (xor-lane-1) shuffle -> both lanes hold the full quad
+    // bbox and compute the SAME verdict (no separate broadcast). All lanes call the shuffles uniformly. CONSERVATIVE
+    // sub-pixel cull: drop the quad only if its whole bbox fits inside one pixel in BOTH axes (round(min)==round(max))
+    // -- helps low-end primitive throughput where sub-pixel quads pile up; a no-op on fast GPUs.
+    vec2 smin = min(sminLocal, subgroupShuffleXor(sminLocal, 1u));
+    vec2 smax = max(smaxLocal, subgroupShuffleXor(smaxLocal, 1u));
+    bool behind = behindLocal || subgroupShuffleXor(behindLocal ? 1.0 : 0.0, 1u) != 0.0;
+    const float bias = 0.01;
+    bool quadCull = !behind && screenSize.x > 0.0
+            && all(equal(round(smin - bias), round(smax + bias)));
+    bool draw = inRange && !quadCull;
+
+    // Warp-ballot compaction (the warp-op win): one subgroup ballot + population counts pack the surviving triangles
+    // into a contiguous 0..total-1 range -- fewer instructions than an arithmetic prefix-sum scan, identical result.
+    uvec4 drawBallot = subgroupBallot(draw);
+    uint compactId = subgroupBallotExclusiveBitCount(drawBallot); // surviving triangles before this lane
+    if (subgroupElect()) {
+        gl_PrimitiveCountNV = subgroupBallotBitCount(drawBallot);
+    }
+
+    // Emit the surviving triangle at its compacted slot. tri0 = (0,1,2), tri1 = (0,2,3) over the quad's output verts.
+    if (draw) {
+        // Per-primitive constants packed into gl_PrimitiveID (see the interface comment): winding bit0 (the
+        // barycentric fragment picks the 3 corners gl_BaryCoordNV weights against -- compaction scrambles the
+        // implicit id), cutoffId bits 2-3, quantized fade bits 4-15.
+        uint fadeBits = uint(round(clamp(payload.chunkVisibility, 0.0, 1.0) * 4095.0));
+        gl_MeshPrimitivesNV[compactId].gl_PrimitiveID =
+                int((tri1 ? 1u : 0u) | (cutoffId << 2u) | (fadeBits << 4u));
+        if (!tri1) {
+            emitTriangle(compactId, outVertexBase + 0u, outVertexBase + 1u, outVertexBase + 2u);
+        } else {
+            emitTriangle(compactId, outVertexBase + 0u, outVertexBase + 2u, outVertexBase + 3u);
+        }
+    }
+}
