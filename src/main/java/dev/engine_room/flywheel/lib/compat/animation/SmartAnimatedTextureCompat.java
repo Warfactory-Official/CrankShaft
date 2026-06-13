@@ -11,6 +11,7 @@ import net.minecraftforge.fml.common.gameevent.TickEvent;
 import net.optifine.SmartAnimations;
 import org.taumc.celeritas.impl.extensions.SpriteExtension;
 import zone.rong.loliasm.client.sprite.ondemand.IAnimatedSpriteActivator;
+import zone.rong.loliasm.config.LoliConfig;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -72,7 +73,13 @@ public final class SmartAnimatedTextureCompat {
     private static Marker pick() {
         Marker[] markers = new Marker[3];
         int n = 0;
-        if (Loader.isModLoaded("loliasm")) {
+        // LoliASM makes TextureAtlasSprite implement IAnimatedSpriteActivator only when its onDemandAnimatedTextures
+        // mixin applies, and it auto-disables that mixin under OptiFine or Celeritas (which supply their own
+        // smart-animation path). Mirror that gate exactly — a bare isModLoaded check CCEs when the feature is off.
+        if (Loader.isModLoaded("loliasm")
+                && LoliConfig.instance.onDemandAnimatedTextures
+                && !FMLClientHandler.instance().hasOptifine()
+                && !Loader.isModLoaded("celeritas")) {
             markers[n++] = sprite -> ((IAnimatedSpriteActivator) sprite).setActive(true);
         }
         if (Loader.isModLoaded("celeritas")) {
