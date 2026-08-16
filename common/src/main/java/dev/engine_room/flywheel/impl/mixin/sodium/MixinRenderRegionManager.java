@@ -96,7 +96,7 @@ public class MixinRenderRegionManager {
         }
     }
 
-    @Inject(method = "update()V",
+    @Inject(method = "update(Lnet/caffeinemc/mods/sodium/client/render/chunk/UniformBufferManager;)V",
             at = @At(value = "INVOKE",
                     target = "Lnet/caffeinemc/mods/sodium/client/render/chunk/IntPool;release(I)V"),
             require = 1)
