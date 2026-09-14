@@ -17,12 +17,4 @@ public interface BackendConfig {
      * {@link TerrainMode#compositesTranslucent()} for the per-layer predicates.
      */
     TerrainMode terrainMode();
-
-    /**
-     * Whether the mesh-shader terrain tiers ({@code gl_mesh_shader} / {@code vk_mesh_shader}) copy Sodium's live
-     * geometry arena into a mod-owned device-local buffer (true) instead of aliasing it in place (false, the
-     * zero-repack default). Read when a mesh {@code MeshEngine} is constructed; a runtime change applies on the
-     * next renderer reload (driven by {@code /flywheel ownGeometry}).
-     */
-    boolean ownGeometry();
 }

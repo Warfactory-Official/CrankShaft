@@ -39,5 +39,5 @@ side = "CLIENT"
 [[dependencies.flywheel]]
 modId = "sodium"
 type = "optional"
-versionRange = "[0.9.1+mc26.2,0.10.0)"
+versionRange = "[0.9.2+mc26.2,0.10.0)"
 side = "CLIENT"

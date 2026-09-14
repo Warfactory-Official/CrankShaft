@@ -1,9 +1,11 @@
 package dev.engine_room.flywheel.impl.mixin.sodium;
 
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainSectionListener;
+import dev.engine_room.flywheel.impl.sodium.SodiumRegionFeed;
 import net.caffeinemc.mods.sodium.client.render.chunk.RenderSection;
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -18,5 +20,51 @@ public class MixinRenderRegion {
             return;
         }
         listener.onSectionRemoved(((RenderRegion) (Object) this).getId(), section.getSectionIndex());
+    }
+
+    // Compat with Sodium 0.9.2: shared arenas relocate a region's segments (defragmentation) and move it between
+    // buffers outside its own uploads; the mirrored section records carry the stale offsets until re-fed.
+    @Inject(method = "onGeometryBufferChange()V", at = @At("TAIL"), require = 1)
+    private void flywheel$onGeometryBufferChange(CallbackInfo ci) {
+        flywheel$refeedRegion();
+    }
+
+    @Inject(method = "onIndexBufferChange()V", at = @At("TAIL"), require = 1)
+    private void flywheel$onIndexBufferChange(CallbackInfo ci) {
+        flywheel$refeedRegion();
+    }
+
+    @Inject(method = "onGeometrySegmentChange(I)V", at = @At("TAIL"), require = 1)
+    private void flywheel$onGeometrySegmentChange(int ownerIndex, CallbackInfo ci) {
+        flywheel$refeedSection(RenderRegion.unpackSectionIndex(ownerIndex));
+    }
+
+    @Inject(method = "onIndexSegmentChange(I)V", at = @At("TAIL"), require = 1)
+    private void flywheel$onIndexSegmentChange(int ownerIndex, CallbackInfo ci) {
+        if (ownerIndex == RenderRegion.SHARED_INDEX_DATA_INDEX) {
+            flywheel$refeedRegion();
+        } else {
+            flywheel$refeedSection(RenderRegion.unpackSectionIndex(ownerIndex));
+        }
+    }
+
+    @Unique
+    private void flywheel$refeedRegion() {
+        TerrainSectionListener listener = TerrainSectionListener.published();
+        RenderRegion self = (RenderRegion) (Object) this;
+        if (listener == null || self.getId() == -1) {
+            return;
+        }
+        SodiumRegionFeed.feedRegion(listener, self, SodiumRegionFeed.geometryHandle(self));
+    }
+
+    @Unique
+    private void flywheel$refeedSection(int s) {
+        TerrainSectionListener listener = TerrainSectionListener.published();
+        RenderRegion self = (RenderRegion) (Object) this;
+        if (listener == null || self.getId() == -1) {
+            return;
+        }
+        SodiumRegionFeed.feedSection(listener, self, s, SodiumRegionFeed.geometryHandle(self));
     }
 }

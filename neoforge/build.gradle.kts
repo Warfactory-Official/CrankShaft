@@ -1,11 +1,14 @@
 plugins {
     id("multiloader-platform")
 
-    id("net.neoforged.moddev") version ("2.0.141")
+    id("net.neoforged.moddev") version ("2.0.147")
     `maven-publish`
 }
 
-val sourcesJar by tasks.registering(Jar::class) {
+val quickPlay: String? = providers.gradleProperty("quickPlay").orNull
+val vulkan = providers.gradleProperty("vulkan").isPresent
+
+val sourcesJar = tasks.register<Jar>("sourcesJar") {
     archiveClassifier = "sources"
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     for (set in listOf("main", "api", "lib", "backend")) {
@@ -18,10 +21,10 @@ publishing {
     publications {
         create<MavenPublication>("mavenJar") {
             groupId = "dev.engine_room"
-            artifactId = "crankshaft"
+            artifactId = "crankshaft-neoforge"
             version = project.version.toString()
-            artifact(tasks.named("jar")) { classifier = "neoforge" }
-            artifact(sourcesJar) { classifier = "neoforge-sources" }
+            artifact(tasks.named("jar"))
+            artifact(sourcesJar)
         }
     }
 }
@@ -95,10 +98,8 @@ neoForge {
         create("client") {
             client()
             ideName = "NeoForge/Client"
-            if (project.hasProperty("quickPlay")) {
-                programArguments.addAll("--quickPlaySingleplayer", project.property("quickPlay").toString())
-            }
-            if (project.hasProperty("vulkan")) {
+            quickPlay?.let { programArguments.addAll("--quickPlaySingleplayer", it) }
+            if (vulkan) {
                 programArguments.addAll("--graphicsBackend", "vulkan")
             }
         }

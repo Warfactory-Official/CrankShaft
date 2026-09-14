@@ -6,13 +6,11 @@ import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.backend.RenderContext;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.task.Plan;
+import dev.engine_room.flywheel.api.visual.BlockEntityVisual;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visual.Effect;
 import dev.engine_room.flywheel.api.visual.TickableVisual;
-import dev.engine_room.flywheel.api.visualization.FramePlanContributor;
-import dev.engine_room.flywheel.api.visualization.VisualManager;
-import dev.engine_room.flywheel.api.visualization.VisualizationLevel;
-import dev.engine_room.flywheel.api.visualization.VisualizationManager;
+import dev.engine_room.flywheel.api.visualization.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.TerrainMode;
 import dev.engine_room.flywheel.backend.engine.*;
@@ -34,8 +32,9 @@ import dev.engine_room.flywheel.lib.task.MapContextPlan;
 import dev.engine_room.flywheel.lib.task.NestedPlan;
 import dev.engine_room.flywheel.lib.task.SimplePlan;
 import dev.engine_room.flywheel.lib.util.LevelAttached;
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.objects.Reference2ObjectArrayMap;
 import net.caffeinemc.mods.sodium.client.render.SodiumWorldRenderer;
 import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionManager;
@@ -445,14 +444,16 @@ public class VisualizationManagerImpl implements VisualizationManager {
     }
 
     private void renderCrumbling(RenderContext context,
-                                 Long2ObjectMap<SortedSet<BlockDestructionProgress>> destructionProgress) {
+                                 Long2ObjectOpenHashMap<SortedSet<BlockDestructionProgress>> destructionProgress) {
         if (destructionProgress.isEmpty()) {
             return;
         }
 
-        List<Engine.CrumblingBlock> crumblingBlocks = new ArrayList<>();
-
-        for (var entry : destructionProgress.long2ObjectEntrySet()) {
+        // Port: CrumblingOwners can route several destroyed positions to one visual; it cracks once, at the max.
+        Reference2ObjectArrayMap<BlockEntityVisual<?>, BlockDestructionProgress> byVisual = new Reference2ObjectArrayMap<>();
+        var it = destructionProgress.long2ObjectEntrySet().fastIterator();
+        while (it.hasNext()) {
+            var entry = it.next();
             var set = entry.getValue();
             if (set == null || set.isEmpty()) {
                 // Nothing to do if there's no crumbling.
@@ -462,13 +463,32 @@ public class VisualizationManagerImpl implements VisualizationManager {
             var visual = blockEntities.getStorage().visualAtPos(entry.getLongKey());
 
             if (visual == null) {
+                BlockPos owner = CrumblingOwners.ownerOf(level, BlockPos.of(entry.getLongKey()));
+                if (owner != null) {
+                    visual = blockEntities.getStorage().visualAtPos(owner.asLong());
+                }
+            }
+
+            if (visual == null) {
                 // The block doesn't have a visual, this is probably the common case.
                 continue;
             }
 
+            var maxDestruction = set.last();
+            var prior = byVisual.get(visual);
+            if (prior == null || prior.getProgress() < maxDestruction.getProgress()) {
+                byVisual.put(visual, maxDestruction);
+            }
+        }
+
+        List<Engine.CrumblingBlock> crumblingBlocks = new ArrayList<>();
+
+        var iterator = byVisual.reference2ObjectEntrySet().fastIterator();
+        while (iterator.hasNext()) {
+            var entry = iterator.next();
             List<Instance> instances = new ArrayList<>();
 
-            visual.collectCrumblingInstances(instance -> {
+            entry.getKey().collectCrumblingInstances(instance -> {
                 if (instance != null) {
                     instances.add(instance);
                 }
@@ -479,7 +499,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
                 continue;
             }
 
-            var maxDestruction = set.last();
+            var maxDestruction = entry.getValue();
 
             crumblingBlocks.add(
                     new CrumblingBlockImpl(maxDestruction.getPos(), maxDestruction.getProgress(), instances));
@@ -644,7 +664,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
 
         @Override
         public void beforeCrumbling(RenderContext ctx,
-                                    Long2ObjectMap<SortedSet<BlockDestructionProgress>> destructionProgress) {
+                                    Long2ObjectOpenHashMap<SortedSet<BlockDestructionProgress>> destructionProgress) {
             renderCrumbling(ctx, destructionProgress);
         }
     }

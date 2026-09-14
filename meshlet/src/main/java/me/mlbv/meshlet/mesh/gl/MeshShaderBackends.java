@@ -4,7 +4,6 @@ package me.mlbv.meshlet.mesh.gl;
 
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.api.backend.Backend;
-import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
 import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
@@ -18,7 +17,6 @@ import dev.engine_room.flywheel.lib.backend.SimpleBackend;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.LevelAccessor;
-import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryUtil;
 
@@ -79,13 +77,9 @@ public final class MeshShaderBackends {
         private final GlMeshPipelines pipelines = new GlMeshPipelines();
         private final GlPrimaryTerrainRasterizer rasterizer = new GlPrimaryTerrainRasterizer(pipelines);
         private final GlTranslucentTerrainRasterizer translucentRasterizer = new GlTranslucentTerrainRasterizer(pipelines);
-        @Nullable
-        private final GlMeshGeometryArena arena = BackendConfig.INSTANCE.ownGeometry() ? new GlMeshGeometryArena(pipelines) : null;
 
         MeshEngine(LevelAccessor level) {
             super(level, new MeshVisualDrawManager(IndirectPrograms.get()), Backends.MAX_ORIGIN_DISTANCE);
-            rasterizer.setArena(arena);
-            translucentRasterizer.setArena(arena);
             TerrainDrawDispatcher.setMeshDrawStrategy(rasterizer::draw);
             TerrainDrawDispatcher.setTranslucentMeshDrawStrategy(translucentRasterizer);
         }
@@ -96,9 +90,6 @@ public final class MeshShaderBackends {
             TerrainDrawDispatcher.setTranslucentMeshDrawStrategy(null);
             rasterizer.destroy();
             translucentRasterizer.destroy();
-            if (arena != null) {
-                arena.destroy();
-            }
             pipelines.destroy();
             super.delete();
         }

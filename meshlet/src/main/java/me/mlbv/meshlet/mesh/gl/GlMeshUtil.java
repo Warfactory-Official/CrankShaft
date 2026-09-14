@@ -9,7 +9,6 @@ import com.mojang.blaze3d.opengl.GlBuffer;
 import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
-import dev.engine_room.flywheel.backend.gl.GlStateTracker;
 import dev.engine_room.flywheel.backend.gl.GlTextureLevelState;
 import org.lwjgl.opengl.GL13C;
 import org.lwjgl.opengl.GL15C;
@@ -58,43 +57,5 @@ final class GlMeshUtil {
         }
         residentAddresses.finishFill();
         ptrs.flush(regionCount);
-    }
-
-    static void uploadOwnedGeometryPointers(int[] regionIds, GpuBuffer[] geometryBuffers, int regionCount,
-            GlGeometryPtrBuffer ptrs, GlResidentAddressCache residentAddresses, GlMeshGeometryArena arena) {
-        ByteBuffer scratch = ptrs.ensureCapacity(regionCount);
-        for (int slot = 0; slot < regionCount; slot++) {
-            long addr = arena.address(regionIds[slot]);
-            if (addr == 0L) {
-                addr = residentAddresses.address(geometryBuffers[slot]);
-            }
-            scratch.putLong(slot * Long.BYTES, addr);
-        }
-        residentAddresses.finishFill();
-        ptrs.flush(regionCount);
-    }
-
-    static void gatherOwnedGeometry(int[] regionIds, GpuBuffer[] geometryBuffers, int regionCount, int gatherProg,
-            GlMeshGeometryArena arena) {
-        if (gatherProg == 0) {
-            return;
-        }
-        boolean bound = false;
-        for (int slot = 0; slot < regionCount; slot++) {
-            GpuBuffer geo = geometryBuffers[slot];
-            int handle = gpuBufferHandle(geo);
-            if (handle <= 0) {
-                continue;
-            }
-            int regionId = regionIds[slot];
-            long usedBytes = arena.usedBytes(regionId, geo.size());
-            if (arena.needsGather(regionId, usedBytes)) {
-                if (!bound) {
-                    GlStateTracker.useProgram(gatherProg);
-                    bound = true;
-                }
-                arena.recordGather(regionId, handle, usedBytes);
-            }
-        }
     }
 }

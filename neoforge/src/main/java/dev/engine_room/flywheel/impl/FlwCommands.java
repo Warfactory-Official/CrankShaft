@@ -157,22 +157,6 @@ public final class FlwCommands {
                             return Command.SINGLE_SUCCESS;
                         })));
 
-        command.then(Commands.literal("ownGeometry")
-                .then(Commands.literal("on")
-                        .executes(context -> {
-                            NeoForgeFlwConfig.INSTANCE.setOwnGeometry(true);
-                            reloadRenderers();
-                            sendMessage(context.getSource(), Component.literal("ownGeometry: on -- mesh tiers copy Sodium's arena into owned buffers (renderers reloaded)"));
-                            return Command.SINGLE_SUCCESS;
-                        }))
-                .then(Commands.literal("off")
-                        .executes(context -> {
-                            NeoForgeFlwConfig.INSTANCE.setOwnGeometry(false);
-                            reloadRenderers();
-                            sendMessage(context.getSource(), Component.literal("ownGeometry: off -- mesh tiers alias Sodium's live arena (renderers reloaded)"));
-                            return Command.SINGLE_SUCCESS;
-                        })));
-
         command.then(createOitCommand());
 
         command.then(createStressCommand());

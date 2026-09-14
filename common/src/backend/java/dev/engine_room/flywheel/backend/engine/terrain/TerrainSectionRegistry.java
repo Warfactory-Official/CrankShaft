@@ -62,12 +62,8 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
     private boolean[] live = new boolean[0];
     private int[] geometryHandle = new int[0];
     private int[][] regionMaxIndexCount = {new int[0], new int[0]};
-    private int[] regionMaxVertexExtent = new int[0];
     @Nullable
     private IntConsumer regionFreedListener;
-
-    @Nullable
-    private OwnedGeometryListener ownedGeometryListener;
 
     public TerrainSectionRegistry(TerrainResidentBuffers buffers) {
         this.buffers = buffers;
@@ -98,11 +94,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         return (int) ((sumVertexCount >> 2) * 6L);
     }
 
-    private static int sectionVertexExtent(long pMeshData) {
-        long sumVertexCount = TerrainSectionMath.sumVertexCount(pMeshData);
-        return (int) (SectionRenderDataUnsafe.getBaseVertex(pMeshData) + sumVertexCount);
-    }
-
     // ============================================================================================
     //  Hook 1 -- RenderRegionManager.uploadResults(region, results, uniforms) @RETURN
 
@@ -126,10 +117,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         this.regionFreedListener = listener;
     }
 
-    public void setOwnedGeometryListener(@Nullable OwnedGeometryListener listener) {
-        this.ownedGeometryListener = listener;
-    }
-
     public void onSectionMeshed(int regionId, int originX, int originY, int originZ, int localIndex,
                                 long dataPtrSolid, long dataPtrCutout, long dataPtrTranslucent, int geometryHandle) {
         ensureRegionCapacity(regionId + 1);
@@ -150,26 +137,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         this.originChunkZ[regionId] = originZ;
         this.geometryHandle[regionId] = geometryHandle;
         this.live[regionId] = true;
-
-        int extent = 0;
-        if (dataPtrSolid != 0L) {
-            extent = Math.max(extent, sectionVertexExtent(dataPtrSolid));
-        }
-        if (dataPtrCutout != 0L) {
-            extent = Math.max(extent, sectionVertexExtent(dataPtrCutout));
-        }
-        if (dataPtrTranslucent != 0L) {
-            extent = Math.max(extent, sectionVertexExtent(dataPtrTranslucent));
-        }
-        if (extent > regionMaxVertexExtent[regionId]) {
-            regionMaxVertexExtent[regionId] = extent;
-        }
-
-        // Notify the owned-geometry tier that this region's arena content changed (a section re-meshed), so it
-        // re-gathers Sodium's live arena into its owned copy; in-place updates keep the same GL/VK handle.
-        if (ownedGeometryListener != null) {
-            ownedGeometryListener.onRegionDirty(regionId);
-        }
     }
 
     // ============================================================================================
@@ -261,11 +228,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         if (regionFreedListener != null) {
             regionFreedListener.accept(regionId);
         }
-        // Drop the owned-geometry copy for the recycled id (unconditional for any valid id, like the fade prune: a
-        // region can own geometry without ever populating the opaque table, so this must precede the cap gate).
-        if (ownedGeometryListener != null) {
-            ownedGeometryListener.onRegionFreed(regionId);
-        }
         if (regionId >= regionTableCap) {
             return;
         }
@@ -279,7 +241,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
             clearPresentMaskRegion(pass, regionId);
             regionMaxIndexCount[pass][regionId] = 0;
         }
-        regionMaxVertexExtent[regionId] = 0;
         clearTranslucentPresentMaskRegion(regionId);
         translucentRegionMaxIndexCount[regionId] = 0;
         translucentRegionIndexCountSum[regionId] = 0;
@@ -304,10 +265,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
 
     public int maxIndexCount(int pass, int regionId) {
         return regionMaxIndexCount[pass][regionId];
-    }
-
-    public int regionMaxVertexExtent(int regionId) {
-        return regionId >= 0 && regionId < regionTableCap ? regionMaxVertexExtent[regionId] : 0;
     }
 
     public int sectionVisHandle(int pass) {
@@ -713,7 +670,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         translucentRegionMaxIndexCount = Arrays.copyOf(translucentRegionMaxIndexCount, newCap);
         translucentRegionIndexCountSum = Arrays.copyOf(translucentRegionIndexCountSum, newCap);
         translucentSectionIndexCount = Arrays.copyOf(translucentSectionIndexCount, newCap * REGION_SIZE);
-        regionMaxVertexExtent = Arrays.copyOf(regionMaxVertexExtent, newCap);
         regionTableCap = newCap;
     }
 

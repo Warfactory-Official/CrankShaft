@@ -27,7 +27,6 @@ import dev.engine_room.flywheel.backend.gl.GlStateTracker;
 import dev.engine_room.flywheel.backend.gl.buffer.GlBufferType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
-import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL12C;
 import org.lwjgl.opengl.GL14C;
@@ -52,7 +51,7 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
     private static final int BINDING_FOG = 9;
     private static final int BINDING_COMPACT_SECTIONS = 7;
     private static final int BINDING_GEOMETRY_POINTERS = 12;
-    // NV_shader_buffer_store: makes the owned-geometry gather's SSBO writes visible to the mesh stage's bindless reads.
+    // NV_shader_buffer_store: makes compute writes through bindless pointers visible to later stages' reads.
     private static final int GL_SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV = 0x00000010;
     private static final int BINDING_COMPACT_GEOM = 13;
     private static final int BINDING_LIVE_MASK = 14;
@@ -100,15 +99,8 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
     private int oitReadSamplerObj = 0;
     private int noiseSamplerObj = 0;
 
-    @Nullable
-    private GlMeshGeometryArena arena;
-
     public GlTranslucentTerrainRasterizer(GlMeshPipelines pipelines) {
         this.pipelines = pipelines;
-    }
-
-    public void setArena(@Nullable GlMeshGeometryArena arena) {
-        this.arena = arena;
     }
 
     @Override
@@ -122,12 +114,6 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         }
 
         ensureCompactSectionsCapacity(regionCount);
-        if (arena != null) {
-            arena.attach(d.registry);
-            arena.tick();
-            GlMeshUtil.gatherOwnedGeometry(d.translucentRegionBatch.regionIds, d.translucentRegionBatch.geometryBuffers,
-                    regionCount, pipelines.gatherProgram(), arena);
-        }
         gatheredThisFrame = false;
 
         uploadAndBindSceneUbo(d, regionCount);
@@ -210,13 +196,8 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         if (gatheredThisFrame) {
             return;
         }
-        if (arena != null) {
-            GlMeshUtil.uploadOwnedGeometryPointers(d.translucentRegionBatch.regionIds,
-                    d.translucentRegionBatch.geometryBuffers, regionCount, geometryPtrs, residentAddresses, arena);
-        } else {
-            GlMeshUtil.uploadGeometryPointers(d.translucentRegionBatch.geometryBuffers, regionCount, geometryPtrs,
-                    residentAddresses);
-        }
+        GlMeshUtil.uploadGeometryPointers(d.translucentRegionBatch.geometryBuffers, regionCount, geometryPtrs,
+                residentAddresses);
         geometryPtrs.bindBase(BINDING_GEOMETRY_POINTERS);
         uploadAndBindSceneUbo(d, regionCount);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, BINDING_COMPACT_SECTIONS, compactSectionsBuffer);

@@ -50,33 +50,6 @@ final class VkMeshUtil {
         }
     }
 
-    static void writeGeoAddrTableOwned(VkCommandBuffer cmd, long ptr, VisibleRegionBatch batch, int n,
-            Long2LongOpenHashMap cache, VkMeshGeometryArena arena, VkMeshPipelines pipelines) {
-        boolean gatherBound = false;
-        for (int slot = 0; slot < n; slot++) {
-            GpuBuffer geo = batch.geometryBuffers[slot];
-            int regionId = batch.regionIds[slot];
-            long ownedAddr = 0L;
-            if (geo != null && !geo.isClosed()) {
-                long vk = ((VulkanGpuBuffer) geo).vkBuffer();
-                long sodiumAddr = cache.get(vk);
-                if (sodiumAddr == 0L) {
-                    sodiumAddr = deviceAddress(vk);
-                    cache.put(vk, sodiumAddr);
-                }
-                long usedBytes = arena.usedBytes(regionId, geo.size());
-                if (arena.needsGather(regionId, usedBytes)) {
-                    if (!gatherBound) {
-                        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, pipelines.gatherPipeline().handle());
-                        gatherBound = true;
-                    }
-                    arena.recordGather(cmd, regionId, sodiumAddr, usedBytes);
-                }
-                ownedAddr = arena.address(regionId);
-            }
-            MemoryUtil.memPutLong(ptr + (long) slot * GEO_ENTRY_BYTES, ownedAddr);
-        }
-    }
 
     static void gatherInputBarrier(VkCommandBuffer cmd) {
         try (MemoryStack stack = MemoryStack.stackPush()) {

@@ -115,10 +115,6 @@ public final class FabricFlwConfig implements FlwConfig {
 		save();
 	}
 
-	public void setOwnGeometry(boolean value) {
-		backendConfig.ownGeometry = value;
-		save();
-	}
 
 	public void load() {
 		if (file.exists()) {
@@ -267,7 +263,6 @@ public final class FabricFlwConfig implements FlwConfig {
 
         public LightSmoothness lightSmoothness = LIGHT_SMOOTHNESS_DEFAULT;
 		public TerrainMode terrainMode = TERRAIN_MODE_DEFAULT;
-		public boolean ownGeometry = false;
 
 		@Override
 		public LightSmoothness lightSmoothness() {
@@ -279,27 +274,10 @@ public final class FabricFlwConfig implements FlwConfig {
 			return TerrainModeGate.effective(terrainMode);
 		}
 
-		@Override
-		public boolean ownGeometry() {
-			return ownGeometry;
-		}
-
 		public void fromJson(JsonObject object) {
 			readLightSmoothness(object);
 			terrainMode = readTerrainMode(object);
-			readOwnGeometry(object);
 			readOit(object);
-		}
-
-		private void readOwnGeometry(JsonObject object) {
-			var json = object.get("ownGeometry");
-			if (json instanceof JsonPrimitive primitive && primitive.isBoolean()) {
-				ownGeometry = primitive.getAsBoolean();
-				return;
-			} else if (json != null) {
-				FlwBackend.LOGGER.warn("'ownGeometry' value must be a boolean");
-			}
-			ownGeometry = false;
 		}
 
 		private static void readOit(JsonObject object) {
@@ -374,7 +352,6 @@ public final class FabricFlwConfig implements FlwConfig {
 			JsonObject object = new JsonObject();
 			object.addProperty("lightSmoothness", lightSmoothness.getSerializedName());
 			object.addProperty("terrain", terrainMode.token());
-			object.addProperty("ownGeometry", ownGeometry);
 
 			JsonObject oit = new JsonObject();
 			oit.addProperty("path", OitConfig.path().name().toLowerCase(java.util.Locale.ROOT));

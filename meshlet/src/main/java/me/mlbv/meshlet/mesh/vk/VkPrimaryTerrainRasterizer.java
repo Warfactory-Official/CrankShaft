@@ -27,7 +27,6 @@ import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 
-import org.jspecify.annotations.Nullable;
 import org.lwjgl.vulkan.EXTMeshShader;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkCommandBuffer;
@@ -53,16 +52,9 @@ public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrate
     private final Long2LongOpenHashMap geoAddrCache = new Long2LongOpenHashMap();
     private int cacheParity = -1;
 
-    @Nullable
-    private VkMeshGeometryArena arena;
-
     public VkPrimaryTerrainRasterizer(VkMeshPipelines pipelines) {
         this.pipelines = pipelines;
         geoAddrCache.defaultReturnValue(0L);
-    }
-
-    public void setArena(@Nullable VkMeshGeometryArena arena) {
-        this.arena = arena;
     }
 
     @Override
@@ -77,12 +69,7 @@ public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrate
 
         VkCommandBuffer cmd = VkContext.beginCommands();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/mesh/emit/" + (pass == 0 ? "solid" : "cutout"));
-        if (arena != null) {
-            arena.attach(manager.registry);
-            buildGeoAddrTableOwned(cmd, batch, pass, parity, n);
-        } else {
-            buildGeoAddrTable(batch, pass, parity, n);
-        }
+        buildGeoAddrTable(batch, pass, parity, n);
         VkComputePipeline emit = pipelines.emitPipeline();
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, emit.handle());
         writer.storage(0, manager.regionInputVk(pass), 0L, manager.regionInputBytes(pass));
@@ -146,15 +133,6 @@ public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrate
             cacheParity = parity;
         }
         VkMeshUtil.writeGeoAddrTable(geoAddrTable[pass][parity].mappedAddress(), batch, n, geoAddrCache);
-    }
-
-    private void buildGeoAddrTableOwned(VkCommandBuffer cmd, VisibleRegionBatch batch, int pass, int parity, int n) {
-        if (parity != cacheParity) {
-            geoAddrCache.clear();
-            cacheParity = parity;
-        }
-        VkMeshUtil.writeGeoAddrTableOwned(cmd, geoAddrTable[pass][parity].mappedAddress(), batch, n,
-                geoAddrCache, arena, pipelines);
     }
 
     private void ensureBuffers(int pass, int parity, int n) {

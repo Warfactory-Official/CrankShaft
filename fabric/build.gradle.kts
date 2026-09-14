@@ -1,11 +1,15 @@
 plugins {
     id("multiloader-platform")
 
-    id("net.fabricmc.fabric-loom") version ("1.17.12")
+    id("net.fabricmc.fabric-loom") version ("1.17.20")
     `maven-publish`
 }
 
-val sourcesJar by tasks.registering(Jar::class) {
+val quickPlay: String? = providers.gradleProperty("quickPlay").orNull
+val vulkan = providers.gradleProperty("vk").isPresent
+val vulkanValidation = providers.gradleProperty("vkvalidation").isPresent
+
+val sourcesJar = tasks.register<Jar>("sourcesJar") {
     archiveClassifier = "sources"
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     for (set in listOf("main", "api", "lib", "backend")) {
@@ -18,10 +22,10 @@ publishing {
     publications {
         create<MavenPublication>("mavenJar") {
             groupId = "dev.engine_room"
-            artifactId = "crankshaft"
+            artifactId = "crankshaft-fabric"
             version = project.version.toString()
-            artifact(tasks.named("jar")) { classifier = "fabric" }
-            artifact(sourcesJar) { classifier = "fabric-sources" }
+            artifact(tasks.named("jar"))
+            artifact(sourcesJar)
         }
     }
 }
@@ -121,17 +125,15 @@ loom {
     runs {
         named("client") {
             client()
-            configName = "Fabric/Client"
-            ideConfigGenerated(true)
-            runDir("run")
-            if (project.hasProperty("quickPlay")) {
-                programArgs("--quickPlaySingleplayer", project.property("quickPlay").toString())
+            displayName = "Fabric/Client"
+            generateRunConfig = true
+            runDirectory = file("run")
+            quickPlay?.let { programArguments.addAll("--quickPlaySingleplayer", it) }
+            if (vulkan) {
+                programArguments.addAll("--graphicsBackend", "vulkan")
             }
-            if (project.hasProperty("vk")) {
-                programArgs("--graphicsBackend", "vulkan")
-            }
-            if (project.hasProperty("vkvalidation")) {
-                programArgs("--vulkanValidation")
+            if (vulkanValidation) {
+                programArguments.add("--vulkanValidation")
             }
         }
     }

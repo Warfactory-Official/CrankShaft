@@ -2,7 +2,7 @@ plugins {
     id("multiloader-base")
     id("java-library")
 
-    id("net.fabricmc.fabric-loom") version ("1.17.12")
+    id("net.fabricmc.fabric-loom") version ("1.17.20")
 }
 
 base {
@@ -40,7 +40,7 @@ dependencies {
 
     compileOnly("net.caffeinemc:sodium-fabric:${sodiumVersion}")
 
-    compileOnly("org.jspecify:jspecify:1.0.0")
+    compileOnly("org.jspecify:jspecify:1.0.1")
 
     compileOnly("io.github.llamalad7:mixinextras-common:0.5.4")
     annotationProcessor("io.github.llamalad7:mixinextras-common:0.5.4")

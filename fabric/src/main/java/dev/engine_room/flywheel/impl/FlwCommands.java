@@ -165,22 +165,6 @@ public final class FlwCommands {
 							return Command.SINGLE_SUCCESS;
 						})));
 
-		command.then(ClientCommands.literal("ownGeometry")
-				.then(ClientCommands.literal("on")
-						.executes(context -> {
-							FabricFlwConfig.INSTANCE.setOwnGeometry(true);
-							reloadRenderers();
-							context.getSource().sendFeedback(Component.literal("ownGeometry: on -- mesh tiers copy Sodium's arena into owned buffers (renderers reloaded)"));
-							return Command.SINGLE_SUCCESS;
-						}))
-				.then(ClientCommands.literal("off")
-						.executes(context -> {
-							FabricFlwConfig.INSTANCE.setOwnGeometry(false);
-							reloadRenderers();
-							context.getSource().sendFeedback(Component.literal("ownGeometry: off -- mesh tiers alias Sodium's live arena (renderers reloaded)"));
-							return Command.SINGLE_SUCCESS;
-						})));
-
 		command.then(createOitCommand());
 
 		command.then(createStressCommand());

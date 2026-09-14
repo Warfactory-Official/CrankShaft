@@ -34,7 +34,6 @@ import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 
-import org.jspecify.annotations.Nullable;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -82,16 +81,9 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
     private int count;
     private int cacheMaxQuads;
 
-    @Nullable
-    private VkMeshGeometryArena arena;
-
     public VkTranslucentTerrainRasterizer(VkMeshPipelines pipelines) {
         this.pipelines = pipelines;
         geoAddrCache.defaultReturnValue(0L);
-    }
-
-    public void setArena(@Nullable VkMeshGeometryArena arena) {
-        this.arena = arena;
     }
 
     @Override
@@ -120,12 +112,7 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
 
         VkCommandBuffer cmd = VkContext.beginCommands();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/mesh/translucent_gather");
-        if (arena != null) {
-            arena.attach(manager.registry);
-            buildGeoAddrTableOwned(cmd, batch, phase, count);
-        } else {
-            buildGeoAddrTable(batch, phase, count);
-        }
+        buildGeoAddrTable(batch, phase, count);
 
         int groupCount = (cacheMaxQuads + 15) / 16;
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -271,11 +258,6 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
     private void buildGeoAddrTable(VisibleRegionBatch batch, int p, int n) {
         geoAddrCache.clear();
         VkMeshUtil.writeGeoAddrTable(geoAddrTable[p].mappedAddress(), batch, n, geoAddrCache);
-    }
-
-    private void buildGeoAddrTableOwned(VkCommandBuffer cmd, VisibleRegionBatch batch, int p, int n) {
-        geoAddrCache.clear();
-        VkMeshUtil.writeGeoAddrTableOwned(cmd, geoAddrTable[p].mappedAddress(), batch, n, geoAddrCache, arena, pipelines);
     }
 
     private void ensureBuffers(int p, int n) {

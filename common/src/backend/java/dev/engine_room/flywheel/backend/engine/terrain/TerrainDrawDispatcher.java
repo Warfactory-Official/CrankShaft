@@ -1699,7 +1699,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
     }
 
     public static final class TranslucentRegionBatch {
-        // Public for the owned-geometry mesh tier's per-region gather (mirrors VisibleRegionBatch.regionIds).
         public final int[] regionIds = new int[MAX_VISIBLE_REGIONS];
         public final GpuBuffer[] geometryBuffers = new GpuBuffer[MAX_VISIBLE_REGIONS];
         final int[] originChunkX = new int[MAX_VISIBLE_REGIONS];

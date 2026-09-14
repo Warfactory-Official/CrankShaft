@@ -20,7 +20,6 @@ import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
-import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.EXTTextureFilterAnisotropic;
 import dev.engine_room.flywheel.backend.gl.GlStateTracker;
 import org.lwjgl.opengl.GL11;
@@ -49,7 +48,6 @@ public final class GlPrimaryTerrainRasterizer {
 
     private static final int GL_DRAW_INDIRECT_UNIFIED_NV = 0x8F40;
     private static final int GL_DRAW_INDIRECT_ADDRESS_NV = 0x8F41;
-    private static final int GL_SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV = 0x00000010;
 
     private static final int COMPACT_SECTIONS_PER_REGION = 256;
 
@@ -75,15 +73,8 @@ public final class GlPrimaryTerrainRasterizer {
     private int atlasSamplerObjLinear = 0;
     private int lightmapSamplerObj = 0;
 
-    @Nullable
-    private GlMeshGeometryArena arena;
-
     public GlPrimaryTerrainRasterizer(GlMeshPipelines pipelines) {
         this.pipelines = pipelines;
-    }
-
-    public void setArena(@Nullable GlMeshGeometryArena arena) {
-        this.arena = arena;
     }
 
     // Read everything synchronously off the dispatcher's public fields -- do not cache the instance (its fields mutate per pass).
@@ -109,9 +100,7 @@ public final class GlPrimaryTerrainRasterizer {
 
         runEmitHalf(d, passIndex, regionCount);
 
-        GL42C.glMemoryBarrier(arena != null
-                ? GL43C.GL_SHADER_STORAGE_BARRIER_BIT | GL42C.GL_COMMAND_BARRIER_BIT | GL_SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV
-                : GL43C.GL_SHADER_STORAGE_BARRIER_BIT | GL42C.GL_COMMAND_BARRIER_BIT);
+        GL42C.glMemoryBarrier(GL43C.GL_SHADER_STORAGE_BARRIER_BIT | GL42C.GL_COMMAND_BARRIER_BIT);
 
         GpuTextureView atlasView = mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView();
         GpuTextureView lightmapView = mc.gameRenderer.lightmap();
@@ -196,13 +185,6 @@ public final class GlPrimaryTerrainRasterizer {
     }
 
     private void runEmitHalf(TerrainDrawDispatcher d, int passIndex, int regionCount) {
-        if (arena != null) {
-            arena.attach(d.registry);
-            arena.tick();
-            GlMeshUtil.gatherOwnedGeometry(d.boundBatch.regionIds, d.boundBatch.geometryBuffers, regionCount,
-                    pipelines.gatherProgram(), arena);
-        }
-
         // compactSections is shared by both opaque passes: barrier against the prior pass's draw reads before we
         // overwrite -- a write-after-read hazard the GL pipeline would otherwise overlap.
         GL42C.glMemoryBarrier(GL43C.GL_SHADER_STORAGE_BARRIER_BIT);
@@ -251,12 +233,7 @@ public final class GlPrimaryTerrainRasterizer {
             }
         }
 
-        if (arena != null) {
-            GlMeshUtil.uploadOwnedGeometryPointers(d.boundBatch.regionIds, d.boundBatch.geometryBuffers, regionCount,
-                    geometryPtrs, residentAddresses, arena);
-        } else {
-            GlMeshUtil.uploadGeometryPointers(d.boundBatch.geometryBuffers, regionCount, geometryPtrs, residentAddresses);
-        }
+        GlMeshUtil.uploadGeometryPointers(d.boundBatch.geometryBuffers, regionCount, geometryPtrs, residentAddresses);
         geometryPtrs.bindBase(BINDING_GEOMETRY_POINTERS);
 
         GL11.glEnableClientState(GL_DRAW_INDIRECT_UNIFIED_NV);

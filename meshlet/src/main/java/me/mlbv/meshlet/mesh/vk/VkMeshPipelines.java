@@ -3,7 +3,6 @@
 
 package me.mlbv.meshlet.mesh.vk;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -33,7 +32,6 @@ import dev.engine_room.flywheel.backend.vk.shader.VkShaderTransform;
 import me.mlbv.meshlet.mesh.shared.MeshShaderPrep;
 import net.minecraft.resources.Identifier;
 
-import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.shaderc.Shaderc;
 import org.lwjgl.vulkan.EXTMeshShader;
 import org.lwjgl.vulkan.VK12;
@@ -99,7 +97,6 @@ public final class VkMeshPipelines {
 
     private final VkMeshPipeline[][] drawPipelines = new VkMeshPipeline[2][2];
     private VkComputePipeline emitPipeline;
-    private VkGatherPipeline gatherPipeline;
     private final VkMeshPipeline[][] translucentDraw = new VkMeshPipeline[2][OitMode.values().length];
     private final VkMeshPipeline[][] translucentDrawFolded = new VkMeshPipeline[2][OitMode.values().length];
     private final VkMeshPipeline[][] translucentMlab = new VkMeshPipeline[2][OitInsertMode.values().length];
@@ -110,7 +107,6 @@ public final class VkMeshPipelines {
         drawPipeline(false, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
         drawPipeline(true, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
         emitPipeline();
-        gatherPipeline();
         translucentEmitPipeline();
         translucentGatherPipeline();
         boolean localRead = VkCaps.DYNAMIC_RENDERING_LOCAL_READ_NEGOTIATED;
@@ -267,19 +263,6 @@ public final class VkMeshPipelines {
         return b;
     }
 
-    public VkGatherPipeline gatherPipeline() {
-        if (gatherPipeline == null) {
-            ByteBuffer comp = VkShaderCompiler.compileToSpirv("terrain/vk/gather.comp",
-                    assembleVk("terrain/vk/gather.comp"), Shaderc.shaderc_compute_shader);
-            try {
-                gatherPipeline = new VkGatherPipeline(comp);
-            } finally {
-                MemoryUtil.memFree(comp);
-            }
-        }
-        return gatherPipeline;
-    }
-
     public VkComputePipeline translucentEmitPipeline() {
         if (translucentEmit == null) {
             long module = 0;
@@ -372,10 +355,6 @@ public final class VkMeshPipelines {
         if (emitPipeline != null) {
             emitPipeline.delete();
             emitPipeline = null;
-        }
-        if (gatherPipeline != null) {
-            gatherPipeline.destroy();
-            gatherPipeline = null;
         }
         for (int lin = 0; lin < 2; lin++) {
             for (int i = 0; i < translucentDraw[lin].length; i++) {

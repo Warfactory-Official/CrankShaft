@@ -1,11 +1,5 @@
 package dev.engine_room.flywheel.impl;
 
-import java.util.ArrayList;
-import java.util.List;
-
-import org.joml.Matrix4fc;
-import org.jspecify.annotations.Nullable;
-
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.backend.compile.FlwProgramsReloader;
 import dev.engine_room.flywheel.impl.event.RenderContextImpl;
@@ -17,6 +11,7 @@ import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.material.Materials;
 import dev.engine_room.flywheel.lib.model.baked.PartialModelEventHandler;
 import dev.engine_room.flywheel.lib.visualization.SimpleBlockEntityVisualizer;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.debug.DebugScreenEntryList;
 import net.minecraft.client.gui.components.debug.DebugScreenEntryStatus;
@@ -25,12 +20,13 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.commands.synchronization.ArgumentTypeInfos;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.BlockDestructionProgress;
 import net.minecraft.world.level.Level;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
-import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.client.event.AddClientReloadListenersEvent;
@@ -41,6 +37,12 @@ import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
+import org.joml.Matrix4fc;
+import org.jspecify.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.SortedSet;
 
 @Mod(value = Flywheel.ID, dist = Dist.CLIENT)
 public final class FlywheelNeoForge {
@@ -117,7 +119,7 @@ public final class FlywheelNeoForge {
                 return;
             }
             manager.renderDispatcher().afterEntities(ctx);
-            manager.renderDispatcher().beforeCrumbling(ctx, mc.level.destructionProgress());
+            manager.renderDispatcher().beforeCrumbling(ctx, (Long2ObjectOpenHashMap<SortedSet<BlockDestructionProgress>>) mc.level.destructionProgress());
         });
     }
 

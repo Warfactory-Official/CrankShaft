@@ -2,12 +2,14 @@ plugins {
     id("multiloader-base")
     id("java-library")
 
-    id("net.fabricmc.fabric-loom") version ("1.17.12")
+    id("net.fabricmc.fabric-loom") version ("1.17.20")
 }
 
 base {
     archivesName = "crankshaft-common"
 }
+
+val NEOFORGE_MIXIN = "0.17.3+mixin.0.8.7"
 
 sourceSets {
     val main = getByName("main")
@@ -69,8 +71,19 @@ dependencies {
     compileOnly("io.github.llamalad7:mixinextras-common:0.5.4")
     annotationProcessor("io.github.llamalad7:mixinextras-common:0.5.4")
 
-    compileOnly("net.fabricmc:sponge-mixin:0.13.2+mixin.0.8.5")
+    compileOnly("net.fabricmc:sponge-mixin:$NEOFORGE_MIXIN")
     compileOnly("net.fabricmc:fabric-loader:${fabricLoaderVersion}")
+}
+
+// Shared bytecode runs on NeoForge's Mixin 0.17.3 + MixinExtras 0.5.4: compiling against 0.17.4 encodes
+// @Redirect/@ModifyArg `at` as an array, which that runtime cannot read. Loom adds the loader's Mixin as a
+// first-level loaderLibraries dependency, so only a resolution rule overrides it.
+configurations.named("compileClasspath") {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "net.fabricmc" && requested.name == "sponge-mixin") {
+            useVersion(NEOFORGE_MIXIN)
+        }
+    }
 }
 
 loom {

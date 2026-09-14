@@ -5,7 +5,6 @@ package me.mlbv.meshlet.mesh.vk;
 
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.api.backend.Backend;
-import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.engine.EngineImpl;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
@@ -20,8 +19,6 @@ import dev.engine_room.flywheel.lib.backend.SimpleBackend;
 
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.LevelAccessor;
-
-import org.jspecify.annotations.Nullable;
 
 public final class VkMeshShaderBackends {
     private static final int PRIORITY = 1900;
@@ -68,13 +65,9 @@ public final class VkMeshShaderBackends {
         private final VkMeshPipelines pipelines = new VkMeshPipelines();
         private final VkPrimaryTerrainRasterizer rasterizer = new VkPrimaryTerrainRasterizer(pipelines);
         private final VkTranslucentTerrainRasterizer translucentRasterizer = new VkTranslucentTerrainRasterizer(pipelines);
-        @Nullable
-        private final VkMeshGeometryArena arena = BackendConfig.INSTANCE.ownGeometry() ? new VkMeshGeometryArena(pipelines) : null;
 
         MeshEngine(LevelAccessor level) {
             super(level, new VkMeshVisualDrawManager(VkPrograms.get()), Backends.MAX_ORIGIN_DISTANCE);
-            rasterizer.setArena(arena);
-            translucentRasterizer.setArena(arena);
             VkTerrainDrawManager.setMeshDrawStrategy(rasterizer);
             VkTerrainDrawManager.setTranslucentMeshDrawStrategy(translucentRasterizer);
         }
@@ -85,9 +78,6 @@ public final class VkMeshShaderBackends {
             VkTerrainDrawManager.setTranslucentMeshDrawStrategy(null);
             rasterizer.destroy();
             translucentRasterizer.destroy();
-            if (arena != null) {
-                arena.destroy();
-            }
             pipelines.destroy();
             super.delete();
         }

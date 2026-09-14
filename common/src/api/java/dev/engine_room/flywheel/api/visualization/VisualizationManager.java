@@ -3,7 +3,7 @@ package dev.engine_room.flywheel.api.visualization;
 import dev.engine_room.flywheel.api.backend.RenderContext;
 import dev.engine_room.flywheel.api.internal.FlwApiLink;
 import dev.engine_room.flywheel.api.visual.Effect;
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.core.Vec3i;
 import net.minecraft.server.level.BlockDestructionProgress;
 import net.minecraft.world.entity.Entity;
@@ -85,6 +85,6 @@ public interface VisualizationManager {
          * @param destructionProgress The destruction progress map from {@link net.minecraft.client.renderer.LevelRenderer LevelRenderer}.
          */
         void beforeCrumbling(RenderContext ctx,
-                             Long2ObjectMap<SortedSet<BlockDestructionProgress>> destructionProgress);
+                             Long2ObjectOpenHashMap<SortedSet<BlockDestructionProgress>> destructionProgress);
     }
 }

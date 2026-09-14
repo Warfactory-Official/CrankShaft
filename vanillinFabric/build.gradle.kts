@@ -1,7 +1,7 @@
 plugins {
     id("multiloader-platform")
 
-    id("net.fabricmc.fabric-loom") version ("1.17.12")
+    id("net.fabricmc.fabric-loom") version ("1.17.20")
 }
 
 base {

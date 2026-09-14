@@ -33,9 +33,6 @@ public final class GlMeshPipelines {
     private boolean builderFailed = false;
     private int lastOpaqueConfigKey = -1;
 
-    private int gatherProgram = 0;
-    private boolean gatherFailed = false;
-
     private int translucentBuilderProgram = 0;
     private int translucentGatherProgram = 0;
     private int translucentProgramDepthRange = 0;
@@ -53,7 +50,6 @@ public final class GlMeshPipelines {
 
     public void warmUp() {
         ensureCompiled(MeshFeatureConfig.currentKey());
-        gatherProgram();
         boolean linear = TerrainAtlasFilter.linear();
         ensureTranslucentCompiled(linear);
         for (OitInsertMode mode : OitInsertMode.values()) {
@@ -123,20 +119,6 @@ public final class GlMeshPipelines {
         terrainProgramCutout = cutout;
         FlwBackend.LOGGER.info("[gl_mesh_shader] terrain programs linked (solid={} cutout={} configKey={})",
                 solid, cutout, configKey);
-    }
-
-    public int gatherProgram() {
-        if (gatherProgram == 0 && !gatherFailed) {
-            int comp = compileShader(GL43C.GL_COMPUTE_SHADER, "terrain/gl/gather.comp");
-            int prog = comp != 0 ? MeshGlPrograms.linkProgram("gl_mesh_shader", "gather", comp) : 0;
-            deleteIfPresent(comp);
-            if (prog == 0) {
-                gatherFailed = true;
-            } else {
-                gatherProgram = prog;
-            }
-        }
-        return gatherProgram;
     }
 
     public int translucentBuilderProgram() {
@@ -278,11 +260,6 @@ public final class GlMeshPipelines {
             GL20C.glDeleteProgram(commandBuilderProgram);
             commandBuilderProgram = 0;
         }
-        if (gatherProgram != 0) {
-            GL20C.glDeleteProgram(gatherProgram);
-            gatherProgram = 0;
-        }
-        gatherFailed = false;
         deleteProgramIfPresent(translucentProgramDepthRange, translucentProgramCoeffs,
                 translucentProgramEvaluate, translucentBuilderProgram, translucentGatherProgram);
         translucentProgramDepthRange = 0;

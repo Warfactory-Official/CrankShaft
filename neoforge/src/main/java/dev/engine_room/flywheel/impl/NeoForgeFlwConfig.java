@@ -74,11 +74,6 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
         return TerrainModeGate.effective(client.terrainMode.get());
     }
 
-    @Override
-    public boolean ownGeometry() {
-        return client.ownGeometry.get();
-    }
-
     public void setBackendString(String value) {
         client.backend.set(value);
         clientSpec.save();
@@ -96,11 +91,6 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
 
     public void setTerrainMode(TerrainMode v) {
         client.terrainMode.set(v);
-        clientSpec.save();
-    }
-
-    public void setOwnGeometry(boolean v) {
-        client.ownGeometry.set(v);
         clientSpec.save();
     }
 
@@ -148,7 +138,6 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
         public final ModConfigSpec.BooleanValue useCommonPool;
         public final ModConfigSpec.EnumValue<LightSmoothness> lightSmoothness;
         public final ModConfigSpec.EnumValue<TerrainMode> terrainMode;
-        public final ModConfigSpec.BooleanValue ownGeometry;
         public final ModConfigSpec.EnumValue<OitConfig.Path> oitPath;
         public final ModConfigSpec.IntValue oitLayersKbuffer;
         public final ModConfigSpec.IntValue oitLayersMlab;
@@ -191,12 +180,6 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
                             + "OFF. FULL: take over OPAQUE terrain plus translucent OIT -- requires Sodium and a "
                             + "gpu-driven backend, else it falls back to TRANSLUCENT_OIT.")
                     .defineEnum("terrain", TerrainMode.OFF);
-
-            ownGeometry = builder.comment("Mesh-shader terrain tiers: copy Sodium's live geometry arena into a "
-                            + "mod-owned device-local buffer (true) instead of aliasing it in place (false, the "
-                            + "zero-repack default). Only affects gl_mesh_shader / vk_mesh_shader; ~2x terrain VRAM. "
-                            + "A runtime change (/flywheel ownGeometry) applies on the next renderer reload.")
-                    .define("ownGeometry", false);
 
             oitPath = builder.comment("Order-independent transparency path. AUTO: best available (MLAB on interlock "
                             + "hardware, else the wavelet chain). WAVELET: the multi-pass moment/wavelet chain. "
