@@ -6,12 +6,12 @@ import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
 import dev.engine_room.flywheel.backend.engine.indirect.OitPipelines;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 
@@ -37,14 +37,8 @@ public final class ChunkTranslucentReplay {
         GpuBuffer indexBuffer = maxIndices == 0 ? null : autoIndices.getBuffer(maxIndices);
         IndexType indexType = maxIndices == 0 ? null : autoIndices.type();
 
-        // Mipmapped clamp-LINEAR == vanilla's chunkLayerSampler. The sharp look comes from flw_chunk_oit.fsh's
-        // ported texel-snapping/RGSS, which REQUIRES a LINEAR+mipmap sampler (textureGrad/textureLod). The 1-arg
-        // clampLinear the caller passes lacks mipmaps, which broke the RGSS mip taps.
-        GpuSampler atlasSampler = RenderSystem.getSamplerCache()
-                                              .getClampToEdge(FilterMode.LINEAR, true);
-
         pass.setPipeline(OitPipelines.chunkProducer(mode));
-        pass.bindTexture("Sampler0", sections.textureView(), atlasSampler);
+        pass.bindTexture("Sampler0", sections.textureView(), TerrainAtlasFilter.sampler());
         pass.bindTexture("Sampler2", lightmapView, clampLinear);
         framebuffer.bindOitReads(pass, mode, blueNoiseView, oitSampler, noiseSampler);
 

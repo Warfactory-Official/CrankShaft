@@ -37,6 +37,15 @@ public final class VkMeshPipeline {
                 config.inputAttachmentIndices(), config.depthBiasConstant(), config.depthBiasSlope());
     }
 
+    // Material-keyed producers (no depth write): depth test, cull and polygon offset from the material.
+    public VkMeshPipeline(VkDescriptorLayout layout, long taskModule, long meshModule, long fragModule,
+                          int[] colorFormats, VkGraphicsPipeline.Blend[] blends, int depthCompareOp, int cullMode,
+                          int depthFormat, int @Nullable [] attachmentLocations, int @Nullable [] inputAttachmentIndices,
+                          float depthBiasConstant, float depthBiasSlope) {
+        this(layout, taskModule, meshModule, fragModule, colorFormats, blends, false, depthCompareOp, cullMode,
+                depthFormat, attachmentLocations, inputAttachmentIndices, depthBiasConstant, depthBiasSlope);
+    }
+
     public VkMeshPipeline(VkDescriptorLayout layout, long taskModule, long meshModule, long fragModule,
                           int[] colorFormats, VkGraphicsPipeline.Blend[] blends, boolean depthWrite, int depthFormat,
                           int @Nullable [] attachmentLocations, int @Nullable [] inputAttachmentIndices,

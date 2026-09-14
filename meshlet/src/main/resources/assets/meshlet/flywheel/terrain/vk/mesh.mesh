@@ -30,10 +30,10 @@ layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer Geo
     Vertex verts[];
 };
 
-// Bit-exact opaque transform: bind the SAME three UBOs terrain_solid.vsh (Pass A / MDI) binds -- ProjMat is
+// Bit-exact opaque transform: bind the SAME three UBOs terrain_solid.vsh (MDI) binds -- ProjMat is
 // RenderSystem.getProjectionMatrixBuffer(), Globals is RenderSystem.getGlobalSettingsUniform() (only its leading
 // CameraBlockPos/CameraOffset are read here), ModelViewMat is the manager's chunkSectionUbo (matrices.modelView()).
-// Same bytes + the identical `precise` expression in main() => this shader's gl_Position matches Pass A's HiZ-seed
+// Same bytes + the identical `precise` expression in main() => this shader's gl_Position matches the MDI draw's HiZ-seed
 // depth to the bit, so early-Z (GREATER_OR_EQUAL) never cracks the mesh's fragments against it. viewProjection (HiZ
 // UBO @5) is NO LONGER used for the vertex clip -- only for the screen-size pads + the region_test cull upstream.
 layout(set = 0, binding = 16, std140) uniform Projection {
@@ -78,7 +78,7 @@ void main() {
 
     // Section world origin in blocks (NO camera fold-in). The camera subtraction happens per-vertex below in the
     // EXACT order + terms terrain_solid.vsh uses (- CameraBlockPos + CameraOffset, from the Globals UBO), so the
-    // resulting depth matches Pass A's to the bit. Region origin comes from regionInput[slot] (no per-region UBO).
+    // resulting depth matches the MDI draw's to the bit. Region origin comes from regionInput[slot] (no per-region UBO).
     ivec3 chunkOrigin = sectionChunkOrigin(regionInput[slot], sectionId);
     vec3 sectionOriginBlocks = vec3(chunkOrigin) * 16.0;
 
@@ -132,7 +132,7 @@ void main() {
         for (uint j = 0u; j < 2u; j++) {
             uint k = (j == 0u) ? c0 : c1;
             Vertex vert = fetchVertex(geo, quadVertexBase + k);
-            // BIT-EXACT with terrain_solid.vsh (Pass A / MDI): identical expression, identical UBO inputs, `precise`
+            // BIT-EXACT with terrain_solid.vsh (MDI): identical expression, identical UBO inputs, `precise`
             // on the whole chain to forbid FMA contraction / reassociation on both sides. Inlined (not the
             // decodeVertexPosition helper) so the mul+add stays inside the precise expression. vec3(uvec3) matches the
             // vsh's implicit uvec3->vec3 conversion. `pos` is camera-relative (== that shader's `pos`).

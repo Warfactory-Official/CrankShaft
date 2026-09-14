@@ -14,6 +14,7 @@ layout(std140, binding = 7) uniform TerrainSceneUbo {
     restrict writeonly uvec2 *u_regionCommandCount;
     restrict readonly float *u_sectionFadeVis;
     uint u_regionCount;
+    uint u_phaseBit;
 };
 
 #endif

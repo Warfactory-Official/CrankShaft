@@ -3,9 +3,13 @@
 
 const float _FLW_HIZ_ADD_BLOCKS = 0.1;
 
+// mins/maxs: camera-BLOCK-relative; cam = fractional camera offset. viewProj is rotation-only => corners need -cam, or
+// boxes test up to 1 block farther and near-planar sections occlude themselves.
 bool _flw_hizAabbVisible(vec3 mins, vec3 maxs, vec3 cam, mat4 viewProj, vec2 viewSize, sampler2D pyramid) {
-    if (all(greaterThanEqual(cam + _FLW_HIZ_ADD_BLOCKS, mins))
-            && all(lessThanEqual(cam - _FLW_HIZ_ADD_BLOCKS, maxs))) {
+    mins -= cam;
+    maxs -= cam;
+    if (all(lessThanEqual(mins, vec3(_FLW_HIZ_ADD_BLOCKS)))
+            && all(greaterThanEqual(maxs, vec3(-_FLW_HIZ_ADD_BLOCKS)))) {
         return true;
     }
 

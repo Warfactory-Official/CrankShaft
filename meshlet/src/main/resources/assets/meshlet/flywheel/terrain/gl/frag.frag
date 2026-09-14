@@ -61,7 +61,7 @@ vec4 apply_fog(vec4 inColor, float spherical, float cylindrical, float envStart,
     return vec4(mix(inColor.rgb, fogColor.rgb, fogValue * fogColor.a), inColor.a);
 }
 
-#ifdef MESHLET_RGSS
+#ifndef FLW_PIXEL_FILTER_LINEAR
 vec2 texelSize;
 
 vec4 sampleNearest(vec2 uv, vec2 du, vec2 dv, vec2 texelScreenSize) {
@@ -73,6 +73,7 @@ vec4 sampleNearest(vec2 uv, vec2 du, vec2 dv, vec2 texelScreenSize) {
     return textureGrad(Sampler0, (texelCenter + texelOffset) * texelSize, du, dv);
 }
 
+#ifdef MESHLET_RGSS
 vec4 sampleRGSS(vec2 uv, vec2 du, vec2 dv, vec2 texelScreenSize) {
     float maxTexelSize = max(texelScreenSize.x, texelScreenSize.y);
     float minPixelSize = min(texelSize.x, texelSize.y);
@@ -93,6 +94,7 @@ vec4 sampleRGSS(vec2 uv, vec2 du, vec2 dv, vec2 texelScreenSize) {
 
     return mix(sampleNearest(uv, du, dv, texelScreenSize), rgssColor, blendFactor);
 }
+#endif
 #endif
 
 void main() {
@@ -124,7 +126,9 @@ void main() {
     vec2 fogDist = v_in.fog;
 #endif
 
-#ifdef MESHLET_RGSS
+#ifdef FLW_PIXEL_FILTER_LINEAR
+    vec4 texel = texture(Sampler0, uv);
+#else
     texelSize = 1.0 / vec2(textureSize(Sampler0, 0));
     #ifdef MESHLET_BARYCENTRIC
     vec2 du = dFdx(uvr);
@@ -134,9 +138,11 @@ void main() {
     vec2 dv = dFdy(uv);
     #endif
     vec2 texelScreenSize = sqrt(du * du + dv * dv);
+    #ifdef MESHLET_RGSS
     vec4 texel = sampleRGSS(uv, du, dv, texelScreenSize);
-#else
-    vec4 texel = texture(Sampler0, uv);
+    #else
+    vec4 texel = sampleNearest(uv, du, dv, texelScreenSize);
+    #endif
 #endif
 
 #ifndef MESHLET_SOLID_PASS

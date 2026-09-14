@@ -3,9 +3,8 @@ package dev.engine_room.vanillin;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import dev.engine_room.flywheel.api.material.*;
+import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
-import dev.engine_room.flywheel.lib.material.SimpleMaterialShaders;
-import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import dev.engine_room.vanillin.compose.*;
 import dev.engine_room.vanillin.config.BlockEntityVisualizerBuilder;
 import dev.engine_room.vanillin.config.Configurator;
@@ -302,20 +301,16 @@ public class VanillaVisuals {
             pose.mulPose(Axis.ZP.rotationDegrees(6.5F * triangleWave));
         }
     };
-    private static final MaterialShaders BREEZE_WIND_SHADERS = new SimpleMaterialShaders(
-            ResourceUtil.rl("material/breeze_wind.vert"), ResourceUtil.rl("material/default.frag"));
-    private static final MaterialShaders ENERGY_SWIRL_SHADERS = new SimpleMaterialShaders(
-            ResourceUtil.rl("material/energy_swirl.vert"), ResourceUtil.rl("material/default.frag"));
     private static final Identifier CREEPER_SWIRL_TEX = Identifier.withDefaultNamespace(
             "textures/entity/creeper/creeper_armor.png");
     private static final Material BREEZE_WIND_MATERIAL = SimpleMaterial.builder()
-                                                                       .shaders(BREEZE_WIND_SHADERS)
                                                                        .backfaceCulling(false)
                                                                        .texture(BREEZE_WIND_TEXTURE)
                                                                        .transparency(Transparency.ORDER_INDEPENDENT)
+                                                                       .cutout(CutoutShaders.ONE_TENTH)
+                                                                       .cardinalLightingMode(CardinalLightingMode.OFF)
                                                                        .build();
     private static final Material CREEPER_SWIRL_MATERIAL = SimpleMaterial.builder()
-                                                                         .shaders(ENERGY_SWIRL_SHADERS)
                                                                          .backfaceCulling(false)
                                                                          .texture(CREEPER_SWIRL_TEX)
                                                                          .transparency(Transparency.ADDITIVE)
@@ -766,7 +761,8 @@ public class VanillaVisuals {
 
         living(EntityTypes.CREEPER, cfg(ModelLayers.CREEPER).scale(CREEPER_SCALE).whiteOverlay(CREEPER_WHITE)
                                                             .scrollOverlay(ModelLayers.CREEPER_ARMOR,
-                                                                    CREEPER_SWIRL_MATERIAL, CREEPER_SWIRL_TINT,
+                                                                    CREEPER_SWIRL_MATERIAL, 0.01F, 0.01F,
+                                                                    CREEPER_SWIRL_TINT,
                                                                     CREEPER_POWERED)).apply(EXPERIMENTAL);
         living(EntityTypes.SPIDER, cfg(ModelLayers.SPIDER).flipDegrees(180.0F)
                                                           .emissiveOverlay(ModelLayers.SPIDER, SPIDER_EYES)).apply(
@@ -811,8 +807,8 @@ public class VanillaVisuals {
                 .customHeldItem(LivingEntity::getMainHandItem, WITCH_NOSE, ItemDisplayContext.GROUND,
                         s -> ((WitchRenderState) s).isHoldingPotion)).apply(EXPERIMENTAL);
         living(EntityTypes.BREEZE, cfg(ModelLayers.BREEZE)
-                .scrollOverlay(ModelLayers.BREEZE_WIND, BREEZE_WIND_MATERIAL, null, null)
-                .emissiveOverlay(ModelLayers.BREEZE, BREEZE_EYES)).apply(EXPERIMENTAL);
+                .scrollOverlay(ModelLayers.BREEZE_WIND, BREEZE_WIND_MATERIAL, 0.02F, 0.0F, null, null)
+                .emissiveTranslucentOverlay(ModelLayers.BREEZE_EYES, BREEZE_EYES, s -> -1, null)).apply(EXPERIMENTAL);
         living(EntityTypes.GUARDIAN, cfg(ModelLayers.GUARDIAN).vanillaFallback(GUARDIAN_BEAMING)).apply(EXPERIMENTAL);
         living(EntityTypes.VINDICATOR, cfg(ModelLayers.VINDICATOR)
                 .heldItems(s -> ((IllagerRenderState) s).isAggressive).headItem()).apply(EXPERIMENTAL);

@@ -28,12 +28,12 @@ shared uint visibleCount;
 
 bool sectionVisible(ivec3 secChunkOrigin) {
     vec3 camDelta = vec3(cameraBlockPosAndPad.xyz);
-    vec3 cornerBase = vec3(secChunkOrigin * 16) - camDelta;
+    // viewProjection is rotation-only: corners are camera-relative, fractional offset included.
+    vec3 cornerBase = vec3(secChunkOrigin * 16) - camDelta - cameraPosAndPad.xyz;
     vec3 mins = cornerBase - SECTION_ADD_BLOCKS;
     vec3 maxs = cornerBase + vec3(16.0) + SECTION_ADD_BLOCKS;
 
-    vec3 cam = cameraPosAndPad.xyz;
-    if (all(greaterThanEqual(cam + SECTION_ADD_BLOCKS, mins)) && all(lessThanEqual(cam - SECTION_ADD_BLOCKS, maxs))) {
+    if (all(lessThanEqual(mins, vec3(SECTION_ADD_BLOCKS))) && all(greaterThanEqual(maxs, vec3(-SECTION_ADD_BLOCKS)))) {
         return true;
     }
 

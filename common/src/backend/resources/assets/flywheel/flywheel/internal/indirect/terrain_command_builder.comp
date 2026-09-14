@@ -12,9 +12,6 @@ const uint FACING_COUNT = 7u; // ModelQuadFacing.COUNT
 const uint REGION_SIZE = 256u; // sections per CrankShaft region (8 x 4 x 8)
 const uint COMMAND_STRIDE = 20u;
 const uint MAX_COMMANDS_PER_REGION_MAIN = FACING_COUNT * REGION_SIZE; // 7 * 256 = 1792
-const uint MAX_TEMPORAL_COMMANDS_PER_REGION = MAX_COMMANDS_PER_REGION_MAIN; // 1792
-const uint TEMPORAL_WORD_OFFSET = MAX_COMMANDS_PER_REGION_MAIN * 5u;
-const uint REGION_COMMAND_WORDS = (MAX_COMMANDS_PER_REGION_MAIN + MAX_TEMPORAL_COMMANDS_PER_REGION) * 5u;
 
 // Scene UBO (7): 7 terrain device pointers + region count (Nvidium scheme; order matches runComputeTailForPass).
 #ifdef _FLW_VK
@@ -33,20 +30,14 @@ layout(std140, binding = 7) uniform TerrainSceneUbo {
     restrict readonly uvec4 *sectionData0;      // 3 uvec4 / section, region-id-keyed
     restrict readonly uint *regionVis;
     restrict readonly uint *sectionVis;
-    restrict writeonly uint *commandWords;      // [main: MAX_COMMANDS_PER_REGION_MAIN*5 u32][temporal]
+    restrict writeonly uint *commandWords;      // per arena run: [first slot * MAX_COMMANDS_PER_REGION_MAIN * 5, ...)
     restrict uvec2 *regionCommandCount;
     restrict readonly uint *geometryMask;
     uint regionCount;                           // visible-region count (replaces regionInput.length())
+    uint phase;
 };
-#endif
-
-#ifndef _FLW_VK
-const uint phase = 0u; // GL/bindless path: single-phase (temporal-shift split) only; two-phase is Vulkan-only.
-#endif
-
-#ifndef _FLW_VK
-shared uint mainCount;
-shared uint temporalCount;
+// atomicAdd takes a buffer variable, not a bindless dereference. [run first slot].x = the run's command count.
+layout(std430, binding = 5) restrict buffer RunCommandCountBuf { uvec2 runCommandCount[]; };
 #endif
 
 struct SectionFields {
@@ -99,15 +90,18 @@ void emitGlobal(uint g, uint firstIndex, uint baseVertex, uint indexCount, uvec4
     drawData[g * 2u + 1u] = uvec4(regionGeo[slot], 0u, 0u);
 }
 #else
-void emitCommand(uint slot, bool isTemporal, uint wi, uint firstIndex, uint baseVertex, uint indexCount) {
-    uint regionBase = slot * REGION_COMMAND_WORDS;
-    uint baseWord = isTemporal ? (regionBase + TEMPORAL_WORD_OFFSET + wi * 5u)
-                               : (regionBase + wi * 5u);
+// in4.w = first slot of this slot's same-arena run; baseInstance = slot (terrain_solid.vert reads regionInput by it).
+void emitCommand(uint slot, uint runSlot, uint firstIndex, uint baseVertex, uint indexCount) {
+    uint wi = runSlot * MAX_COMMANDS_PER_REGION_MAIN + atomicAdd(runCommandCount[runSlot].x, 1u);
+    if (wi >= regionCount * MAX_COMMANDS_PER_REGION_MAIN) {
+        return;
+    }
+    uint baseWord = wi * 5u;
     commandWords[baseWord + 0u] = indexCount;
     commandWords[baseWord + 1u] = 1u;
     commandWords[baseWord + 2u] = firstIndex;   // byte offset into the shared quad index
     commandWords[baseWord + 3u] = baseVertex;
-    commandWords[baseWord + 4u] = 0u;
+    commandWords[baseWord + 4u] = slot;
 }
 #endif
 
@@ -122,13 +116,8 @@ void main() {
     }
     uint regionId = in4.z;
 
-    // Region occluded: section_test froze the shift register; zero both counts and bail before per-section work.
+    // Region occluded: no section of this slot emits; bail before per-section work.
     if (regionVis[slot] == 0u) {
-#ifndef _FLW_VK
-        if (gl_LocalInvocationID.x == 0u) {
-            regionCommandCount[slot] = uvec2(0u, 0u);
-        }
-#endif
         return;
     }
 
@@ -137,32 +126,16 @@ void main() {
     if ((geo.x | geo.y) == 0u) {
         return;
     }
-#else
-    if (gl_LocalInvocationID.x == 0u) {
-        mainCount = 0u;
-        temporalCount = 0u;
-    }
-    barrier();
 #endif
 
     uint s = gl_LocalInvocationID.x;
     uint visIndex = (regionId << 8u) | s;
     uint sv = sectionVis[visIndex] & 0xFFu;
 
-    // phase 1: bit0 -> MAIN; phase 2: bit1 -> TEMPORAL; phase 0 (GL): bit0 -> MAIN unless newly-visible.
+    // phase 1: bit0 -> MAIN; phase 2: bit1 -> TEMPORAL.
     // Lanes diverge on emit; the final barrier + lane-0 count write is unconditional.
-    bool emit;
-    bool newlyVisible;
-    if (phase == 1u) {
-        emit = (sv & 1u) == 1u;
-        newlyVisible = false;
-    } else if (phase == 2u) {
-        emit = (sv & 2u) != 0u;
-        newlyVisible = true;
-    } else {
-        emit = (sv & 1u) == 1u;
-        newlyVisible = (sv & 3u) == 1u;
-    }
+    bool newlyVisible = phase == 2u;
+    bool emit = (sv & (newlyVisible ? 2u : 1u)) != 0u;
     if (emit) {
         SectionFields f = decodeSection(regionId, s);
 
@@ -217,17 +190,7 @@ void main() {
                         }
                     }
 #else
-                    if (newlyVisible) {
-                        uint wi = atomicAdd(temporalCount, 1u);
-                        if (wi < MAX_TEMPORAL_COMMANDS_PER_REGION) {
-                            emitCommand(slot, true, wi, firstIndex, runBaseVertex, indexCount);
-                        }
-                    } else {
-                        uint wi = atomicAdd(mainCount, 1u);
-                        if (wi < MAX_COMMANDS_PER_REGION_MAIN) {
-                            emitCommand(slot, false, wi, firstIndex, runBaseVertex, indexCount);
-                        }
-                    }
+                    emitCommand(slot, in4.w, firstIndex, runBaseVertex, indexCount);
 #endif
                     runBaseVertex += groupVertexCount;
                     groupVertexCount = 0u;
@@ -240,11 +203,4 @@ void main() {
         }
     }
     }
-
-#ifndef _FLW_VK
-    barrier();
-    if (gl_LocalInvocationID.x == 0u) {
-        regionCommandCount[slot] = uvec2(mainCount, temporalCount);
-    }
-#endif
 }

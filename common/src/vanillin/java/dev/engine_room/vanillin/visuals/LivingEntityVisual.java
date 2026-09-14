@@ -229,13 +229,13 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
             case COPLANAR -> builder.cutout(CutoutShaders.ONE_TENTH)
                                     .polygonOffset(true);
             case TRANSLUCENT -> builder.transparency(Transparency.ORDER_INDEPENDENT);
-            // OFF cardinal lighting = flat, no directional dimming (the eyes are already fullbright).
+            // EYES pipeline: no cardinal lighting. entityTranslucentEmissive keeps it (per-face).
             case EMISSIVE -> builder.transparency(Transparency.ADDITIVE)
                                     .writeMask(WriteMask.COLOR)
                                     .cardinalLightingMode(CardinalLightingMode.OFF);
             case EMISSIVE_TRANSLUCENT -> builder.transparency(Transparency.ORDER_INDEPENDENT)
                                                 .writeMask(WriteMask.COLOR)
-                                                .cardinalLightingMode(CardinalLightingMode.OFF);
+                                                .cutout(CutoutShaders.ONE_TENTH);
         }
         return builder.build();
     }
@@ -535,8 +535,8 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
         }
 
         return new LivingExtra(hands, equipment, evaluateConditions(state), heldShown, dynBlocks, overlayColors,
-                overlayTextures, customHeld, bodyEquipItems, bodyEquipRidden, bodyEquipFallback, bodyEquipSelfPose,
-                headItemActive ? captureHead(model) : null);
+                overlayTextures, state.ageInTicks, customHeld, bodyEquipItems, bodyEquipRidden, bodyEquipFallback,
+                bodyEquipSelfPose, headItemActive ? captureHead(model) : null);
     }
 
     @Nullable
@@ -681,8 +681,8 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
         }
 
         if (overlayLayer != null) {
-            overlayLayer.apply(snapshot.conditionMask(), snapshot.overlayColors(), snapshot.overlayTextures(), t, root,
-                    light, overlay);
+            overlayLayer.apply(snapshot.conditionMask(), snapshot.overlayColors(), snapshot.overlayTextures(),
+                    snapshot.ageInTicks(), t, root, light, overlay);
         }
 
         if (blockDecos != null) {
@@ -920,11 +920,15 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
     public record ModelVariant(ModelLayerLocation layer, Function<ModelPart, ? extends EntityModel<?>> factory) {
     }
 
+    // scrollU/V: texture offset per ageInTicks (vanilla OffsetTextureTransform); nonzero => UV_TRANSFORMED tree.
     public record Overlay(ModelLayerLocation layer, @Nullable Material material, boolean emissive,
                           @Nullable Predicate<LivingEntityRenderState> visible,
                           @Nullable ToIntFunction<LivingEntityRenderState> color,
                           @Nullable Function<LivingEntityRenderState, Identifier> textureResolver,
-                          @Nullable OverlayKind dynamicKind) {
+                          @Nullable OverlayKind dynamicKind, float scrollU, float scrollV) {
+        boolean scrolls() {
+            return scrollU != 0.0F || scrollV != 0.0F;
+        }
     }
 
     public record CustomHeldItem(Function<LivingEntity, ItemStack> stack, ItemPose pose,
@@ -977,7 +981,7 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
     private record LivingExtra(@Nullable HandItems hands, @Nullable Equipment equipment,
                                long conditionMask, boolean heldItemsShown, BlockState @Nullable [] dynamicBlocks,
                                int @Nullable [] overlayColors, Identifier @Nullable [] overlayTextures,
-                               CustomHeldCapture @Nullable [] customHeld, ItemStack @Nullable [] bodyEquipItems,
+                               float ageInTicks, CustomHeldCapture @Nullable [] customHeld, ItemStack @Nullable [] bodyEquipItems,
                                boolean @Nullable [] bodyEquipRidden, boolean @Nullable [] bodyEquipFallback,
                                float @Nullable [] @Nullable [] bodyEquipSelfPose, @Nullable HeadCapture head) {
     }
@@ -1064,10 +1068,12 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
 
         /**
          * True on frames vanilla must draw this entity whole: babies unless {@link Builder#handlesBaby}, invisible
-         * entities, and the per-mob fallback. {@code skipVanillaRender} must be its exact complement.
+         * entities, leashed entities (the rope is part of the leashed entity's render), and the per-mob fallback.
+         * {@code skipVanillaRender} must be its exact complement.
          */
         public boolean vanillaHandles(LivingEntity entity) {
             return (!handlesBaby && entity.isBaby()) || entity.isInvisible()
+                    || (entity instanceof Leashable leashable && leashable.getLeashHolder() != null)
                     || (vanillaFallback != null && vanillaFallback.test(entity));
         }
 
@@ -1237,21 +1243,23 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
             private Builder addOverlay(ModelLayerLocation layer, Material material, boolean emissive,
                                        @Nullable Predicate<LivingEntityRenderState> visibleWhen,
                                        @Nullable ToIntFunction<LivingEntityRenderState> color) {
-                overlays.add(new Overlay(layer, material, emissive, visibleWhen, color, null, null));
+                overlays.add(new Overlay(layer, material, emissive, visibleWhen, color, null, null, 0.0F, 0.0F));
                 return this;
             }
 
             public Builder texturedCoplanarOverlay(ModelLayerLocation layer,
                                                    Function<LivingEntityRenderState, Identifier> texture,
                                                    @Nullable Predicate<LivingEntityRenderState> visibleWhen) {
-                overlays.add(new Overlay(layer, null, false, visibleWhen, null, texture, OverlayKind.COPLANAR));
+                overlays.add(new Overlay(layer, null, false, visibleWhen, null, texture, OverlayKind.COPLANAR, 0.0F,
+                        0.0F));
                 return this;
             }
 
             public Builder texturedTranslucentOverlay(ModelLayerLocation layer,
                                                       Function<LivingEntityRenderState, Identifier> texture,
                                                       @Nullable Predicate<LivingEntityRenderState> visibleWhen) {
-                overlays.add(new Overlay(layer, null, false, visibleWhen, null, texture, OverlayKind.TRANSLUCENT));
+                overlays.add(new Overlay(layer, null, false, visibleWhen, null, texture, OverlayKind.TRANSLUCENT, 0.0F,
+                        0.0F));
                 return this;
             }
 
@@ -1259,7 +1267,8 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
                                                           Function<LivingEntityRenderState, Identifier> texture,
                                                           ToIntFunction<LivingEntityRenderState> color,
                                                           @Nullable Predicate<LivingEntityRenderState> visibleWhen) {
-                overlays.add(new Overlay(layer, null, false, visibleWhen, color, texture, OverlayKind.COPLANAR));
+                overlays.add(new Overlay(layer, null, false, visibleWhen, color, texture, OverlayKind.COPLANAR, 0.0F,
+                        0.0F));
                 return this;
             }
 
@@ -1304,7 +1313,8 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
             public Builder texturedEmissiveOverlay(ModelLayerLocation layer,
                                                    Function<LivingEntityRenderState, Identifier> texture,
                                                    @Nullable Predicate<LivingEntityRenderState> visibleWhen) {
-                overlays.add(new Overlay(layer, null, true, visibleWhen, null, texture, OverlayKind.EMISSIVE));
+                overlays.add(new Overlay(layer, null, true, visibleWhen, null, texture, OverlayKind.EMISSIVE, 0.0F,
+                        0.0F));
                 return this;
             }
 
@@ -1326,10 +1336,11 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
                 return addOverlay(layer, texture, OverlayKind.EMISSIVE_TRANSLUCENT, true, visibleWhen, color);
             }
 
-            public Builder scrollOverlay(ModelLayerLocation layer, Material material,
+            public Builder scrollOverlay(ModelLayerLocation layer, Material material, float scrollU, float scrollV,
                                          @Nullable ToIntFunction<LivingEntityRenderState> color,
                                          @Nullable Predicate<LivingEntityRenderState> visibleWhen) {
-                return addOverlay(layer, material, false, visibleWhen, color);
+                overlays.add(new Overlay(layer, material, false, visibleWhen, color, null, null, scrollU, scrollV));
+                return this;
             }
 
             public Builder customHeldItem(Function<LivingEntity, ItemStack> stack, ItemPose pose,

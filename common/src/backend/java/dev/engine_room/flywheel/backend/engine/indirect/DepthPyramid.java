@@ -61,11 +61,6 @@ public class DepthPyramid {
     }
 
     public void regenerate(int depthBufferTextureId, int framebufferWidth, int framebufferHeight) {
-        regenerate(depthBufferTextureId, framebufferWidth, framebufferHeight, false);
-    }
-
-    public void regenerate(int depthBufferTextureId, int framebufferWidth, int framebufferHeight,
-                           boolean deferFetchBarrier) {
         int width = mip0Size(framebufferWidth);
         int height = mip0Size(framebufferHeight);
         int mipLevels = getImageMipLevels(width, height);
@@ -101,9 +96,7 @@ public class DepthPyramid {
                     Mth.positiveCeilDiv(height >> baseMipLevel, 64), 1);
         }
 
-        if (!deferFetchBarrier) {
-            GL42.glMemoryBarrier(GL42.GL_TEXTURE_FETCH_BARRIER_BIT);
-        }
+        GL42.glMemoryBarrier(GL42.GL_TEXTURE_FETCH_BARRIER_BIT);
     }
 
     public void bindForCull() {

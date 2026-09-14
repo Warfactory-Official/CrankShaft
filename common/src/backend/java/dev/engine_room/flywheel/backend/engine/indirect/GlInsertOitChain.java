@@ -9,12 +9,12 @@ import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.engine.*;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
@@ -100,7 +100,7 @@ public final class GlInsertOitChain {
             prePass.run();
         }
         if (terrain != null) {
-            terrain.prepareCull(depthView, width, height);
+            terrain.prepareCull(depthView, width, height, true);
         }
 
         long pixels = (long) width * height;
@@ -205,10 +205,8 @@ public final class GlInsertOitChain {
         RenderSystem.AutoStorageIndexBuffer autoIndices = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS);
         GpuBuffer indexBuffer = maxIndices == 0 ? null : autoIndices.getBuffer(maxIndices);
         IndexType indexType = maxIndices == 0 ? null : autoIndices.type();
-        GpuSampler atlasSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR, true);
-
         pass.setPipeline(OitPipelines.chunkMlab(mode));
-        pass.bindTexture("Sampler0", sections.textureView(), atlasSampler);
+        pass.bindTexture("Sampler0", sections.textureView(), TerrainAtlasFilter.sampler());
         pass.bindTexture("Sampler2", frame.lightmapView(), frame.loSampler());
         bindStorage(mode); // re-bind after the pipeline prime, defensive against RHI state churn
 

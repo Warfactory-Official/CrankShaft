@@ -36,9 +36,9 @@ layout(std430, binding = 2) restrict readonly buffer _flw_DrawDataBuf {
     _FlwDrawData _flw_drawData[];
 };
 #else
-layout(std140, binding = 10) uniform u_RegionChunkOrigin {
-    ivec3 _flw_regionChunkOrigin;
-    int _flw_regionPadding;
+// [baseInstance = visible-region slot] = (originChunkX lo16 | Z hi16, originChunkY lo16, regionId, run slot).
+layout(std430, binding = 10) restrict readonly buffer _flw_RegionInputBuf {
+    uvec4 _flw_regionInput[];
 };
 #endif
 
@@ -89,6 +89,8 @@ void main() {
 #ifdef _FLW_VK
     // gl_InstanceIndex = the command's baseInstance = its global stream index (instanceCount is always 1).
     _FlwDrawData _flw_dd = _flw_drawData[gl_InstanceIndex];
+#else
+    uvec4 _flw_region = _flw_regionInput[gl_BaseInstanceARB];
 #endif
 #ifdef _FLW_VK_BDA
     _FlwVertex _flw_v = _FlwGeoRef(_flw_dd.geoAddr).verts[gl_VertexIndex];
@@ -103,7 +105,8 @@ void main() {
 #ifdef _FLW_VK
     ivec3 chunkOrigin = _flw_dd.regionChunkOrigin + _unpackSectionOffset(a_LightAndData.w);
 #else
-    ivec3 chunkOrigin = _flw_regionChunkOrigin + _unpackSectionOffset(a_LightAndData.w);
+    ivec3 regionOrigin = ivec3(int(_flw_region.x << 16) >> 16, int(_flw_region.y << 16) >> 16, int(_flw_region.x) >> 16);
+    ivec3 chunkOrigin = regionOrigin + _unpackSectionOffset(a_LightAndData.w);
 #endif
     vec3 sectionOriginBlocks = vec3(chunkOrigin) * 16.0;
 
@@ -123,6 +126,6 @@ void main() {
 #ifdef _FLW_VK
     flw_chunkVisibility = _flw_sectionFadeVis[int(_flw_dd.visBase) + (int(a_LightAndData.w) & 0xFF)];
 #else
-    flw_chunkVisibility = _flw_sectionFadeVis[int(a_LightAndData.w) & 0xFF];
+    flw_chunkVisibility = _flw_sectionFadeVis[(int(_flw_region.z) << 8) + (int(a_LightAndData.w) & 0xFF)];
 #endif
 }

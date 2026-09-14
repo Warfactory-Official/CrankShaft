@@ -1,13 +1,17 @@
 package dev.engine_room.flywheel.backend.engine.terrain;
 
+import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.blaze3d.opengl.GlBuffer;
+import com.mojang.blaze3d.vulkan.VulkanGpuBuffer;
+import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.lib.memory.MemoryBlock;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2LongMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import net.caffeinemc.mods.sodium.client.render.chunk.data.SectionRenderDataUnsafe;
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRenderPasses;
-import net.caffeinemc.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
 import net.minecraft.util.Mth;
 import net.minecraft.util.Util;
 import org.jspecify.annotations.Nullable;
@@ -20,6 +24,7 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
     static final int SECTION_DATA_STRIDE = 48;
     static final int REGION_SIZE = RenderRegion.REGION_SIZE;
     static final int GEOMETRY_MASK_WORDS = REGION_SIZE / Integer.SIZE;
+    private static final int PENDING_WORDS = REGION_SIZE / Long.SIZE;
     static final int VISIBILITY_STRIDE = Integer.BYTES;
     static final int PASS_SOLID = 0;
     static final int PASS_CUTOUT = 1;
@@ -35,6 +40,7 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
     private final TerrainResidentBuffer[] sectionDataMirrors;
     private final long[] sectionDataMirrorBytes = new long[PASS_COUNT];
     private final TerrainResidentBuffer[] presentMaskBuffers;
+    // Never cleared: phase 1 writes all 256 entries of every batched region before any reader.
     private final TerrainResidentBuffer[] sectionVisBuffers;
     private final TerrainResidentBuffer translucentSectionDataMirror;
     private final TerrainResidentBuffer translucentVisBuffer;
@@ -62,6 +68,15 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
     private boolean[] live = new boolean[0];
     private int[] geometryHandle = new int[0];
     private int[][] regionMaxIndexCount = {new int[0], new int[0]};
+    // Slot bits [regionId * REGION_SIZE + s]: may be nonzero. Clear only dirty slots: refeeds re-clear every empty
+    // pass (~6k redundant GL clears/s in flight). Translucent cull decodes all 256 slots ungated => never skip a
+    // dirty clear.
+    private long[][] sectionDataDirty = {new long[0], new long[0]};
+    private long[] translucentDataDirty = new long[0];
+    // Hooks mark, flush feeds once: each defrag/transfer notify re-marks (up to 3 region notifies/move), ~19x uploads.
+    private @Nullable RenderRegion[] pendingRegion = new RenderRegion[0];
+    private long[] pendingSections = new long[0];
+    private final IntArrayList pendingRegionIds = new IntArrayList();
     @Nullable
     private IntConsumer regionFreedListener;
 
@@ -92,13 +107,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
     private static int sectionIndexCount(long pMeshData) {
         long sumVertexCount = TerrainSectionMath.sumVertexCount(pMeshData);
         return (int) ((sumVertexCount >> 2) * 6L);
-    }
-
-    // ============================================================================================
-    //  Hook 1 -- RenderRegionManager.uploadResults(region, results, uniforms) @RETURN
-
-    static TerrainRenderPass passFor(int pass) {
-        return pass == PASS_SOLID ? DefaultTerrainRenderPasses.SOLID : DefaultTerrainRenderPasses.CUTOUT;
     }
 
     /**
@@ -139,9 +147,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         this.live[regionId] = true;
     }
 
-    // ============================================================================================
-    //  Hook 2 -- RenderRegion.removeSection(section) @HEAD
-
     private void copyTranslucentSlot(int regionId, int s, long srcPtr) {
         long dstOffset = ((long) regionId * REGION_SIZE + s) * SECTION_DATA_STRIDE;
         int idx = srcPtr == 0L ? 0 : sectionIndexCount(srcPtr);
@@ -151,19 +156,17 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
             translucentRegionIndexCountSum[regionId] += idx - prev;
         }
         if (idx <= 0) {
-            clearTranslucentSlotAt(dstOffset);
+            clearTranslucentSlot(regionId, s);
             setTranslucentPresentBit(regionId, s, false);
             return;
         }
         translucentSectionDataMirror.write(dstOffset, srcPtr, SECTION_DATA_STRIDE);
+        translucentDataDirty[(regionId * REGION_SIZE + s) >>> 6] |= 1L << (regionId * REGION_SIZE + s);
         setTranslucentPresentBit(regionId, s, true);
         if (idx > translucentRegionMaxIndexCount[regionId]) {
             translucentRegionMaxIndexCount[regionId] = idx;
         }
     }
-
-    // ============================================================================================
-    //  Hook 3 -- RenderRegionManager.update() at freeIds.release(region.getId())
 
     private boolean anySectionPresent(int regionId, int s) {
         return sectionPresentBit(PASS_SOLID, regionId, s) || sectionPresentBit(PASS_CUTOUT, regionId, s)
@@ -174,6 +177,80 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         int word = regionId * GEOMETRY_MASK_WORDS + (s >>> 5);
         int[] shadow = presentMaskShadow[pass];
         return word < shadow.length && (shadow[word] & (1 << (s & 31))) != 0;
+    }
+
+    @Override
+    public void markSection(RenderRegion region, int localIndex) {
+        // pend() may grow pendingSections: index first.
+        int base = pend(region);
+        pendingSections[base + (localIndex >>> 6)] |= 1L << localIndex;
+    }
+
+    @Override
+    public void markRegion(RenderRegion region) {
+        int base = pend(region);
+        Arrays.fill(pendingSections, base, base + PENDING_WORDS, -1L);
+    }
+
+    private int pend(RenderRegion region) {
+        int regionId = region.getId();
+        if (regionId >= pendingRegion.length) {
+            int cap = Math.max(regionId + 1, pendingRegion.length * 2);
+            pendingRegion = Arrays.copyOf(pendingRegion, cap);
+            pendingSections = Arrays.copyOf(pendingSections, cap * PENDING_WORDS);
+        }
+        if (pendingRegion[regionId] == null) {
+            pendingRegion[regionId] = region;
+            pendingRegionIds.add(regionId);
+        }
+        return regionId * PENDING_WORDS;
+    }
+
+    private void feedPending() {
+        for (int i = 0; i < pendingRegionIds.size(); i++) {
+            int regionId = pendingRegionIds.getInt(i);
+            RenderRegion region = pendingRegion[regionId];
+            // Freed after marking (storages deleted).
+            if (region == null) {
+                continue;
+            }
+            pendingRegion[regionId] = null;
+            int base = regionId * PENDING_WORDS;
+            var resources = region.getResources();
+            int handle = gpuBufferHandle(resources == null ? null : resources.getGeometryBuffer());
+            int originX = region.getChunkX();
+            int originY = region.getChunkY();
+            int originZ = region.getChunkZ();
+            if (handle != cachedGeometryHandle(regionId)) {
+                noteRegionIdentity(regionId, originX, originY, originZ, handle);
+                Arrays.fill(pendingSections, base, base + PENDING_WORDS, -1L);
+            }
+            var solid = region.getStorage(DefaultTerrainRenderPasses.SOLID);
+            var cutout = region.getStorage(DefaultTerrainRenderPasses.CUTOUT);
+            var translucent = region.getStorage(DefaultTerrainRenderPasses.TRANSLUCENT);
+            for (int w = 0; w < PENDING_WORDS; w++) {
+                long bits = pendingSections[base + w];
+                pendingSections[base + w] = 0L;
+                for (; bits != 0L; bits &= bits - 1) {
+                    int s = w * Long.SIZE + Long.numberOfTrailingZeros(bits);
+                    onSectionMeshed(regionId, originX, originY, originZ, s,
+                            solid == null ? 0L : solid.getDataPointer(s),
+                            cutout == null ? 0L : cutout.getDataPointer(s),
+                            translucent == null ? 0L : translucent.getDataPointer(s), handle);
+                }
+            }
+        }
+        pendingRegionIds.clear();
+    }
+
+    private static int gpuBufferHandle(@Nullable GpuBuffer buffer) {
+        if (buffer == null || buffer.isClosed()) {
+            return -1;
+        }
+        if (VkContext.isVulkanHost()) {
+            return buffer instanceof VulkanGpuBuffer vkBuffer ? (int) vkBuffer.vkBuffer() : -1;
+        }
+        return buffer instanceof GlBuffer glBuffer ? glBuffer.handle() : -1;
     }
 
     public void noteRegionIdentity(int regionId, int originX, int originY, int originZ, int geometryHandle) {
@@ -200,8 +277,7 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
             clearSlot(pass, regionId, localIndex);
             setPresentBit(pass, regionId, localIndex, false);
         }
-        clearSectionVis(regionId, localIndex);
-        clearTranslucentSlotAt(((long) regionId * REGION_SIZE + localIndex) * SECTION_DATA_STRIDE);
+        clearTranslucentSlot(regionId, localIndex);
         setTranslucentPresentBit(regionId, localIndex, false);
         int prevIdx = translucentSectionIndexCount[regionId * REGION_SIZE + localIndex];
         if (prevIdx != 0) {
@@ -222,20 +298,16 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         if (regionId < 0) {
             return;
         }
-        // Prune CPU-side per-region state (translucent fade timers) FIRST, unconditionally for any valid id: a
-        // translucent-only region can hold fade entries without ever populating the opaque resident table, so this
-        // must not be gated by regionTableCap. Closes the IntPool id-recycle fade-timestamp collision + the leak.
+        // Not gated by regionTableCap: translucent-only regions hold fade timers without opaque table entries.
         if (regionFreedListener != null) {
             regionFreedListener.accept(regionId);
         }
+        if (regionId < pendingRegion.length) {
+            pendingRegion[regionId] = null;
+            Arrays.fill(pendingSections, regionId * PENDING_WORDS, (regionId + 1) * PENDING_WORDS, 0L);
+        }
         if (regionId >= regionTableCap) {
             return;
-        }
-        long base = (long) regionId * REGION_SIZE * VISIBILITY_STRIDE;
-        if (base + (long) REGION_SIZE * VISIBILITY_STRIDE <= sectionVisBufferSize) {
-            for (TerrainResidentBuffer sectionVisBuffer : sectionVisBuffers) {
-                sectionVisBuffer.clearRange(base, (long) REGION_SIZE * VISIBILITY_STRIDE, 0);
-            }
         }
         for (int pass = 0; pass < PASS_COUNT; pass++) {
             clearPresentMaskRegion(pass, regionId);
@@ -248,10 +320,7 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         clearTranslucentVisRegion(regionId);
         pruneActiveFadeRegion(regionId);
         live[regionId] = false;
-        // Reset the cached geometry handle so a recycled region-id always observes a handle CHANGE on its next
-        // mesh-applied hook, forcing the full-region recopy (Hook 1's handleChanged path). Without this, if the
-        // recycled region happens to reuse the same GL handle, handleChanged would falsely report "unchanged" and
-        // skip the recopy, relying implicitly on the present-mask clear above.
+        // Recycled id sharing the old buffer handle must still refeed all 256 sections.
         geometryHandle[regionId] = -1;
     }
 
@@ -408,7 +477,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         if (needed > sectionVisBufferSize) {
             for (TerrainResidentBuffer sectionVisBuffer : sectionVisBuffers) {
                 sectionVisBuffer.ensureCapacity(needed);
-                sectionVisBuffer.clearRange(0, needed, 0);
             }
             sectionVisBufferSize = needed;
         }
@@ -421,30 +489,34 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
     }
 
     public void flushPendingUploads() {
+        feedPending();
         buffers.flushPendingWrites();
     }
 
-    public void clearSectionVisRegion(int pass, int regionId) {
-        long base = (long) regionId * REGION_SIZE * VISIBILITY_STRIDE;
-        if (base + (long) REGION_SIZE * VISIBILITY_STRIDE <= sectionVisBufferSize) {
-            sectionVisBuffers[pass].clearRange(base, (long) REGION_SIZE * VISIBILITY_STRIDE, 0);
+    // Unused section records are zero (Sodium callocs + clearFull) == a cleared slot.
+    private static boolean isZeroRecord(long ptr) {
+        for (long o = 0; o < SECTION_DATA_STRIDE; o += Long.BYTES) {
+            if (MemoryUtil.memGetLong(ptr + o) != 0L) {
+                return false;
+            }
         }
+        return true;
     }
 
     private void copySlot(int pass, int regionId, int s, long srcPtr) {
         long dstOffset = ((long) regionId * REGION_SIZE + s) * SECTION_DATA_STRIDE;
-        if (srcPtr == 0L) {
-            clearSlotAt(pass, dstOffset);
+        if (srcPtr == 0L || isZeroRecord(srcPtr)) {
+            clearSlot(pass, regionId, s);
             setPresentBit(pass, regionId, s, false);
             return;
         }
         sectionDataMirrors[pass].write(dstOffset, srcPtr, SECTION_DATA_STRIDE);
+        sectionDataDirty[pass][(regionId * REGION_SIZE + s) >>> 6] |= 1L << (regionId * REGION_SIZE + s);
 
         boolean liveSlot = isSlotLive(srcPtr);
         setPresentBit(pass, regionId, s, liveSlot);
         if (liveSlot) {
-            // Monotonic over-estimate of the per-region max index count: it only grows. A re-mesh that shrinks the
-            // largest section leaves the estimate high, which over-sizes the shared index buffer (harmless -- the GPU
+            // Grow-only: shrinking re-mesh leaves it high => oversized shared index buffer only.
             int idx = sectionIndexCount(srcPtr);
             if (idx > regionMaxIndexCount[pass][regionId]) {
                 regionMaxIndexCount[pass][regionId] = idx;
@@ -453,13 +525,22 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
     }
 
     private void clearSlot(int pass, int regionId, int s) {
-        clearSlotAt(pass, ((long) regionId * REGION_SIZE + s) * SECTION_DATA_STRIDE);
+        int slot = regionId * REGION_SIZE + s;
+        if (takeDirty(sectionDataDirty[pass], slot)) {
+            sectionDataMirrors[pass].clearRange((long) slot * SECTION_DATA_STRIDE, SECTION_DATA_STRIDE, 0);
+        }
     }
 
-    private void clearSlotAt(int pass, long dstOffset) {
-        if (dstOffset + SECTION_DATA_STRIDE <= sectionDataMirrors[pass].byteCapacity()) {
-            sectionDataMirrors[pass].clearRange(dstOffset, SECTION_DATA_STRIDE, 0);
+    // Past the mirror's capacity (region table can outgrow it): never written.
+    private static boolean takeDirty(long[] dirty, int slot) {
+        int w = slot >>> 6;
+        if (w >= dirty.length) {
+            return false;
         }
+        long bit = 1L << slot;
+        long word = dirty[w];
+        dirty[w] = word & ~bit;
+        return (word & bit) != 0;
     }
 
     private void setPresentBit(int pass, int regionId, int s, boolean set) {
@@ -491,18 +572,10 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         }
     }
 
-    private void clearSectionVis(int regionId, int s) {
-        long offset = ((long) regionId * REGION_SIZE + s) * VISIBILITY_STRIDE;
-        if (offset + VISIBILITY_STRIDE <= sectionVisBufferSize) {
-            for (TerrainResidentBuffer sectionVisBuffer : sectionVisBuffers) {
-                sectionVisBuffer.clearRange(offset, VISIBILITY_STRIDE, 0);
-            }
-        }
-    }
-
-    private void clearTranslucentSlotAt(long dstOffset) {
-        if (dstOffset + SECTION_DATA_STRIDE <= translucentSectionDataMirror.byteCapacity()) {
-            translucentSectionDataMirror.clearRange(dstOffset, SECTION_DATA_STRIDE, 0);
+    private void clearTranslucentSlot(int regionId, int s) {
+        int slot = regionId * REGION_SIZE + s;
+        if (takeDirty(translucentDataDirty, slot)) {
+            translucentSectionDataMirror.clearRange((long) slot * SECTION_DATA_STRIDE, SECTION_DATA_STRIDE, 0);
         }
     }
 
@@ -601,12 +674,13 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
                 int newCap = regionCap <= 1 ? 1
                         : Math.min(METADATA_REGION_ID_CAP, Integer.highestOneBit(regionCap - 1) << 1);
                 long newBytes = (long) newCap * REGION_SIZE * SECTION_DATA_STRIDE;
-                // Flush deferred mirror writes (+ barrier on GL) before a realloc's old->new content copy, so pending
+                // Pending mirror writes land before the realloc's old -> new copy.
                 if (sectionDataMirrors[pass].byteCapacity() > 0) {
                     buffers.flushBeforeGrow();
                 }
                 sectionDataMirrors[pass].ensureCapacity(newBytes);
                 sectionDataMirrorBytes[pass] = newBytes;
+                sectionDataDirty[pass] = growDirty(sectionDataDirty[pass], newCap);
             }
         }
         if (needed > translucentSectionDataMirrorBytes) {
@@ -618,7 +692,16 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
             }
             translucentSectionDataMirror.ensureCapacity(newBytes);
             translucentSectionDataMirrorBytes = newBytes;
+            translucentDataDirty = growDirty(translucentDataDirty, newCap);
         }
+    }
+
+    // Grown storage content is undefined => new slots start dirty.
+    private static long[] growDirty(long[] dirty, int regionCap) {
+        int oldLength = dirty.length;
+        long[] grown = Arrays.copyOf(dirty, regionCap * REGION_SIZE / Long.SIZE);
+        Arrays.fill(grown, oldLength, grown.length, -1L);
+        return grown;
     }
 
     private void ensurePresentMaskCapacity(int regionCap) {
@@ -630,10 +713,9 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
             int[] grown = new int[newCap * GEOMETRY_MASK_WORDS];
             System.arraycopy(presentMaskShadow[pass], 0, grown, 0, presentMaskShadow[pass].length);
             presentMaskShadow[pass] = grown;
-            // Re-upload the whole mask: a resident grow recreates the storage (new device address, no content
+            // Resident grow recreates storage without content => re-upload whole mask.
             uploadPresentMask(pass, newCap);
         }
-        // Translucent present shadow is CPU-only (no GL buffer): just grow the array.
         int[] grownT = new int[newCap * GEOMETRY_MASK_WORDS];
         System.arraycopy(translucentPresentMaskShadow, 0, grownT, 0, translucentPresentMaskShadow.length);
         translucentPresentMaskShadow = grownT;

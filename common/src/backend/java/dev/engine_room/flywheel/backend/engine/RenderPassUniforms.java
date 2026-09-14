@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.backend.engine;
 
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.DynamicUniformStorage;
 import net.minecraft.core.Vec3i;
@@ -33,6 +34,9 @@ public final class RenderPassUniforms {
     private final DynamicUniformStorage<EmbedDrawUniform> embedDraw = new DynamicUniformStorage<>("flywheel:embed_draw",
             4, 16);
 
+    // Per-frame reuse: each write flushes its mapped range (NV GPU copy). gl_instancing 150-mob lineup: 1420 -> 24
+    // writes, 111 -> 138 fps.
+    private final Int2ObjectOpenHashMap<GpuBufferSlice> materialSlices = new Int2ObjectOpenHashMap<>();
     private GpuBufferSlice renderOriginSlice;
     // Frame-constant glint inputs the per-material vertex shaders read; written into every _FlwInstanceDraw
     // slice (the RenderPass port has no flywheel frame/options UBO -- see header.vsh).
@@ -49,6 +53,7 @@ public final class RenderPassUniforms {
         renderOrigin.endFrame();
         embed.endFrame();
         embedDraw.endFrame();
+        materialSlices.clear();
         renderOriginSlice = renderOrigin.writeUniform(
                 new RenderOriginUniform(origin.getX(), origin.getY(), origin.getZ(), constantAmbientLight ? 1 : 0));
         // Glint animation inputs, constant across the frame (upstream FrameUniforms.writeTime +
@@ -68,8 +73,13 @@ public final class RenderPassUniforms {
      * per-material glint vertex shaders).
      */
     public GpuBufferSlice material(int packedProperties) {
-        return material.writeUniform(new MaterialUniform(packedProperties, frameSystemSeconds, frameGlintSpeedOption,
-                frameGlintStrengthOption));
+        GpuBufferSlice slice = materialSlices.get(packedProperties);
+        if (slice == null) {
+            slice = material.writeUniform(new MaterialUniform(packedProperties, frameSystemSeconds,
+                    frameGlintSpeedOption, frameGlintStrengthOption));
+            materialSlices.put(packedProperties, slice);
+        }
+        return slice;
     }
 
     /**

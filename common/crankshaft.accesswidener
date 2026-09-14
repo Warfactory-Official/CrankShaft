@@ -60,3 +60,4 @@ accessible class com/mojang/blaze3d/opengl/GlDevice
 accessible class com/mojang/blaze3d/opengl/GlCommandEncoder
 accessible field com/mojang/blaze3d/opengl/GlCommandEncoder lastProgram Lcom/mojang/blaze3d/opengl/GlProgram;
 mutable field com/mojang/blaze3d/opengl/GlCommandEncoder lastProgram Lcom/mojang/blaze3d/opengl/GlProgram;
+accessible field net/minecraft/client/renderer/LevelRenderer chunkLayerSampler Lcom/mojang/blaze3d/textures/GpuSampler;

@@ -21,6 +21,7 @@ import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorWriter;
 import dev.engine_room.flywheel.backend.vk.shader.VkMeshPipeline;
 import dev.engine_room.flywheel.backend.engine.terrain.VkTerrainDrawManager;
 import dev.engine_room.flywheel.backend.engine.terrain.VkTerrainMeshDrawStrategy;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 
@@ -102,7 +103,7 @@ public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrate
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, draw.handle());
 
         long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView()).vkImageView();
-        long atlasSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR, true)).vkSampler();
+        long atlasSampler = ((VulkanGpuSampler) TerrainAtlasFilter.sampler()).vkSampler();
         long lightmapView = ((VulkanGpuTextureView) mc.gameRenderer.lightmap()).vkImageView();
         long lightmapSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR)).vkSampler();
         GpuBufferSlice fog = RenderSystem.getShaderFog();

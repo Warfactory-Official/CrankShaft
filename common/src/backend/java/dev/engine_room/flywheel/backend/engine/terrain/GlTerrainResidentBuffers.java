@@ -5,6 +5,8 @@ import dev.engine_room.flywheel.backend.engine.indirect.StagingBuffer;
 import dev.engine_room.flywheel.backend.gl.buffer.GlResidentBuffer;
 import dev.engine_room.flywheel.lib.memory.MemoryBlock;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.longs.LongArrays;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL42;
@@ -100,6 +102,7 @@ public final class GlTerrainResidentBuffers implements TerrainResidentBuffers {
 
     // Writes are held per slot and staged once at flush: StagingBuffer's scatter runs one flush's copies into a
     // buffer in parallel, so two copies to the same slot race and the older bytes can win.
+    // Clears likewise, applied before the writes as merged runs: per-slot clears => ~2000 GL calls per unload frame.
     private final class Mirror implements TerrainResidentBuffer {
         private final ResizableStorageArray array;
         private final long stride;
@@ -108,6 +111,8 @@ public final class GlTerrainResidentBuffers implements TerrainResidentBuffers {
         private long[] pendingOffsets = new long[64];
         private MemoryBlock pendingBytes;
         private int pendingCount;
+        private final Long2IntOpenHashMap pendingClearFillByOffset = new Long2IntOpenHashMap();
+        private final LongArrayList clearOffsets = new LongArrayList();
 
         Mirror(long stride) {
             this.stride = stride;
@@ -116,7 +121,33 @@ public final class GlTerrainResidentBuffers implements TerrainResidentBuffers {
             pendingIndexByOffset.defaultReturnValue(-1);
         }
 
+        private void applyPendingClears() {
+            if (pendingClearFillByOffset.isEmpty()) {
+                return;
+            }
+            clearOffsets.clear();
+            clearOffsets.addAll(pendingClearFillByOffset.keySet());
+            LongArrays.quickSort(clearOffsets.elements(), 0, clearOffsets.size());
+            int handle = array.handle();
+            long runStart = clearOffsets.getLong(0);
+            int runFill = pendingClearFillByOffset.get(runStart);
+            long runEnd = runStart + stride;
+            for (int i = 1; i < clearOffsets.size(); i++) {
+                long offset = clearOffsets.getLong(i);
+                int fill = pendingClearFillByOffset.get(offset);
+                if (offset != runEnd || fill != runFill) {
+                    clear(handle, runStart, runEnd - runStart, runFill, clearScratch);
+                    runStart = offset;
+                    runFill = fill;
+                }
+                runEnd = offset + stride;
+            }
+            clear(handle, runStart, runEnd - runStart, runFill, clearScratch);
+            pendingClearFillByOffset.clear();
+        }
+
         private boolean stagePending() {
+            applyPendingClears();
             if (pendingCount == 0) {
                 return false;
             }
@@ -174,10 +205,11 @@ public final class GlTerrainResidentBuffers implements TerrainResidentBuffers {
 
         @Override
         public void clearRange(long offset, long size, int fillWord) {
+            assert size % stride == 0 && offset % stride == 0;
             for (long slot = offset; slot < offset + size; slot += stride) {
                 dropPending(slot);
+                pendingClearFillByOffset.put(slot, fillWord);
             }
-            clear(array.handle(), offset, size, fillWord, clearScratch);
         }
 
         @Override

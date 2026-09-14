@@ -2,6 +2,12 @@ package dev.engine_room.flywheel.backend.engine.instancing;
 
 import com.mojang.blaze3d.IndexType;
 import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.opengl.GlBuffer;
+import com.mojang.blaze3d.opengl.GlRenderPipeline;
+import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.blaze3d.opengl.Uniform;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.systems.RenderPass;
@@ -30,9 +36,15 @@ import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.client.resources.model.ModelBakery;
 import net.minecraft.core.Vec3i;
+import net.minecraft.resources.Identifier;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
+import org.lwjgl.opengl.GL11C;
+import org.lwjgl.opengl.GL13C;
+import org.lwjgl.opengl.GL30C;
+import org.lwjgl.opengl.GL31C;
+import org.lwjgl.opengl.GL32C;
 
 import java.util.*;
 
@@ -180,46 +192,21 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             pass.bindTexture("Sampler2", lightmapView, lightOverlaySampler);
             bindLight(pass);
 
-            for (var drawCall : draws) {
-                var mesh = drawCall.mesh();
-                if (mesh.isInvalid()) {
-                    continue;
-                }
-                InstancedInstancer<?> instancer = drawCall.instancer();
-                int live = instancer.instanceCount();
-                GpuBuffer texels = instancer.instanceTexels();
-                if (live == 0 || texels == null) {
-                    continue;
-                }
-
-                Material material = drawCall.material();
-                var environment = drawCall.groupKey.environment();
-                boolean embedded = environment instanceof EmbeddedEnvironment;
-                pass.setPipeline(InstancingPipeline.pipelineFor(material, drawCall.groupKey.instanceType(), embedded));
-
-                AbstractTexture atlas = textureManager.getTexture(material.texture());
-                pass.bindTexture("Sampler0", atlas.getTextureView(), MaterialSamplers.get(material));
-
-                pass.setUniform("_flw_instances", texels.slice());
-                pass.setUniform("_FlwInstanceDraw",
-                        renderPassUniforms.material(MaterialEncoder.packProperties(material)));
-                if (embedded) {
-                    EmbeddedEnvironment env = (EmbeddedEnvironment) environment;
-                    pass.setUniform("_FlwEmbed", renderPassUniforms.embed(env.pose(), env.normal()));
-                }
-                pass.drawIndexed(mesh.indexCount(), live, mesh.firstIndex(), mesh.baseVertex(), 0);
-            }
+            drawRuns(pass, draws, (material, type, embedded) -> InstancingPipeline.pipelineFor(material, type, embedded),
+                    textureManager);
         }
         GlCompat.popDebugGroup();
     }
 
-    private void submitOitInstances(RenderPass pass, OitMode mode, OitFrame f) {
-        boolean needsColor = mode != OitMode.DEPTH_RANGE;
-        if (needsColor) {
-            bindLight(pass);
-        }
-
-        for (var drawCall : oitDraws) {
+    // Port: RenderPass.drawIndexed re-runs trySetup (every sampler, texel buffer, UBO) per draw, ~12 us on 1300-draw
+    // entity scenes. Set up once per pipeline/texture run, then bind only per-draw state and draw raw.
+    private void drawRuns(RenderPass pass, List<InstancedDraw> list, PipelineSelector pipelineFor,
+                          @Nullable TextureManager textureManager) {
+        RenderPipeline lastPipeline = null;
+        Identifier lastTexture = null;
+        GpuSampler lastSampler = null;
+        Map<String, Uniform> uniforms = Map.of();
+        for (var drawCall : list) {
             var mesh = drawCall.mesh();
             if (mesh.isInvalid()) {
                 continue;
@@ -234,22 +221,69 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             Material material = drawCall.material();
             var environment = drawCall.groupKey.environment();
             boolean embedded = environment instanceof EmbeddedEnvironment;
-            pass.setPipeline(OitPipelines.producer(material, drawCall.groupKey.instanceType(), mode, false, embedded));
-
-            if (needsColor) {
-                AbstractTexture atlas = f.textureManager()
-                                         .getTexture(material.texture());
-                pass.bindTexture("Sampler0", atlas.getTextureView(), MaterialSamplers.get(material));
-            }
-
-            pass.setUniform("_flw_instances", texels.slice());
-            pass.setUniform("_FlwInstanceDraw", renderPassUniforms.material(MaterialEncoder.packProperties(material)));
+            RenderPipeline pipeline = pipelineFor.pipeline(material, drawCall.groupKey.instanceType(), embedded);
+            GpuBufferSlice materialSlice = renderPassUniforms.material(MaterialEncoder.packProperties(material));
+            GpuBufferSlice embedSlice = null;
             if (embedded) {
                 EmbeddedEnvironment env = (EmbeddedEnvironment) environment;
-                pass.setUniform("_FlwEmbed", renderPassUniforms.embed(env.pose(), env.normal()));
+                embedSlice = renderPassUniforms.embed(env.pose(), env.normal());
             }
-            pass.drawIndexed(mesh.indexCount(), live, mesh.firstIndex(), mesh.baseVertex(), 0);
+
+            boolean prime = false;
+            if (pipeline != lastPipeline) {
+                pass.setPipeline(pipeline);
+                lastPipeline = pipeline;
+                prime = true;
+            }
+            if (textureManager != null) {
+                GpuSampler sampler = MaterialSamplers.get(material);
+                if (!material.texture().equals(lastTexture) || sampler != lastSampler) {
+                    lastTexture = material.texture();
+                    lastSampler = sampler;
+                    pass.bindTexture("Sampler0", textureManager.getTexture(lastTexture).getTextureView(), sampler);
+                    prime = true;
+                }
+            }
+            if (prime) {
+                pass.setUniform("_flw_instances", texels.slice());
+                pass.setUniform("_FlwInstanceDraw", materialSlice);
+                if (embedSlice != null) {
+                    pass.setUniform("_FlwEmbed", embedSlice);
+                }
+                pass.drawIndexed(0, 0, 0, 0, 0);
+                uniforms = ((GlRenderPipeline) RenderSystem.getDevice().precompilePipeline(pipeline)).program()
+                                                                                                  .getUniforms();
+            }
+
+            GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + ((Uniform.Utb) uniforms.get("_flw_instances")).samplerIndex());
+            GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, instancer.texelTexture());
+            bindUbo(uniforms, "_FlwInstanceDraw", materialSlice);
+            if (embedSlice != null) {
+                bindUbo(uniforms, "_FlwEmbed", embedSlice);
+            }
+            GL32C.glDrawElementsInstancedBaseVertex(GL11C.GL_TRIANGLES, mesh.indexCount(), GL11C.GL_UNSIGNED_INT,
+                    (long) mesh.firstIndex() * Integer.BYTES, live, mesh.baseVertex());
         }
+    }
+
+    private static void bindUbo(Map<String, Uniform> uniforms, String name, GpuBufferSlice slice) {
+        GL30C.glBindBufferRange(GL31C.GL_UNIFORM_BUFFER, ((Uniform.Ubo) uniforms.get(name)).blockBinding(),
+                ((GlBuffer) slice.buffer()).handle(), slice.offset(), slice.length());
+    }
+
+    @FunctionalInterface
+    private interface PipelineSelector {
+        RenderPipeline pipeline(Material material, InstanceType<?> type, boolean embedded);
+    }
+
+    private void submitOitInstances(RenderPass pass, OitMode mode, OitFrame f) {
+        boolean needsColor = mode != OitMode.DEPTH_RANGE;
+        if (needsColor) {
+            bindLight(pass);
+        }
+
+        drawRuns(pass, oitDraws, (material, type, embedded) -> OitPipelines.producer(material, type, mode, false,
+                embedded), needsColor ? f.textureManager() : null);
     }
 
     private void bindLight(RenderPass pass) {

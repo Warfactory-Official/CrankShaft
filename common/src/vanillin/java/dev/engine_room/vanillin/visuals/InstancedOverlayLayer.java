@@ -1,6 +1,8 @@
 package dev.engine_room.vanillin.visuals;
 
 import dev.engine_room.flywheel.api.instance.InstancerProvider;
+import dev.engine_room.flywheel.lib.instance.InstanceTypes;
+import dev.engine_room.flywheel.lib.instance.UvTransformedInstance;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTrees;
 import dev.engine_room.vanillin.visuals.LivingEntityVisual.OverlayKind;
@@ -30,9 +32,11 @@ final class InstancedOverlayLayer {
         this.draws = new Draw[overlays.size()];
         for (int i = 0; i < overlays.size(); i++) {
             LivingEntityVisual.Overlay overlay = overlays.get(i);
-            Draw draw = new Draw(overlay.layer(), overlay.emissive(), overlay.dynamicKind());
+            Draw draw = new Draw(overlay.layer(), overlay.emissive(), overlay.dynamicKind(), overlay.scrollU(),
+                    overlay.scrollV());
             if (overlay.textureResolver() == null) {
-                build(draw, InstanceTree.create(provider, ModelTrees.of(overlay.layer(), overlay.material())));
+                build(draw, InstanceTree.create(provider, ModelTrees.of(overlay.layer(), overlay.material()),
+                        overlay.scrolls() ? InstanceTypes.UV_TRANSFORMED : InstanceTypes.TRANSFORMED));
             }
             draws[i] = draw;
         }
@@ -45,8 +49,8 @@ final class InstancedOverlayLayer {
         }
     }
 
-    private static void pose(Draw draw, float inflate, float[] transforms, Matrix4f root, int light, int overlayCoords,
-                             int color) {
+    private static void pose(Draw draw, float inflate, float ageInTicks, float[] transforms, Matrix4f root, int light,
+                             int overlayCoords, int color) {
         InstanceTree[] nodes = draw.nodes;
         int[] map = draw.nodeToBody;
         for (int i = 0; i < nodes.length; i++) {
@@ -63,10 +67,16 @@ final class InstancedOverlayLayer {
         }
         draw.tree.updateInstances(root);
         int drawLight = draw.emissive ? LightCoordsUtil.FULL_BRIGHT : light;
+        boolean scrolls = draw.scrollU != 0.0F || draw.scrollV != 0.0F;
+        float offU = ageInTicks * draw.scrollU % 1.0F;
+        float offV = ageInTicks * draw.scrollV % 1.0F;
         draw.tree.traverse(instance -> {
             instance.light(drawLight);
             instance.overlay(overlayCoords);
             instance.colorArgb(color);
+            if (scrolls) {
+                ((UvTransformedInstance) instance).uvRegion(offU, offV, 1.0F, 1.0F);
+            }
             instance.setChanged();
         });
     }
@@ -79,8 +89,8 @@ final class InstancedOverlayLayer {
         }
     }
 
-    void apply(long conditionMask, int @Nullable [] colors, Identifier @Nullable [] textures, float[] transforms,
-               Matrix4f root, int light, int overlayCoords) {
+    void apply(long conditionMask, int @Nullable [] colors, Identifier @Nullable [] textures, float ageInTicks,
+               float[] transforms, Matrix4f root, int light, int overlayCoords) {
         for (int i = 0; i < draws.length; i++) {
             Draw draw = draws[i];
             if ((conditionMask & (1L << i)) == 0) {
@@ -101,7 +111,7 @@ final class InstancedOverlayLayer {
                 continue;
             }
             setShown(draw, true);
-            pose(draw, 1.0F + INFLATE_STEP * i, transforms, root, light, overlayCoords,
+            pose(draw, 1.0F + INFLATE_STEP * i, ageInTicks, transforms, root, light, overlayCoords,
                     colors == null ? -1 : colors[i]);
         }
     }
@@ -148,6 +158,8 @@ final class InstancedOverlayLayer {
         final boolean emissive;
         @Nullable
         final OverlayKind dynamicKind;
+        final float scrollU;
+        final float scrollV;
         @Nullable
         InstanceTree tree;
         InstanceTree[] nodes = new InstanceTree[0];
@@ -156,10 +168,13 @@ final class InstancedOverlayLayer {
         Identifier currentTexture;
         boolean shown;
 
-        Draw(ModelLayerLocation layer, boolean emissive, @Nullable OverlayKind dynamicKind) {
+        Draw(ModelLayerLocation layer, boolean emissive, @Nullable OverlayKind dynamicKind, float scrollU,
+             float scrollV) {
             this.layer = layer;
             this.emissive = emissive;
             this.dynamicKind = dynamicKind;
+            this.scrollU = scrollU;
+            this.scrollV = scrollV;
         }
     }
 }

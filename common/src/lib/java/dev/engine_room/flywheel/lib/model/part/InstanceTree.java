@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.lib.model.part;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.instance.InstancerProvider;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
@@ -54,15 +55,21 @@ public final class InstanceTree {
     }
 
     public static InstanceTree create(InstancerProvider provider, ModelTree meshTree) {
+        return create(provider, meshTree, InstanceTypes.TRANSFORMED);
+    }
+
+    // Port: instance type per tree (UV_TRANSFORMED scroll overlays carry a per-instance UV offset).
+    public static InstanceTree create(InstancerProvider provider, ModelTree meshTree,
+                                      InstanceType<? extends TransformedInstance> type) {
         InstanceTree[] children = new InstanceTree[meshTree.childCount()];
         for (int i = 0; i < meshTree.childCount(); i++) {
-            children[i] = create(provider, meshTree.child(i));
+            children[i] = create(provider, meshTree.child(i), type);
         }
 
         Model model = meshTree.model();
         TransformedInstance instance;
         if (model != null) {
-            instance = provider.instancer(InstanceTypes.TRANSFORMED, model)
+            instance = provider.instancer(type, model)
                                .createInstance();
         } else {
             instance = null;

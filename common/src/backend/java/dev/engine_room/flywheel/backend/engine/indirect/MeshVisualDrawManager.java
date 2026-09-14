@@ -487,9 +487,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                                                        .writeTransform(new Matrix4f(renderModelView));
 
         GlStateManager._enableDepthTest();
-        GlStateManager._depthFunc(GL11C.GL_GEQUAL);
         GlStateManager._depthMask(false);
-        GlStateManager._enableCull();
         GlStateManager._enableBlend(0);
         GlStateManager._blendFuncSeparate(GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE);
         GL14C.glBlendEquation(depthRange ? GL14C.GL_MAX : GL14C.GL_FUNC_ADD);
@@ -542,6 +540,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
             if (program == 0) {
                 continue;
             }
+            applyOitMaterialState(run.material());
             if (program != lastProgram) {
                 lastProgram = program;
                 GlStateTracker.useProgram(program);
@@ -563,6 +562,22 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
         GlStateTracker.useProgram(0);
         GL14C.glBlendEquation(GL14C.GL_FUNC_ADD);
+        GlStateManager._disablePolygonOffset();
+    }
+
+    private static void applyOitMaterialState(Material material) {
+        GlStateManager._depthFunc(depthFunc(material.depthTest()));
+        if (material.backfaceCulling()) {
+            GlStateManager._enableCull();
+        } else {
+            GlStateManager._disableCull();
+        }
+        if (material.polygonOffset()) {
+            GlStateManager._polygonOffset(1.0f, 10.0f);
+            GlStateManager._enablePolygonOffset();
+        } else {
+            GlStateManager._disablePolygonOffset();
+        }
     }
 
     @Override

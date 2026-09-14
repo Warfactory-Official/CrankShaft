@@ -61,7 +61,7 @@ public final class WaveletOitChain {
         }
 
         if (terrain != null) {
-            terrain.prepareCull(depthView, target.width, target.height);
+            terrain.prepareCull(depthView, target.width, target.height, false);
         }
         if (prePass != null) {
             prePass.run();

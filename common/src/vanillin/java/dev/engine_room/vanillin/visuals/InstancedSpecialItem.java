@@ -1,9 +1,13 @@
 package dev.engine_room.vanillin.visuals;
 
+import dev.engine_room.flywheel.api.instance.Instance;
+import dev.engine_room.flywheel.api.instance.InstanceType;
+import dev.engine_room.flywheel.api.instance.Instancer;
 import dev.engine_room.flywheel.api.instance.InstancerProvider;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.api.material.WriteMask;
+import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.lib.material.Materials;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
@@ -35,8 +39,9 @@ import java.util.List;
 
 /**
  * A worker-side slot drawing the resolved special-model layers of one item ({@link SpecialItemModels}).
- * Pattern stacks draw one OIT tree per layer, bones inflated 0.1% per step about their own pivots, so the OIT
- * resolve recovers vanilla's submit-order paint order (a root-scale would shift geometry off-origin).
+ * Pattern stacks draw one translucent tree per layer, ordered by instancer bias (vanilla submit order) and bones
+ * inflated 0.1% per step about their own pivots so each layer passes depth over the one below (a root-scale would
+ * shift geometry off-origin). Not using OIT since wavelet cannot order the 0.1% shells => patterns vanish.
  */
 final class InstancedSpecialItem {
     private static final Material SHIELD_BASE_MATERIAL = SimpleMaterial.builder()
@@ -48,13 +53,13 @@ final class InstancedSpecialItem {
                                                                        .texture(Sheets.BANNER_SHEET)
                                                                        .build();
     private static final Material SHIELD_PATTERN_MATERIAL = SimpleMaterial.builder()
-                                                                          .transparency(Transparency.ORDER_INDEPENDENT)
+                                                                          .transparency(Transparency.TRANSLUCENT)
                                                                           .writeMask(WriteMask.COLOR)
                                                                           .mipmap(false)
                                                                           .texture(Sheets.SHIELD_SHEET)
                                                                           .build();
     private static final Material BANNER_PATTERN_MATERIAL = SimpleMaterial.builder()
-                                                                          .transparency(Transparency.ORDER_INDEPENDENT)
+                                                                          .transparency(Transparency.TRANSLUCENT)
                                                                           .writeMask(WriteMask.COLOR)
                                                                           .mipmap(false)
                                                                           .texture(Sheets.BANNER_SHEET)
@@ -171,9 +176,9 @@ final class InstancedSpecialItem {
         for (SpecialItemModels.Resolved layer : resolved) {
             switch (layer.key()) {
                 case SpecialItemModels.TridentKey k -> {
-                    add(ModelTrees.of(ModelLayers.TRIDENT, TridentVisual.MATERIAL), layer.transform(), -1, true);
+                    add(ModelTrees.of(ModelLayers.TRIDENT, TridentVisual.MATERIAL), layer.transform(), -1, true, 0);
                     if (k.foil()) {
-                        add(ModelTrees.of(ModelLayers.TRIDENT, Materials.GLINT_ENTITY), layer.transform(), -1, true);
+                        add(ModelTrees.of(ModelLayers.TRIDENT, Materials.GLINT_ENTITY), layer.transform(), -1, true, 1);
                     }
                 }
                 case SpecialItemModels.SkullKey k -> addSkull(k, layer.transform());
@@ -181,23 +186,23 @@ final class InstancedSpecialItem {
                     boolean patterned = !k.patterns().layers().isEmpty() || k.baseColor() != null;
                     TextureAtlasSprite base = sprite(AtlasIds.SHIELD_PATTERNS,
                             patterned ? Sheets.SHIELD_BASE : Sheets.SHIELD_BASE_NO_PATTERN);
-                    add(ModelTrees.of(ModelLayers.SHIELD, base, SHIELD_BASE_MATERIAL), layer.transform(), -1, true);
+                    add(ModelTrees.of(ModelLayers.SHIELD, base, SHIELD_BASE_MATERIAL), layer.transform(), -1, true, 0);
                     if (patterned) {
                         addPatterns(ModelLayers.SHIELD, false, k.baseColor() == null ? DyeColor.WHITE : k.baseColor(),
                                 k.patterns(), layer.transform(), null);
                     }
                     if (k.foil()) {
                         add(ModelTrees.of(ModelLayers.SHIELD, base, Materials.GLINT_ENTITY), layer.transform(), -1,
-                                true);
+                                true, Math.min(16, k.patterns().layers().size()) + 2);
                     }
                 }
                 case SpecialItemModels.BannerKey k -> {
                     TextureAtlasSprite base = sprite(AtlasIds.BANNER_PATTERNS, Sheets.BANNER_BASE);
                     add(ModelTrees.of(ModelLayers.STANDING_BANNER, base, BANNER_BASE_MATERIAL), layer.transform(), -1,
-                            true);
+                            true, 0);
                     float[] flagPose = flagPose();
                     posed(add(ModelTrees.of(ModelLayers.STANDING_BANNER_FLAG, base, BANNER_BASE_MATERIAL),
-                            layer.transform(), -1, true), flagPose);
+                            layer.transform(), -1, true, 0), flagPose);
                     addPatterns(ModelLayers.STANDING_BANNER_FLAG, true, k.baseColor(), k.patterns(), layer.transform(),
                             flagPose);
                 }
@@ -225,7 +230,7 @@ final class InstancedSpecialItem {
     private void addPatternLayer(ModelLayerLocation layerLoc, Identifier atlas, Material material, SpriteId spriteId,
                                  int color, int steps, boolean banner, Matrix4fc transform,
                                  float @Nullable [] fixedPose) {
-        Draw draw = add(ModelTrees.of(layerLoc, sprite(atlas, spriteId), material), transform, color, false);
+        Draw draw = add(ModelTrees.of(layerLoc, sprite(atlas, spriteId), material), transform, color, false, steps);
         if (fixedPose != null && fixedPose.length != draw.nodes.length * 9) {
             throw new IllegalStateException("special-item model/bake tree mismatch");
         }
@@ -256,7 +261,7 @@ final class InstancedSpecialItem {
         Material material = key.translucentSkin()
                 ? LivingEntityVisual.translucentBodyMaterial(key.texture())
                 : LivingEntityVisual.equipmentMaterial(key.texture());
-        Draw draw = add(ModelTrees.of(skullLayer(key.type()), material), transform, -1, true);
+        Draw draw = add(ModelTrees.of(skullLayer(key.type()), material), transform, -1, true, 0);
         List<ModelPart> parts = new ArrayList<>();
         EntityModelVisual.flattenModel(model.root(), "", -1, parts, new ArrayList<>(), new ArrayList<>());
         draw.skull = model;
@@ -274,13 +279,23 @@ final class InstancedSpecialItem {
         poseNodes(draw.nodes, pose);
     }
 
-    private Draw add(ModelTree modelTree, Matrix4fc transform, int color, boolean useOverlay) {
-        InstanceTree tree = InstanceTree.create(provider, modelTree);
+    private Draw add(ModelTree modelTree, Matrix4fc transform, int color, boolean useOverlay, int bias) {
+        InstanceTree tree = InstanceTree.create(biased(bias), modelTree);
         List<InstanceTree> nodes = new ArrayList<>();
         flattenTree(tree, nodes);
         Draw draw = new Draw(tree, nodes.toArray(new InstanceTree[0]), new Matrix4f(transform), color, useOverlay);
         draws.add(draw);
         return draw;
+    }
+
+    // InstanceTree.create requests bias 0; pin the layer's.
+    private InstancerProvider biased(int bias) {
+        return bias == 0 ? provider : new InstancerProvider() {
+            @Override
+            public <I extends Instance> Instancer<I> instancer(InstanceType<I> type, Model model, int ignored) {
+                return provider.instancer(type, model, bias);
+            }
+        };
     }
 
     private float[] flagPose() {

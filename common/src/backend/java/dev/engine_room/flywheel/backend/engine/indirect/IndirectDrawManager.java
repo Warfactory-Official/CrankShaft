@@ -25,7 +25,6 @@ import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher;
-import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.backend.engine.uniform.Uniforms;
 import dev.engine_room.flywheel.backend.gl.GlBindlessTable;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
@@ -65,11 +64,8 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             .thenComparing(IndirectDraw::material, MaterialRenderState::uberPipelineCompare)
             .thenComparing(IndirectDraw::material, MaterialRenderState.COMPARATOR)
             .thenComparingInt((IndirectDraw d) -> InstanceTypeIds.id(d.instanceType()));
-    private static final float REPLAY_MIN_RADIUS = 1.5f;
     private static final int UBO_INSTANCE_DRAW = 11;
     private static final int UBO_EMBED_DRAW = 12;
-    @Nullable
-    private static IndirectDrawManager published;
     final MeshPool meshPool;
     final IndirectBuffers buffers = new IndirectBuffers();
     final List<MeshDrawRun> meshMultiDraws = new ArrayList<>();
@@ -86,7 +82,6 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     private final List<IndirectDraw> allDraws = new ArrayList<>();
     private final List<UberDraw> uberMultiDraws = new ArrayList<>();
     private final List<UberDraw> uberOitMultiDraws = new ArrayList<>();
-    private final List<UberDraw> replayRuns = new ArrayList<>();
     private final GlBuffer crumblingDrawBuffer = new GlBuffer(GlBufferUsage.STREAM_DRAW);
     private final MatrixBuffer matrixBuffer;
     int frameDrawCount;
@@ -107,51 +102,6 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         matrixBuffer = new MatrixBuffer();
 
         depthPyramid = new DepthPyramid(programs);
-    }
-
-    public static void replayVisualDepth(GpuTextureView colorView, GpuTextureView depthView) {
-        var m = published;
-        if (m == null) {
-            return;
-        }
-        GpuBuffer vertexBuffer = m.meshPool.vertexBuffer();
-        GpuBuffer indexBuffer = m.meshPool.indexBuffer();
-        if (vertexBuffer == null || indexBuffer == null) {
-            return;
-        }
-        if (m.replayRuns.isEmpty()) {
-            return;
-        }
-
-        Minecraft mc = Minecraft.getInstance();
-        TextureManager textureManager = mc.getTextureManager();
-        GpuSampler lightOverlaySampler = RenderSystem.getSamplerCache()
-                                                     .getClampToEdge(FilterMode.LINEAR);
-        var dynamicTransforms = RenderSystem.getDynamicUniforms()
-                                            .writeTransform(new Matrix4f(FrameUniforms.view()));
-
-        CommandEncoder encoder = RenderSystem.getDevice()
-                                             .createCommandEncoder();
-        GlCompat.pushDebugGroup("flywheel:gl/visual_depth_replay");
-        try (RenderPass pass = encoder.createRenderPass(() -> "flywheel:indirect/visual_depth_replay",
-                colorView, Optional.empty(), depthView, OptionalDouble.empty())) {
-            RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform("DynamicTransforms", dynamicTransforms);
-            pass.setUniform("_FlwRenderOrigin", m.renderPassUniforms.renderOriginSlice());
-            pass.setVertexBuffer(0, vertexBuffer.slice());
-            pass.setIndexBuffer(indexBuffer, IndexType.INT);
-            pass.bindTexture("Sampler1", mc.gameRenderer.overlayTexture()
-                                                        .getTextureView(), lightOverlaySampler);
-            pass.bindTexture("Sampler2", mc.gameRenderer.lightmap(), lightOverlaySampler);
-            m.lightBuffers.bind();
-            m.matrixBuffer.bind();
-            m.buffers.bindForDraw();
-            if (GlCompat.SUPPORTS_BINDLESS_TEXTURES) {
-                GlBindlessTable.bind();
-            }
-            m.submitUberVisualDepthReplay(pass, textureManager);
-        }
-        GlCompat.popDebugGroup();
     }
 
     private static boolean incompatibleUber(IndirectDraw a, IndirectDraw b) {
@@ -193,7 +143,6 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         super.render(lightStorage, environmentStorage, modelViewMatrix, renderOrigin, constantAmbientLight);
 
         renderModelView.set(modelViewMatrix);
-        published = this;
         pass2Pending = false;
         renderPassUniforms.beginFrame(renderOrigin, constantAmbientLight);
 
@@ -235,9 +184,8 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             uberOitMultiDraws.clear();
             meshMultiDraws.clear();
             meshOitMultiDraws.clear();
-            replayRuns.clear();
             if (SodiumClassLoadCheck.PRESENT) {
-                TerrainDrawDispatcher.runDeferredMeshRegen();
+                TerrainDrawDispatcher.runDeferredPostVisuals();
             }
             invalidateEncoderProgramCache();
             return;
@@ -309,7 +257,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         GlCompat.popDebugGroup();
 
         if (SodiumClassLoadCheck.PRESENT) {
-            TerrainDrawDispatcher.runDeferredMeshRegen();
+            TerrainDrawDispatcher.runDeferredPostVisuals();
         }
 
         GlCompat.pushDebugGroup("flywheel:gl/hiz");
@@ -423,34 +371,6 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             if (uberSplit) {
                 (oit ? uberOitMultiDraws : uberMultiDraws).add(new UberDraw(draw.material(), uberStart, i + 1));
                 uberStart = i + 1;
-            }
-        }
-
-        buildReplayRuns();
-    }
-
-    private void buildReplayRuns() {
-        replayRuns.clear();
-        for (var md : uberMultiDraws) {
-            if (md.material().transparency() != Transparency.OPAQUE || !md.material()
-                                                                          .writeMask()
-                                                                          .depth()) {
-                continue;
-            }
-            int runStart = -1;
-            for (int i = md.start(); i < md.end(); i++) {
-                boolean big = allDraws.get(i)
-                                      .mesh()
-                                      .boundingRadius() >= REPLAY_MIN_RADIUS;
-                if (big && runStart < 0) {
-                    runStart = i;
-                } else if (!big && runStart >= 0) {
-                    replayRuns.add(new UberDraw(md.material(), runStart, i));
-                    runStart = -1;
-                }
-            }
-            if (runStart >= 0) {
-                replayRuns.add(new UberDraw(md.material(), runStart, md.end()));
             }
         }
     }
@@ -571,10 +491,6 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                 oit != OitMode.DEPTH_RANGE, textureManager);
     }
 
-    private void submitUberVisualDepthReplay(RenderPass pass, TextureManager textureManager) {
-        submitUberBatches(pass, replayRuns, IndirectPipeline::uberDepthOnlyPipelineFor, true, textureManager);
-    }
-
     private void submitUberBatches(RenderPass pass, List<UberDraw> batches,
                                    Function<Material, RenderPipeline> pipelineFor, boolean bindColor,
                                    TextureManager textureManager) {
@@ -637,9 +553,6 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
     @Override
     public void delete() {
-        if (published == this) {
-            published = null;
-        }
         instancers.values()
                   .forEach(IndirectInstancer::delete);
 

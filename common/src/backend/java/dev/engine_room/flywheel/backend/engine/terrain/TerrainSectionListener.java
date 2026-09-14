@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.backend.engine.terrain;
 
+import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import org.jspecify.annotations.Nullable;
 
 public interface TerrainSectionListener {
@@ -33,22 +34,18 @@ public interface TerrainSectionListener {
         }
     }
 
-    void onSectionMeshed(int regionId, int originX, int originY, int originZ, int localIndex,
-                         long dataPtrSolid, long dataPtrCutout, long dataPtrTranslucent, int geometryHandle);
+    void markSection(RenderRegion region, int localIndex);
+
+    void markRegion(RenderRegion region);
 
     void onSectionRemoved(int regionId, int localIndex);
 
     void onRegionFreed(int regionId);
 
-    void noteRegionIdentity(int regionId, int originX, int originY, int originZ, int geometryHandle);
-
-    int cachedGeometryHandle(int regionId);
-
     final class Holder {
         @Nullable
         private static volatile TerrainSectionListener published;
-        // Lifetime-scoped (attach on construct / detach on delete) so Hook 3 can invalidate a freed region even
-        // while the takeover is unpublished.
+        // Region frees must reach the registry while the takeover is unpublished.
         @Nullable
         private static volatile TerrainSectionListener attached;
 

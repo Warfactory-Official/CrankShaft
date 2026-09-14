@@ -73,8 +73,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     private static final long CMD_BYTES_PER_REGION = ((long) MAX_COMMANDS_PER_REGION + MAX_TEMPORAL_COMMANDS_PER_REGION) * COMMAND_STRIDE;
     private static final long REGION_GEO_STRIDE = 8;  // uvec2 arena device address per visible-region slot
     private static final long DRAW_DATA_STRIDE = 32;  // 8 uints: origin xyz, visBase, geoAddr lo/hi, pad, pad
-    // Two-phase HiZ phase ids (section_test / mesh emit `phase` field): 0 = single-phase MDI (Pass A / temporal
-    private static final int PHASE_MDI = 0;
+    // Two-phase HiZ phase ids (section_test / mesh emit `phase` field).
     private static final int PHASE_1 = 1;
     private static final int PHASE_2 = 2;
     // DIAG bisect: force the opaque / translucent mesh tier OFF (fall back to the proven MDI opaque / CPU translucent
@@ -109,7 +108,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     @Nullable
     public VisibleRegionBatch boundBatch;
     public int boundParity;
-    public int boundPhase = PHASE_MDI;
+    public int boundPhase = PHASE_1;
     int frameParity;
     private int residentParity;
     private boolean metadataSyncedThisFrame;
@@ -269,6 +268,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         }
 
         geoAddrCache.clear();
+        registry.flushPendingUploads();
         collect(manager);
         // Size the resident vis/section buffers for the opaque region-id range BEFORE capturing translucent.
         int maxRegionId = Math.max(maxRegionId(solidBatch), maxRegionId(cutoutBatch));
@@ -529,8 +529,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS)
                                                    .getTextureView()).vkImageView();
         long lightmapView = ((VulkanGpuTextureView) mc.gameRenderer.lightmap()).vkImageView();
-        long atlasSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache()
-                                                            .getClampToEdge(FilterMode.LINEAR, true)).vkSampler();
+        long atlasSampler = ((VulkanGpuSampler) TerrainAtlasFilter.sampler()).vkSampler();
         long loSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache()
                                                          .getClampToEdge(FilterMode.LINEAR)).vkSampler();
         return new Frame(programs, indexVk, projection, fog, globals, atlasView, lightmapView, atlasSampler, loSampler);
@@ -704,6 +703,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     public void prepareResidentTranslucent(ChunkRenderMatrices matrices, RenderSectionManager manager) {
         // terrainMode TRANSLUCENT: Sodium draws opaque, the engine owns only the translucent layer. The full HiZ
         geoAddrCache.clear();
+        registry.flushPendingUploads();
         translucent.capture(matrices, manager);
         hiz.writeTranslucentFrame(matrices, Minecraft.getInstance());
     }

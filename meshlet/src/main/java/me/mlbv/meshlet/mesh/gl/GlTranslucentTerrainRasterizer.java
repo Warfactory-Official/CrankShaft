@@ -12,7 +12,6 @@ import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.pipeline.ColorTargetState;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 
@@ -150,7 +149,7 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         // requires the mip taps (a plain non-mip LINEAR sampler broke the crisp/NEAREST look).
         GpuTextureView atlasView = Minecraft.getInstance().getTextureManager()
                 .getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView();
-        int atlasSamplerObj = ((GlSampler) RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR, true)).getId();
+        int atlasSamplerObj = ((GlSampler) TerrainAtlasFilter.sampler()).getId();
         GlMeshUtil.bindTexture(UNIT_ATLAS, atlasView, atlasSamplerObj);
         GlMeshUtil.bindTexture(UNIT_LIGHTMAP, lightmapView, lightmapSamplerObj);
         if (mode != OitMode.DEPTH_RANGE) {
@@ -280,7 +279,7 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
 
         GpuTextureView atlasView = Minecraft.getInstance().getTextureManager()
                 .getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView();
-        int atlasSamplerObj = ((GlSampler) RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR, true)).getId();
+        int atlasSamplerObj = ((GlSampler) TerrainAtlasFilter.sampler()).getId();
         GlMeshUtil.bindTexture(UNIT_ATLAS, atlasView, atlasSamplerObj);
         GlMeshUtil.bindTexture(UNIT_LIGHTMAP, lightmapView, lightmapSamplerObj);
 

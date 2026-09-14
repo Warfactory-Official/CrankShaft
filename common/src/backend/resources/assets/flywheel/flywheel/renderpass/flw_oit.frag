@@ -58,7 +58,11 @@ void main() {
     flw_fragLight = lightCoord;
     _flw_unpackMaterialProperties(_flw_packedMaterial.y, flw_material);
     flw_materialFragment();
+    // Perf: COLLECT_COEFFS reads alpha only and NV does not dead-code the light chain => skip it explicitly.
+    // Invariant: light shaders never write alpha.
+    #ifndef _FLW_COLLECT_COEFFS
     flw_shaderLight();
+    #endif
 
     // Per-material cutout (COEFFS/EVALUATE only); uber dispatches on the draw command's cutout index.
     #ifdef _FLW_UBER_FRAGMENT
@@ -71,6 +75,7 @@ void main() {
     }
     #endif
 
+    #ifndef _FLW_COLLECT_COEFFS
     float diffuseFactor = _flw_diffuseFactor();
     flw_fragColor.rgb *= diffuseFactor;
     if (flw_material.useOverlay) {
@@ -80,12 +85,15 @@ void main() {
     vec4 lightColor = vec4(1.);
     if (flw_material.useLight) {
         lightColor = texture(Sampler2, clamp(flw_fragLight, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
-        // Perf: lightmap alpha is 1 by construction; RGB-only lets COLLECT_COEFFS dead-code the chain.
+        // Lightmap alpha is 1 by construction.
         flw_fragColor.rgb *= lightColor.rgb;
     }
+    #endif
 
     #ifdef _FLW_DEBUG
-    #if _FLW_DEBUG == 1
+    #ifdef _FLW_COLLECT_COEFFS
+    flw_fragColor.a = 1.; // every debug mode below writes alpha 1
+    #elif _FLW_DEBUG == 1
     flw_fragColor = vec4(flw_vertexNormal * .5 + .5, 1.);
     #elif _FLW_DEBUG == 2
     flw_fragColor = _flw_id2Color(_flw_ids.x);

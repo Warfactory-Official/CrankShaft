@@ -10,6 +10,7 @@ import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkMemoryBarrier;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public final class VkTerrainResidentBuffers implements TerrainResidentBuffers {
@@ -17,8 +18,45 @@ public final class VkTerrainResidentBuffers implements TerrainResidentBuffers {
     private static final int TRANSFER_SRC = VK12.VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     private static final int TRANSFER_DST = VK12.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
+    private static final int PAGE_SHIFT = 10;
+    private static final long PAGE_SIZE = 1L << PAGE_SHIFT;
+
     private final List<Buffer> all = new ArrayList<>();
     private int readParity;
+
+    private static int pageWords(long bytes) {
+        return (int) ((((bytes + PAGE_SIZE - 1) >>> PAGE_SHIFT) + 63) >>> 6);
+    }
+
+    private static int nextSet(long[] bits, int from, int limit) {
+        int w = from >>> 6;
+        if (w >= bits.length) {
+            return limit;
+        }
+        long word = bits[w] & (-1L << from);
+        while (word == 0L) {
+            if (++w >= bits.length) {
+                return limit;
+            }
+            word = bits[w];
+        }
+        return Math.min(w * 64 + Long.numberOfTrailingZeros(word), limit);
+    }
+
+    private static int nextClear(long[] bits, int from, int limit) {
+        int w = from >>> 6;
+        if (w >= bits.length) {
+            return limit;
+        }
+        long word = ~bits[w] & (-1L << from);
+        while (word == 0L) {
+            if (++w >= bits.length) {
+                return limit;
+            }
+            word = ~bits[w];
+        }
+        return Math.min(w * 64 + Long.numberOfTrailingZeros(word), limit);
+    }
 
     public void setReadParity(int parity) {
         readParity = parity;
@@ -26,7 +64,7 @@ public final class VkTerrainResidentBuffers implements TerrainResidentBuffers {
 
     public boolean hasDirty(int parity) {
         for (Buffer b : all) {
-            if (b.dirtyHi[parity] != 0L) {
+            if (b.dirty[parity]) {
                 return true;
             }
         }
@@ -77,9 +115,10 @@ public final class VkTerrainResidentBuffers implements TerrainResidentBuffers {
     private final class Buffer implements TerrainResidentBuffer {
         private final VkBuffer[] staging = new VkBuffer[2];
         private final VkBuffer[] device = new VkBuffer[2];
-        // Dirty span [lo, hi) per parity -- the byte range changed since that parity was last synced. hi == 0 => clean.
-        private final long[] dirtyLo = {0L, 0L};
-        private final long[] dirtyHi = {0L, 0L};
+        // Dirty pages per parity, changed since that parity was last synced. One [lo, hi) span per buffer re-uploaded
+        // ~950 MB/s in flight (scattered section feeds span most of the table).
+        private final long[][] dirtyPages = new long[2][];
+        private final boolean[] dirty = new boolean[2];
         private long shadowPtr;
         private long shadowBytes;
 
@@ -88,6 +127,8 @@ public final class VkTerrainResidentBuffers implements TerrainResidentBuffers {
             this.shadowBytes = bytes;
             this.shadowPtr = FlwMemoryTracker.malloc(bytes);
             MemoryUtil.memSet(shadowPtr, 0, bytes);
+            dirtyPages[0] = new long[pageWords(bytes)];
+            dirtyPages[1] = new long[pageWords(bytes)];
             try {
                 staging[0] = new VkBuffer(TRANSFER_SRC, bytes);
                 staging[1] = new VkBuffer(TRANSFER_SRC, bytes);
@@ -124,6 +165,8 @@ public final class VkTerrainResidentBuffers implements TerrainResidentBuffers {
             staging[1].ensureCapacity(newBytes);
             device[0].ensureCapacity(newBytes);
             device[1].ensureCapacity(newBytes);
+            dirtyPages[0] = Arrays.copyOf(dirtyPages[0], pageWords(newBytes));
+            dirtyPages[1] = Arrays.copyOf(dirtyPages[1], pageWords(newBytes));
             markDirty(0L, newBytes);
             return true;
         }
@@ -160,37 +203,52 @@ public final class VkTerrainResidentBuffers implements TerrainResidentBuffers {
         }
 
         private void markDirty(long lo, long hi) {
+            if (hi <= lo) {
+                return;
+            }
+            int first = (int) (lo >>> PAGE_SHIFT);
+            int last = (int) ((hi - 1) >>> PAGE_SHIFT);
             for (int p = 0; p < 2; p++) {
-                if (dirtyHi[p] == 0L) {
-                    dirtyLo[p] = lo;
-                    dirtyHi[p] = hi;
-                } else {
-                    if (lo < dirtyLo[p]) {
-                        dirtyLo[p] = lo;
+                dirty[p] = true;
+                long[] pages = dirtyPages[p];
+                for (int w = first >>> 6; w <= last >>> 6; w++) {
+                    long mask = -1L;
+                    if (w == first >>> 6) {
+                        mask &= -1L << first;
                     }
-                    if (hi > dirtyHi[p]) {
-                        dirtyHi[p] = hi;
+                    if (w == last >>> 6) {
+                        mask &= -1L >>> (63 - (last & 63));
                     }
+                    pages[w] |= mask;
                 }
             }
         }
 
         boolean recordCopy(VkCommandBuffer cmd, int parity) {
-            long hi = dirtyHi[parity];
-            if (hi == 0L) {
+            if (!dirty[parity]) {
                 return false;
             }
-            long lo = dirtyLo[parity];
-            long size = hi - lo;
-            VkBuffer stage = staging[parity];
-            VkBuffer dev = device[parity];
-            MemoryUtil.memCopy(shadowPtr + lo, stage.mappedAddress() + lo, size);
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                VkBufferCopy.Buffer region = VkBufferCopy.calloc(1, stack).srcOffset(lo).dstOffset(lo).size(size);
-                VK12.vkCmdCopyBuffer(cmd, stage.vkBuffer(), dev.vkBuffer(), region);
+            long[] pages = dirtyPages[parity];
+            int pageCount = (int) ((shadowBytes + PAGE_SIZE - 1) >>> PAGE_SHIFT);
+            int runs = 0;
+            for (int page = nextSet(pages, 0, pageCount); page < pageCount; page = nextSet(pages, nextClear(pages, page, pageCount), pageCount)) {
+                runs++;
             }
-            dirtyLo[parity] = 0L;
-            dirtyHi[parity] = 0L;
+            VkBuffer stage = staging[parity];
+            VkBufferCopy.Buffer regions = VkBufferCopy.malloc(runs);
+            for (int page = nextSet(pages, 0, pageCount); page < pageCount; ) {
+                int end = nextClear(pages, page, pageCount);
+                long lo = (long) page << PAGE_SHIFT;
+                long size = Math.min((long) end << PAGE_SHIFT, shadowBytes) - lo;
+                MemoryUtil.memCopy(shadowPtr + lo, stage.mappedAddress() + lo, size);
+                regions.get().srcOffset(lo).dstOffset(lo).size(size);
+                page = nextSet(pages, end, pageCount);
+            }
+            regions.flip();
+            VK12.vkCmdCopyBuffer(cmd, stage.vkBuffer(), device[parity].vkBuffer(), regions);
+            regions.free();
+            Arrays.fill(pages, 0L);
+            dirty[parity] = false;
             return true;
         }
 

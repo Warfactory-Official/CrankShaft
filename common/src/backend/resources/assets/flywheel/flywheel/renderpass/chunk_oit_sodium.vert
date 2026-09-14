@@ -37,6 +37,11 @@ layout(std140, binding = 23) uniform u_RegionChunkOrigin {
     ivec3 _flw_regionChunkOrigin;
     int _flw_regionPadding;
 };
+#elif defined(_FLW_TRANSLUCENT_MDI)
+// [baseInstance = visible-region slot] = (originChunkX lo16 | Z hi16, originChunkY lo16, regionId, run).
+layout(std430, binding = 10) restrict readonly buffer _flw_RegionInputBuf {
+    uvec4 _flw_regionInput[];
+};
 #else
 layout(std140, binding = 10) uniform u_RegionChunkOrigin {
     ivec3 _flw_regionChunkOrigin;
@@ -94,6 +99,9 @@ void main() {
     vec4 a_Color = unpackUnorm4x8(_flw_v.color);
     uvec2 a_TexCoord = uvec2(_flw_v.uv, _flw_v.uv >> 16u);
     uvec4 a_LightAndData = uvec4(_flw_v.light, _flw_v.light >> 8u, _flw_v.light >> 16u, _flw_v.light >> 24u) & 0xFFu;
+#elif defined(_FLW_TRANSLUCENT_MDI) && !defined(_FLW_VK)
+    uvec4 _flw_region = _flw_regionInput[gl_BaseInstanceARB];
+    ivec3 regionChunkOrigin = ivec3(int(_flw_region.x << 16) >> 16, int(_flw_region.y << 16) >> 16, int(_flw_region.x) >> 16);
 #else
     ivec3 regionChunkOrigin = _flw_regionChunkOrigin;
 #endif
@@ -117,7 +125,7 @@ void main() {
     texCoord0 = vec2(a_TexCoord & TEXTURE_MAX_VALUE) / float(TEXTURE_MAX_COORD);
 
 #if defined(_FLW_TRANSLUCENT_FADE)
-    flw_chunkVisibility = _flw_translucentVis[int(a_LightAndData.w) & 0xFF];
+    flw_chunkVisibility = _flw_translucentVis[(int(_flw_region.z) << 8) + (int(a_LightAndData.w) & 0xFF)];
 #elif defined(_FLW_TRANSLUCENT_MDI)
     flw_chunkVisibility = 1.0;
 #elif defined(_FLW_TRANSLUCENT_INSTANCED)

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Shift register: bit0 = this frame, bit1 = last frame; occluded freezes, absent clears, off-screen shifts 0 in.
+// sectionVis bit0 = visible vs carried pyramid (phase 1); bit1 = phase-1 reject visible vs fresh pyramid (phase 2).
 // Conservative texel-gather HiZ
 
 #include "flywheel:internal/indirect/hiz_aabb.glsl"
@@ -18,25 +18,21 @@ layout(std430, binding = 1) restrict readonly buffer SectionDataBuf { uvec4 sect
 layout(std430, binding = 2) restrict readonly buffer RegionVisBuf { uint regionVis[]; };
 layout(std430, binding = 3) restrict buffer SectionVisBuf { uint sectionVis[]; };
 layout(std430, binding = 6) restrict readonly buffer GeometryMaskBuf { uint geometryMask[]; };
-// phase: 0 = single-phase shift; 1 = vs carried pyramid -> bit0; 2 = re-test vs FRESH pyramid -> bit1 (mesh tier).
 layout(std140, binding = 9) uniform TerrainRegionCount { uint regionCount; uint phase; uint _rcPad1; uint _rcPad2; };
 #else
 layout(std140, binding = 7) uniform TerrainSceneUbo {
     restrict readonly uvec4 *regionInput;
     restrict readonly uvec4 *sectionData0;      // 3 uvec4 / section, region-id-keyed
-    restrict readonly uint *regionVis;          // [slot] (read; gates freezing)
-    restrict uint *sectionVis;                  // [regionId<<8 | s] shift register (read-modify-write)
+    restrict readonly uint *regionVis;          // [slot]
+    restrict uint *sectionVis;                  // [regionId<<8 | s] (read-modify-write)
     restrict writeonly uvec2 *commandWords;     // command stream (unused here)
     restrict uvec2 *regionCommandCount;         // per-slot counts (unused here)
     restrict readonly uint *geometryMask;       // 8 uint / region; index = regionId*GEOMETRY_MASK_WORDS + (s>>5)
     uint regionCount;                           // visible-region count (replaces regionInput.length())
+    uint phase;
 };
 #endif
 layout(binding = 10) uniform sampler2D hizPyramid;
-
-#ifndef _FLW_VK
-const uint phase = 0u; // GL/bindless path: single-phase (temporal shift) only; the two-phase driver is Vulkan-only.
-#endif
 
 const uint REGION_SIZE = 256u; // sections per CrankShaft region (8 x 4 x 8)
 const uint GEOMETRY_MASK_WORDS = REGION_SIZE / 32u;
@@ -78,14 +74,7 @@ ivec3 sectionRelativeBlocks(uint s) {
 }
 
 void store(uint visIndex, bool present, bool visible) {
-    if (phase == 0u) {
-        if (!present) {
-            sectionVis[visIndex] = 0u;
-            return;
-        }
-        uint lastData = sectionVis[visIndex] & 0xFFu;
-        sectionVis[visIndex] = ((lastData << 1u) | (visible ? 1u : 0u)) & 0xFFu;
-    } else if (phase == 1u) {
+    if (phase == 1u) {
         sectionVis[visIndex] = (present && visible) ? 1u : 0u;
     } else if ((sectionVis[visIndex] & 1u) == 0u) {
         sectionVis[visIndex] = (present && visible) ? 2u : 0u;
@@ -105,7 +94,7 @@ void main() {
     uint regionId = in4.z;
     uint visIndex = (regionId << 8u) | s;
 
-    // Occluded: phase 0 FREEZES history (Pass-A relies on stale); phase 1 CLEARS; phase 2 keeps phase-1's result.
+    // Occluded: phase 1 clears; phase 2 keeps phase-1's result.
     if (regionVis[slot] == 0u) {
         if (phase == 1u) {
             sectionVis[visIndex] = 0u;

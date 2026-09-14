@@ -144,17 +144,23 @@ public final class GlGpuTimer {
         collectFreshest();
     }
 
+    // Newest READY slot: with >= 1 frame of GPU latency the newest pending slot is never ready when polled.
     private static void collectFreshest() {
         Slot best = null;
         for (Slot slot : slots) {
             if (slot == null || !slot.pending || slot.collected || slot.scopeCount == 0) {
                 continue;
             }
-            if (best == null || slot.frameId > best.frameId) {
+            if ((best == null || slot.frameId > best.frameId) && slot.resultsAvailable()) {
                 best = slot;
             }
         }
-        if (best != null && best.resultsAvailable()) {
+        if (best != null) {
+            for (Slot slot : slots) {
+                if (slot != null && slot.pending && slot.frameId < best.frameId) {
+                    slot.collected = true;
+                }
+            }
             copyCompleted(best);
             best.collected = true;
             report.capturedFrames++;

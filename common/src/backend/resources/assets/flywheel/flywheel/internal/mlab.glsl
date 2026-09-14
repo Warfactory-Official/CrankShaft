@@ -105,14 +105,18 @@ void _flw_mlabInsertWindow(uint p, uint count, uvec2 cur) {
             return;
         }
     }
+    // Write back from the first changed slot only.
+    uint lo = count;
     for (uint i = 0u; i < _FLW_MLAB_WINDOW; ++i) {
         if (i < count && uintBitsToFloat(cur.x) > uintBitsToFloat(s[i].x)) {
+            lo = min(lo, i);
             uvec2 t = s[i];
             s[i] = cur;
             cur = t;
         }
     }
     if (count >= _flw_mlabK) {
+        lo = min(lo, count - 1u);
         for (uint i = 0u; i < _FLW_MLAB_WINDOW; ++i) {
             if (i + 1u == count) {
                 vec4 l = unpackUnorm4x8(s[i].y);
@@ -122,13 +126,13 @@ void _flw_mlabInsertWindow(uint p, uint count, uvec2 cur) {
             }
         }
         for (uint i = 0u; i < _FLW_MLAB_WINDOW; ++i) {
-            if (i < count) {
+            if (i >= lo && i < count) {
                 _flw_mlabData[_flw_mlabSlot(p, i)] = s[i];
             }
         }
     } else {
         for (uint i = 0u; i < _FLW_MLAB_WINDOW; ++i) {
-            if (i < count) {
+            if (i >= lo && i < count) {
                 _flw_mlabData[_flw_mlabSlot(p, i)] = s[i];
             } else if (i == count) {
                 _flw_mlabData[_flw_mlabSlot(p, i)] = cur;

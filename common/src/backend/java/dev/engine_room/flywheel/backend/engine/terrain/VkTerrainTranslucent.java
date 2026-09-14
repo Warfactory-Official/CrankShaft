@@ -233,7 +233,7 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
     }
 
     @Override
-    public void prepareCull(GpuTextureView depthView, int width, int height) {
+    public void prepareCull(GpuTextureView depthView, int width, int height, boolean insert) {
         VkTerrainTranslucentMeshDrawStrategy strategy = VkTerrainDrawManager.translucentMeshDrawStrategy;
         if (strategy != null) {
             // Publish this frame's resident parity before the translucent cull reads the registry buffers. In
@@ -326,8 +326,7 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
 
         long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS)
                                                    .getTextureView()).vkImageView();
-        long atlasSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache()
-                                                            .getClampToEdge(FilterMode.LINEAR, true)).vkSampler();
+        long atlasSampler = ((VulkanGpuSampler) TerrainAtlasFilter.sampler()).vkSampler();
 
         PhaseSet b = buffers();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/translucent_mlab/" + oitMode);
@@ -394,8 +393,7 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
 
         long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS)
                                                    .getTextureView()).vkImageView();
-        long atlasSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache()
-                                                            .getClampToEdge(FilterMode.LINEAR, true)).vkSampler();
+        long atlasSampler = ((VulkanGpuSampler) TerrainAtlasFilter.sampler()).vkSampler();
         long lightmapVk = ((VulkanGpuTextureView) lightmapView).vkImageView();
         long lightmapSampler = ((VulkanGpuSampler) clampLinear).vkSampler();
         boolean nonDepthRange = mode != OitMode.DEPTH_RANGE;

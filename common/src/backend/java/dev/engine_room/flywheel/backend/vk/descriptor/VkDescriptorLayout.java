@@ -21,10 +21,11 @@ public final class VkDescriptorLayout {
     public static final int STAGE_FRAGMENT = VK12.VK_SHADER_STAGE_FRAGMENT_BIT;
     public static final int STAGE_COMPUTE = VK12.VK_SHADER_STAGE_COMPUTE_BIT;
     private static final long[] EMPTY = new long[0];
-    // NV driver bug (reproduced on 610.47 and 610.62): graphics-stage combined-image-sampler sets consumed
-    // from a descriptor buffer MMU-fault a driver-internal descriptor-servicing kernel minutes into chunk
-    // churn; those sets take the push path instead. Flip to false to retest against future drivers.
-    private static final boolean DB_NO_GFX_SAMPLERS = true;
+    // NV driver bug: sets consumed from a descriptor buffer MMU-fault a driver-internal descriptor-servicing kernel
+    // (2560 B compute) => push path. Graphics combined-image-sampler sets: 610.47/610.62, minutes into chunk churn.
+    // Input-attachment sets (folded wavelet producers): 616.92, first folded frame after insert-OIT frames,
+    // 5/5 vs 0/2 routed. Flip to false to retest against future drivers.
+    private static final boolean DB_ROUTE_FAULTING_SETS = true;
     private final long setLayout;
     private final long pipelineLayout;
     private final boolean descriptorBuffer;
@@ -47,7 +48,7 @@ public final class VkDescriptorLayout {
         this.bindlessTextures = bindlessTextures && VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
         boolean descriptorBuffer = VkCaps.DESCRIPTOR_BUFFER_NEGOTIATED
                 && !this.bindlessTextures
-                && !(DB_NO_GFX_SAMPLERS && hasGraphicsSamplerBindings(bindings));
+                && !(DB_ROUTE_FAULTING_SETS && hasFaultingDbBindings(bindings));
         this.descriptorBuffer = descriptorBuffer;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkDescriptorSetLayoutBinding.Buffer vkBindings = VkDescriptorSetLayoutBinding.calloc(bindings.size(),
@@ -121,9 +122,10 @@ public final class VkDescriptorLayout {
         }
     }
 
-    private static boolean hasGraphicsSamplerBindings(List<Binding> bindings) {
+    private static boolean hasFaultingDbBindings(List<Binding> bindings) {
         for (Binding b : bindings) {
-            if (b.type() == TYPE_COMBINED_IMAGE_SAMPLER && (b.stageFlags() & ~STAGE_COMPUTE) != 0) {
+            if (b.type() == TYPE_INPUT_ATTACHMENT
+                    || b.type() == TYPE_COMBINED_IMAGE_SAMPLER && (b.stageFlags() & ~STAGE_COMPUTE) != 0) {
                 return true;
             }
         }

@@ -24,9 +24,10 @@ public interface SodiumTerrainOitReplay {
      * Build the translucent command streams on the GPU (cull against the current OIT-target depth), ONCE per frame,
      * BEFORE any OIT producer pass opens -- compute cannot run inside a RenderPass. The GPU-driven (INDIRECT) path runs
      * the cull/build compute tail here; the CPU per-section (instancing) path no-ops. {@code depthView} is the
-     * OIT target's depth (= the depth the producers test against), with its dimensions.
+     * OIT target's depth (= the depth the producers test against), with its dimensions. {@code insert}: this frame's
+     * chain is the single-pass insert chain ({@link #replayInsert}), known before the call.
      */
-    void prepareCull(GpuTextureView depthView, int width, int height);
+    void prepareCull(GpuTextureView depthView, int width, int height, boolean insert);
 
     /**
      * Replay the captured translucent sections into an open OIT producer pass (depthRange / coefficients /

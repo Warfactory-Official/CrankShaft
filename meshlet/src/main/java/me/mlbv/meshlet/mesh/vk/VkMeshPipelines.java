@@ -56,7 +56,7 @@ public final class VkMeshPipelines {
 
     // DRAW (task+mesh+frag): binding numbers mirror MDI's VkShaderTransform ABI exactly -- Sampler0 atlas @10 (frag),
     // Sampler2 lightmap @12 (mesh bakes vertexColor), Projection @16 + Globals @20 + ChunkSection(ModelViewMat) @21
-    // (the SAME vanilla buffers terrain_solid.vsh binds, for the bit-exact Pass-A-matching transform), Fog @18 (frag).
+    // (the SAME vanilla buffers terrain_solid.vsh binds, for the bit-exact MDI-matching transform), Fog @18 (frag).
     private static final List<Binding> DRAW_BINDINGS = List.of(
             new Binding(0, SSBO, TASK | MESH), new Binding(1, SSBO, TASK), new Binding(2, SSBO, TASK),
             new Binding(3, SSBO, TASK), new Binding(4, SSBO, TASK),

@@ -391,34 +391,6 @@ public final class FlwCommands {
 							return Command.SINGLE_SUCCESS;
 						})));
 
-		debug.then(ClientCommands.literal("terrainHiZProbe")
-				.then(ClientCommands.literal("on")
-						.executes(context -> {
-							TerrainDebug.HIZ_PROBE = true;
-							context.getSource().sendFeedback(Component.literal("Terrain HiZ probe: ON -- NOTE: currently a no-op (the probe has no read-site on this build)."));
-							return Command.SINGLE_SUCCESS;
-						}))
-				.then(ClientCommands.literal("off")
-						.executes(context -> {
-							TerrainDebug.HIZ_PROBE = false;
-							context.getSource().sendFeedback(Component.literal("Terrain HiZ probe: OFF"));
-							return Command.SINGLE_SUCCESS;
-						})));
-
-		debug.then(ClientCommands.literal("terrainBuilderDiff")
-				.then(ClientCommands.literal("on")
-						.executes(context -> {
-							TerrainDebug.DEBUG_VALIDATE_GPU_BUILDER = true;
-							context.getSource().sendFeedback(Component.literal("Terrain GPU-builder validation: ON (throws on GPU/CPU mismatch)"));
-							return Command.SINGLE_SUCCESS;
-						}))
-				.then(ClientCommands.literal("off")
-						.executes(context -> {
-							TerrainDebug.DEBUG_VALIDATE_GPU_BUILDER = false;
-							context.getSource().sendFeedback(Component.literal("Terrain GPU-builder validation: OFF"));
-							return Command.SINGLE_SUCCESS;
-						})));
-
 		debug.then(ClientCommands.literal("gpuTimer")
 				.then(ClientCommands.literal("on")
 						.executes(context -> {

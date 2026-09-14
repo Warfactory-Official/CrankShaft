@@ -22,7 +22,7 @@ layout(std140, binding = 7) uniform TerrainSceneUbo {
     restrict readonly uvec4 *regionInput;       // [slot].xyzw as above
     restrict readonly uvec4 *sectionData;       // 3 uvec4 / section, region-id-keyed (unused here)
     restrict writeonly uint *regionVis;         // [slot]
-    restrict uint *sectionVis;                  // shift register (unused here)
+    restrict uint *sectionVis;                  // (unused here)
     restrict writeonly uvec2 *commandWords;     // command stream (unused here)
     restrict uvec2 *regionCommandCount;         // per-slot counts (unused here)
     restrict readonly uint *geometryMask;       // region-id-keyed present mask (unused here)

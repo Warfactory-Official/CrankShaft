@@ -17,6 +17,7 @@ import dev.engine_room.flywheel.backend.InternalVertex;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.*;
+import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.BerFamily;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
@@ -29,6 +30,7 @@ import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
 
 import java.util.*;
+import java.util.function.Consumer;
 
 /**
  * {@link RenderPipeline}s for the OIT passes: per-(type, mode) producers plus fullscreen composite/depth passes.
@@ -60,6 +62,7 @@ public final class OitPipelines {
     private static final Identifier CHUNK_SODIUM_VERTEX = ResourceUtil.rl("codegen/oit/chunk_sodium");
     private static final Identifier CHUNK_SODIUM_VERTEX_MDI = ResourceUtil.rl("codegen/oit/chunk_sodium_mdi");
     private static final Identifier CHUNK_SODIUM_VERTEX_MDI_FADE = ResourceUtil.rl("codegen/oit/chunk_sodium_mdi_fade");
+    private static final Consumer<Compilation> DRAW_PARAMETERS = ctx -> ctx.requireExtension("GL_ARB_shader_draw_parameters");
     private static final Identifier[] BER_VERTEX = new Identifier[BerFamily.VALUES.length];
     private static final Map<Identifier, BerFamily> BER_VERTEX_FAMILY = new HashMap<>();
     private static final Identifier[][] BER_FRAGMENT = new Identifier[BerFamily.VALUES.length][OitMode.values().length];
@@ -86,10 +89,10 @@ public final class OitPipelines {
                 yield RenderPassShaders.assembleSodiumChunkOitVertex(false, false);
             }
             if (id.equals(CHUNK_SODIUM_VERTEX_MDI)) {
-                yield RenderPassShaders.assembleSodiumChunkOitVertex(true, false);
+                yield RenderPassShaders.assembleSodiumChunkOitVertex(true, false, DRAW_PARAMETERS);
             }
             if (id.equals(CHUNK_SODIUM_VERTEX_MDI_FADE)) {
-                yield RenderPassShaders.assembleSodiumChunkOitVertex(true, true);
+                yield RenderPassShaders.assembleSodiumChunkOitVertex(true, true, DRAW_PARAMETERS);
             }
             BerFamily berFamily = BER_VERTEX_FAMILY.get(id);
             if (berFamily != null) {

@@ -237,7 +237,7 @@ public final class VkTerrainPrograms {
                     VkShaderTransform.toVulkan(vsGl, VkShaderTransform.Stage.VERTEX), VkShaderCompiler.KIND_VERTEX);
             fs = VkShaderCompiler.compileModule(cutout ? "terrain_cutout" : "terrain_solid",
                     VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
-            // Opaque: depth-write ON because Pass A / HiZ read it.
+            // Opaque: depth-write ON because the HiZ pyramid reads it.
             var blend = new VkGraphicsPipeline.Blend(false, 0, 0, 0, 0, 0, 0, VkGraphicsPipeline.COLOR_WRITE_RGBA);
             VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(new int[]{colorFormat},
                     new VkGraphicsPipeline.Blend[]{blend},

@@ -17,21 +17,18 @@ layout(std140, binding = 7) uniform TerrainSceneUbo {
     restrict readonly uvec4 *sectionData0;      // 3 uvec4 / section, region-id-keyed (TRANSLUCENT mirror)
     restrict readonly uint *regionVis;
     restrict readonly float *translucentVis;    // [regionId*256 + s]; 1.0 = settled, <1.0 = mid-fade
-    restrict writeonly uint *commandWords;      // [slot * REGION_COMMAND_WORDS + stream offset + cmd * 5]
-    restrict uvec2 *regionCommandCount;         // [slot] = (settledCount, fadingCount)
+    restrict writeonly uint *commandWords;      // run window: [runStart*512 settled lane][+ runLength*256 fading lane]
+    restrict uvec2 *regionCommandCount;
     restrict readonly uint *unused48;
     uint regionCount;                           // visible-region count (replaces regionInput.length())
 };
+// atomicAdd takes a buffer variable, not a bindless dereference. [run start] = (settledCount, fadingCount).
+layout(std430, binding = 5) restrict buffer RunCommandCountBuf { uvec2 runCommandCount[]; };
 layout(binding = 10) uniform sampler2D hizPyramid;
 
 const uint REGION_SIZE = 256u; // sections per CrankShaft region (8 x 4 x 8)
 const uint COMMAND_STRIDE_WORDS = 5u;
 const uint MAX_COMMANDS_PER_STREAM = REGION_SIZE;
-const uint FADING_WORD_OFFSET = MAX_COMMANDS_PER_STREAM * COMMAND_STRIDE_WORDS;
-const uint REGION_COMMAND_WORDS = MAX_COMMANDS_PER_STREAM * 2u * COMMAND_STRIDE_WORDS;
-
-shared uint sSettledCount;
-shared uint sFadingCount;
 
 struct TranslucentSection {
     uint baseVertex;
@@ -71,13 +68,14 @@ bool sectionVisible(ivec3 originChunk, uint s) {
     return _flw_hizAabbVisible(mins, maxs, cameraPosAndPad.xyz, viewProjection, viewSize, hizPyramid);
 }
 
-void emitCommand(uint slot, uint streamWordOffset, uint wi, uint indexCount, uint baseVertex) {
-    uint baseWord = slot * REGION_COMMAND_WORDS + streamWordOffset + wi * COMMAND_STRIDE_WORDS;
+// baseInstance = slot: chunk_oit_sodium.vert reads the region input by it.
+void emitCommand(uint laneBase, uint wi, uint indexCount, uint baseVertex, uint slot) {
+    uint baseWord = (laneBase + wi) * COMMAND_STRIDE_WORDS;
     commandWords[baseWord + 0u] = indexCount;
     commandWords[baseWord + 1u] = 1u;
     commandWords[baseWord + 2u] = 0u;
     commandWords[baseWord + 3u] = baseVertex;
-    commandWords[baseWord + 4u] = 0u;
+    commandWords[baseWord + 4u] = slot;
 }
 
 void main() {
@@ -88,17 +86,12 @@ void main() {
     uvec4 in4 = regionInput[slot];
     uint regionId = in4.z;
     if (regionId == 0xFFFFFFFFu || regionVis[slot] == 0u) {
-        if (gl_LocalInvocationID.x == 0u) {
-            regionCommandCount[slot] = uvec2(0u, 0u);
-        }
         return;
     }
-
-    if (gl_LocalInvocationID.x == 0u) {
-        sSettledCount = 0u;
-        sFadingCount = 0u;
-    }
-    barrier();
+    // in4.w = runStart | runLength << 16 over consecutive same-arena slots.
+    uint runStart = in4.w & 0xFFFFu;
+    uint laneCapacity = (in4.w >> 16u) * MAX_COMMANDS_PER_STREAM;
+    uint settledBase = runStart * 2u * MAX_COMMANDS_PER_STREAM;
 
     uint s = gl_LocalInvocationID.x;
     TranslucentSection t = decodeSection(regionId, s);
@@ -109,21 +102,16 @@ void main() {
             uint indexCount = (t.sumVertexCount >> 2u) * 6u;
             // Route by resident fade: settled (vis == 1.0) avoids the per-vertex SSBO fetch in its producer.
             if (translucentVis[regionId * REGION_SIZE + s] < 1.0) {
-                uint wi = atomicAdd(sFadingCount, 1u);
-                if (wi < MAX_COMMANDS_PER_STREAM) {
-                    emitCommand(slot, FADING_WORD_OFFSET, wi, indexCount, t.baseVertex);
+                uint wi = atomicAdd(runCommandCount[runStart].y, 1u);
+                if (wi < laneCapacity) {
+                    emitCommand(settledBase + laneCapacity, wi, indexCount, t.baseVertex, slot);
                 }
             } else {
-                uint wi = atomicAdd(sSettledCount, 1u);
-                if (wi < MAX_COMMANDS_PER_STREAM) {
-                    emitCommand(slot, 0u, wi, indexCount, t.baseVertex);
+                uint wi = atomicAdd(runCommandCount[runStart].x, 1u);
+                if (wi < laneCapacity) {
+                    emitCommand(settledBase, wi, indexCount, t.baseVertex, slot);
                 }
             }
         }
-    }
-
-    barrier();
-    if (gl_LocalInvocationID.x == 0u) {
-        regionCommandCount[slot] = uvec2(sSettledCount, sFadingCount);
     }
 }

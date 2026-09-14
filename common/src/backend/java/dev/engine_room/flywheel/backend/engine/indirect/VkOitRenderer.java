@@ -18,6 +18,7 @@ import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkBindlessTable;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.client.renderer.texture.TextureManager;
@@ -74,7 +75,7 @@ final class VkOitRenderer {
         }
 
         if (terrain != null) {
-            terrain.prepareCull(depthView, target.width, target.height);
+            terrain.prepareCull(depthView, target.width, target.height, false);
         }
 
         boolean canInsert = terrain == null || terrain instanceof VkFoldedOitReplay;
@@ -106,7 +107,7 @@ final class VkOitRenderer {
         GpuBufferSlice dynamicTransforms = RenderSystem.getDynamicUniforms()
                                                        .writeTransform(new Matrix4f(m.renderModelView));
 
-        GpuSampler atlasSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR, true);
+        GpuSampler atlasSampler = TerrainAtlasFilter.sampler();
         GpuSampler loSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler oitSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         GpuSampler noiseSampler = RenderSystem.getSamplerCache().getRepeat(FilterMode.LINEAR);

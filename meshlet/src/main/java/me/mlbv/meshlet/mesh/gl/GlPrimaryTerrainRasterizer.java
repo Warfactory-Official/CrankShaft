@@ -16,11 +16,11 @@ import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTextureView;
 
+import com.mojang.blaze3d.opengl.GlSampler;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
-import org.lwjgl.opengl.EXTTextureFilterAnisotropic;
 import dev.engine_room.flywheel.backend.gl.GlStateTracker;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL11C;
@@ -65,12 +65,6 @@ public final class GlPrimaryTerrainRasterizer {
 
     // Engine-owned sampler objects: without these the unit inherits the prior pass's sampler -- a depth-compare
     // sampler turns colour terrain black.
-    private int atlasSamplerObj = 0;
-    // RGSS variant: mipmapped trilinear min + NEAREST mag so the fragment's textureGrad supersampling can select mips.
-    private int atlasSamplerObjRgss = 0;
-    private int atlasSamplerObjAniso = 0;
-    private int atlasAnisoLevel = 0;
-    private int atlasSamplerObjLinear = 0;
     private int lightmapSamplerObj = 0;
 
     public GlPrimaryTerrainRasterizer(GlMeshPipelines pipelines) {
@@ -109,7 +103,7 @@ public final class GlPrimaryTerrainRasterizer {
         try (RenderPass pass = encoder.createRenderPass(() -> "meshlet:terrain/gl_opaque",
                 colorView, Optional.empty(), depthView, OptionalDouble.empty())) {
             ensureSamplers();
-            GlMeshUtil.bindTexture(UNIT_ATLAS, atlasView, selectAtlasSampler());
+            GlMeshUtil.bindTexture(UNIT_ATLAS, atlasView, ((GlSampler) TerrainAtlasFilter.sampler()).getId());
             GlMeshUtil.bindTexture(UNIT_LIGHTMAP, lightmapView, lightmapSamplerObj);
             setupOpaqueState();
             drawRegions(d, passIndex, regionCount);
@@ -128,59 +122,10 @@ public final class GlPrimaryTerrainRasterizer {
     }
 
     private void ensureSamplers() {
-        if (atlasSamplerObj == 0) {
-            atlasSamplerObj = GL33C.glGenSamplers();
-            GL33C.glSamplerParameteri(atlasSamplerObj, GL11C.GL_TEXTURE_MIN_FILTER, GL11C.GL_NEAREST);
-            GL33C.glSamplerParameteri(atlasSamplerObj, GL11C.GL_TEXTURE_MAG_FILTER, GL11C.GL_NEAREST);
-            GL33C.glSamplerParameteri(atlasSamplerObj, GL11C.GL_TEXTURE_WRAP_S, GL11C.GL_REPEAT);
-            GL33C.glSamplerParameteri(atlasSamplerObj, GL11C.GL_TEXTURE_WRAP_T, GL11C.GL_REPEAT);
-        }
-        if (atlasSamplerObjRgss == 0) {
-            atlasSamplerObjRgss = GL33C.glGenSamplers();
-            GL33C.glSamplerParameteri(atlasSamplerObjRgss, GL11C.GL_TEXTURE_MIN_FILTER, GL11C.GL_LINEAR_MIPMAP_LINEAR);
-            GL33C.glSamplerParameteri(atlasSamplerObjRgss, GL11C.GL_TEXTURE_MAG_FILTER, GL11C.GL_NEAREST);
-            GL33C.glSamplerParameteri(atlasSamplerObjRgss, GL11C.GL_TEXTURE_WRAP_S, GL11C.GL_REPEAT);
-            GL33C.glSamplerParameteri(atlasSamplerObjRgss, GL11C.GL_TEXTURE_WRAP_T, GL11C.GL_REPEAT);
-        }
-        if (atlasSamplerObjAniso == 0) {
-            atlasSamplerObjAniso = GL33C.glGenSamplers();
-            GL33C.glSamplerParameteri(atlasSamplerObjAniso, GL11C.GL_TEXTURE_MIN_FILTER, GL11C.GL_LINEAR_MIPMAP_LINEAR);
-            GL33C.glSamplerParameteri(atlasSamplerObjAniso, GL11C.GL_TEXTURE_MAG_FILTER, GL11C.GL_NEAREST);
-            GL33C.glSamplerParameteri(atlasSamplerObjAniso, GL11C.GL_TEXTURE_WRAP_S, GL11C.GL_REPEAT);
-            GL33C.glSamplerParameteri(atlasSamplerObjAniso, GL11C.GL_TEXTURE_WRAP_T, GL11C.GL_REPEAT);
-        }
-        if (atlasSamplerObjLinear == 0) {
-            atlasSamplerObjLinear = GL33C.glGenSamplers();
-            GL33C.glSamplerParameteri(atlasSamplerObjLinear, GL11C.GL_TEXTURE_MIN_FILTER, GL11C.GL_LINEAR_MIPMAP_LINEAR);
-            GL33C.glSamplerParameteri(atlasSamplerObjLinear, GL11C.GL_TEXTURE_MAG_FILTER, GL11C.GL_LINEAR);
-            GL33C.glSamplerParameteri(atlasSamplerObjLinear, GL11C.GL_TEXTURE_WRAP_S, GL11C.GL_REPEAT);
-            GL33C.glSamplerParameteri(atlasSamplerObjLinear, GL11C.GL_TEXTURE_WRAP_T, GL11C.GL_REPEAT);
-        }
         if (lightmapSamplerObj == 0) {
             lightmapSamplerObj = GL33C.glGenSamplers();
             GL33C.glSamplerParameteri(lightmapSamplerObj, GL11C.GL_TEXTURE_MIN_FILTER, GL11C.GL_LINEAR);
             GL33C.glSamplerParameteri(lightmapSamplerObj, GL11C.GL_TEXTURE_MAG_FILTER, GL11C.GL_LINEAR);
-        }
-    }
-
-    private int selectAtlasSampler() {
-        if (TerrainAtlasFilter.linear()) {
-            return atlasSamplerObjLinear;
-        }
-        switch (MeshFeatureConfig.atlasFilter()) {
-            case RGSS:
-                return atlasSamplerObjRgss;
-            case ANISOTROPIC: {
-                int level = MeshFeatureConfig.atlasAnisotropy();
-                if (level != atlasAnisoLevel) {
-                    GL33C.glSamplerParameterf(atlasSamplerObjAniso,
-                            EXTTextureFilterAnisotropic.GL_TEXTURE_MAX_ANISOTROPY_EXT, (float) level);
-                    atlasAnisoLevel = level;
-                }
-                return atlasSamplerObjAniso;
-            }
-            default:
-                return atlasSamplerObj;
         }
     }
 
@@ -206,10 +151,11 @@ public final class GlPrimaryTerrainRasterizer {
         s.putLong(8, d.registry.sectionDataAddress(passIndex));
         s.putLong(16, d.regionVisBuffer.deviceAddress());
         s.putLong(24, d.registry.sectionVisAddress(passIndex));
-        s.putLong(32, d.commandBuffers[passIndex][d.boundBufferIndex].deviceAddress());
-        s.putLong(40, d.regionCommandCounts[passIndex][d.boundBufferIndex].deviceAddress());
+        s.putLong(32, d.commandBuffers[passIndex].deviceAddress());
+        s.putLong(40, d.regionCommandCounts[passIndex].deviceAddress());
         s.putLong(48, d.registry.translucentVisAddress());
         s.putInt(56, regionCount);
+        s.putInt(60, 1 << (d.boundPhase - 1));
         s.position(0).limit((int) TERRAIN_SCENE_UBO_BYTES);
         GL15C.glBindBuffer(GL31C.GL_UNIFORM_BUFFER, sceneUbo);
         GL15C.glBufferData(GL31C.GL_UNIFORM_BUFFER, TERRAIN_SCENE_UBO_BYTES, GL15C.GL_STREAM_DRAW);
@@ -238,7 +184,7 @@ public final class GlPrimaryTerrainRasterizer {
 
         GL11.glEnableClientState(GL_DRAW_INDIRECT_UNIFIED_NV);
         NVVertexBufferUnifiedMemory.glBufferAddressRangeNV(GL_DRAW_INDIRECT_ADDRESS_NV, 0,
-                d.commandBuffers[passIndex][d.boundBufferIndex].deviceAddress(), (long) regionCount * MESH_TASK_COMMAND_STRIDE);
+                d.commandBuffers[passIndex].deviceAddress(), (long) regionCount * MESH_TASK_COMMAND_STRIDE);
 
         NVMeshShader.glMultiDrawMeshTasksIndirectNV(0L, regionCount, MESH_TASK_COMMAND_STRIDE);
 
@@ -274,23 +220,6 @@ public final class GlPrimaryTerrainRasterizer {
         }
         MemoryUtil.memFree(sceneUboScratch);
         residentAddresses.clear();
-        if (atlasSamplerObj != 0) {
-            GL33C.glDeleteSamplers(atlasSamplerObj);
-            atlasSamplerObj = 0;
-        }
-        if (atlasSamplerObjRgss != 0) {
-            GL33C.glDeleteSamplers(atlasSamplerObjRgss);
-            atlasSamplerObjRgss = 0;
-        }
-        if (atlasSamplerObjAniso != 0) {
-            GL33C.glDeleteSamplers(atlasSamplerObjAniso);
-            atlasSamplerObjAniso = 0;
-            atlasAnisoLevel = 0;
-        }
-        if (atlasSamplerObjLinear != 0) {
-            GL33C.glDeleteSamplers(atlasSamplerObjLinear);
-            atlasSamplerObjLinear = 0;
-        }
         if (lightmapSamplerObj != 0) {
             GL33C.glDeleteSamplers(lightmapSamplerObj);
             lightmapSamplerObj = 0;

@@ -48,10 +48,6 @@ public final class IndirectPipeline {
         return uberPipelineFor(material, material.writeMask().color());
     }
 
-    public static RenderPipeline uberDepthOnlyPipelineFor(Material material) {
-        return uberPipelineFor(material, false);
-    }
-
     private static RenderPipeline uberPipelineFor(Material material, boolean colorWrite) {
         MaterialShaders shaders = material.shaders();
         LightShader light = material.light();

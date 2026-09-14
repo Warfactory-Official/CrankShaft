@@ -2,12 +2,14 @@ package dev.engine_room.flywheel.impl.mixin.sodium;
 
 import com.llamalad7.mixinextras.sugar.Local;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainSectionListener;
-import dev.engine_room.flywheel.impl.sodium.SodiumRegionFeed;
+import net.caffeinemc.mods.sodium.client.render.chunk.IntPool;
 import net.caffeinemc.mods.sodium.client.render.chunk.UniformBufferManager;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.BuilderTaskOutput;
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegionManager;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -19,6 +21,20 @@ import java.util.Collection;
  */
 @Mixin(value = RenderRegionManager.class, remap = false)
 public class MixinRenderRegionManager {
+    @Shadow
+    @Final
+    private IntPool freeIds;
+
+    // Sodium 0.9.2: only fade-timed (first-build) uploads acquire a region id
+    @Inject(method = "uploadResults(Lnet/caffeinemc/mods/sodium/client/render/chunk/region/RenderRegion;"
+            + "Ljava/util/Collection;"
+            + "Lnet/caffeinemc/mods/sodium/client/render/chunk/UniformBufferManager;)V",
+            at = @At("HEAD"), require = 1)
+    private void flywheel$acquireRegionId(RenderRegion region, Collection<BuilderTaskOutput> results,
+                                          UniformBufferManager uniforms, CallbackInfo ci) {
+        region.getOrAcquireId(freeIds);
+    }
+
     @Inject(method = "uploadResults(Lnet/caffeinemc/mods/sodium/client/render/chunk/region/RenderRegion;"
             + "Ljava/util/Collection;"
             + "Lnet/caffeinemc/mods/sodium/client/render/chunk/UniformBufferManager;)V",
@@ -29,19 +45,8 @@ public class MixinRenderRegionManager {
         if (listener == null) {
             return;
         }
-        int regionId = region.getId();
-        if (regionId == -1) {
-            return;
-        }
-
-        int geometryHandle = SodiumRegionFeed.geometryHandle(region);
-        if (geometryHandle != listener.cachedGeometryHandle(regionId)) {
-            SodiumRegionFeed.feedRegion(listener, region, geometryHandle);
-            return;
-        }
-
         for (BuilderTaskOutput result : results) {
-            SodiumRegionFeed.feedSection(listener, region, result.section.getSectionIndex(), geometryHandle);
+            listener.markSection(region, result.section.getSectionIndex());
         }
     }
 
@@ -54,9 +59,6 @@ public class MixinRenderRegionManager {
         if (listener == null) {
             return;
         }
-        int regionId = region.getId();
-        if (regionId != -1) {
-            listener.onRegionFreed(regionId);
-        }
+        listener.onRegionFreed(region.getId());
     }
 }

@@ -219,9 +219,10 @@ public final class VkMeshVisualPipelines {
                         + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug().getSerializedName()));
                 if (folded) {
                     layout = new VkDescriptorLayout(drawBindings(true, true), PUSH_BYTES, TASK | MESH, bindless);
-                    arr[idx] = new VkMeshPipeline(layout, task, mesh, frag,
-                            VkOitPipelines.FOLDED_FORMATS, VkOitPipelines.foldedBlends(mode), false, depthFormat,
-                            VkOitPipelines.foldedLocations(mode), VkOitPipelines.FOLDED_INPUT_INDICES);
+                    arr[idx] = new VkMeshPipeline(layout, task, mesh, frag, VkOitPipelines.FOLDED_FORMATS,
+                            VkOitPipelines.foldedBlends(mode), key.compareOp(), key.cullMode(), depthFormat,
+                            VkOitPipelines.foldedLocations(mode), VkOitPipelines.FOLDED_INPUT_INDICES,
+                            key.biasConstant(), key.biasSlope());
                 } else {
                     int[] colorFormats = switch (mode) {
                         case DEPTH_RANGE -> new int[]{FMT_RGBA32F};
@@ -233,7 +234,8 @@ public final class VkMeshVisualPipelines {
                     Arrays.fill(blends,
                             mode == OitMode.DEPTH_RANGE ? VkGraphicsPipeline.max() : VkGraphicsPipeline.additive());
                     layout = new VkDescriptorLayout(drawBindings(true, false), PUSH_BYTES, TASK | MESH, bindless);
-                    arr[idx] = new VkMeshPipeline(layout, task, mesh, frag, colorFormats, blends, false, depthFormat);
+                    arr[idx] = new VkMeshPipeline(layout, task, mesh, frag, colorFormats, blends, key.compareOp(),
+                            key.cullMode(), depthFormat, null, null, key.biasConstant(), key.biasSlope());
                 }
             } catch (Throwable t) {
                 if (layout != null) {
@@ -275,7 +277,8 @@ public final class VkMeshVisualPipelines {
                 VkOitPipelines.mlabBindings(b, oitMode);
                 layout = new VkDescriptorLayout(b, PUSH_BYTES, TASK | MESH, bindless);
                 arr[idx] = new VkMeshPipeline(layout, task, mesh, frag, new int[0], new VkGraphicsPipeline.Blend[0],
-                        false, depthFormat);
+                        key.compareOp(), key.cullMode(), depthFormat, null, null, key.biasConstant(),
+                        key.biasSlope());
             } catch (Throwable t) {
                 if (layout != null) {
                     layout.delete();
@@ -352,9 +355,12 @@ public final class VkMeshVisualPipelines {
         }
     }
 
-    private record OitKey(MeshKey mesh, int cutoutGen, int fogGen, DebugMode debug) {
+    // Fixed-function state as VkUberPipelines' OIT/insert producer keys (offset keeps the slope term).
+    private record OitKey(MeshKey mesh, DepthTest depthTest, boolean cull, boolean polygonOffset, int cutoutGen,
+                          int fogGen, DebugMode debug) {
         static OitKey of(InstanceType<?> type, Material material) {
-            return new OitKey(MeshKey.of(type, material),
+            return new OitKey(MeshKey.of(type, material), material.depthTest(), material.backfaceCulling(),
+                    material.polygonOffset(),
                     MaterialShaderIndices.cutoutSources()
                                          .all()
                                          .size(),
@@ -362,6 +368,22 @@ public final class VkMeshVisualPipelines {
                                          .all()
                                          .size(),
                     FrameUniforms.debugMode());
+        }
+
+        int compareOp() {
+            return VkGraphicsPipeline.compareOp(depthTest);
+        }
+
+        int cullMode() {
+            return cull ? VK12.VK_CULL_MODE_BACK_BIT : VK12.VK_CULL_MODE_NONE;
+        }
+
+        float biasConstant() {
+            return polygonOffset ? 10.0F : 0.0F;
+        }
+
+        float biasSlope() {
+            return polygonOffset ? 1.0F : 0.0F;
         }
     }
 

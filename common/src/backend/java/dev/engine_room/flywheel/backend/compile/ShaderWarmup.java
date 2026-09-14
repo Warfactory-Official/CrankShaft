@@ -157,7 +157,6 @@ public final class ShaderWarmup {
         List<Material> materials = warmMaterials();
         for (Material material : materials) {
             IndirectPipeline.uberPipelineFor(material);
-            IndirectPipeline.uberDepthOnlyPipelineFor(material);
             if (material.transparency() != Transparency.OPAQUE) {
                 for (OitMode mode : OitMode.values()) {
                     if (mode != OitMode.OFF) {

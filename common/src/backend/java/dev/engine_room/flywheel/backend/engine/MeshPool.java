@@ -311,13 +311,6 @@ public class MeshPool {
         }
 
         /**
-         * Model-space bounding-sphere radius; the visual depth replay's occluder-worthiness filter reads it.
-         */
-        public float boundingRadius() {
-            return mesh.boundingSphere().w();
-        }
-
-        /**
          * Number of 64-triangle meshlets this mesh spans.
          */
         public int meshletCount() {

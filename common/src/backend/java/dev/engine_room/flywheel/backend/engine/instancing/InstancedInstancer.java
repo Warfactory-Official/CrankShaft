@@ -1,12 +1,17 @@
 package dev.engine_room.flywheel.backend.engine.instancing;
 
 import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.blaze3d.opengl.GlBuffer;
+import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.backend.engine.BaseInstancer;
 import dev.engine_room.flywheel.backend.engine.GlSlab;
 import dev.engine_room.flywheel.backend.engine.InstancerKey;
 import org.jspecify.annotations.Nullable;
+import org.lwjgl.opengl.GL11C;
+import org.lwjgl.opengl.GL30C;
+import org.lwjgl.opengl.GL31C;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
@@ -23,6 +28,7 @@ public class InstancedInstancer<I extends Instance> extends BaseInstancer<I> {
     private final List<InstancedDraw> draws = new ArrayList<>();
     @Nullable
     private GpuBuffer instanceTexels;
+    private int texelTexture;
     private int texelCapacity;
     private boolean texelsReady;
     private boolean texelsValid;
@@ -48,6 +54,10 @@ public class InstancedInstancer<I extends Instance> extends BaseInstancer<I> {
     @Nullable
     public GpuBuffer instanceTexels() {
         return instanceTexels;
+    }
+
+    public int texelTexture() {
+        return texelTexture;
     }
 
     public void resetTexelsReady() {
@@ -88,6 +98,11 @@ public class InstancedInstancer<I extends Instance> extends BaseInstancer<I> {
                                                  GpuBuffer.USAGE_UNIFORM_TEXEL_BUFFER | GpuBuffer.USAGE_COPY_DST,
                                                  needBytes);
             texelCapacity = count;
+            if (texelTexture == 0) {
+                texelTexture = GlStateManager._genTexture();
+            }
+            GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, texelTexture);
+            GL31C.glTexBuffer(GL31C.GL_TEXTURE_BUFFER, GL30C.GL_RGBA32UI, ((GlBuffer) instanceTexels).handle());
         }
         RenderSystem.getDevice()
                     .createCommandEncoder()
@@ -188,6 +203,10 @@ public class InstancedInstancer<I extends Instance> extends BaseInstancer<I> {
         if (instanceTexels != null) {
             instanceTexels.close();
             instanceTexels = null;
+        }
+        if (texelTexture != 0) {
+            GlStateManager._deleteTexture(texelTexture);
+            texelTexture = 0;
         }
         clear();
         freeGlResources();

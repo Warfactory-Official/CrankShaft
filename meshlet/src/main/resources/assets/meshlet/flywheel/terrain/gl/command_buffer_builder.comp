@@ -42,7 +42,7 @@ void main() {
     for (uint k = 0u; k < 8u; k++) {
         uint s = gl_LocalInvocationID.x + k * 32u;
         uint visIndex = (regionId << SECTION_ID_REGION_SHIFT) | s;
-        if ((u_sectionVis[visIndex] & 1u) != 1u) {
+        if ((u_sectionVis[visIndex] & u_phaseBit) == 0u) {
             continue;
         }
         SectionFields f = decodeSection(regionId, s);

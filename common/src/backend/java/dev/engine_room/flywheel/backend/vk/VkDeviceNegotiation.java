@@ -71,9 +71,8 @@ public final class VkDeviceNegotiation {
                     && features12.descriptorBindingSampledImageUpdateAfterBind()
                     && features12.descriptorBindingPartiallyBound()
                     && features12.descriptorBindingUpdateUnusedWhilePending();
-            // NV driver bug (reproduced on 610.47 and 610.62, soak-bisected 2026-07-04): GRAPHICS-stage
-            // combined-image-sampler sets consumed from a descriptor buffer MMU-fault a driver-internal kernel minutes
-            // into chunk-churn flight; DB_NO_GFX_SAMPLERS in VkDescriptorLayout routes that class to push descriptors, so the extension negotiates whenever supported.
+            // NV driver bug classes routed to push by VkDescriptorLayout.DB_ROUTE_FAULTING_SETS => negotiate whenever
+            // supported.
             descriptorBuffer = dbFeatures.descriptorBuffer()
                     && physicalDevice.hasDeviceExtension(EXTDescriptorBuffer.VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
             localRead = lrFeatures.dynamicRenderingLocalRead()

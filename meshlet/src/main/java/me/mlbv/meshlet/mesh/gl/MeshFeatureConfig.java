@@ -5,12 +5,12 @@ package me.mlbv.meshlet.mesh.gl;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.Options;
 import net.minecraft.client.TextureFilteringMethod;
 
 public final class MeshFeatureConfig {
     private static final int BIT_RGSS = 1;
     private static final int BIT_BARYCENTRIC = 1 << 1;
+    private static final int BIT_LINEAR = 1 << 2;
 
     // OFF by default: benchmarking found it neutral-to-regression. A future config option flips this.
     private static volatile boolean barycentricEnabled = false;
@@ -23,9 +23,10 @@ public final class MeshFeatureConfig {
     }
 
     public static int currentKey() {
-        Options o = Minecraft.getInstance().options;
         int key = 0;
-        if (!TerrainAtlasFilter.linear() && o.textureFiltering().get() == TextureFilteringMethod.RGSS) {
+        if (TerrainAtlasFilter.linear()) {
+            key |= BIT_LINEAR;
+        } else if (Minecraft.getInstance().options.textureFiltering().get() == TextureFilteringMethod.RGSS) {
             key |= BIT_RGSS;
         }
         if (barycentricEnabled) {
@@ -34,20 +35,15 @@ public final class MeshFeatureConfig {
         return key;
     }
 
-    public static TextureFilteringMethod atlasFilter() {
-        return Minecraft.getInstance().options.textureFiltering().get();
-    }
-
-    public static int atlasAnisotropy() {
-        return Minecraft.getInstance().options.maxAnisotropyValue();
-    }
-
     public static void applyFeatureDefines(Compilation ctx, int key) {
         if ((key & BIT_RGSS) != 0) {
             ctx.define("MESHLET_RGSS");
         }
         if ((key & BIT_BARYCENTRIC) != 0) {
             ctx.define("MESHLET_BARYCENTRIC");
+        }
+        if ((key & BIT_LINEAR) != 0) {
+            ctx.define(TerrainAtlasFilter.LINEAR_DEFINE);
         }
     }
 

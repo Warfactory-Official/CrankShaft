@@ -33,7 +33,7 @@ public final class TerrainPipelines {
     private static final Identifier TEXEL_FILTER = ResourceUtil.rl("internal/texel_filter.glsl");
 
     private static final ShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
-        case VERTEX -> assembleVertex();
+        case VERTEX -> assembleVertex(ctx -> ctx.requireExtension("GL_ARB_shader_draw_parameters"));
         case FRAGMENT -> assembleFragment(id.equals(CUTOUT_FRAGMENT) || id.equals(CUTOUT_FRAGMENT_LINEAR),
                 id.equals(SOLID_FRAGMENT_LINEAR) || id.equals(CUTOUT_FRAGMENT_LINEAR));
     };
