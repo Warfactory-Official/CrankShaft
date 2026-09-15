@@ -117,7 +117,6 @@ public final class ShaderWarmup {
         OitPipelines.composite(true);
         OitPipelines.emission();
         OitPipelines.mlabNearestDepth();
-        OitPipelines.depth();
         for (OitMode mode : OitMode.values()) {
             if (mode == OitMode.OFF) {
                 continue;
@@ -201,9 +200,7 @@ public final class ShaderWarmup {
         oit.compositePipeline(true);
         oit.emissionPipeline();
         oit.mlabNearestDepthPipeline();
-        oit.depthPipeline(false);
         if (localRead) {
-            oit.depthPipeline(true);
             for (OitMode mode : OitMode.values()) {
                 if (mode == OitMode.OFF) {
                     continue;

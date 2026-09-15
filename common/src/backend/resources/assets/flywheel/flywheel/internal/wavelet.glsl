@@ -165,6 +165,7 @@ float transmittance(in vec4 coefficients[4], float depth) {
     return ABSORBANCE_TO_TRANSMITTANCE(absorbance(coefficients, depth));
 }
 
-float signal_corrected_transmittance(in vec4 coefficients[4], float depth, float signal) {
-    return ABSORBANCE_TO_TRANSMITTANCE(signal_corrected_absorbance(coefficients, depth, signal));
+// Port: upstream subtracts the transmittance as absorbance => alpha -> 1 fragments occlude themselves.
+float signal_corrected_transmittance(in vec4 coefficients[4], float depth, float transmittance) {
+    return ABSORBANCE_TO_TRANSMITTANCE(signal_corrected_absorbance(coefficients, depth, -log(max(transmittance, 0.00001))));
 }

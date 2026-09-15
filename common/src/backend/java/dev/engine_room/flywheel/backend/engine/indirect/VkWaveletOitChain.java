@@ -23,7 +23,6 @@ import net.minecraft.client.renderer.StagedVertexBuffer;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.TextureManager;
-import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 
@@ -32,7 +31,7 @@ import java.util.List;
 import static dev.engine_room.flywheel.backend.vk.VkCmd.*;
 
 /**
- * The VK wavelet/moment OIT chain: depthRange -> coefficients -> depth-from-transmittance -> evaluate -> composite, folded (local_read) or standalone passes.
+ * The VK wavelet/moment OIT chain: depthRange -> coefficients -> evaluate -> composite, folded (local_read) or standalone passes.
  * Frames with {@code ORDER_INDEPENDENT_ADDITIVE} producers add a standalone emission pass before the composite and an
  * emission composite after it.
  */
@@ -60,7 +59,7 @@ final class VkWaveletOitChain extends VkOitChain {
         }
     }
 
-    private static void setFoldedLocations(VkCommandBuffer cmd, @Nullable OitMode mode) {
+    private static void setFoldedLocations(VkCommandBuffer cmd, OitMode mode) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkRenderingAttachmentLocationInfoKHR locations = VkRenderingAttachmentLocationInfoKHR.calloc(stack)
                                                                                                  .sType$Default()
@@ -94,8 +93,6 @@ final class VkWaveletOitChain extends VkOitChain {
                     vertexVk, indexVk, width, height, hasInstanceOit);
             producerPass(encoder, framebuffer.coefficientsDescriptor(depthView), OitMode.GENERATE_COEFFICIENTS, frame,
                     replay, vertexVk, indexVk, width, height, hasInstanceOit);
-            fullscreenPass(encoder, framebuffer.depthFromTransmittanceDescriptor(depthView),
-                    m.programs.oit().depthPipeline(false), frame, width, height, false, false);
             producerPass(encoder, framebuffer.accumulateDescriptor(depthView), OitMode.EVALUATE, frame, replay,
                     vertexVk, indexVk, width, height, hasInstanceOit);
         }
@@ -103,8 +100,8 @@ final class VkWaveletOitChain extends VkOitChain {
         if (hasAdditive) {
             emissionPass(encoder, framebuffer.emissionDescriptor(depthView), frame, vertexVk, indexVk, width, height);
         }
-        fullscreenPass(encoder, compositeDescriptor, m.programs.oit().compositePipeline(hasAdditive), frame, width,
-                height, true, hasAdditive);
+        compositePass(encoder, compositeDescriptor, m.programs.oit().compositePipeline(hasAdditive), frame, width,
+                height, hasAdditive);
         if (hasAdditive) {
             emissionComposite(encoder, compositeDescriptor, frame, width, height);
         }
@@ -236,22 +233,15 @@ final class VkWaveletOitChain extends VkOitChain {
         }
     }
 
-    private void fullscreenPass(CommandEncoder encoder, RenderPassDescriptor descriptor, VkGraphicsPipeline pipeline,
-                                VkOitRenderer.OitFrame frame, int width, int height, boolean composite,
-                                boolean emission) {
-        if (composite) {
-            FlwPassBarrier.expectFramebufferProducer();
-        } else {
-            FlwPassBarrier.expectFramebufferSample();
-        }
+    private void compositePass(CommandEncoder encoder, RenderPassDescriptor descriptor, VkGraphicsPipeline pipeline,
+                               VkOitRenderer.OitFrame frame, int width, int height, boolean emission) {
+        FlwPassBarrier.expectFramebufferProducer();
         try (RenderPass pass = encoder.createRenderPass(descriptor)) {
             VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
             setViewportScissor(cmd, width, height);
-            VkContext.pushLabel(cmd, composite ? "flywheel:vk/oit/composite" : "flywheel:vk/oit/transmittance_depth");
+            VkContext.pushLabel(cmd, "flywheel:vk/oit/composite");
             VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
-            if (composite) {
-                m.writer.sampler(28, frame.accumulateView(), frame.oitSampler());
-            }
+            m.writer.sampler(28, frame.accumulateView(), frame.oitSampler());
             if (emission) {
                 m.writer.sampler(38, VkContext.imageView(framebuffer.emissionView()), frame.oitSampler());
             }
@@ -325,20 +315,6 @@ final class VkWaveletOitChain extends VkOitChain {
         foldedStage(cmd, OitMode.GENERATE_COEFFICIENTS, frame, replay, hasInstanceOit, vertexVk, indexVk);
         VkContext.popLabel(cmd);
         byRegionBarrier(cmd);
-
-        // Transmittance-depth: fullscreen, writes only gl_FragDepth; EVALUATE's test against it is rasterization-ordered (no barrier).
-        VkContext.pushLabel(cmd, "flywheel:vk/oit/folded/stage/transmittance_depth");
-        setFoldedLocations(cmd, null);
-        VkGraphicsPipeline depthPipe = m.programs.oit().depthPipeline(true);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, depthPipe.handle());
-        m.writer.inputAttachment(14, frame.depthRangeView());
-        for (int i = 0; i < 4; i++) {
-            m.writer.inputAttachment(24 + i, frame.coefficientViews()[i]);
-        }
-        m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, depthPipe.layout());
-        VK12.vkCmdDraw(cmd, 3, 1, 0, 0);
-        VkContext.popLabel(cmd);
-
         VkContext.pushLabel(cmd, "flywheel:vk/oit/folded/stage/evaluate");
         foldedStage(cmd, OitMode.EVALUATE, frame, replay, hasInstanceOit, vertexVk, indexVk);
         VkContext.popLabel(cmd);

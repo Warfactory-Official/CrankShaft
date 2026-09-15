@@ -50,11 +50,6 @@ public final class VkOitPipelines {
     private VkGraphicsPipeline emission;
     @Nullable
     private VkGraphicsPipeline mlabNearestDepth;
-    @Nullable
-    private VkGraphicsPipeline depth;
-
-    @Nullable
-    private VkGraphicsPipeline depthFolded;
 
     // ---- Folded OIT (VK_KHR_dynamic_rendering_local_read): the stages share ONE 6-attachment rendering instance
     // ([0]=depthBounds RGBA32F, [1-4]=coefficients RGBA16F, [5]=accumulate RGBA16F); each stage's pipeline
@@ -81,11 +76,8 @@ public final class VkOitPipelines {
         };
     }
 
-    public static int[] foldedLocations(@Nullable OitMode mode) {
+    public static int[] foldedLocations(OitMode mode) {
         int u = VK12.VK_ATTACHMENT_UNUSED;
-        if (mode == null) {
-            return new int[]{u, u, u, u, u, u};
-        }
         return switch (mode) {
             case DEPTH_RANGE -> new int[]{0, u, u, u, u, u};
             case GENERATE_COEFFICIENTS -> new int[]{u, 0, 1, 2, 3, u};
@@ -94,12 +86,9 @@ public final class VkOitPipelines {
         };
     }
 
-    public static VkGraphicsPipeline.Blend[] foldedBlends(@Nullable OitMode mode) {
+    public static VkGraphicsPipeline.Blend[] foldedBlends(OitMode mode) {
         VkGraphicsPipeline.Blend off = VkGraphicsPipeline.noColorWrite();
         VkGraphicsPipeline.Blend[] b = {off, off, off, off, off, off};
-        if (mode == null) {
-            return b;
-        }
         switch (mode) {
             case DEPTH_RANGE -> b[0] = VkGraphicsPipeline.max();
             case GENERATE_COEFFICIENTS -> {
@@ -150,16 +139,6 @@ public final class VkOitPipelines {
         b.add(new Binding(14, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
         for (int i = 24; i <= 27; i++) {
             b.add(new Binding(i, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
-        }
-        return b;
-    }
-
-    private static List<Binding> depthBindings(boolean folded) {
-        int oitRead = folded ? TYPE_INPUT_ATTACHMENT : TYPE_COMBINED_IMAGE_SAMPLER;
-        List<Binding> b = new ArrayList<>();
-        b.add(new Binding(14, oitRead, STAGE_FRAGMENT));
-        for (int i = 24; i <= 27; i++) {
-            b.add(new Binding(i, oitRead, STAGE_FRAGMENT));
         }
         return b;
     }
@@ -359,54 +338,6 @@ public final class VkOitPipelines {
             }
         }
         return mlabNearestDepth;
-    }
-
-    public VkGraphicsPipeline depthPipeline(boolean folded) {
-        if (folded) {
-            if (depthFolded == null) {
-                depthFolded = buildDepth(true);
-            }
-            return depthFolded;
-        }
-        if (depth == null) {
-            depth = buildDepth(false);
-        }
-        return depth;
-    }
-
-    private VkGraphicsPipeline buildDepth(boolean folded) {
-        String fsGl = RenderPassShaders.assembleOitDepth(folded ? VkPrograms.LOCAL_READ : ShaderAssembly.NO_EXTRA);
-        long vs = 0;
-        long fs = 0;
-        VkDescriptorLayout layout = null;
-        try {
-            vs = VkShaderCompiler.compileModule("oit_fullscreen_d",
-                    VkShaderTransform.toVulkan(RenderPassShaders.fullscreenVertex(), VkShaderTransform.Stage.VERTEX),
-                    VkShaderCompiler.KIND_VERTEX);
-            fs = VkShaderCompiler.compileModule("oit_depth",
-                    VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
-            VkGraphicsPipeline.Config config;
-            // Color masked off (the stage writes only gl_FragDepth); the standalone pass binds accumulate as a write-disabled dummy.
-            if (folded) {
-                config = new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(null),
-                        true, true, VK12.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_NONE,
-                        FMT_D32)
-                        .withLocalRead(foldedLocations(null), FOLDED_INPUT_INDICES);
-            } else {
-                config = new VkGraphicsPipeline.Config(new int[]{FMT_RGBA16F},
-                        new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.noColorWrite()},
-                        true, true, VK12.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_NONE,
-                        FMT_D32);
-            }
-            layout = new VkDescriptorLayout(depthBindings(folded), 0, 0);
-            return new VkGraphicsPipeline(layout, vs, fs, config);
-        } catch (Throwable t) {
-            if (layout != null) {
-                layout.delete();
-            }
-            destroyModules(vs, fs);
-            throw t;
-        }
     }
 
     public VkGraphicsPipeline layerFoldedPipeline(OitMode mode) {
@@ -700,14 +631,6 @@ public final class VkOitPipelines {
         if (mlabNearestDepth != null) {
             mlabNearestDepth.delete();
             mlabNearestDepth = null;
-        }
-        if (depth != null) {
-            depth.delete();
-            depth = null;
-        }
-        if (depthFolded != null) {
-            depthFolded.delete();
-            depthFolded = null;
         }
         for (int i = 0; i < layerFolded.length; i++) {
             if (layerFolded[i] != null) {

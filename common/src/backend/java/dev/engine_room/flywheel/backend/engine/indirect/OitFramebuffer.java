@@ -261,13 +261,6 @@ public class OitFramebuffer {
                                    .withRenderArea(fullArea());
     }
 
-    public RenderPassDescriptor depthFromTransmittanceDescriptor(GpuTextureView mainDepth) {
-        return RenderPassDescriptor.create(() -> "flywheel:oit/depth_from_transmittance")
-                                   .withColorAttachment(accumulateView)
-                                   .withDepthAttachment(mainDepth, OptionalDouble.empty())
-                                   .withRenderArea(fullArea());
-    }
-
     public RenderPassDescriptor accumulateDescriptor(GpuTextureView mainDepth) {
         return RenderPassDescriptor.create(() -> "flywheel:oit/accumulate")
                                    .withColorAttachment(accumulateView,

@@ -54,7 +54,6 @@ public final class OitPipelines {
     private static final Identifier COMPOSITE_FRAGMENT = ResourceUtil.rl("codegen/oit/composite_frag");
     private static final Identifier COMPOSITE_EMISSION_FRAGMENT =
             ResourceUtil.rl("codegen/oit/composite_emission_frag");
-    private static final Identifier DEPTH_FRAGMENT = ResourceUtil.rl("codegen/oit/depth_frag");
     private static final Identifier MLAB_NEAREST_DEPTH_FRAGMENT =
             ResourceUtil.rl("codegen/oit/mlab/nearest_depth_frag");
     private static final Identifier EMISSION_FRAGMENT = ResourceUtil.rl("codegen/oit/emission_frag");
@@ -127,9 +126,6 @@ public final class OitPipelines {
         case FRAGMENT -> {
             if (id.equals(COMPOSITE_FRAGMENT) || id.equals(COMPOSITE_EMISSION_FRAGMENT)) {
                 yield RenderPassShaders.assembleOitComposite(id.equals(COMPOSITE_EMISSION_FRAGMENT));
-            }
-            if (id.equals(DEPTH_FRAGMENT)) {
-                yield RenderPassShaders.assembleOitDepth();
             }
             if (id.equals(MLAB_NEAREST_DEPTH_FRAGMENT)) {
                 yield RenderPassShaders.assembleMlabNearestDepth();
@@ -208,7 +204,6 @@ public final class OitPipelines {
     private static final Map<ChunkSodiumMlabKey, RenderPipeline> CHUNK_SODIUM_MLAB_CACHE = new HashMap<>();
     private static RenderPipeline compositePipeline;
     private static RenderPipeline compositeEmissionPipeline;
-    private static RenderPipeline depthPipeline;
     private static RenderPipeline mlabNearestDepthPipeline;
     private static RenderPipeline emissionPipeline;
 
@@ -395,15 +390,6 @@ public final class OitPipelines {
         RenderSystem.getDevice()
                     .precompilePipeline(pipeline, SHADER_SOURCE);
         return pipeline;
-    }
-
-    public static RenderPipeline depth() {
-        if (depthPipeline == null) {
-            depthPipeline = buildDepth();
-        }
-        RenderSystem.getDevice()
-                    .precompilePipeline(depthPipeline, SHADER_SOURCE);
-        return depthPipeline;
     }
 
     public static RenderPipeline emission() {
@@ -735,24 +721,6 @@ public final class OitPipelines {
                              .withColorTargetState(0,
                                      new ColorTargetState(Optional.of(BlendFunction.ADDITIVE), GpuFormat.RGBA8_UNORM,
                                              ColorTargetState.WRITE_ALL))
-                             .build();
-    }
-
-    private static RenderPipeline buildDepth() {
-        return RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                             .withLocation(ResourceUtil.rl("pipeline/oit/depth"))
-                             .withVertexShader(FULLSCREEN_VERTEX)
-                             .withFragmentShader(DEPTH_FRAGMENT)
-                             .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-                             .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS, true, 0.0f, 0.0f))
-                             .withCull(false)
-                             .withBindGroupLayout(withCoefficientSamplers(BindGroupLayout.builder()
-                                                                                         .withSampler(
-                                                                                                 "_flw_depthRange"))
-                                     .build())
-                             .withColorTargetState(0,
-                                     new ColorTargetState(Optional.empty(), OitFramebuffer.ACCUMULATE_FORMAT,
-                                             ColorTargetState.WRITE_NONE))
                              .build();
     }
 

@@ -20,7 +20,7 @@ public class Samplers {
     public static final GlTextureUnit DEPTH_PYRAMID = GlTextureUnit.T10;
 
     // The wavelet-OIT coefficient ARRAY (OitConfig.coefficientArray()): must match layout(binding=11) in
-    // oit_producer.glsl / oit_depth.frag / oit_composite.frag / meshlet translucent_frag.frag. Raw-bound
+    // oit_producer.glsl / oit_composite.frag / meshlet translucent_frag.frag. Raw-bound
     // (the GL_TEXTURE_2D_ARRAY binding point is untracked by GlStateManager, so a raw bind cannot desync the
     // cache); kept above every unit vanilla's bind groups reach in the OIT passes and off T10 (the pyramid).
     public static final GlTextureUnit COEFFICIENTS_ARRAY = GlTextureUnit.T11;

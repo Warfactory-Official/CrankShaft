@@ -23,7 +23,7 @@ import org.jspecify.annotations.Nullable;
 import java.util.OptionalDouble;
 
 /**
- * The GL wavelet/moment OIT chain: depthRange -> coefficients -> depth-from-transmittance -> accumulate ->
+ * The GL wavelet/moment OIT chain: depthRange -> coefficients -> accumulate ->
  * composite over Mojang RenderPasses, with the vanilla replays interleaved into every producer pass. Frames with
  * {@code ORDER_INDEPENDENT_ADDITIVE} producers append emission -> emission composite.
  */
@@ -87,17 +87,8 @@ public final class WaveletOitChain {
         submitProducerPass(frame, framebuffer.coefficientsDescriptor(depthView), OitMode.GENERATE_COEFFICIENTS, false,
                 chunks, ber, terrain, fabulous, producer);
 
-        GlCompat.pushDebugGroup("flywheel:gl/oit/transmittance_depth");
-        try (RenderPass pass = encoder.createRenderPass(framebuffer.depthFromTransmittanceDescriptor(depthView))) {
-            RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform("DynamicTransforms", frame.dynamicTransforms());
-            pass.setPipeline(OitPipelines.depth());
-            pass.bindTexture("_flw_depthRange", framebuffer.depthBoundsView(), frame.oitSampler());
-            framebuffer.bindCoefficients(pass, frame.oitSampler());
-            pass.draw(3, 1, 0, 0);
-        }
-        GlCompat.popDebugGroup();
-
+        // Port: no depth-from-transmittance pass (composite writes depth). Its write lands up to a bin in front of the
+        // layer reaching T <= 1e-4 => EVALUATE culls that layer.
         submitProducerPass(frame, framebuffer.accumulateDescriptor(depthView), OitMode.EVALUATE, false, chunks, ber,
                 terrain, fabulous, producer);
 

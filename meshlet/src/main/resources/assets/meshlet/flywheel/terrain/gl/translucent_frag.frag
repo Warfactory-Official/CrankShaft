@@ -170,8 +170,8 @@ float signal_corrected_absorbance(in vec4 c[4], float depth, float signal) {
     float t = coefficient_depth >= TRANSPARENCY_WAVELET_COEFFICIENT_COUNT ? 1.0 : fract(coefficient_depth);
     return mix(a, b, t);
 }
-float signal_corrected_transmittance(in vec4 c[4], float depth, float signal) {
-    return clamp(exp(-signal_corrected_absorbance(c, depth, signal)), 0., 1.);
+float signal_corrected_transmittance(in vec4 c[4], float depth, float transmittance) {
+    return clamp(exp(-signal_corrected_absorbance(c, depth, -log(max(transmittance, 0.00001)))), 0., 1.);
 }
 #endif
 

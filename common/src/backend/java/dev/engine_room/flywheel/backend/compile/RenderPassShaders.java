@@ -108,7 +108,6 @@ public final class RenderPassShaders {
     private static final Identifier WAVELET = ResourceUtil.rl("internal/wavelet.glsl");
     private static final Identifier OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_oit.frag");
     private static final Identifier OIT_COMPOSITE = ResourceUtil.rl("internal/oit_composite.frag");
-    private static final Identifier OIT_DEPTH = ResourceUtil.rl("internal/oit_depth.frag");
     private static final Identifier OIT_EMISSION = ResourceUtil.rl("internal/oit_emission.frag");
     private static final Identifier FULLSCREEN_VERT = ResourceUtil.rl("internal/fullscreen.vert");
     private static final Identifier MLAB_RESOLVE = ResourceUtil.rl("internal/mlab_resolve.frag");
@@ -737,14 +736,6 @@ public final class RenderPassShaders {
 
     public static String assembleMlabNearestDepth() {
         return assembleFullscreenFragment(MLAB_NEAREST_DEPTH, "mlab_nearest_depth.fsh", ShaderAssembly.NO_EXTRA);
-    }
-
-    public static String assembleOitDepth() {
-        return assembleOitDepth(ShaderAssembly.NO_EXTRA);
-    }
-
-    public static String assembleOitDepth(Consumer<Compilation> extra) {
-        return assembleFullscreenFragment(OIT_DEPTH, "oit_depth.fsh", extra);
     }
 
     public static String fullscreenVertex() {
