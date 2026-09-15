@@ -4,11 +4,11 @@ layout(triangles, max_vertices = 192, max_primitives = 64) out;
 layout(location = 0) out MeshVertexOut {
     vec2 texCoord;
     vec4 color;
-    vec2 light;
+    vec4 light; // zw unused: crumbling skips fog
     vec3 normal;
     vec3 worldPos;
-    flat uint overlayCutout; // overlay texel u8:u8 (see visual_main.mesh); cutout bits unused -- crumbling never dispatches a cutout
-    flat uint packedMaterial;
+    flat uint fogCutout; // unused: crumbling dispatches neither
+    flat uint packedMaterial; // see visual_main.mesh
 #ifdef _FLW_DEBUG
     flat uvec2 debugIds; // (instance id, mesh base vertex) for the INSTANCE_ID/MODEL_ID debug views
 #endif
@@ -49,11 +49,12 @@ void main() {
             gl_MeshVerticesNV[ov].gl_Position = ProjMat * viewPos;
             v_out[ov].texCoord = flw_vertexTexCoord;
             v_out[ov].color = flw_vertexColor;
-            v_out[ov].light = flw_vertexLight;
+            v_out[ov].light = vec4(flw_vertexLight, 0.0, 0.0);
             v_out[ov].normal = normalize(flw_vertexNormal);
             v_out[ov].worldPos = flw_vertexPos.xyz;
-            v_out[ov].overlayCutout = (uint(flw_vertexOverlay.x) & 0xFFu) | ((uint(flw_vertexOverlay.y) & 0xFFu) << 8u);
-            v_out[ov].packedMaterial = _flw_crumblingPackedMaterial;
+            v_out[ov].fogCutout = 0u;
+            v_out[ov].packedMaterial = _flw_crumblingPackedMaterial | ((uint(flw_vertexOverlay.x) & 0xFu) << 24u)
+                    | ((uint(flw_vertexOverlay.y) & 0xFu) << 28u);
 #ifdef _FLW_DEBUG
             v_out[ov].debugIds = uvec2(_flw_crumblingInstance, _flw_crumblingVertexOffset);
 #endif

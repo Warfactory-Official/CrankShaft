@@ -24,7 +24,8 @@ import java.util.OptionalDouble;
 
 /**
  * The GL wavelet/moment OIT chain: depthRange -> coefficients -> depth-from-transmittance -> accumulate ->
- * composite over Mojang RenderPasses, with the vanilla replays interleaved into every producer pass.
+ * composite over Mojang RenderPasses, with the vanilla replays interleaved into every producer pass. Frames with
+ * {@code ORDER_INDEPENDENT_ADDITIVE} producers append emission -> emission composite.
  */
 public final class WaveletOitChain {
     private final OitFramebuffer framebuffer = new OitFramebuffer();
@@ -34,7 +35,7 @@ public final class WaveletOitChain {
     }
 
     public boolean render(Matrix4fc renderModelView, @Nullable GpuBuffer vertexBuffer, @Nullable GpuBuffer indexBuffer,
-                          boolean hasInstanceOit, @Nullable Runnable prePass,
+                          boolean hasInstanceOit, boolean hasAdditive, @Nullable Runnable prePass,
                           @Nullable ChunkSectionsToRender chunks,
                           @Nullable BerTranslucentCapture ber, @Nullable SodiumTerrainOitReplay terrain,
                           @Nullable FabulousCaptures fabulous, ProducerGeometry producer) {
@@ -80,11 +81,11 @@ public final class WaveletOitChain {
 
         float far = FrameUniforms.getDepthFar();
 
-        submitProducerPass(frame, framebuffer.depthRangeDescriptor(depthView, far), OitMode.DEPTH_RANGE, chunks, ber,
-                terrain, fabulous, producer);
-
-        submitProducerPass(frame, framebuffer.coefficientsDescriptor(depthView), OitMode.GENERATE_COEFFICIENTS, chunks,
+        submitProducerPass(frame, framebuffer.depthRangeDescriptor(depthView, far), OitMode.DEPTH_RANGE, false, chunks,
                 ber, terrain, fabulous, producer);
+
+        submitProducerPass(frame, framebuffer.coefficientsDescriptor(depthView), OitMode.GENERATE_COEFFICIENTS, false,
+                chunks, ber, terrain, fabulous, producer);
 
         GlCompat.pushDebugGroup("flywheel:gl/oit/transmittance_depth");
         try (RenderPass pass = encoder.createRenderPass(framebuffer.depthFromTransmittanceDescriptor(depthView))) {
@@ -97,8 +98,15 @@ public final class WaveletOitChain {
         }
         GlCompat.popDebugGroup();
 
-        submitProducerPass(frame, framebuffer.accumulateDescriptor(depthView), OitMode.EVALUATE, chunks, ber, terrain,
-                fabulous, producer);
+        submitProducerPass(frame, framebuffer.accumulateDescriptor(depthView), OitMode.EVALUATE, false, chunks, ber,
+                terrain, fabulous, producer);
+
+        // Before the composite: it writes the nearest OIT depth, which would cull emission behind it.
+        if (hasAdditive) {
+            framebuffer.prepareEmission();
+            submitProducerPass(frame, framebuffer.emissionDescriptor(depthView), OitMode.EVALUATE, true, null, null,
+                    null, null, producer);
+        }
 
         if (SharedConstants.IS_RUNNING_IN_IDE) {
             GlStateAssert.assertCoherent("oit/pre-composite");
@@ -114,24 +122,45 @@ public final class WaveletOitChain {
         try (RenderPass pass = encoder.createRenderPass(compositeDescriptor)) {
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform("DynamicTransforms", frame.dynamicTransforms());
-            pass.setPipeline(OitPipelines.composite());
+            pass.setPipeline(OitPipelines.composite(hasAdditive));
             pass.bindTexture("_flw_accumulate", framebuffer.accumulateView(), frame.oitSampler());
+            if (hasAdditive) {
+                pass.bindTexture("_flw_emission", framebuffer.emissionView(), frame.oitSampler());
+            }
             pass.bindTexture("_flw_depthRange", framebuffer.depthBoundsView(), frame.oitSampler());
             framebuffer.bindCoefficients(pass, frame.oitSampler());
             pass.draw(3, 1, 0, 0);
         }
         GlCompat.popDebugGroup();
 
+        if (hasAdditive) {
+            RenderPassDescriptor emissionDescriptor =
+                    RenderPassDescriptor.create(() -> "flywheel:oit/emission_composite")
+                                        .withColorAttachment(colorView)
+                                        .withDepthAttachment(depthView, OptionalDouble.empty())
+                                        .withRenderArea(new RenderPass.RenderArea(0, 0, target.width, target.height));
+            GlCompat.pushDebugGroup("flywheel:gl/oit/emission_composite");
+            try (RenderPass pass = encoder.createRenderPass(emissionDescriptor)) {
+                RenderSystem.bindDefaultUniforms(pass);
+                pass.setUniform("DynamicTransforms", frame.dynamicTransforms());
+                pass.setPipeline(OitPipelines.emission());
+                pass.bindTexture("_flw_accumulate", framebuffer.accumulateView(), frame.oitSampler());
+                pass.bindTexture("_flw_emission", framebuffer.emissionView(), frame.oitSampler());
+                pass.draw(3, 1, 0, 0);
+            }
+            GlCompat.popDebugGroup();
+        }
+
         return true;
     }
 
-    private void submitProducerPass(OitFrame f, RenderPassDescriptor descriptor, OitMode mode,
+    private void submitProducerPass(OitFrame f, RenderPassDescriptor descriptor, OitMode mode, boolean additive,
                                     @Nullable ChunkSectionsToRender chunks,
                                     @Nullable BerTranslucentCapture ber, @Nullable SodiumTerrainOitReplay terrain,
                                     @Nullable FabulousCaptures fabulous, ProducerGeometry producer) {
         boolean needsColor = mode != OitMode.DEPTH_RANGE;
 
-        GlCompat.pushDebugGroup("flywheel:gl/oit/producer/" + mode.name);
+        GlCompat.pushDebugGroup("flywheel:gl/oit/producer/" + (additive ? "_emission" : mode.name));
         try (RenderPass pass = f.encoder()
                                 .createRenderPass(descriptor)) {
             RenderSystem.bindDefaultUniforms(pass);
@@ -148,7 +177,7 @@ public final class WaveletOitChain {
                 framebuffer.bindOitReads(pass, mode, f.blueNoiseView(), f.oitSampler(), f.noiseSampler());
             }
 
-            producer.submit(pass, mode, f);
+            producer.submit(pass, mode, f, additive);
 
             if (chunks != null) {
                 ChunkTranslucentReplay.replay(pass, chunks, mode, framebuffer,
@@ -203,6 +232,10 @@ public final class WaveletOitChain {
     }
 
     public interface ProducerGeometry {
-        void submit(RenderPass pass, OitMode mode, OitFrame f);
+        /**
+         * {@code additive}: submit only {@code ORDER_INDEPENDENT_ADDITIVE} draws (the emission pass); otherwise only
+         * the occluding ones.
+         */
+        void submit(RenderPass pass, OitMode mode, OitFrame f, boolean additive);
     }
 }

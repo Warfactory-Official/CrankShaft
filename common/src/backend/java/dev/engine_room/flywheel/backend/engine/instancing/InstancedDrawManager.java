@@ -19,7 +19,6 @@ import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
-import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.backend.BackendDebugFlags;
 import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
 import dev.engine_room.flywheel.backend.compile.OitMode;
@@ -58,6 +57,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
     private final List<InstancedDraw> allDraws = new ArrayList<>();
     private final List<InstancedDraw> draws = new ArrayList<>();
     private final List<InstancedDraw> oitDraws = new ArrayList<>();
+    private final List<InstancedDraw> oitAdditiveDraws = new ArrayList<>();
     private final InstancingPrograms programs;
     /**
      * A map of vertex types to their mesh pools.
@@ -106,10 +106,12 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
 
             draws.clear();
             oitDraws.clear();
+            oitAdditiveDraws.clear();
 
             for (var draw : allDraws) {
-                if (draw.material()
-                        .transparency() == Transparency.ORDER_INDEPENDENT) {
+                if (OitTransparency.additive(draw.material())) {
+                    oitAdditiveDraws.add(draw);
+                } else if (OitTransparency.orderIndependent(draw.material())) {
                     oitDraws.add(draw);
                 } else {
                     draws.add(draw);
@@ -142,9 +144,14 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                 drawCall.instancer()
                         .prepareInstanceTexels();
             }
+            for (var drawCall : oitAdditiveDraws) {
+                drawCall.instancer()
+                        .prepareInstanceTexels();
+            }
         };
         return oitChain.render(renderModelView, meshPool.vertexBuffer(), meshPool.indexBuffer(),
-                !oitDraws.isEmpty(), prePass, chunks, ber, terrain, fabulous, this::submitOitInstances);
+                !oitDraws.isEmpty() || !oitAdditiveDraws.isEmpty(), !oitAdditiveDraws.isEmpty(), prePass, chunks, ber,
+                terrain, fabulous, this::submitOitInstances);
     }
 
     // Opaque draw through Mojang RenderPass: encoder routing keeps 26.2's GL RHI state caches consistent
@@ -276,14 +283,15 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         RenderPipeline pipeline(Material material, InstanceType<?> type, boolean embedded);
     }
 
-    private void submitOitInstances(RenderPass pass, OitMode mode, OitFrame f) {
+    private void submitOitInstances(RenderPass pass, OitMode mode, OitFrame f, boolean additive) {
         boolean needsColor = mode != OitMode.DEPTH_RANGE;
         if (needsColor) {
             bindLight(pass);
         }
 
-        drawRuns(pass, oitDraws, (material, type, embedded) -> OitPipelines.producer(material, type, mode, false,
-                embedded), needsColor ? f.textureManager() : null);
+        drawRuns(pass, additive ? oitAdditiveDraws : oitDraws,
+                (material, type, embedded) -> OitPipelines.producer(material, type, mode, false, embedded),
+                needsColor ? f.textureManager() : null);
     }
 
     private void bindLight(RenderPass pass) {
@@ -303,6 +311,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         allDraws.clear();
         draws.clear();
         oitDraws.clear();
+        oitAdditiveDraws.clear();
 
         meshPool.delete();
         programs.release();
@@ -341,7 +350,9 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
     }
 
     private void warmUp(Material material, InstanceType<?> type) {
-        if (material.transparency() == Transparency.ORDER_INDEPENDENT) {
+        if (OitTransparency.additive(material)) {
+            OitPipelines.producer(material, type, OitMode.EVALUATE);
+        } else if (OitTransparency.orderIndependent(material)) {
             OitPipelines.producer(material, type, OitMode.DEPTH_RANGE);
             OitPipelines.producer(material, type, OitMode.GENERATE_COEFFICIENTS);
             OitPipelines.producer(material, type, OitMode.EVALUATE);

@@ -12,6 +12,7 @@ import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vulkan.VulkanRenderPass;
 import dev.engine_room.flywheel.backend.OitConfig;
+import dev.engine_room.flywheel.backend.compile.MlabResolveVariant;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.vk.FlwPassBarrier;
@@ -23,12 +24,16 @@ import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.TextureManager;
+import org.joml.Vector4f;
+import org.joml.Vector4fc;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.OptionalDouble;
 
 import static dev.engine_room.flywheel.backend.vk.VkCmd.*;
 
@@ -63,12 +68,25 @@ abstract class VkInsertOitChain extends VkOitChain {
     void render(CommandEncoder encoder, VkOitRenderer.OitFrame frame, @Nullable ChunkSectionsToRender chunks,
                 @Nullable BerTranslucentCapture ber, @Nullable SodiumTerrainOitReplay terrain,
                 @Nullable FabulousCaptures fabulous, GpuTextureView lightmapView, GpuSampler clampLinear,
-                long vertexVk, long indexVk, int width, int height, boolean hasInstanceOit,
-                GpuTextureView depthView, RenderPassDescriptor compositeDescriptor) {
+                long vertexVk, long indexVk, int width, int height, boolean hasInstanceOit, boolean hasAdditive,
+                GpuTextureView colorView, GpuTextureView depthView, RenderPassDescriptor compositeDescriptor) {
         VkMlabBuffers mlab = ensureStorage(width, height, fabulous);
         producers(frame, chunks, ber, terrain, fabulous, lightmapView, clampLinear, vertexVk, indexVk,
                 width, height, hasInstanceOit, depthView, mlab);
-        resolve(encoder, compositeDescriptor, width, height, frame, fabulous);
+        if (hasAdditive) {
+            framebuffer.prepareNearestDepth();
+            RenderPassDescriptor additiveDescriptor =
+                    RenderPassDescriptor.create(() -> "flywheel:vk/oit/resolve_additive")
+                                        .withColorAttachment(colorView)
+                                        .withColorAttachment(framebuffer.nearestDepthView(),
+                                                Optional.<Vector4fc>of(new Vector4f(-1.0f)))
+                                        .withDepthAttachment(depthView, OptionalDouble.empty())
+                                        .withRenderArea(new RenderPass.RenderArea(0, 0, width, height));
+            resolve(encoder, additiveDescriptor, width, height, frame, fabulous, MlabResolveVariant.ADDITIVE);
+            nearestDepth(encoder, compositeDescriptor, frame, width, height);
+        } else {
+            resolve(encoder, compositeDescriptor, width, height, frame, fabulous, MlabResolveVariant.PLAIN);
+        }
     }
 
     private VkMlabBuffers ensureStorage(int width, int height, @Nullable FabulousCaptures fabulous) {
@@ -249,13 +267,17 @@ abstract class VkInsertOitChain extends VkOitChain {
     }
 
     private void resolve(CommandEncoder encoder, RenderPassDescriptor descriptor, int width, int height,
-                         VkOitRenderer.OitFrame frame, @Nullable FabulousCaptures fab) {
-        FlwPassBarrier.expectFramebufferProducer();
+                         VkOitRenderer.OitFrame frame, @Nullable FabulousCaptures fab, MlabResolveVariant variant) {
+        if (variant == MlabResolveVariant.ADDITIVE) {
+            FlwPassBarrier.expectFramebufferSample();
+        } else {
+            FlwPassBarrier.expectFramebufferProducer();
+        }
         try (RenderPass pass = encoder.createRenderPass(descriptor)) {
             VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
             setViewportScissor(cmd, width, height);
-            VkContext.pushLabel(cmd, "flywheel:vk/oit/composite");
-            VkGraphicsPipeline pipeline = m.programs.oit().mlabResolvePipeline(mode);
+            VkContext.pushLabel(cmd, "flywheel:vk/oit/composite" + variant.suffix);
+            VkGraphicsPipeline pipeline = m.programs.oit().mlabResolvePipeline(mode, variant);
             VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
             // Layer-merge inputs; absent layers get a mask-guarded placeholder -- never the pass's own depth attachment (descriptor-level feedback loop).
             long placeholder = frame.lightmapView();
@@ -278,6 +300,24 @@ abstract class VkInsertOitChain extends VkOitChain {
             m.writer.sampler(37, weather ? VkContext.imageView(framebuffer.weatherDepthView()) : placeholder,
                     frame.oitSampler());
             buffers().bind(m.writer);
+            m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            VK12.vkCmdDraw(cmd, 3, 1, 0, 0);
+            VkContext.popLabel(cmd);
+        } finally {
+            FlwPassBarrier.clear();
+        }
+    }
+
+    private void nearestDepth(CommandEncoder encoder, RenderPassDescriptor descriptor, VkOitRenderer.OitFrame frame,
+                              int width, int height) {
+        FlwPassBarrier.expectFramebufferProducer();
+        try (RenderPass pass = encoder.createRenderPass(descriptor)) {
+            VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
+            setViewportScissor(cmd, width, height);
+            VkContext.pushLabel(cmd, "flywheel:vk/oit/nearest_depth");
+            VkGraphicsPipeline pipeline = m.programs.oit().mlabNearestDepthPipeline();
+            VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+            m.writer.sampler(39, VkContext.imageView(framebuffer.nearestDepthView()), frame.oitSampler());
             m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
             VK12.vkCmdDraw(cmd, 3, 1, 0, 0);
             VkContext.popLabel(cmd);

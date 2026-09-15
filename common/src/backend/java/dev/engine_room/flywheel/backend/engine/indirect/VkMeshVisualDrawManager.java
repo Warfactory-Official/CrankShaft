@@ -26,6 +26,8 @@ import org.lwjgl.vulkan.EXTMeshShader;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
+import java.util.List;
+
 /**
  * The vk_mesh_shader VISUAL DrawManager: solid + OIT draws go through vkCmdDrawMeshTasksIndirectEXT (per-type EXT mesh pipelines over the same cull/apply output); crumbling via the EXT crumbling mesh variant.
  */
@@ -167,8 +169,8 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
 
         for (MeshDrawRun multiDraw : meshMultiDraws) {
             Material material = multiDraw.material();
-            VkMeshPipeline pipeline = meshVisualPipelines().solidPipeline(multiDraw.type(), material, COLOR_FORMAT,
-                    DEPTH_FORMAT);
+            VkMeshPipeline pipeline = meshVisualPipelines().solidPipeline(multiDraw.type(), material,
+                    multiDraw.embedded(), COLOR_FORMAT, DEPTH_FORMAT);
             if (pipeline != lastPipeline) {
                 bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
                 lastPipeline = pipeline;
@@ -192,8 +194,10 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
     }
 
     @Override
-    void drawOitProducerGeometry(VkCommandBuffer cmd, OitMode mode, VkOitRenderer.OitFrame f, boolean folded) {
-        if (meshOitMultiDraws.isEmpty()) {
+    void drawOitProducerGeometry(VkCommandBuffer cmd, OitMode mode, VkOitRenderer.OitFrame f, boolean folded,
+                                 boolean additive) {
+        List<MeshDrawRun> draws = additive ? meshOitAdditiveMultiDraws : meshOitMultiDraws;
+        if (draws.isEmpty()) {
             return;
         }
         MeshVisualInputs in = meshVisualInputs();
@@ -206,9 +210,9 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
         VkMeshPipeline lastPipeline = null;
 
-        for (MeshDrawRun multiDraw : meshOitMultiDraws) {
-            VkMeshPipeline pipeline = meshVisualPipelines().oitPipeline(multiDraw.type(), multiDraw.material(), mode,
-                    DEPTH_FORMAT, folded);
+        for (MeshDrawRun multiDraw : draws) {
+            VkMeshPipeline pipeline = meshVisualPipelines().oitPipeline(multiDraw.type(), multiDraw.material(),
+                    multiDraw.embedded(), mode, DEPTH_FORMAT, folded);
             if (pipeline != lastPipeline) {
                 bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
                 lastPipeline = pipeline;
@@ -237,7 +241,13 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
     @Override
     void drawMlabProducerGeometry(OitInsertMode oitMode, VkCommandBuffer cmd, VkOitRenderer.OitFrame f,
                                   VkMlabBuffers mlab) {
-        if (meshOitMultiDraws.isEmpty()) {
+        drawMlabProducerGeometry(oitMode, cmd, f, mlab, meshOitMultiDraws);
+        drawMlabProducerGeometry(oitMode, cmd, f, mlab, meshOitAdditiveMultiDraws);
+    }
+
+    private void drawMlabProducerGeometry(OitInsertMode oitMode, VkCommandBuffer cmd, VkOitRenderer.OitFrame f,
+                                          VkMlabBuffers mlab, List<MeshDrawRun> draws) {
+        if (draws.isEmpty()) {
             return;
         }
         MeshVisualInputs in = meshVisualInputs();
@@ -249,9 +259,9 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
         VkMeshPipeline lastPipeline = null;
 
-        for (MeshDrawRun multiDraw : meshOitMultiDraws) {
+        for (MeshDrawRun multiDraw : draws) {
             VkMeshPipeline pipeline = meshVisualPipelines().mlabPipeline(multiDraw.type(), multiDraw.material(),
-                    oitMode, DEPTH_FORMAT);
+                    multiDraw.embedded(), oitMode, DEPTH_FORMAT);
             if (pipeline != lastPipeline) {
                 bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
                 lastPipeline = pipeline;
@@ -286,7 +296,8 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         if (triCount == 0) {
             return true;
         }
-        VkMeshPipeline pipeline = meshVisualPipelines().crumblingPipeline(instanceType, COLOR_FORMAT, DEPTH_FORMAT);
+        VkMeshPipeline pipeline = meshVisualPipelines().crumblingPipeline(crumblingMaterial, instanceType, COLOR_FORMAT,
+                DEPTH_FORMAT);
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
 
         Material material = draw.material();

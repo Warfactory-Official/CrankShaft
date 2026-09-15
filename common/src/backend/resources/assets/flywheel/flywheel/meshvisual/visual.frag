@@ -2,16 +2,16 @@ layout(location = 0) in MeshVertexOut {
     vec2 texCoord;
 #ifdef _FLW_MV_F16_VARYINGS
     f16vec4 color;
-    f16vec2 light;
+    f16vec4 light;
     f16vec3 normal;
 #else
     vec4 color;
-    vec2 light;
+    vec4 light;
     vec3 normal;
 #endif
     vec3 worldPos;
-    flat uint overlayCutout; // overlay texel u8:u8 | cutout index << 16 (see visual_main.mesh)
-    flat uint packedMaterial;
+    flat uint fogCutout;
+    flat uint packedMaterial; // packedMaterialProperties | overlay texel u4:u4 << 24 (see visual_main.mesh)
 #ifdef _FLW_MV_CLIP
     vec2 clipData; // compact clip ABI (see visual_main.mesh); main copies into the prelude global
 #endif
@@ -91,91 +91,79 @@ float _flw_meshDiffuse(uint cardinalMode, vec3 normal) {
 void main() {
 #ifdef _FLW_MV_F16_VARYINGS
     vec4 _mvColor = vec4(v_in.color);
-    vec2 _mvLight = vec2(v_in.light);
+    vec2 _mvLight = vec2(v_in.light.xy);
     vec3 _mvNormal = vec3(v_in.normal);
 #else
     vec4 _mvColor = v_in.color;
-    vec2 _mvLight = v_in.light;
+    vec2 _mvLight = v_in.light.xy;
     vec3 _mvNormal = v_in.normal;
 #endif
-    vec3 _mvWorldPos = v_in.worldPos;
-    ivec2 _mvOverlay = ivec2(int(v_in.overlayCutout & 0xFFu), int((v_in.overlayCutout >> 8u) & 0xFFu));
+    ivec2 _mvOverlay = ivec2(int((v_in.packedMaterial >> 24u) & 0xFu), int(v_in.packedMaterial >> 28u));
 
-    FlwMaterial material;
-    _flw_unpackMaterialProperties(v_in.packedMaterial, material);
-
-    // Material hook: after the modulate, before crumbling/cutout; nametag.frag et al. may rewrite flw_fragColor.
+    flw_vertexPos = vec4(v_in.worldPos, 1.0);
+    flw_vertexNormal = normalize(_mvNormal);
     flw_vertexColor = _mvColor;
     flw_sampleColor = texture(Sampler0, v_in.texCoord);
     flw_fragColor = flw_sampleColor * flw_vertexColor * ColorModulator;
+    flw_fragLight = _mvLight;
+    _flw_unpackMaterialProperties(v_in.packedMaterial, flw_material);
+
+    // Material hook: after the modulate, before crumbling/cutout; nametag.frag et al. may rewrite flw_fragColor.
     flw_materialFragment();
-    vec4 color = flw_fragColor;
 #ifdef _FLW_CRUMBLING
-    vec4 crack = texture(_flw_crumblingTex, _flw_crumblingTexCoord(_mvWorldPos, normalize(_mvNormal)));
-    color.rgb = crack.rgb;
-    color.a *= crack.a;
-    if (color.a < 0.1) {
+    vec4 crack = texture(_flw_crumblingTex, _flw_crumblingTexCoord(flw_vertexPos.xyz, flw_vertexNormal));
+    flw_fragColor.rgb = crack.rgb;
+    flw_fragColor.a *= crack.a;
+    if (flw_fragColor.a < 0.1) {
         discard;
     }
 #else
 #ifdef _FLW_MV_CLIP
     _flw_clipData = v_in.clipData;
 #endif
-    if (flw_discardPredicateUber(v_in.overlayCutout >> 16u, color)) {
+    if (flw_discardPredicateUber(v_in.fogCutout & 0xFFFFu, flw_fragColor)) {
         discard;
     }
 #endif
 
-    vec3 normal = normalize(_mvNormal);
+    flw_shaderLight();
 
-    vec2 lightCoord = _mvLight;
-    if (material.useLight) {
-        FlwLightAo lightAo;
-        if (flw_light(_mvWorldPos, normal, lightAo)) {
-            color.rgb *= lightAo.ao;
-            lightCoord = lightAo.light;
-        }
-    }
+    float diffuseFactor = _flw_meshDiffuse(flw_material.cardinalLightingMode, flw_vertexNormal);
+    flw_fragColor.rgb *= diffuseFactor;
 
-    float diffuseFactor = _flw_meshDiffuse(material.cardinalLightingMode, normal);
-    color.rgb *= diffuseFactor;
-
-    if (material.useOverlay) {
+    if (flw_material.useOverlay) {
         vec4 overlay = texelFetch(Sampler1, _mvOverlay, 0);
-        color.rgb = mix(overlay.rgb, color.rgb, overlay.a);
+        flw_fragColor.rgb = mix(overlay.rgb, flw_fragColor.rgb, overlay.a);
     }
 
     vec4 lightColor = vec4(1.);
-    if (material.useLight) {
-        lightColor = texture(Sampler2, clamp(lightCoord, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
-        color *= lightColor;
+    if (flw_material.useLight) {
+        lightColor = texture(Sampler2, clamp(flw_fragLight, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
+        flw_fragColor *= lightColor;
     }
 
 #ifdef _FLW_DEBUG
 #if _FLW_DEBUG == 1
-    color = vec4(normal * .5 + .5, 1.);
+    flw_fragColor = vec4(flw_vertexNormal * .5 + .5, 1.);
 #elif _FLW_DEBUG == 2
-    color = _flw_id2Color(v_in.debugIds.x);
+    flw_fragColor = _flw_id2Color(v_in.debugIds.x);
 #elif _FLW_DEBUG == 3
-    color = vec4(vec2((lightCoord * 15.0 + 0.5) / 16.), 0., 1.);
+    flw_fragColor = vec4(vec2((flw_fragLight * 15.0 + 0.5) / 16.), 0., 1.);
 #elif _FLW_DEBUG == 4
-    color = lightColor;
+    flw_fragColor = lightColor;
 #elif _FLW_DEBUG == 5
-    color = vec4(vec2(_mvOverlay) / 16., 0., 1.);
+    flw_fragColor = vec4(vec2(_mvOverlay) / 16., 0., 1.);
 #elif _FLW_DEBUG == 6
-    color = vec4(vec3(diffuseFactor), 1.);
+    flw_fragColor = vec4(vec3(diffuseFactor), 1.);
 #elif _FLW_DEBUG == 7
-    color = _flw_id2Color(v_in.debugIds.y);
+    flw_fragColor = _flw_id2Color(v_in.debugIds.y);
 #endif
 #endif
 
 #ifdef _FLW_CRUMBLING
-    fragColor = color;
+    fragColor = flw_fragColor;
 #else
-    vec3 viewPos = (_flw_mvModelView * vec4(_mvWorldPos, 1.0)).xyz;
-    float fogSpherical = length(viewPos);
-    float fogCylindrical = max(length(viewPos.xz), abs(viewPos.y));
-    fragColor = apply_fog(color, fogSpherical, fogCylindrical, FogEnvironmentalStart, FogEnvironmentalEnd,
-            FogRenderDistanceStart, FogRenderDistanceEnd, FogColor);
+    vec2 fogDistance = vec2(v_in.light.zw);
+    fragColor = flw_fogFilterUber(v_in.fogCutout >> 16u, flw_fragColor, fogDistance.x, fogDistance.y);
 #endif
 }

@@ -12,6 +12,7 @@ import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.InternalVertex;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
+import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
@@ -40,7 +41,7 @@ public final class InstancingPipeline {
         case FRAGMENT -> {
             FragmentAssembly fa = FRAGMENT_ASSEMBLY.get(id);
             yield RenderPassShaders.fragment(fa.light(), false, fa.material(), fa.smoothness(), fa.cutout(), fa.fog(),
-                    fa.debug());
+                    fa.debug(), fa.embedded() ? RenderPassShaders.EMBEDDED : ShaderAssembly.NO_EXTRA);
         }
     };
     private static final Map<PipelineKey, RenderPipeline> CACHE = new HashMap<>();
@@ -60,15 +61,18 @@ public final class InstancingPipeline {
         LightSmoothness smoothness = BackendConfig.INSTANCE.lightSmoothness();
         DebugMode debug = FrameUniforms.debugMode();
 
+        boolean embeddedFragment = embedded && RenderPassShaders.readsEmbedded(material);
+
         Identifier vId = vertexId(instanceType, embedded, shaders, debug != DebugMode.OFF);
         VERTEX_ASSEMBLY.putIfAbsent(vId, new VertexAssembly(instanceType, shaders, debug != DebugMode.OFF));
-        Identifier fId = fragmentId(light, shaders, smoothness, cutout, fog, debug);
-        FRAGMENT_ASSEMBLY.putIfAbsent(fId, new FragmentAssembly(light, shaders, smoothness, cutout, fog, debug));
+        Identifier fId = fragmentId(light, shaders, smoothness, cutout, fog, debug, embeddedFragment);
+        FRAGMENT_ASSEMBLY.putIfAbsent(fId,
+                new FragmentAssembly(light, shaders, smoothness, cutout, fog, debug, embeddedFragment));
 
         PipelineKey key = new PipelineKey(instanceType, light, shaders, smoothness, cutout, fog, debug,
                 material.transparency(), material.depthTest(),
                 material.writeMask().depth(), material.writeMask().color(),
-                material.backfaceCulling(), material.polygonOffset(), embedded);
+                material.backfaceCulling(), material.polygonOffset(), embedded, embeddedFragment);
         RenderPipeline pipeline = CACHE.computeIfAbsent(key, InstancingPipeline::build);
         RenderSystem.getDevice()
                     .precompilePipeline(pipeline, SHADER_SOURCE);
@@ -84,8 +88,9 @@ public final class InstancingPipeline {
     }
 
     private static Identifier fragmentId(LightShader light, MaterialShaders materialShaders, LightSmoothness smoothness,
-                                         CutoutShader cutout, FogShader fog, DebugMode debug) {
-        return ResourceUtil.rl("codegen/instancing_frag/" + ResourceUtil.toDebugFileNameNoExtension(light.source())
+                                         CutoutShader cutout, FogShader fog, DebugMode debug, boolean embedded) {
+        return ResourceUtil.rl("codegen/instancing_frag/" + (embedded ? "embedded/" : "")
+                + ResourceUtil.toDebugFileNameNoExtension(light.source())
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(materialShaders.fragmentSource())
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(cutout.source())
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(fog.source())
@@ -118,7 +123,7 @@ public final class InstancingPipeline {
                                                        .withFragmentShader(
                                                                fragmentId(key.light(), key.materialShaders(),
                                                                        key.smoothness(), key.cutout(), key.fog(),
-                                                                       key.debug()))
+                                                                       key.debug(), key.embeddedFragment()))
                                                        .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
                                                        .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                                                        // Positive offset wins GREATER_THAN_OR_EQUAL under reversed-Z (26.2 feeds bias straight to
@@ -143,7 +148,7 @@ public final class InstancingPipeline {
         BlendFunction blend = switch (key.transparency()) {
             case OPAQUE -> null;
             case ADDITIVE -> BlendFunction.ADDITIVE;
-            case LIGHTNING -> BlendFunction.LIGHTNING;
+            case LIGHTNING, ORDER_INDEPENDENT_ADDITIVE -> BlendFunction.LIGHTNING;
             case GLINT -> BlendFunction.GLINT;
             case CRUMBLING, TRANSLUCENT, ORDER_INDEPENDENT -> BlendFunction.TRANSLUCENT;
         };
@@ -160,14 +165,14 @@ public final class InstancingPipeline {
     }
 
     private record FragmentAssembly(LightShader light, MaterialShaders material, LightSmoothness smoothness,
-                                    CutoutShader cutout, FogShader fog, DebugMode debug) {
+                                    CutoutShader cutout, FogShader fog, DebugMode debug, boolean embedded) {
     }
 
     private record PipelineKey(InstanceType<?> instanceType, LightShader light, MaterialShaders materialShaders,
                                LightSmoothness smoothness, CutoutShader cutout, FogShader fog, DebugMode debug,
                                Transparency transparency, DepthTest depthTest,
                                boolean depthWrite, boolean colorWrite, boolean cull, boolean polygonOffset,
-                               boolean embedded) {
+                               boolean embedded, boolean embeddedFragment) {
         String cacheName() {
             StringBuilder sb = new StringBuilder();
             sb.append(ResourceUtil.toDebugFileNameNoExtension(instanceType.vertexShader()))
@@ -204,7 +209,7 @@ public final class InstancingPipeline {
                 sb.append("_po");
             }
             if (embedded) {
-                sb.append("_embed");
+                sb.append(embeddedFragment ? "_embedfrag" : "_embed");
             }
             return sb.toString().toLowerCase(Locale.ROOT);
         }

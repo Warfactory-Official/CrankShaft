@@ -6,24 +6,24 @@ layout(triangles, max_vertices = 256, max_primitives = 512) out;
 layout(location = 0) out MeshVertexOut {
     vec2 texCoord;
 #ifdef _FLW_MV_F16_VARYINGS
-    // f16 varying trim (GL only, GL_NV_gpu_shader5): color/light/normal ride the interface as half precision to
-    // halve their per-vertex output storage (the confirmed mesh-shader occupancy limiter). Quality-neutral -- an
-    // 8-bit-sourced colour bound for an 8-bit output, a lightmap UV indexing 16 light levels, and a renormalized
-    // normal (axis normals are f16-exact) are all coarser than f16 downstream. MUST match visual.frag / visual_oit.frag.
+    // f16 trim (GL only, GL_NV_gpu_shader5): halves per-vertex output storage (the mesh occupancy limiter).
+    // Quality-neutral: 8-bit colour, 16-level lightmap UV, fog distances (step <= 0.5 block below 1024; fog spans
+    // >= 4 blocks), renormalized normal (axis normals f16-exact). MUST match visual.frag / visual_oit.frag.
     f16vec4 color;
-    f16vec2 light;
+    f16vec4 light;
     f16vec3 normal;
 #else
     vec4 color;
-    vec2 light;
+    // xy lightmap coord | zw (spherical, cylindrical) fog distance, interpolated like vanilla's vertex distances
+    // (exact per-fragment distances fog a large quad less).
+    vec4 light;
     vec3 normal;            // world/render-origin space (== light-direction space), for the directional diffuse
 #endif
-    vec3 worldPos;          // render-origin-relative world position; the fragment derives smooth light + fog from it
-    // Entity overlay (hurt/flash) texel in the low bytes -- the overlay texture is 16x16, so 0..15 each -- and
-    // the draw command's cutout index (packedFogAndCutout lo16) in the high half: one word of per-vertex output
-    // space instead of ivec2 + uint (output space is the confirmed mesh occupancy limiter).
-    flat uint overlayCutout;
-    flat uint packedMaterial; // draw command's packedMaterialProperties (cardinalLightingMode / useLight / ...)
+    vec3 worldPos;          // render-origin-relative world position; the fragment derives smooth light from it
+    flat uint fogCutout; // draw command's packedFogAndCutout
+    // Draw command's packedMaterialProperties (MUST stay < 24 bits) | entity overlay texel u4:u4 << 24 (16x16
+    // overlay texture): no separate overlay word (output space is the confirmed mesh occupancy limiter).
+    flat uint packedMaterial;
 #ifdef _FLW_MV_CLIP
     // Clip-type routing: the instance body's compact _flw_clipData (x = dot(plane.xyz, slidPos), y = plane.w),
     // forwarded per-vertex so the CLIP_* cutout predicates clip faithfully. Compiled only for types whose
@@ -87,17 +87,19 @@ void _flw_emitVertex(uint outV, FlwInstance instance, uint matrixIndex, uint pac
     v_out[outV].texCoord = flw_vertexTexCoord;
 #ifdef _FLW_MV_F16_VARYINGS
     v_out[outV].color = f16vec4(flw_vertexColor);
-    v_out[outV].light = f16vec2(flw_vertexLight);
+    // NV GL trap: a multi-argument f16vecN(...) constructor writes zero; convert a built vecN.
+    vec4 lightFog = vec4(flw_vertexLight, length(viewPos.xyz), max(length(viewPos.xz), abs(viewPos.y)));
+    v_out[outV].light = f16vec4(lightFog);
     v_out[outV].normal = f16vec3(normalize(flw_vertexNormal));
 #else
     v_out[outV].color = flw_vertexColor;
-    v_out[outV].light = flw_vertexLight;
+    v_out[outV].light = vec4(flw_vertexLight, length(viewPos.xyz), max(length(viewPos.xz), abs(viewPos.y)));
     v_out[outV].normal = normalize(flw_vertexNormal);
 #endif
     v_out[outV].worldPos = flw_vertexPos.xyz;
-    v_out[outV].overlayCutout = (uint(flw_vertexOverlay.x) & 0xFFu) | ((uint(flw_vertexOverlay.y) & 0xFFu) << 8u)
-            | ((packedFogAndCutout & 0xFFFFu) << 16u);
-    v_out[outV].packedMaterial = packedMaterial;
+    v_out[outV].fogCutout = packedFogAndCutout;
+    v_out[outV].packedMaterial = packedMaterial | ((uint(flw_vertexOverlay.x) & 0xFu) << 24u)
+            | ((uint(flw_vertexOverlay.y) & 0xFu) << 28u);
 #ifdef _FLW_MV_CLIP
     v_out[outV].clipData = _flw_clipData;
 #endif

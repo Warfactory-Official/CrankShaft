@@ -78,4 +78,12 @@ public enum Transparency {
      * overlay against solid geometry the order dependent modes are preferred.
      */
     ORDER_INDEPENDENT,
+
+    /**
+     * If supported by the backend, this mode will use OIT that approximates {@code LIGHTNING} transparency: the
+     * fragment adds {@code color_src * alpha_src}, attenuated by whatever lies in front of it, and occludes nothing.
+     *
+     * <p>If a backend does not support OIT, it must treat this the same as {@code LIGHTNING}.
+     */
+    ORDER_INDEPENDENT_ADDITIVE,
 }

@@ -115,7 +115,13 @@ void main() {
     vec4 color = flw_fogFilter(flw_fragColor, sphericalVertexDistance, cylindricalVertexDistance);
     #endif
 
+    #if defined(_FLW_OIT_EMISSION) && defined(_FLW_OIT_INSERT)
+    _flw_mlabInsertPremul(color.rgb * color.a, 0., gl_FragCoord.z);
+    #elif defined(_FLW_OIT_EMISSION)
+    _flw_oitEmitAdditive(color.rgb * color.a, linearDepth);
+    #else
     _flw_oitEmit(color, linearDepth);
+    #endif
 
     #endif
 }

@@ -3,11 +3,11 @@ package dev.engine_room.flywheel.backend.engine.indirect;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
-import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.engine.InstancerKey;
 import dev.engine_room.flywheel.backend.engine.MeshPool;
+import dev.engine_room.flywheel.backend.engine.OitTransparency;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -63,19 +63,21 @@ public class IndirectCullingGroup<I extends Instance> {
             var draw = new IndirectDraw(instancer, entry.material(), mesh, key.bias(), i);
             indirectDraws.add(draw);
             instancer.addDraw(draw);
-            warmUp(entry.material());
+            warmUp(entry.material(), draw.embeddedVariant());
         }
 
         drawsDirty = true;
     }
 
-    private void warmUp(Material material) {
-        if (material.transparency() == Transparency.ORDER_INDEPENDENT) {
-            OitPipelines.uberProducer(material, OitMode.DEPTH_RANGE);
-            OitPipelines.uberProducer(material, OitMode.GENERATE_COEFFICIENTS);
-            OitPipelines.uberProducer(material, OitMode.EVALUATE);
+    private void warmUp(Material material, boolean embedded) {
+        if (OitTransparency.additive(material)) {
+            OitPipelines.uberProducer(material, OitMode.EVALUATE, embedded);
+        } else if (OitTransparency.orderIndependent(material)) {
+            OitPipelines.uberProducer(material, OitMode.DEPTH_RANGE, embedded);
+            OitPipelines.uberProducer(material, OitMode.GENERATE_COEFFICIENTS, embedded);
+            OitPipelines.uberProducer(material, OitMode.EVALUATE, embedded);
         } else {
-            IndirectPipeline.uberPipelineFor(material);
+            IndirectPipeline.uberPipelineFor(material, embedded);
         }
     }
 

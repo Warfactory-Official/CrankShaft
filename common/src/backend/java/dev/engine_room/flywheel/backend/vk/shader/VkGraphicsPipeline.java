@@ -265,7 +265,7 @@ public final class VkGraphicsPipeline {
         return switch (transparency) {
             case OPAQUE -> new Blend(false, 0, 0, 0, 0, 0, 0, wm);
             case ADDITIVE -> new Blend(true, one, one, add, one, one, add, wm);
-            case LIGHTNING -> new Blend(true, sa, one, add, sa, one, add, wm);
+            case LIGHTNING, ORDER_INDEPENDENT_ADDITIVE -> new Blend(true, sa, one, add, sa, one, add, wm);
             case GLINT -> new Blend(true, sc, one, add, zero, one, add, wm);
             case CRUMBLING, TRANSLUCENT, ORDER_INDEPENDENT -> new Blend(true, sa, omsa, add, one, omsa, add, wm);
         };

@@ -19,6 +19,7 @@ import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.*;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.BerFamily;
+import dev.engine_room.flywheel.backend.engine.OitTransparency;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
@@ -51,7 +52,12 @@ public final class OitPipelines {
 
     private static final Identifier FULLSCREEN_VERTEX = ResourceUtil.rl("codegen/oit/fullscreen");
     private static final Identifier COMPOSITE_FRAGMENT = ResourceUtil.rl("codegen/oit/composite_frag");
+    private static final Identifier COMPOSITE_EMISSION_FRAGMENT =
+            ResourceUtil.rl("codegen/oit/composite_emission_frag");
     private static final Identifier DEPTH_FRAGMENT = ResourceUtil.rl("codegen/oit/depth_frag");
+    private static final Identifier MLAB_NEAREST_DEPTH_FRAGMENT =
+            ResourceUtil.rl("codegen/oit/mlab/nearest_depth_frag");
+    private static final Identifier EMISSION_FRAGMENT = ResourceUtil.rl("codegen/oit/emission_frag");
 
     private static final String LIGHT_LUT_NAME = "_flw_lightLut";
     private static final String LIGHT_SECTIONS_NAME = "_flw_lightSections";
@@ -74,7 +80,7 @@ public final class OitPipelines {
     private static final Map<Identifier, OitMode> WEATHER_FRAGMENT_MODE = new HashMap<>();
     private static final Map<Identifier, MlabUberKey> MLAB_UBER_KEY = new HashMap<>();
     private static final Map<Identifier, ChunkMlabKey> CHUNK_MLAB_KEY = new HashMap<>();
-    private static final Map<Identifier, OitInsertMode> MLAB_RESOLVE_MODE = new HashMap<>();
+    private static final Map<Identifier, MlabResolveKey> MLAB_RESOLVE_KEY = new HashMap<>();
     private static final Map<Identifier, BerMlabKey> BER_MLAB_KEY = new HashMap<>();
     private static final Map<Identifier, OitInsertMode> WEATHER_MLAB_MODE = new HashMap<>();
     private static final ShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
@@ -104,7 +110,7 @@ public final class OitPipelines {
             VertexAssembly va = VERTEX_ASSEMBLY.get(id);
             if (id.getPath().contains("/uber/")) {
                 yield RenderPassShaders.assembleUberIndirectVertex(va.material(), va.debug(),
-                        RenderPassShaders.maybeBindlessGl());
+                        RenderPassShaders.maybeBindlessGl().andThen(embeddedExtra(va.embedded())));
             }
             boolean indirect = id.getPath().contains("/indirect/");
             if (va.embedded()) {
@@ -119,11 +125,17 @@ public final class OitPipelines {
                     : RenderPassShaders.assembleInstancingVertex(va.type(), va.material(), va.debug());
         }
         case FRAGMENT -> {
-            if (id.equals(COMPOSITE_FRAGMENT)) {
-                yield RenderPassShaders.assembleOitComposite();
+            if (id.equals(COMPOSITE_FRAGMENT) || id.equals(COMPOSITE_EMISSION_FRAGMENT)) {
+                yield RenderPassShaders.assembleOitComposite(id.equals(COMPOSITE_EMISSION_FRAGMENT));
             }
             if (id.equals(DEPTH_FRAGMENT)) {
                 yield RenderPassShaders.assembleOitDepth();
+            }
+            if (id.equals(MLAB_NEAREST_DEPTH_FRAGMENT)) {
+                yield RenderPassShaders.assembleMlabNearestDepth();
+            }
+            if (id.equals(EMISSION_FRAGMENT)) {
+                yield RenderPassShaders.assembleOitEmission();
             }
             ChunkFragmentKey chunkKey = CHUNK_FRAGMENT_KEY.get(id);
             if (chunkKey != null) {
@@ -144,15 +156,17 @@ public final class OitPipelines {
             MlabUberKey mlabUber = MLAB_UBER_KEY.get(id);
             if (mlabUber != null) {
                 yield RenderPassShaders.assembleUberMlabFragment(mlabUber.mode(), mlabUber.light(), mlabUber.material(),
-                        mlabUber.smoothness(), mlabUber.debug(), RenderPassShaders.maybeBindlessGl());
+                        mlabUber.smoothness(), mlabUber.debug(), RenderPassShaders.maybeBindlessGl()
+                                .andThen(emissionExtra(mlabUber.emission()))
+                                .andThen(embeddedExtra(mlabUber.embedded())));
             }
             ChunkMlabKey mlabChunk = CHUNK_MLAB_KEY.get(id);
             if (mlabChunk != null) {
                 yield RenderPassShaders.assembleChunkMlabFragment(mlabChunk.mode(), mlabChunk.linear());
             }
-            OitInsertMode mlabResolveMode = MLAB_RESOLVE_MODE.get(id);
-            if (mlabResolveMode != null) {
-                yield RenderPassShaders.assembleMlabResolve(mlabResolveMode);
+            MlabResolveKey mlabResolve = MLAB_RESOLVE_KEY.get(id);
+            if (mlabResolve != null) {
+                yield RenderPassShaders.assembleMlabResolve(mlabResolve.mode(), mlabResolve.variant());
             }
             BerMlabKey berMlab = BER_MLAB_KEY.get(id);
             if (berMlab != null) {
@@ -163,13 +177,14 @@ public final class OitPipelines {
                 yield RenderPassShaders.assembleWeatherMlabFragment(weatherMlabMode);
             }
             ProducerFragmentKey pfk = PRODUCER_FRAGMENT_KEY.get(id);
+            Consumer<Compilation> emission = emissionExtra(pfk.emission()).andThen(embeddedExtra(pfk.embedded()));
             if (id.getPath().contains("/uber/")) {
                 yield RenderPassShaders.assembleUberOitFragment(pfk.mode(), pfk.light(), pfk.material(),
-                        pfk.smoothness(), pfk.debug(), RenderPassShaders.maybeBindlessGl());
+                        pfk.smoothness(), pfk.debug(), RenderPassShaders.maybeBindlessGl().andThen(emission));
             }
             yield RenderPassShaders.assembleOitFragment(pfk.mode(), pfk.light(), pfk.indirect(), pfk.material(),
                     pfk.smoothness(), pfk.cutout(), pfk.fog(), pfk.debug(),
-                    pfk.indirect() ? RenderPassShaders.maybeBindlessGl() : ShaderAssembly.NO_EXTRA);
+                    (pfk.indirect() ? RenderPassShaders.maybeBindlessGl() : ShaderAssembly.NO_EXTRA).andThen(emission));
         }
     };
     private static final Map<ProducerKey, RenderPipeline> PRODUCER_CACHE = new HashMap<>();
@@ -187,12 +202,15 @@ public final class OitPipelines {
             ColorTargetState.WRITE_NONE);
     private static final Map<MlabUberKey, RenderPipeline> UBER_MLAB_CACHE = new HashMap<>();
     private static final Map<ChunkMlabKey, RenderPipeline> CHUNK_MLAB_CACHE = new HashMap<>();
-    private static final Map<OitInsertMode, RenderPipeline> MLAB_RESOLVE_CACHE = new EnumMap<>(OitInsertMode.class);
+    private static final Map<MlabResolveKey, RenderPipeline> MLAB_RESOLVE_CACHE = new HashMap<>();
     private static final Map<BerMlabKey, RenderPipeline> BER_MLAB_CACHE = new HashMap<>();
     private static final Map<OitInsertMode, RenderPipeline> WEATHER_MLAB_CACHE = new EnumMap<>(OitInsertMode.class);
     private static final Map<ChunkSodiumMlabKey, RenderPipeline> CHUNK_SODIUM_MLAB_CACHE = new HashMap<>();
     private static RenderPipeline compositePipeline;
+    private static RenderPipeline compositeEmissionPipeline;
     private static RenderPipeline depthPipeline;
+    private static RenderPipeline mlabNearestDepthPipeline;
+    private static RenderPipeline emissionPipeline;
 
     static {
         for (BerFamily family : BerFamily.VALUES) {
@@ -247,55 +265,78 @@ public final class OitPipelines {
         LightShader light = material.light();
         CutoutShader cutout = material.cutout();
         FogShader fog = material.fog();
+        boolean emission = emission(material, mode);
+        boolean embeddedFragment = embedded && RenderPassShaders.readsEmbedded(material);
         PRODUCER_FRAGMENT_KEY.putIfAbsent(
-                producerFragmentId(mode, light, indirect, shaders, smoothness, cutout, fog, debug),
-                new ProducerFragmentKey(mode, light, indirect, shaders, smoothness, cutout, fog, debug));
+                producerFragmentId(mode, light, indirect, shaders, smoothness, cutout, fog, debug, emission,
+                        embeddedFragment),
+                new ProducerFragmentKey(mode, light, indirect, shaders, smoothness, cutout, fog, debug, emission,
+                        embeddedFragment));
 
         ProducerKey key = new ProducerKey(instanceType, light, shaders, smoothness, cutout, fog, debug, mode, indirect,
                 material.depthTest(),
-                material.backfaceCulling(), material.polygonOffset(), embedded);
+                material.backfaceCulling(), material.polygonOffset(), embedded, embeddedFragment, emission);
         RenderPipeline pipeline = PRODUCER_CACHE.computeIfAbsent(key, OitPipelines::buildProducer);
         RenderSystem.getDevice()
                     .precompilePipeline(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
-    public static RenderPipeline uberProducer(Material material, OitMode mode) {
+    /**
+     * {@code embedded}: the {@link RenderPassShaders#readsEmbedded} variant of an embedded run.
+     */
+    public static RenderPipeline uberProducer(Material material, OitMode mode, boolean embedded) {
         MaterialShaders shaders = material.shaders();
         LightShader light = material.light();
         LightSmoothness smoothness = BackendConfig.INSTANCE.lightSmoothness();
         DebugMode debug = FrameUniforms.debugMode();
 
-        Identifier vertexId = uberVertexId(shaders, debug != DebugMode.OFF);
-        VERTEX_ASSEMBLY.putIfAbsent(vertexId, new VertexAssembly(null, shaders, false, debug != DebugMode.OFF));
-        Identifier fragmentId = uberProducerFragmentId(mode, light, shaders, smoothness, debug);
+        Identifier vertexId = uberVertexId(shaders, debug != DebugMode.OFF, embedded);
+        VERTEX_ASSEMBLY.putIfAbsent(vertexId, new VertexAssembly(null, shaders, embedded, debug != DebugMode.OFF));
+        boolean emission = emission(material, mode);
+        Identifier fragmentId = uberProducerFragmentId(mode, light, shaders, smoothness, debug, emission, embedded);
         PRODUCER_FRAGMENT_KEY.putIfAbsent(fragmentId,
-                new ProducerFragmentKey(mode, light, true, shaders, smoothness, null, null, debug));
+                new ProducerFragmentKey(mode, light, true, shaders, smoothness, null, null, debug, emission, embedded));
 
         UberProducerKey key = new UberProducerKey(light, shaders, smoothness, debug, mode, material.depthTest(),
                 material.backfaceCulling(), material.polygonOffset(),
                 InstanceTypeIds.snapshot().types().size(),
                 MaterialShaderIndices.cutoutSources().all().size(),
-                MaterialShaderIndices.fogSources().all().size());
+                MaterialShaderIndices.fogSources().all().size(), emission, embedded);
         RenderPipeline pipeline = UBER_PRODUCER_CACHE.computeIfAbsent(key, OitPipelines::buildUberProducer);
         RenderSystem.getDevice()
                     .precompilePipeline(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
-    private static Identifier uberVertexId(MaterialShaders materialShaders, boolean debug) {
-        return ResourceUtil.rl("codegen/oit/uber/g" + InstanceTypeIds.snapshot().types().size()
+    private static Consumer<Compilation> embeddedExtra(boolean embedded) {
+        return embedded ? RenderPassShaders.EMBEDDED : ShaderAssembly.NO_EXTRA;
+    }
+
+    private static Consumer<Compilation> emissionExtra(boolean emission) {
+        return emission ? RenderPassShaders.EMISSION_PRODUCER : ShaderAssembly.NO_EXTRA;
+    }
+
+    private static Identifier uberVertexId(MaterialShaders materialShaders, boolean debug, boolean embedded) {
+        return ResourceUtil.rl("codegen/oit/uber/" + (embedded ? "embedded/" : "") + "g"
+                + InstanceTypeIds.snapshot().types().size()
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(materialShaders.vertexSource())
                 + (debug ? "__debug" : ""));
     }
 
+    private static boolean emission(Material material, OitMode mode) {
+        return mode == OitMode.EVALUATE && OitTransparency.additive(material);
+    }
+
     private static Identifier uberProducerFragmentId(OitMode mode, LightShader light, MaterialShaders materialShaders,
-                                                     LightSmoothness smoothness, DebugMode debug) {
-        return ResourceUtil.rl("codegen/oit/producer_frag/uber/g" + MaterialShaderIndices.cutoutSources().all().size()
+                                                     LightSmoothness smoothness, DebugMode debug, boolean emission,
+                                                     boolean embedded) {
+        return ResourceUtil.rl("codegen/oit/producer_frag/uber/" + (embedded ? "embedded/" : "") + "g"
+                + MaterialShaderIndices.cutoutSources().all().size()
                 + "_" + MaterialShaderIndices.fogSources().all().size()
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(light.source())
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(materialShaders.fragmentSource())
-                + "__" + smoothness.getSerializedName() + mode.name
+                + "__" + smoothness.getSerializedName() + mode.name + (emission ? "_emission" : "")
                 + (debug == DebugMode.OFF ? "" : "__debug_" + debug.getSerializedName()));
     }
 
@@ -304,9 +345,10 @@ public final class OitPipelines {
         RenderPipeline.Builder builder = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
                                                        .withLocation(ResourceUtil.rl("pipeline/oit/" + key.cacheName()))
                                                        .withVertexShader(uberVertexId(key.materialShaders(),
-                                                               key.debug() != DebugMode.OFF))
+                                                               key.debug() != DebugMode.OFF, key.embedded()))
                                                        .withFragmentShader(uberProducerFragmentId(mode, key.light(),
-                                                               key.materialShaders(), key.smoothness(), key.debug()))
+                                                               key.materialShaders(), key.smoothness(), key.debug(),
+                                                               key.emission(), key.embedded()))
                                                        .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
                                                        .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                                                        .withDepthStencilState(
@@ -322,23 +364,37 @@ public final class OitPipelines {
 
     private static Identifier producerFragmentId(OitMode mode, LightShader light, boolean indirect,
                                                  MaterialShaders materialShaders, LightSmoothness smoothness,
-                                                 CutoutShader cutout, FogShader fog, DebugMode debug) {
-        return ResourceUtil.rl("codegen/oit/producer_frag/" + (indirect ? "ind_" : "ins_")
-                + ResourceUtil.toDebugFileNameNoExtension(light.source())
+                                                 CutoutShader cutout, FogShader fog, DebugMode debug,
+                                                 boolean emission, boolean embedded) {
+        return ResourceUtil.rl("codegen/oit/producer_frag/" + (embedded ? "embedded/" : "")
+                + (indirect ? "ind_" : "ins_") + ResourceUtil.toDebugFileNameNoExtension(light.source())
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(materialShaders.fragmentSource())
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(cutout.source())
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(fog.source())
-                + "__" + smoothness.getSerializedName() + mode.name
+                + "__" + smoothness.getSerializedName() + mode.name + (emission ? "_emission" : "")
                 + (debug == DebugMode.OFF ? "" : "__debug_" + debug.getSerializedName()));
     }
 
-    public static RenderPipeline composite() {
-        if (compositePipeline == null) {
-            compositePipeline = buildComposite();
+    /**
+     * {@code emission}: frames with {@code ORDER_INDEPENDENT_ADDITIVE} producers; adds {@code _flw_emission} inside the
+     * composite write.
+     */
+    public static RenderPipeline composite(boolean emission) {
+        RenderPipeline pipeline;
+        if (emission) {
+            if (compositeEmissionPipeline == null) {
+                compositeEmissionPipeline = buildComposite(true);
+            }
+            pipeline = compositeEmissionPipeline;
+        } else {
+            if (compositePipeline == null) {
+                compositePipeline = buildComposite(false);
+            }
+            pipeline = compositePipeline;
         }
         RenderSystem.getDevice()
-                    .precompilePipeline(compositePipeline, SHADER_SOURCE);
-        return compositePipeline;
+                    .precompilePipeline(pipeline, SHADER_SOURCE);
+        return pipeline;
     }
 
     public static RenderPipeline depth() {
@@ -348,6 +404,15 @@ public final class OitPipelines {
         RenderSystem.getDevice()
                     .precompilePipeline(depthPipeline, SHADER_SOURCE);
         return depthPipeline;
+    }
+
+    public static RenderPipeline emission() {
+        if (emissionPipeline == null) {
+            emissionPipeline = buildEmission();
+        }
+        RenderSystem.getDevice()
+                    .precompilePipeline(emissionPipeline, SHADER_SOURCE);
+        return emissionPipeline;
     }
 
     public static RenderPipeline chunkProducer(OitMode mode) {
@@ -588,7 +653,8 @@ public final class OitPipelines {
                                                        .withFragmentShader(
                                                                producerFragmentId(mode, key.light(), key.indirect(),
                                                                        key.materialShaders(), key.smoothness(),
-                                                                       key.cutout(), key.fog(), key.debug()))
+                                                                       key.cutout(), key.fog(), key.debug(),
+                                                                       key.emission(), key.embeddedFragment()))
                                                        .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
                                                        .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                                                        .withDepthStencilState(
@@ -632,21 +698,42 @@ public final class OitPipelines {
         return b.build();
     }
 
-    private static RenderPipeline buildComposite() {
+    private static RenderPipeline buildComposite(boolean emission) {
+        BindGroupLayout.Builder samplers = BindGroupLayout.builder()
+                                                          .withSampler("_flw_accumulate")
+                                                          .withSampler("_flw_depthRange");
+        if (emission) {
+            samplers.withSampler("_flw_emission");
+        }
         return RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                             .withLocation(ResourceUtil.rl("pipeline/oit/composite"))
+                             .withLocation(ResourceUtil.rl(emission ? "pipeline/oit/composite_emission"
+                                     : "pipeline/oit/composite"))
                              .withVertexShader(FULLSCREEN_VERTEX)
-                             .withFragmentShader(COMPOSITE_FRAGMENT)
+                             .withFragmentShader(emission ? COMPOSITE_EMISSION_FRAGMENT : COMPOSITE_FRAGMENT)
                              .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                              .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS, true, 0.0f, 0.0f))
                              .withCull(false)
-                             .withBindGroupLayout(withCoefficientSamplers(BindGroupLayout.builder()
-                                                                                         .withSampler("_flw_accumulate")
-                                                                                         .withSampler(
-                                                                                                 "_flw_depthRange"))
-                                     .build())
+                             .withBindGroupLayout(withCoefficientSamplers(samplers).build())
                              .withColorTargetState(0,
-                                     new ColorTargetState(Optional.of(COMPOSITE_BLEND), GpuFormat.RGBA8_UNORM,
+                                     new ColorTargetState(Optional.of(emission ? PREMULT_BLEND : COMPOSITE_BLEND),
+                                             GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_ALL))
+                             .build();
+    }
+
+    private static RenderPipeline buildEmission() {
+        return RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
+                             .withLocation(ResourceUtil.rl("pipeline/oit/emission"))
+                             .withVertexShader(FULLSCREEN_VERTEX)
+                             .withFragmentShader(EMISSION_FRAGMENT)
+                             .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                             .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS, false, 0.0f, 0.0f))
+                             .withCull(false)
+                             .withBindGroupLayout(BindGroupLayout.builder()
+                                                                 .withSampler("_flw_accumulate")
+                                                                 .withSampler("_flw_emission")
+                                                                 .build())
+                             .withColorTargetState(0,
+                                     new ColorTargetState(Optional.of(BlendFunction.ADDITIVE), GpuFormat.RGBA8_UNORM,
                                              ColorTargetState.WRITE_ALL))
                              .build();
     }
@@ -670,13 +757,16 @@ public final class OitPipelines {
     }
 
     private static Identifier uberMlabFragmentId(OitInsertMode mode, LightShader light, MaterialShaders m,
-                                                 LightSmoothness s, DebugMode debug) {
+                                                 LightSmoothness s, DebugMode debug, boolean emission,
+                                                 boolean embedded) {
         Identifier id = ResourceUtil.rl(
-                "codegen/oit/mlab/uber_frag/g" + MaterialShaderIndices.cutoutSources().all().size()
+                "codegen/oit/mlab/uber_frag/" + (embedded ? "embedded/" : "") + "g"
+                        + MaterialShaderIndices.cutoutSources().all().size()
                         + "_" + MaterialShaderIndices.fogSources().all().size()
                         + "__" + ResourceUtil.toDebugFileNameNoExtension(light.source())
                         + "__" + ResourceUtil.toDebugFileNameNoExtension(m.fragmentSource())
                         + "__" + s.getSerializedName() + "_" + mode.name().toLowerCase(Locale.ROOT)
+                        + (emission ? "_emission" : "")
                         + (debug == DebugMode.OFF ? "" : "__debug_" + debug.getSerializedName()));
         return id;
     }
@@ -688,26 +778,28 @@ public final class OitPipelines {
         return id;
     }
 
-    private static Identifier mlabResolveFragmentId(OitInsertMode mode) {
-        Identifier id = ResourceUtil.rl("codegen/oit/mlab/resolve_frag_" + mode.name().toLowerCase(Locale.ROOT));
-        MLAB_RESOLVE_MODE.putIfAbsent(id, mode);
+    private static Identifier mlabResolveFragmentId(MlabResolveKey key) {
+        Identifier id = ResourceUtil.rl("codegen/oit/mlab/resolve_frag_" + key.mode().name().toLowerCase(Locale.ROOT)
+                + key.variant().suffix);
+        MLAB_RESOLVE_KEY.putIfAbsent(id, key);
         return id;
     }
 
-    public static RenderPipeline uberMlab(Material material, OitInsertMode mode) {
+    public static RenderPipeline uberMlab(Material material, OitInsertMode mode, boolean embedded) {
         MaterialShaders shaders = material.shaders();
         LightShader light = material.light();
         LightSmoothness smoothness = BackendConfig.INSTANCE.lightSmoothness();
         DebugMode debug = FrameUniforms.debugMode();
-        Identifier vertexId = uberVertexId(shaders, debug != DebugMode.OFF);
-        VERTEX_ASSEMBLY.putIfAbsent(vertexId, new VertexAssembly(null, shaders, false, debug != DebugMode.OFF));
+        Identifier vertexId = uberVertexId(shaders, debug != DebugMode.OFF, embedded);
+        VERTEX_ASSEMBLY.putIfAbsent(vertexId, new VertexAssembly(null, shaders, embedded, debug != DebugMode.OFF));
 
+        boolean emission = OitTransparency.additive(material);
         MlabUberKey key = new MlabUberKey(mode, light, shaders, smoothness, debug, material.depthTest(),
                 material.backfaceCulling(), material.polygonOffset(),
                 InstanceTypeIds.snapshot().types().size(),
                 MaterialShaderIndices.cutoutSources().all().size(),
-                MaterialShaderIndices.fogSources().all().size());
-        MLAB_UBER_KEY.put(uberMlabFragmentId(mode, light, shaders, smoothness, debug), key);
+                MaterialShaderIndices.fogSources().all().size(), emission, embedded);
+        MLAB_UBER_KEY.put(uberMlabFragmentId(mode, light, shaders, smoothness, debug, emission, embedded), key);
         RenderPipeline pipeline = UBER_MLAB_CACHE.computeIfAbsent(key, OitPipelines::buildUberMlab);
         RenderSystem.getDevice().precompilePipeline(pipeline, SHADER_SOURCE);
         return pipeline;
@@ -723,12 +815,15 @@ public final class OitPipelines {
                                                                        + "_" + ResourceUtil.toDebugFileNameNoExtension(
                                                                        key.material().fragmentSource())
                                                                        + "_" + key.smoothness().getSerializedName()
+                                                                       + (key.emission() ? "_emission" : "")
+                                                                       + (key.embedded() ? "_embedded" : "")
                                                                        + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug()
                                                                                                                              .getSerializedName())))
                                                        .withVertexShader(uberVertexId(key.material(),
-                                                               key.debug() != DebugMode.OFF))
+                                                               key.debug() != DebugMode.OFF, key.embedded()))
                                                        .withFragmentShader(uberMlabFragmentId(key.mode(), key.light(),
-                                                               key.material(), key.smoothness(), key.debug()))
+                                                               key.material(), key.smoothness(), key.debug(),
+                                                               key.emission(), key.embedded()))
                                                        .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
                                                        .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                                                        .withDepthStencilState(
@@ -778,20 +873,44 @@ public final class OitPipelines {
                              .build();
     }
 
-    public static RenderPipeline mlabResolve(OitInsertMode mode) {
-        RenderPipeline pipeline = MLAB_RESOLVE_CACHE.computeIfAbsent(mode, OitPipelines::buildMlabResolve);
+    public static RenderPipeline mlabResolve(OitInsertMode mode, MlabResolveVariant variant) {
+        RenderPipeline pipeline = MLAB_RESOLVE_CACHE.computeIfAbsent(new MlabResolveKey(mode, variant),
+                OitPipelines::buildMlabResolve);
         RenderSystem.getDevice().precompilePipeline(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
-    private static RenderPipeline buildMlabResolve(OitInsertMode mode) {
-        return RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
+    public static RenderPipeline mlabNearestDepth() {
+        if (mlabNearestDepthPipeline == null) {
+            mlabNearestDepthPipeline = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
+                                                     .withLocation(ResourceUtil.rl("pipeline/oit/mlab/nearest_depth"))
+                                                     .withVertexShader(FULLSCREEN_VERTEX)
+                                                     .withFragmentShader(MLAB_NEAREST_DEPTH_FRAGMENT)
+                                                     .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                                                     .withDepthStencilState(new DepthStencilState(
+                                                             CompareOp.ALWAYS_PASS, true, 0.0f, 0.0f))
+                                                     .withCull(false)
+                                                     .withBindGroupLayout(
+                                                             BindGroupLayout.builder().withSampler("_flw_mlabNearest")
+                                                                            .build())
+                                                     .withColorTargetState(0, new ColorTargetState(Optional.empty(),
+                                                             GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_NONE))
+                                                     .build();
+        }
+        RenderSystem.getDevice().precompilePipeline(mlabNearestDepthPipeline, SHADER_SOURCE);
+        return mlabNearestDepthPipeline;
+    }
+
+    private static RenderPipeline buildMlabResolve(MlabResolveKey key) {
+        RenderPipeline.Builder builder = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
                              .withLocation(ResourceUtil.rl(
-                                     "pipeline/oit/mlab/resolve_" + mode.name().toLowerCase(Locale.ROOT)))
+                                     "pipeline/oit/mlab/resolve_" + key.mode().name().toLowerCase(Locale.ROOT)
+                                             + key.variant().suffix))
                              .withVertexShader(FULLSCREEN_VERTEX)
-                             .withFragmentShader(mlabResolveFragmentId(mode))
+                             .withFragmentShader(mlabResolveFragmentId(key))
                              .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-                             .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS, true, 0.0f, 0.0f))
+                             .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS,
+                                     key.variant().writesDepth(), 0.0f, 0.0f))
                              .withCull(false)
                              .withBindGroupLayout(BindGroupLayout.builder()
                                                                  .withSampler("_flw_layerColor")
@@ -805,8 +924,12 @@ public final class OitPipelines {
                                                                  .build())
                              .withColorTargetState(0,
                                      new ColorTargetState(Optional.of(PREMULT_BLEND), GpuFormat.RGBA8_UNORM,
-                                             ColorTargetState.WRITE_ALL))
-                             .build();
+                                             ColorTargetState.WRITE_ALL));
+        if (key.variant() == MlabResolveVariant.ADDITIVE) {
+            builder.withColorTargetState(1, new ColorTargetState(Optional.empty(),
+                    OitFramebuffer.NEAREST_DEPTH_FORMAT, ColorTargetState.WRITE_ALL));
+        }
+        return builder.build();
     }
 
     private static Identifier berMlabFragmentId(BerMlabKey key) {
@@ -909,7 +1032,7 @@ public final class OitPipelines {
 
     private record ProducerFragmentKey(OitMode mode, LightShader light, boolean indirect, MaterialShaders material,
                                        LightSmoothness smoothness, CutoutShader cutout, FogShader fog,
-                                       DebugMode debug) {
+                                       DebugMode debug, boolean emission, boolean embedded) {
     }
 
     private record VertexAssembly(InstanceType<?> type, MaterialShaders material, boolean embedded, boolean debug) {
@@ -924,12 +1047,13 @@ public final class OitPipelines {
     private record UberProducerKey(LightShader light, MaterialShaders materialShaders, LightSmoothness smoothness,
                                    DebugMode debug, OitMode mode, DepthTest depthTest, boolean cull,
                                    boolean polygonOffset,
-                                   int typeGen, int cutoutGen, int fogGen) {
+                                   int typeGen, int cutoutGen, int fogGen, boolean emission, boolean embedded) {
         String cacheName() {
             return "uber_" + ResourceUtil.toDebugFileNameNoExtension(light.source())
                     + "_" + ResourceUtil.toDebugFileNameNoExtension(materialShaders.vertexSource())
                     + "_" + ResourceUtil.toDebugFileNameNoExtension(materialShaders.fragmentSource())
-                    + "_" + smoothness.getSerializedName() + mode.name
+                    + "_" + smoothness.getSerializedName() + mode.name + (emission ? "_emission" : "")
+                    + (embedded ? "_embedded" : "")
                     + (debug == DebugMode.OFF ? "" : "_debug_" + debug.getSerializedName())
                     + "_" + depthTest.name().toLowerCase(java.util.Locale.ROOT)
                     + (cull ? "_cull" : "") + (polygonOffset ? "_po" : "");
@@ -939,7 +1063,10 @@ public final class OitPipelines {
     private record MlabUberKey(OitInsertMode mode, LightShader light, MaterialShaders material,
                                LightSmoothness smoothness,
                                DebugMode debug, DepthTest depthTest, boolean cull, boolean polygonOffset, int typeGen,
-                               int cutoutGen, int fogGen) {
+                               int cutoutGen, int fogGen, boolean emission, boolean embedded) {
+    }
+
+    private record MlabResolveKey(OitInsertMode mode, MlabResolveVariant variant) {
     }
 
     private record ChunkMlabKey(OitInsertMode mode, boolean linear) {
@@ -954,7 +1081,8 @@ public final class OitPipelines {
     private record ProducerKey(InstanceType<?> instanceType, LightShader light, MaterialShaders materialShaders,
                                LightSmoothness smoothness, CutoutShader cutout, FogShader fog, DebugMode debug,
                                OitMode mode, boolean indirect, DepthTest depthTest,
-                               boolean cull, boolean polygonOffset, boolean embedded) {
+                               boolean cull, boolean polygonOffset, boolean embedded, boolean embeddedFragment,
+                               boolean emission) {
         String cacheName() {
             StringBuilder sb = new StringBuilder();
             sb.append(indirect ? "ind_" : "ins_")
@@ -972,6 +1100,7 @@ public final class OitPipelines {
               .append('_')
               .append(smoothness.getSerializedName())
               .append(mode.name)
+              .append(emission ? "_emission" : "")
               .append('_')
               .append(depthTest.name());
             if (debug != DebugMode.OFF) {
@@ -985,7 +1114,7 @@ public final class OitPipelines {
                 sb.append("_po");
             }
             if (embedded) {
-                sb.append("_emb");
+                sb.append(embeddedFragment ? "_embfrag" : "_emb");
             }
             return sb.toString().toLowerCase(Locale.ROOT);
         }

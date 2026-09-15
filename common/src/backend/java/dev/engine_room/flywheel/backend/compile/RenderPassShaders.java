@@ -4,7 +4,9 @@ import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.CutoutShader;
 import dev.engine_room.flywheel.api.material.FogShader;
 import dev.engine_room.flywheel.api.material.LightShader;
+import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.material.MaterialShaders;
+import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly.RawSource;
 import dev.engine_room.flywheel.backend.compile.component.*;
@@ -14,6 +16,7 @@ import dev.engine_room.flywheel.backend.engine.indirect.InstanceTypeIds;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
+import dev.engine_room.flywheel.backend.glsl.ShaderSources;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.LightShaders;
@@ -21,12 +24,16 @@ import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.Identifier;
+import org.jspecify.annotations.Nullable;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 public final class RenderPassShaders {
     public static final Identifier COLORIZER = ResourceUtil.rl("internal/colorizer.glsl");
@@ -34,6 +41,17 @@ public final class RenderPassShaders {
         ctx.requireExtension("GL_ARB_bindless_texture");
         ctx.define("_FLW_BINDLESS_GL");
     };
+    // ORDER_INDEPENDENT_ADDITIVE variants (EVALUATE/insert producers, wavelet composite); a per-fragment
+    // transparency branch costs +24% wavelet EVALUATE.
+    public static final Consumer<Compilation> EMISSION_PRODUCER = ctx -> ctx.define("_FLW_OIT_EMISSION");
+    // Every stage of an embedded variant (readsEmbedded): the uber/mesh vertex keeps its runtime matrixIndex branch.
+    public static final Consumer<Compilation> EMBEDDED = ctx -> ctx.define("FLW_EMBEDDED");
+    private static final Pattern EMBEDDED_TOKEN = Pattern.compile("\\bFLW_EMBEDDED\\b");
+    // Render-thread only; keyed per loaded ShaderSources.
+    private static final Map<Identifier, Boolean> READS_EMBEDDED = new HashMap<>();
+    private static @Nullable ShaderSources readsEmbeddedSources;
+    private static long registeredReadsEmbeddedGen = -1;
+    private static boolean registeredReadsEmbedded;
     static final Identifier MLAB = ResourceUtil.rl("internal/mlab.glsl");
     private static final Identifier HEADER = ResourceUtil.rl("renderpass/header.vert");
     private static final Identifier INDIRECT_MAIN = ResourceUtil.rl("renderpass/indirect_main.vert");
@@ -91,8 +109,10 @@ public final class RenderPassShaders {
     private static final Identifier OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_oit.frag");
     private static final Identifier OIT_COMPOSITE = ResourceUtil.rl("internal/oit_composite.frag");
     private static final Identifier OIT_DEPTH = ResourceUtil.rl("internal/oit_depth.frag");
+    private static final Identifier OIT_EMISSION = ResourceUtil.rl("internal/oit_emission.frag");
     private static final Identifier FULLSCREEN_VERT = ResourceUtil.rl("internal/fullscreen.vert");
     private static final Identifier MLAB_RESOLVE = ResourceUtil.rl("internal/mlab_resolve.frag");
+    private static final Identifier MLAB_NEAREST_DEPTH = ResourceUtil.rl("internal/mlab_nearest_depth.frag");
     private static final Identifier CHUNK_OIT_VERTEX = ResourceUtil.rl("renderpass/chunk_oit.vert");
     private static final Identifier CHUNK_OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_chunk_oit.frag");
     private static final Identifier CHUNK_OIT_SODIUM_VERTEX = ResourceUtil.rl("renderpass/chunk_oit_sodium.vert");
@@ -122,6 +142,51 @@ public final class RenderPassShaders {
             ctx -> ctx.define("FLW_EMBEDDED"));
 
     private RenderPassShaders() {
+    }
+
+    /**
+     * Whether an embedded draw of {@code material} needs its own {@link #EMBEDDED} program: some source it links
+     * (light, material, or any registered cutout/fog/instance vertex) reads {@code FLW_EMBEDDED}. Upstream compiles
+     * every embedded program with the define; here the rest share the non-embedded program and MDI run.
+     */
+    public static boolean readsEmbedded(Material material) {
+        if (readsEmbeddedSources != FlwPrograms.SOURCES) {
+            readsEmbeddedSources = FlwPrograms.SOURCES;
+            READS_EMBEDDED.clear();
+            registeredReadsEmbeddedGen = -1;
+        }
+        MaterialShaders shaders = material.shaders();
+        return readsEmbedded(material.light().source()) || readsEmbedded(shaders.vertexSource())
+                || readsEmbedded(shaders.fragmentSource()) || registeredReadsEmbedded();
+    }
+
+    private static boolean registeredReadsEmbedded() {
+        List<Identifier> cutouts = MaterialShaderIndices.cutoutSources().all();
+        List<Identifier> fogs = MaterialShaderIndices.fogSources().all();
+        long gen = ((long) cutouts.size() << 42) | ((long) fogs.size() << 21) | InstanceTypeIds.count();
+        if (gen != registeredReadsEmbeddedGen) {
+            registeredReadsEmbeddedGen = gen;
+            registeredReadsEmbedded = cutouts.stream().anyMatch(RenderPassShaders::readsEmbedded)
+                    || fogs.stream().anyMatch(RenderPassShaders::readsEmbedded)
+                    || InstanceTypeIds.snapshot().types().stream().anyMatch(type -> readsEmbedded(type.vertexShader()));
+        }
+        return registeredReadsEmbedded;
+    }
+
+    private static boolean readsEmbedded(Identifier source) {
+        return READS_EMBEDDED.computeIfAbsent(source, id -> readsEmbedded(FlwPrograms.SOURCES.get(id)));
+    }
+
+    private static boolean readsEmbedded(SourceComponent component) {
+        if (EMBEDDED_TOKEN.matcher(component.source()).find()) {
+            return true;
+        }
+        for (SourceComponent included : component.included()) {
+            if (readsEmbedded(included)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void fragmentImports(Compilation ctx) {
@@ -256,7 +321,8 @@ public final class RenderPassShaders {
     }
 
     public static String fragment(LightShader light, boolean indirect, MaterialShaders materialShaders,
-                                  LightSmoothness smoothness, CutoutShader cutout, FogShader fog, DebugMode debug) {
+                                  LightSmoothness smoothness, CutoutShader cutout, FogShader fog, DebugMode debug,
+                                  Consumer<Compilation> extra) {
         List<SourceComponent> roots = new ArrayList<>(lightingRoots(light, indirect));
         roots.add(FlwPrograms.SOURCES.get(materialShaders.fragmentSource()));
         boolean useDiscard = cutout != CutoutShaders.OFF;
@@ -280,6 +346,7 @@ public final class RenderPassShaders {
                     if (useDiscard) {
                         ctx.define("_FLW_USE_DISCARD");
                     }
+                    extra.accept(ctx);
                 }, roots);
     }
 
@@ -440,12 +507,17 @@ public final class RenderPassShaders {
     /**
      * The insert-OIT fullscreen resolve (plain reads after a producer barrier -- no interlock).
      */
-    public static String assembleMlabResolve(OitInsertMode oitMode) {
+    public static String assembleMlabResolve(OitInsertMode oitMode, MlabResolveVariant variant) {
         List<SourceComponent> roots = List.of(
                 FlwPrograms.SOURCES.get(MLAB),
                 FlwPrograms.SOURCES.get(MLAB_RESOLVE));
-        return assemble("mlab_resolve_" + oitMode.name().toLowerCase(java.util.Locale.ROOT) + ".fsh",
-                ctx -> mlabResolveDefines(ctx, oitMode), roots);
+        return assemble("mlab_resolve_" + oitMode.name().toLowerCase(java.util.Locale.ROOT) + variant.suffix + ".fsh",
+                ctx -> {
+                    mlabResolveDefines(ctx, oitMode);
+                    if (variant.define != null) {
+                        ctx.define(variant.define);
+                    }
+                }, roots);
     }
 
     private static List<SourceComponent> lightingRoots(LightShader light, boolean indirect) {
@@ -653,8 +725,18 @@ public final class RenderPassShaders {
                 }, roots);
     }
 
-    public static String assembleOitComposite() {
-        return assembleFullscreenFragment(OIT_COMPOSITE, "oit_composite.fsh", ShaderAssembly.NO_EXTRA);
+    public static String assembleOitComposite(boolean emission) {
+        return emission
+                ? assembleFullscreenFragment(OIT_COMPOSITE, "oit_composite_emission.fsh", EMISSION_PRODUCER)
+                : assembleFullscreenFragment(OIT_COMPOSITE, "oit_composite.fsh", ShaderAssembly.NO_EXTRA);
+    }
+
+    public static String assembleOitEmission() {
+        return assembleFullscreenFragment(OIT_EMISSION, "oit_emission.fsh", ShaderAssembly.NO_EXTRA);
+    }
+
+    public static String assembleMlabNearestDepth() {
+        return assembleFullscreenFragment(MLAB_NEAREST_DEPTH, "mlab_nearest_depth.fsh", ShaderAssembly.NO_EXTRA);
     }
 
     public static String assembleOitDepth() {

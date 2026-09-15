@@ -34,6 +34,10 @@ public final class InstanceTypeIds {
         return id;
     }
 
+    public static synchronized int count() {
+        return TYPES.size();
+    }
+
     public static synchronized Snapshot snapshot() {
         return new Snapshot(List.copyOf(TYPES));
     }

@@ -133,6 +133,23 @@ void _flw_oitEmitPremul(vec3 premultiplied, float alpha, float linearDepth) {
 
 #endif
 
+#if defined(_FLW_OIT_EMISSION) && !defined(_FLW_OIT_INSERT)
+
+// ORDER_INDEPENDENT_ADDITIVE: absent from the depth range and coefficients (occludes nothing), so evaluated
+// without signal correction and accumulated into the emission target by its own EVALUATE pass. our_depth may leave
+// [0, 1]: the tent goes negative there, and absorbance() below 0 interpolates into bin 0.
+void _flw_oitEmitAdditive(vec3 premultiplied, float linearDepth) {
+    vec2 depthRange = _FLW_DEPTH_RANGE_FETCH().rg;
+    float our_depth = (linearDepth + depthRange.x) / (depthRange.x + depthRange.y);
+    our_depth = max(our_depth - tented_blue_noise(clamp(our_depth, 0., 1.)) * _FLW_OIT_NOISE, 0.);
+
+    vec4 _flw_coeffTexels[4];
+    _FLW_FETCH_COEFFS(_flw_coeffTexels);
+    _flw_accumulate = vec4(premultiplied * transmittance(_flw_coeffTexels, our_depth), 0.);
+}
+
+#endif
+
 #ifdef _FLW_OIT_INSERT
 #define _flw_oitEmit(color, linearDepth) _flw_mlabInsert(color, gl_FragCoord.z)
 #else

@@ -12,17 +12,16 @@ layout(location = 0) out MeshVertexOut {
     // f16 varying trim (VK, VkCaps.MESH_F16_VARYINGS_NEGOTIATED: storageInputOutput16 + shaderFloat16). Quality-
     // neutral, same as GL. MUST match the shared visual.frag / visual_oit.frag in block.
     f16vec4 color;
-    f16vec2 light;
+    f16vec4 light;
     f16vec3 normal;
 #else
     vec4 color;
-    vec2 light;
+    vec4 light;             // lightmap coord | fog distances (see visual_main.mesh)
     vec3 normal;            // world/render-origin space (== light-direction space), for the directional diffuse
 #endif
-    vec3 worldPos;          // render-origin-relative world position; the fragment derives smooth light + fog from it
-    // Overlay texel u8:u8 | cutout index << 16 (see visual_main.mesh): one word of per-vertex output space.
-    flat uint overlayCutout;
-    flat uint packedMaterial; // draw command's packedMaterialProperties (cardinalLightingMode / useLight / ...)
+    vec3 worldPos;          // render-origin-relative world position; the fragment derives smooth light from it
+    flat uint fogCutout;
+    flat uint packedMaterial; // packedMaterialProperties | overlay texel u4:u4 << 24 (see visual_main.mesh)
 #ifdef _FLW_MV_CLIP
     // Clip-type routing, compact ABI (see visual_main.mesh): only compiled for clip-writing types; MUST match
     // the fragment's.
@@ -74,19 +73,20 @@ void _flw_emitVertex(uint outV, FlwInstance instance, uint matrixIndex, uint pac
     vec4 viewPos = _flw_mvModelView * flw_vertexPos;
     gl_MeshVerticesEXT[outV].gl_Position = ProjMat * viewPos;
     v_out[outV].texCoord = flw_vertexTexCoord;
+    vec4 lightFog = vec4(flw_vertexLight, length(viewPos.xyz), max(length(viewPos.xz), abs(viewPos.y)));
 #ifdef _FLW_MV_F16_VARYINGS
     v_out[outV].color = f16vec4(flw_vertexColor);
-    v_out[outV].light = f16vec2(flw_vertexLight);
+    v_out[outV].light = f16vec4(lightFog);
     v_out[outV].normal = f16vec3(normalize(flw_vertexNormal));
 #else
     v_out[outV].color = flw_vertexColor;
-    v_out[outV].light = flw_vertexLight;
+    v_out[outV].light = lightFog;
     v_out[outV].normal = normalize(flw_vertexNormal);
 #endif
     v_out[outV].worldPos = flw_vertexPos.xyz;
-    v_out[outV].overlayCutout = (uint(flw_vertexOverlay.x) & 0xFFu) | ((uint(flw_vertexOverlay.y) & 0xFFu) << 8u)
-            | ((packedFogAndCutout & 0xFFFFu) << 16u);
-    v_out[outV].packedMaterial = packedMaterial;
+    v_out[outV].fogCutout = packedFogAndCutout;
+    v_out[outV].packedMaterial = packedMaterial | ((uint(flw_vertexOverlay.x) & 0xFu) << 24u)
+            | ((uint(flw_vertexOverlay.y) & 0xFu) << 28u);
 #ifdef _FLW_MV_CLIP
     v_out[outV].clipData = _flw_clipData;
 #endif

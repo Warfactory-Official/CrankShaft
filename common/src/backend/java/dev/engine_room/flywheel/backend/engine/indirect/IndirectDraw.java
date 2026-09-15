@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.backend.engine.indirect;
 
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
+import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.engine.BindlessSlots;
 import dev.engine_room.flywheel.backend.engine.MaterialEncoder;
 import dev.engine_room.flywheel.backend.engine.MeshPool;
@@ -53,6 +54,10 @@ public class IndirectDraw {
 
     public boolean isEmbedded() {
         return instancer.environment instanceof EmbeddedEnvironment;
+    }
+
+    public boolean embeddedVariant() {
+        return isEmbedded() && RenderPassShaders.readsEmbedded(material);
     }
 
     public MeshPool.PooledMesh mesh() {

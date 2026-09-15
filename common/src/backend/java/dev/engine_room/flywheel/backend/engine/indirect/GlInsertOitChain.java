@@ -12,6 +12,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import dev.engine_room.flywheel.backend.OitConfig;
+import dev.engine_room.flywheel.backend.compile.MlabResolveVariant;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
@@ -21,11 +22,14 @@ import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import org.joml.Matrix4fc;
+import org.joml.Vector4f;
+import org.joml.Vector4fc;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.*;
 import org.lwjgl.system.MemoryStack;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.OptionalDouble;
 
 import static org.lwjgl.opengl.GL45.*;
@@ -68,7 +72,8 @@ public final class GlInsertOitChain {
     }
 
     public boolean render(Matrix4fc renderModelView, @Nullable GpuBuffer vertexBuffer, @Nullable GpuBuffer indexBuffer,
-                          boolean hasInstanceOit, @Nullable Runnable prePass, @Nullable ChunkSectionsToRender chunks,
+                          boolean hasInstanceOit, boolean hasAdditive, @Nullable Runnable prePass,
+                          @Nullable ChunkSectionsToRender chunks,
                           @Nullable BerTranslucentCapture ber, @Nullable SodiumTerrainOitReplay terrain,
                           @Nullable FabulousCaptures fabulous, OitInsertMode mode, InsertProducerGeometry producer) {
         boolean hasChunks = chunks != null;
@@ -166,15 +171,45 @@ public final class GlInsertOitChain {
 
         GL42.glMemoryBarrier(GL43.GL_SHADER_STORAGE_BARRIER_BIT);
 
-        RenderPassDescriptor resolveDesc = RenderPassDescriptor.create(() -> "flywheel:oit/mlab/resolve")
-                                                               .withColorAttachment(colorView)
-                                                               .withDepthAttachment(depthView, OptionalDouble.empty())
-                                                               .withRenderArea(area);
-        GlCompat.pushDebugGroup("flywheel:gl/oit/mlab/resolve");
-        try (RenderPass pass = encoder.createRenderPass(resolveDesc)) {
+        if (hasAdditive) {
+            framebuffer.prepareNearestDepth();
+            resolve(frame, colorView, depthView, area, MlabResolveVariant.ADDITIVE, mode, fabulous);
+            RenderPassDescriptor depthDesc = RenderPassDescriptor.create(() -> "flywheel:oit/mlab/nearest_depth")
+                                                                 .withColorAttachment(colorView)
+                                                                 .withDepthAttachment(depthView, OptionalDouble.empty())
+                                                                 .withRenderArea(area);
+            GlCompat.pushDebugGroup("flywheel:gl/oit/mlab/nearest_depth");
+            try (RenderPass pass = frame.encoder().createRenderPass(depthDesc)) {
+                RenderSystem.bindDefaultUniforms(pass);
+                pass.setUniform("DynamicTransforms", frame.dynamicTransforms());
+                pass.setPipeline(OitPipelines.mlabNearestDepth());
+                pass.bindTexture("_flw_mlabNearest", framebuffer.nearestDepthView(), frame.oitSampler());
+                pass.draw(3, 1, 0, 0);
+            }
+            GlCompat.popDebugGroup();
+        } else {
+            resolve(frame, colorView, depthView, area, MlabResolveVariant.PLAIN, mode, fabulous);
+        }
+        return true;
+    }
+
+    private void resolve(OitFrame frame, GpuTextureView colorView, GpuTextureView depthView,
+                         RenderPass.RenderArea area, MlabResolveVariant variant, OitInsertMode mode,
+                         @Nullable FabulousCaptures fabulous) {
+        String name = "resolve" + variant.suffix;
+        RenderPassDescriptor resolveDesc = RenderPassDescriptor.create(() -> "flywheel:oit/mlab/" + name)
+                                                               .withColorAttachment(colorView);
+        if (variant == MlabResolveVariant.ADDITIVE) {
+            resolveDesc.withColorAttachment(framebuffer.nearestDepthView(),
+                    Optional.<Vector4fc>of(new Vector4f(-1.0f)));
+        }
+        resolveDesc.withDepthAttachment(depthView, OptionalDouble.empty())
+                   .withRenderArea(area);
+        GlCompat.pushDebugGroup("flywheel:gl/oit/mlab/" + name);
+        try (RenderPass pass = frame.encoder().createRenderPass(resolveDesc)) {
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform("DynamicTransforms", frame.dynamicTransforms());
-            pass.setPipeline(OitPipelines.mlabResolve(mode));
+            pass.setPipeline(OitPipelines.mlabResolve(mode, variant));
             bindStorage(mode);
             GpuTextureView ph = frame.lightmapView();
             GpuSampler s = frame.oitSampler();
@@ -193,7 +228,6 @@ public final class GlInsertOitChain {
             pass.draw(3, 1, 0, 0);
         }
         GlCompat.popDebugGroup();
-        return true;
     }
 
     private void replayChunks(RenderPass pass, ChunkSectionsToRender sections, OitInsertMode mode, OitFrame frame) {
@@ -346,6 +380,10 @@ public final class GlInsertOitChain {
     }
 
     public interface InsertProducerGeometry {
+        /**
+         * Submits both {@code ORDER_INDEPENDENT} and {@code ORDER_INDEPENDENT_ADDITIVE} draws: the producer inserts
+         * additive fragments as zero-alpha nodes.
+         */
         void submit(RenderPass pass, OitInsertMode mode, OitFrame f);
     }
 }

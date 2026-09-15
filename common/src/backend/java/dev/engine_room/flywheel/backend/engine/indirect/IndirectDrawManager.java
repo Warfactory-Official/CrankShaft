@@ -15,7 +15,6 @@ import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
-import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.backend.BackendDebugFlags;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.SodiumClassLoadCheck;
@@ -62,6 +61,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             .comparingInt(IndirectDraw::bias)
             .thenComparingInt(IndirectDraw::indexOfMeshInModel)
             .thenComparing(IndirectDraw::material, MaterialRenderState::uberPipelineCompare)
+            .thenComparing(IndirectDraw::embeddedVariant)
             .thenComparing(IndirectDraw::material, MaterialRenderState.COMPARATOR)
             .thenComparingInt((IndirectDraw d) -> InstanceTypeIds.id(d.instanceType()));
     private static final int UBO_INSTANCE_DRAW = 11;
@@ -70,6 +70,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     final IndirectBuffers buffers = new IndirectBuffers();
     final List<MeshDrawRun> meshMultiDraws = new ArrayList<>();
     final List<MeshDrawRun> meshOitMultiDraws = new ArrayList<>();
+    final List<MeshDrawRun> meshOitAdditiveMultiDraws = new ArrayList<>();
     final LightBuffers lightBuffers;
     final RenderPassUniforms renderPassUniforms = new RenderPassUniforms();
     final DepthPyramid depthPyramid;
@@ -82,6 +83,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     private final List<IndirectDraw> allDraws = new ArrayList<>();
     private final List<UberDraw> uberMultiDraws = new ArrayList<>();
     private final List<UberDraw> uberOitMultiDraws = new ArrayList<>();
+    private final List<UberDraw> uberOitAdditiveMultiDraws = new ArrayList<>();
     private final GlBuffer crumblingDrawBuffer = new GlBuffer(GlBufferUsage.STREAM_DRAW);
     private final MatrixBuffer matrixBuffer;
     int frameDrawCount;
@@ -105,7 +107,8 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     }
 
     private static boolean incompatibleUber(IndirectDraw a, IndirectDraw b) {
-        if (!MaterialRenderState.uberPipelineEquals(a.material(), b.material())) {
+        if (!MaterialRenderState.uberPipelineEquals(a.material(), b.material())
+                || a.embeddedVariant() != b.embeddedVariant()) {
             return true;
         }
         if (!GlCompat.SUPPORTS_BINDLESS_TEXTURES) {
@@ -182,8 +185,10 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             allDraws.clear();
             uberMultiDraws.clear();
             uberOitMultiDraws.clear();
+            uberOitAdditiveMultiDraws.clear();
             meshMultiDraws.clear();
             meshOitMultiDraws.clear();
+            meshOitAdditiveMultiDraws.clear();
             if (SodiumClassLoadCheck.PRESENT) {
                 TerrainDrawDispatcher.runDeferredPostVisuals();
             }
@@ -354,22 +359,27 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
         uberMultiDraws.clear();
         uberOitMultiDraws.clear();
+        uberOitAdditiveMultiDraws.clear();
         meshMultiDraws.clear();
         meshOitMultiDraws.clear();
+        meshOitAdditiveMultiDraws.clear();
         int uberStart = 0;
         int meshStart = 0;
         for (int i = 0; i < allDraws.size(); i++) {
             IndirectDraw draw = allDraws.get(i);
             IndirectDraw next = i == allDraws.size() - 1 ? null : allDraws.get(i + 1);
             boolean uberSplit = next == null || incompatibleUber(draw, next);
-            boolean oit = draw.material().transparency() == Transparency.ORDER_INDEPENDENT;
+            boolean additive = OitTransparency.additive(draw.material());
+            boolean oit = OitTransparency.orderIndependent(draw.material());
             if (uberSplit || draw.instanceType() != next.instanceType()) {
-                (oit ? meshOitMultiDraws : meshMultiDraws).add(
-                        new MeshDrawRun(draw.material(), draw.instanceType(), meshStart, i + 1));
+                (additive ? meshOitAdditiveMultiDraws : oit ? meshOitMultiDraws : meshMultiDraws).add(
+                        new MeshDrawRun(draw.material(), draw.embeddedVariant(), draw.instanceType(), meshStart,
+                                i + 1));
                 meshStart = i + 1;
             }
             if (uberSplit) {
-                (oit ? uberOitMultiDraws : uberMultiDraws).add(new UberDraw(draw.material(), uberStart, i + 1));
+                (additive ? uberOitAdditiveMultiDraws : oit ? uberOitMultiDraws : uberMultiDraws).add(
+                        new UberDraw(draw.material(), draw.embeddedVariant(), uberStart, i + 1));
                 uberStart = i + 1;
             }
         }
@@ -390,7 +400,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         submitSolidPass(modelViewMatrix, false);
     }
 
-    void submitOitProducerGeometry(RenderPass pass, OitMode mode, OitFrame f) {
+    void submitOitProducerGeometry(RenderPass pass, OitMode mode, OitFrame f, boolean additive) {
         if (mode != OitMode.DEPTH_RANGE) {
             lightBuffers.bind();
             pass.setUniform("_FlwRenderOrigin", renderPassUniforms.renderOriginSlice());
@@ -402,7 +412,9 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             GlBindlessTable.bind();
         }
         drawBarrier();
-        submitUberTransparent(pass, mode, f.textureManager());
+        submitUberBatches(pass, additive ? uberOitAdditiveMultiDraws : uberOitMultiDraws,
+                batch -> OitPipelines.uberProducer(batch.material(), mode, batch.embedded()),
+                mode != OitMode.DEPTH_RANGE, f.textureManager());
     }
 
     void submitOitInsertProducerGeometry(RenderPass pass, OitInsertMode mode, OitFrame f) {
@@ -414,8 +426,10 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             GlBindlessTable.bind();
         }
         drawBarrier();
-        submitUberBatches(pass, uberOitMultiDraws, material -> OitPipelines.uberMlab(material, mode), true,
-                f.textureManager());
+        submitUberBatches(pass, uberOitMultiDraws,
+                batch -> OitPipelines.uberMlab(batch.material(), mode, batch.embedded()), true, f.textureManager());
+        submitUberBatches(pass, uberOitAdditiveMultiDraws,
+                batch -> OitPipelines.uberMlab(batch.material(), mode, batch.embedded()), true, f.textureManager());
     }
 
     private void submitPass2IfPending() {
@@ -483,16 +497,12 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     }
 
     private void submitUberSolid(RenderPass pass, TextureManager textureManager) {
-        submitUberBatches(pass, uberMultiDraws, IndirectPipeline::uberPipelineFor, true, textureManager);
-    }
-
-    private void submitUberTransparent(RenderPass pass, OitMode oit, TextureManager textureManager) {
-        submitUberBatches(pass, uberOitMultiDraws, material -> OitPipelines.uberProducer(material, oit),
-                oit != OitMode.DEPTH_RANGE, textureManager);
+        submitUberBatches(pass, uberMultiDraws,
+                batch -> IndirectPipeline.uberPipelineFor(batch.material(), batch.embedded()), true, textureManager);
     }
 
     private void submitUberBatches(RenderPass pass, List<UberDraw> batches,
-                                   Function<Material, RenderPipeline> pipelineFor, boolean bindColor,
+                                   Function<UberDraw, RenderPipeline> pipelineFor, boolean bindColor,
                                    TextureManager textureManager) {
         boolean bindless = GlCompat.SUPPORTS_BINDLESS_TEXTURES;
         RenderPipeline lastPipeline = null;
@@ -500,7 +510,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         GpuSampler lastSampler = null;
 
         for (var batch : batches) {
-            RenderPipeline pipeline = pipelineFor.apply(batch.material());
+            RenderPipeline pipeline = pipelineFor.apply(batch);
             boolean needPrime = false;
             if (pipeline != lastPipeline) {
                 lastPipeline = pipeline;
@@ -544,11 +554,14 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         boolean insertCompatible = insertMode != null && terrainOk;
         if (insertCompatible) {
             return insertChain.render(renderModelView, meshPool.vertexBuffer(), meshPool.indexBuffer(),
-                    !uberOitMultiDraws.isEmpty(), null, chunks, ber, terrain, fabulous, insertMode,
+                    !uberOitMultiDraws.isEmpty() || !uberOitAdditiveMultiDraws.isEmpty(),
+                    !uberOitAdditiveMultiDraws.isEmpty(), null, chunks, ber, terrain, fabulous, insertMode,
                     this::submitOitInsertProducerGeometry);
         }
         return oitChain.render(renderModelView, meshPool.vertexBuffer(), meshPool.indexBuffer(),
-                !uberOitMultiDraws.isEmpty(), null, chunks, ber, terrain, fabulous, this::submitOitProducerGeometry);
+                !uberOitMultiDraws.isEmpty() || !uberOitAdditiveMultiDraws.isEmpty(),
+                !uberOitAdditiveMultiDraws.isEmpty(), null, chunks, ber, terrain, fabulous,
+                this::submitOitProducerGeometry);
     }
 
     @Override
@@ -698,7 +711,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         return meshPool;
     }
 
-    record UberDraw(Material material, int start, int end) {
+    record UberDraw(Material material, boolean embedded, int start, int end) {
         void submitRaw() {
             long indirect = (long) start * IndirectBuffers.DRAW_COMMAND_STRIDE;
             glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, indirect, end - start,
@@ -706,6 +719,6 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         }
     }
 
-    record MeshDrawRun(Material material, InstanceType<?> type, int start, int end) {
+    record MeshDrawRun(Material material, boolean embedded, InstanceType<?> type, int start, int end) {
     }
 }

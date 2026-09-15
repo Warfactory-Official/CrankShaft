@@ -4,6 +4,9 @@ layout(location = 0) out vec4 frag;
 
 uniform sampler2D _flw_accumulate;
 uniform sampler2D _flw_depthRange;
+#ifdef _FLW_OIT_EMISSION
+uniform sampler2D _flw_emission;
+#endif
 #ifdef _FLW_COEFF_ARRAY
 layout(binding = 11) uniform sampler2DArray _flw_coefficients;
 #define _FLW_FETCH_COEFFS(dst) dst[0] = texelFetch(_flw_coefficients, ivec3(gl_FragCoord.xy, 0), 0); \
@@ -32,7 +35,13 @@ void main() {
     _FLW_FETCH_COEFFS(coefficients);
     float total = total_transmittance(coefficients);
 
+    #ifdef _FLW_OIT_EMISSION
+    // Premultiplied (ONE, ONE_MINUS_SRC_ALPHA): emission rounds to 8 bits in the same write as the layers, not after.
+    frag = vec4(texel.rgb / texel.a * (1. - total) + texelFetch(_flw_emission, ivec2(gl_FragCoord.xy), 0).rgb,
+            1. - total);
+    #else
     frag = vec4(texel.rgb / texel.a, 1. - total);
+    #endif
 
     // 26.2: ProjMat is vertex-stage-only; fullscreen frag reads reversed-Z device depth from depthRange.b.
     gl_FragDepth = texelFetch(_flw_depthRange, ivec2(gl_FragCoord.xy), 0).b;

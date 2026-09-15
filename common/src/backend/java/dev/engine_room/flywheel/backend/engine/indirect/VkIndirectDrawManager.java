@@ -13,7 +13,6 @@ import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
-import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.BackendDebugFlags;
@@ -64,6 +63,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             .comparingInt(IndirectDraw::bias)
             .thenComparingInt(IndirectDraw::indexOfMeshInModel)
             .thenComparing(IndirectDraw::material, MaterialRenderState::uberPipelineCompare)
+            .thenComparing(IndirectDraw::embeddedVariant)
             .thenComparing(IndirectDraw::material, MaterialRenderState.COMPARATOR)
             .thenComparingInt((IndirectDraw d) -> InstanceTypeIds.id(d.instanceType()));
     private static final int COPY_REGION_CAP = 256;
@@ -73,8 +73,10 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     final VkObjectStorage objectStorage = new VkObjectStorage();
     final FrameSet[] frames = {new FrameSet(), new FrameSet()};
     final List<UberDraw> uberOitMultiDraws = new ArrayList<>();
+    final List<UberDraw> uberOitAdditiveMultiDraws = new ArrayList<>();
     final List<MeshDrawRun> meshMultiDraws = new ArrayList<>();
     final List<MeshDrawRun> meshOitMultiDraws = new ArrayList<>();
+    final List<MeshDrawRun> meshOitAdditiveMultiDraws = new ArrayList<>();
     final VkBuffer zeroBuffer = new VkBuffer(VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, ZERO_BYTES);
     final VkDescriptorWriter writer = new VkDescriptorWriter();
     final VkOitRenderer oit = new VkOitRenderer(this);
@@ -104,7 +106,8 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     }
 
     private static boolean incompatibleUber(IndirectDraw a, IndirectDraw b) {
-        if (!MaterialRenderState.uberPipelineEquals(a.material(), b.material())) {
+        if (!MaterialRenderState.uberPipelineEquals(a.material(), b.material())
+                || a.embeddedVariant() != b.embeddedVariant()) {
             return true;
         }
         if (!VkCaps.BINDLESS_TEXTURES_NEGOTIATED) {
@@ -182,8 +185,10 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             allDraws.clear();
             uberMultiDraws.clear();
             uberOitMultiDraws.clear();
+            uberOitAdditiveMultiDraws.clear();
             meshMultiDraws.clear();
             meshOitMultiDraws.clear();
+            meshOitAdditiveMultiDraws.clear();
             return;
         }
 
@@ -293,22 +298,27 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
         uberMultiDraws.clear();
         uberOitMultiDraws.clear();
+        uberOitAdditiveMultiDraws.clear();
         meshMultiDraws.clear();
         meshOitMultiDraws.clear();
+        meshOitAdditiveMultiDraws.clear();
         int uberStart = 0;
         int meshStart = 0;
         for (int i = 0; i < allDraws.size(); i++) {
             IndirectDraw draw = allDraws.get(i);
             IndirectDraw next = i == allDraws.size() - 1 ? null : allDraws.get(i + 1);
             boolean uberSplit = next == null || incompatibleUber(draw, next);
-            boolean oit = draw.material().transparency() == Transparency.ORDER_INDEPENDENT;
+            boolean additive = OitTransparency.additive(draw.material());
+            boolean oit = OitTransparency.orderIndependent(draw.material());
             if (uberSplit || draw.instanceType() != next.instanceType()) {
-                (oit ? meshOitMultiDraws : meshMultiDraws).add(
-                        new MeshDrawRun(draw.material(), draw.instanceType(), meshStart, i + 1));
+                (additive ? meshOitAdditiveMultiDraws : oit ? meshOitMultiDraws : meshMultiDraws).add(
+                        new MeshDrawRun(draw.material(), draw.embeddedVariant(), draw.instanceType(), meshStart,
+                                i + 1));
                 meshStart = i + 1;
             }
             if (uberSplit) {
-                (oit ? uberOitMultiDraws : uberMultiDraws).add(new UberDraw(draw.material(), uberStart, i + 1));
+                (additive ? uberOitAdditiveMultiDraws : oit ? uberOitMultiDraws : uberMultiDraws).add(
+                        new UberDraw(draw.material(), draw.embeddedVariant(), uberStart, i + 1));
                 uberStart = i + 1;
             }
         }
@@ -319,6 +329,9 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             textureManager.getTexture(multiDraw.material().texture());
         }
         for (UberDraw multiDraw : uberOitMultiDraws) {
+            textureManager.getTexture(multiDraw.material().texture());
+        }
+        for (UberDraw multiDraw : uberOitAdditiveMultiDraws) {
             textureManager.getTexture(multiDraw.material().texture());
         }
     }
@@ -555,8 +568,14 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
               .uniform(22, renderOrigin);
     }
 
-    void drawOitProducerGeometry(VkCommandBuffer cmd, OitMode mode, VkOitRenderer.OitFrame f, boolean folded) {
-        if (uberOitMultiDraws.isEmpty()) {
+    /**
+     * {@code additive}: only {@code ORDER_INDEPENDENT_ADDITIVE} draws (the emission pass); otherwise only the occluding
+     * ones.
+     */
+    void drawOitProducerGeometry(VkCommandBuffer cmd, OitMode mode, VkOitRenderer.OitFrame f, boolean folded,
+                                 boolean additive) {
+        List<UberDraw> draws = additive ? uberOitAdditiveMultiDraws : uberOitMultiDraws;
+        if (draws.isEmpty()) {
             return;
         }
         FrameSet fs = frame();
@@ -564,9 +583,10 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         boolean needsColor = mode != OitMode.DEPTH_RANGE;
         boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
         VkGraphicsPipeline lastPipeline = null;
-        for (UberDraw multiDraw : uberOitMultiDraws) {
+        for (UberDraw multiDraw : draws) {
             Material material = multiDraw.material();
-            VkGraphicsPipeline pipeline = programs.uber().oitProducerPipeline(material, smoothness, mode, folded);
+            VkGraphicsPipeline pipeline = programs.uber().oitProducerPipeline(material, multiDraw.embedded(),
+                    smoothness, mode, folded);
             if (pipeline != lastPipeline) {
                 bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
                 lastPipeline = pipeline;
@@ -590,16 +610,23 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
     void drawMlabProducerGeometry(OitInsertMode oitMode, VkCommandBuffer cmd, VkOitRenderer.OitFrame f,
                                   VkMlabBuffers mlab) {
-        if (uberOitMultiDraws.isEmpty()) {
+        drawMlabProducerGeometry(oitMode, cmd, f, mlab, uberOitMultiDraws);
+        drawMlabProducerGeometry(oitMode, cmd, f, mlab, uberOitAdditiveMultiDraws);
+    }
+
+    private void drawMlabProducerGeometry(OitInsertMode oitMode, VkCommandBuffer cmd, VkOitRenderer.OitFrame f,
+                                          VkMlabBuffers mlab, List<UberDraw> draws) {
+        if (draws.isEmpty()) {
             return;
         }
         FrameSet fs = frame();
         var smoothness = BackendConfig.INSTANCE.lightSmoothness();
         boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
         VkGraphicsPipeline lastPipeline = null;
-        for (UberDraw multiDraw : uberOitMultiDraws) {
+        for (UberDraw multiDraw : draws) {
             Material material = multiDraw.material();
-            VkGraphicsPipeline pipeline = programs.uber().mlabProducerPipeline(oitMode, material, smoothness);
+            VkGraphicsPipeline pipeline = programs.uber().mlabProducerPipeline(oitMode, material, multiDraw.embedded(),
+                    smoothness);
             if (pipeline != lastPipeline) {
                 bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
                 lastPipeline = pipeline;
@@ -643,7 +670,8 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         for (UberDraw multiDraw : uberMultiDraws) {
             Material material = multiDraw.material();
             VkGraphicsPipeline pipeline = programs.uber()
-                                                  .drawPipeline(material, smoothness, COLOR_FORMAT, DEPTH_FORMAT);
+                                                  .drawPipeline(material, multiDraw.embedded(), smoothness,
+                                                          COLOR_FORMAT, DEPTH_FORMAT);
             if (pipeline != lastPipeline) {
                 bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
                 lastPipeline = pipeline;
@@ -751,8 +779,8 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                                     crackView)) {
                                 continue;
                             }
-                            VkGraphicsPipeline pipeline = programs.uber().crumblingPipeline(instanceType, smoothness,
-                                    COLOR_FORMAT, DEPTH_FORMAT);
+                            VkGraphicsPipeline pipeline = programs.uber().crumblingPipeline(crumblingMaterial,
+                                    instanceType, smoothness, COLOR_FORMAT, DEPTH_FORMAT);
                             VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
 
                             writer.storage(1, objectBuffer);
@@ -817,10 +845,10 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         programs.release();
     }
 
-    record UberDraw(Material material, int start, int end) {
+    record UberDraw(Material material, boolean embedded, int start, int end) {
     }
 
-    record MeshDrawRun(Material material, InstanceType<?> type, int start, int end) {
+    record MeshDrawRun(Material material, boolean embedded, InstanceType<?> type, int start, int end) {
     }
 
     static final class FrameSet {

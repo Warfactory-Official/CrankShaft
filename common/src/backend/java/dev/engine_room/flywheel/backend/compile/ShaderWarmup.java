@@ -113,7 +113,10 @@ public final class ShaderWarmup {
     private static void warmGl() {
         boolean sodium = sodiumLoaded();
         boolean interlock = GlCompat.SUPPORTS_FRAGMENT_INTERLOCK;
-        OitPipelines.composite();
+        OitPipelines.composite(false);
+        OitPipelines.composite(true);
+        OitPipelines.emission();
+        OitPipelines.mlabNearestDepth();
         OitPipelines.depth();
         for (OitMode mode : OitMode.values()) {
             if (mode == OitMode.OFF) {
@@ -135,7 +138,9 @@ public final class ShaderWarmup {
             if (mode == OitInsertMode.MLAB && !interlock) {
                 continue;
             }
-            OitPipelines.mlabResolve(mode);
+            for (MlabResolveVariant variant : MlabResolveVariant.values()) {
+                OitPipelines.mlabResolve(mode, variant);
+            }
             OitPipelines.chunkMlab(mode);
             for (BerFamily family : BerFamily.VALUES) {
                 OitPipelines.berMlab(family, mode);
@@ -156,16 +161,16 @@ public final class ShaderWarmup {
         programs.getCullingPass2Program();
         List<Material> materials = warmMaterials();
         for (Material material : materials) {
-            IndirectPipeline.uberPipelineFor(material);
+            IndirectPipeline.uberPipelineFor(material, false);
             if (material.transparency() != Transparency.OPAQUE) {
                 for (OitMode mode : OitMode.values()) {
                     if (mode != OitMode.OFF) {
-                        OitPipelines.uberProducer(material, mode);
+                        OitPipelines.uberProducer(material, mode, false);
                     }
                 }
                 for (OitInsertMode mode : OitInsertMode.values()) {
                     if (mode != OitInsertMode.MLAB || interlock) {
-                        OitPipelines.uberMlab(material, mode);
+                        OitPipelines.uberMlab(material, mode, false);
                     }
                 }
             }
@@ -192,7 +197,10 @@ public final class ShaderWarmup {
         programs.downsampleSecondPipeline();
 
         VkOitPipelines oit = programs.oit();
-        oit.compositePipeline();
+        oit.compositePipeline(false);
+        oit.compositePipeline(true);
+        oit.emissionPipeline();
+        oit.mlabNearestDepthPipeline();
         oit.depthPipeline(false);
         if (localRead) {
             oit.depthPipeline(true);
@@ -224,7 +232,9 @@ public final class ShaderWarmup {
             if (mode == OitInsertMode.MLAB && !interlock) {
                 continue;
             }
-            oit.mlabResolvePipeline(mode);
+            for (MlabResolveVariant variant : MlabResolveVariant.values()) {
+                oit.mlabResolvePipeline(mode, variant);
+            }
             oit.chunkMlabPipeline(mode);
             for (BerFamily family : BerFamily.VALUES) {
                 oit.berMlabPipeline(family, mode);
@@ -258,45 +268,48 @@ public final class ShaderWarmup {
         VkUberPipelines uber = programs.uber();
         List<Material> materials = warmMaterials();
         for (Material material : materials) {
-            uber.drawPipeline(material, smoothness, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
+            uber.drawPipeline(material, false, smoothness, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
             if (material.transparency() != Transparency.OPAQUE) {
                 for (OitMode mode : OitMode.values()) {
                     if (mode == OitMode.OFF) {
                         continue;
                     }
-                    uber.oitProducerPipeline(material, smoothness, mode, localRead);
+                    uber.oitProducerPipeline(material, false, smoothness, mode, localRead);
                 }
                 for (OitInsertMode mode : OitInsertMode.values()) {
                     if (mode != OitInsertMode.MLAB || interlock) {
-                        uber.mlabProducerPipeline(mode, material, smoothness);
+                        uber.mlabProducerPipeline(mode, material, false, smoothness);
                     }
                 }
             }
         }
         for (InstanceType<?> type : STANDARD_TYPES) {
-            uber.crumblingPipeline(type, smoothness, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
+            uber.crumblingPipeline(Materials.CRUMBLING, type, smoothness, VK12.VK_FORMAT_R8G8B8A8_UNORM,
+                    VK12.VK_FORMAT_D32_SFLOAT);
         }
 
         if (VkCaps.MESH_SHADER_NEGOTIATED) {
             VkMeshVisualPipelines mesh = programs.meshVisual();
             mesh.builderPipeline();
             for (InstanceType<?> type : STANDARD_TYPES) {
-                mesh.crumblingPipeline(type, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
+                mesh.crumblingPipeline(Materials.CRUMBLING, type, VK12.VK_FORMAT_R8G8B8A8_UNORM,
+                        VK12.VK_FORMAT_D32_SFLOAT);
             }
             for (InstanceType<?> type : MESH_VISUAL_TYPES) {
                 for (Material material : materials) {
                     if (material.transparency() == Transparency.OPAQUE) {
-                        mesh.solidPipeline(type, material, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
+                        mesh.solidPipeline(type, material, false, VK12.VK_FORMAT_R8G8B8A8_UNORM,
+                                VK12.VK_FORMAT_D32_SFLOAT);
                     } else {
                         for (OitMode mode : OitMode.values()) {
                             if (mode == OitMode.OFF) {
                                 continue;
                             }
-                            mesh.oitPipeline(type, material, mode, VK12.VK_FORMAT_D32_SFLOAT, localRead);
+                            mesh.oitPipeline(type, material, false, mode, VK12.VK_FORMAT_D32_SFLOAT, localRead);
                         }
                         for (OitInsertMode mode : OitInsertMode.values()) {
                             if (mode != OitInsertMode.MLAB || interlock) {
-                                mesh.mlabPipeline(type, material, mode, VK12.VK_FORMAT_D32_SFLOAT);
+                                mesh.mlabPipeline(type, material, false, mode, VK12.VK_FORMAT_D32_SFLOAT);
                             }
                         }
                     }

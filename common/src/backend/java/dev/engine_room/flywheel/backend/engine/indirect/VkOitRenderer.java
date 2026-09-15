@@ -41,7 +41,8 @@ final class VkOitRenderer {
 
     boolean render(@Nullable ChunkSectionsToRender chunks, @Nullable BerTranslucentCapture ber,
                    @Nullable SodiumTerrainOitReplay terrain, @Nullable FabulousCaptures fabulous) {
-        boolean useOit = !m.uberOitMultiDraws.isEmpty();
+        boolean hasAdditive = !m.uberOitAdditiveMultiDraws.isEmpty();
+        boolean useOit = !m.uberOitMultiDraws.isEmpty() || hasAdditive;
         boolean hasBer = ber != null && !ber.isEmpty();
         boolean hasFabulous = fabulous != null && fabulous.hasAny();
         if (!useOit && chunks == null && !hasBer && terrain == null && !hasFabulous) {
@@ -83,6 +84,9 @@ final class VkOitRenderer {
         boolean insert = insertMode != null;
         if (!insert) {
             oitFramebuffer.prepare();
+            if (hasAdditive) {
+                oitFramebuffer.prepareEmission();
+            }
             if (insertChain != null) {
                 insertChain.delete();
                 insertChain = null;
@@ -180,11 +184,11 @@ final class VkOitRenderer {
 
         if (insert) {
             insertChain.render(encoder, frame, chunks, ber, terrain, fabulous, lightmapView, loSampler,
-                    vertexVk, indexVk, width, height, useOit, depthView, compositeDescriptor);
+                    vertexVk, indexVk, width, height, useOit, hasAdditive, colorView, depthView, compositeDescriptor);
         } else {
             boolean folded = VkCaps.DYNAMIC_RENDERING_LOCAL_READ_NEGOTIATED
                     && (terrain == null || terrain instanceof VkFoldedOitReplay);
-            waveletChain.render(encoder, frame, replay, vertexVk, indexVk, width, height, useOit,
+            waveletChain.render(encoder, frame, replay, vertexVk, indexVk, width, height, useOit, hasAdditive,
                     depthView, far, compositeDescriptor, folded);
         }
 

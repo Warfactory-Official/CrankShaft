@@ -12,6 +12,8 @@ import dev.engine_room.flywheel.backend.InternalVertex;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
+import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
+import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
@@ -23,6 +25,7 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 public final class IndirectPipeline {
     private static final Map<Identifier, VertexAssembly> VERTEX_ASSEMBLY = new HashMap<>();
@@ -31,12 +34,12 @@ public final class IndirectPipeline {
         case VERTEX -> {
             VertexAssembly va = VERTEX_ASSEMBLY.get(id);
             yield RenderPassShaders.assembleUberIndirectVertex(va.material(), va.debug(),
-                    RenderPassShaders.maybeBindlessGl());
+                    RenderPassShaders.maybeBindlessGl().andThen(embeddedExtra(va.embedded())));
         }
         case FRAGMENT -> {
             FragmentAssembly fa = FRAGMENT_ASSEMBLY.get(id);
             yield RenderPassShaders.uberFragment(fa.light(), fa.material(), fa.smoothness(), fa.debug(),
-                    RenderPassShaders.maybeBindlessGl());
+                    RenderPassShaders.maybeBindlessGl().andThen(embeddedExtra(fa.embedded())));
         }
     };
     private static final Map<UberKey, RenderPipeline> UBER_CACHE = new HashMap<>();
@@ -44,41 +47,47 @@ public final class IndirectPipeline {
     private IndirectPipeline() {
     }
 
-    public static RenderPipeline uberPipelineFor(Material material) {
-        return uberPipelineFor(material, material.writeMask().color());
-    }
-
-    private static RenderPipeline uberPipelineFor(Material material, boolean colorWrite) {
+    /**
+     * {@code embedded}: the {@link RenderPassShaders#readsEmbedded} variant of an embedded run.
+     */
+    public static RenderPipeline uberPipelineFor(Material material, boolean embedded) {
         MaterialShaders shaders = material.shaders();
         LightShader light = material.light();
         LightSmoothness smoothness = BackendConfig.INSTANCE.lightSmoothness();
         DebugMode debug = FrameUniforms.debugMode();
 
-        Identifier vId = uberVertexId(shaders, debug != DebugMode.OFF);
-        VERTEX_ASSEMBLY.putIfAbsent(vId, new VertexAssembly(shaders, debug != DebugMode.OFF));
-        Identifier fId = uberFragmentId(light, shaders, smoothness, debug);
-        FRAGMENT_ASSEMBLY.putIfAbsent(fId, new FragmentAssembly(light, shaders, smoothness, debug));
+        Identifier vId = uberVertexId(shaders, debug != DebugMode.OFF, embedded);
+        VERTEX_ASSEMBLY.putIfAbsent(vId, new VertexAssembly(shaders, debug != DebugMode.OFF, embedded));
+        Identifier fId = uberFragmentId(light, shaders, smoothness, debug, embedded);
+        FRAGMENT_ASSEMBLY.putIfAbsent(fId, new FragmentAssembly(light, shaders, smoothness, debug, embedded));
 
         UberKey key = new UberKey(light, shaders, smoothness, debug, material.transparency(), material.depthTest(),
-                material.writeMask().depth(), colorWrite, material.backfaceCulling(), material.polygonOffset(),
+                material.writeMask().depth(), material.writeMask().color(), material.backfaceCulling(),
+                material.polygonOffset(),
                 InstanceTypeIds.snapshot().types().size(),
                 MaterialShaderIndices.cutoutSources().all().size(),
-                MaterialShaderIndices.fogSources().all().size());
+                MaterialShaderIndices.fogSources().all().size(), embedded);
         RenderPipeline pipeline = UBER_CACHE.computeIfAbsent(key, IndirectPipeline::buildUber);
         RenderSystem.getDevice()
                     .precompilePipeline(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
-    private static Identifier uberVertexId(MaterialShaders materialShaders, boolean debug) {
-        return ResourceUtil.rl("codegen/indirect/uber/g" + InstanceTypeIds.snapshot().types().size()
+    private static Consumer<Compilation> embeddedExtra(boolean embedded) {
+        return embedded ? RenderPassShaders.EMBEDDED : ShaderAssembly.NO_EXTRA;
+    }
+
+    private static Identifier uberVertexId(MaterialShaders materialShaders, boolean debug, boolean embedded) {
+        return ResourceUtil.rl("codegen/indirect/uber/" + (embedded ? "embedded/" : "") + "g"
+                + InstanceTypeIds.snapshot().types().size()
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(materialShaders.vertexSource())
                 + (debug ? "__debug" : ""));
     }
 
     private static Identifier uberFragmentId(LightShader light, MaterialShaders materialShaders,
-                                             LightSmoothness smoothness, DebugMode debug) {
-        return ResourceUtil.rl("codegen/indirect_frag/uber/g" + MaterialShaderIndices.cutoutSources().all().size()
+                                             LightSmoothness smoothness, DebugMode debug, boolean embedded) {
+        return ResourceUtil.rl("codegen/indirect_frag/uber/" + (embedded ? "embedded/" : "") + "g"
+                + MaterialShaderIndices.cutoutSources().all().size()
                 + "_" + MaterialShaderIndices.fogSources().all().size()
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(light.source())
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(materialShaders.fragmentSource())
@@ -99,10 +108,10 @@ public final class IndirectPipeline {
                                                        .withLocation(ResourceUtil.rl(
                                                                "pipeline/indirect/uber_" + key.uberCacheName()))
                                                        .withVertexShader(uberVertexId(key.materialShaders(),
-                                                               key.debug() != DebugMode.OFF))
+                                                               key.debug() != DebugMode.OFF, key.embedded()))
                                                        .withFragmentShader(
                                                                uberFragmentId(key.light(), key.materialShaders(),
-                                                                       key.smoothness(), key.debug()))
+                                                                       key.smoothness(), key.debug(), key.embedded()))
                                                        .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
                                                        .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                                                        .withDepthStencilState(
@@ -124,7 +133,7 @@ public final class IndirectPipeline {
         BlendFunction blend = switch (key.transparency()) {
             case OPAQUE -> null;
             case ADDITIVE -> BlendFunction.ADDITIVE;
-            case LIGHTNING -> BlendFunction.LIGHTNING;
+            case LIGHTNING, ORDER_INDEPENDENT_ADDITIVE -> BlendFunction.LIGHTNING;
             case GLINT -> BlendFunction.GLINT;
             case CRUMBLING, TRANSLUCENT, ORDER_INDEPENDENT -> BlendFunction.TRANSLUCENT;
         };
@@ -137,17 +146,18 @@ public final class IndirectPipeline {
         return new ColorTargetState(Optional.ofNullable(blend), GpuFormat.RGBA8_UNORM, writeMask);
     }
 
-    private record VertexAssembly(MaterialShaders material, boolean debug) {
+    private record VertexAssembly(MaterialShaders material, boolean debug, boolean embedded) {
     }
 
     private record FragmentAssembly(LightShader light, MaterialShaders material, LightSmoothness smoothness,
-                                    DebugMode debug) {
+                                    DebugMode debug, boolean embedded) {
     }
 
     private record UberKey(LightShader light, MaterialShaders materialShaders, LightSmoothness smoothness,
                            DebugMode debug, Transparency transparency, DepthTest depthTest, boolean depthWrite,
                            boolean colorWrite,
-                           boolean cull, boolean polygonOffset, int typeGen, int cutoutGen, int fogGen) {
+                           boolean cull, boolean polygonOffset, int typeGen, int cutoutGen, int fogGen,
+                           boolean embedded) {
         String uberCacheName() {
             return ResourceUtil.toDebugFileNameNoExtension(light.source())
                     + "_" + ResourceUtil.toDebugFileNameNoExtension(materialShaders.vertexSource())
@@ -157,7 +167,7 @@ public final class IndirectPipeline {
                     + "_" + transparency.name().toLowerCase(Locale.ROOT)
                     + "_" + depthTest.name().toLowerCase(Locale.ROOT)
                     + (depthWrite ? "_dw" : "") + (colorWrite ? "" : "_nc")
-                    + (cull ? "_cull" : "") + (polygonOffset ? "_po" : "");
+                    + (cull ? "_cull" : "") + (polygonOffset ? "_po" : "") + (embedded ? "_embedded" : "");
         }
     }
 }

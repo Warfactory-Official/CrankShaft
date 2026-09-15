@@ -48,7 +48,9 @@ public final class VkShaderTransform {
             Map.entry("_flw_layerColor2", 34),
             Map.entry("_flw_layerDepth2", 35),
             Map.entry("_flw_layerColor3", 36),
-            Map.entry("_flw_layerDepth3", 37));
+            Map.entry("_flw_layerDepth3", 37),
+            Map.entry("_flw_emission", 38),
+            Map.entry("_flw_mlabNearest", 39));
     private static final Map<String, Integer> VERTEX_INPUT_LOCATIONS = Map.of(
             "Position", 0, "Color", 1, "UV0", 2, "UV1", 3, "UV2", 4, "Normal", 5);
     private static final Map<String, Integer> VARYING_LOCATIONS = Map.ofEntries(

@@ -2,17 +2,19 @@ package dev.engine_room.flywheel.backend.compile;
 
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.DepthTest;
+import dev.engine_room.flywheel.api.material.LightShader;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.material.MaterialShaders;
 import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
+import dev.engine_room.flywheel.backend.compile.core.Compilation;
+import dev.engine_room.flywheel.backend.engine.OitTransparency;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout;
 import dev.engine_room.flywheel.backend.vk.shader.*;
-import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.util.shaderc.Shaderc;
 import org.lwjgl.vulkan.EXTMeshShader;
@@ -21,6 +23,7 @@ import org.lwjgl.vulkan.VkBufferDeviceAddressInfo;
 import org.lwjgl.vulkan.VkDevice;
 
 import java.util.*;
+import java.util.function.Consumer;
 
 /**
  * Pipelines for the {@code vk_mesh_shader} VISUAL tier: per-{@link InstanceType} EXT task+mesh+frag pipelines plus
@@ -84,9 +87,23 @@ public final class VkMeshVisualPipelines {
                                                                      .vertexSource(),
                 (VkCaps.BINDLESS_TEXTURES_NEGOTIATED ? VkPrograms.BINDLESS : ShaderAssembly.NO_EXTRA)
                         .andThen(MeshVisualShaders.clipExtra(key.type()))
-                        .andThen(RenderPassShaders.debugExtra(debug)));
+                        .andThen(RenderPassShaders.debugExtra(debug))
+                        .andThen(embeddedExtra(key.embedded())));
         return VkShaderCompiler.compileModule("meshvisual_vk_mesh" + (debug == DebugMode.OFF ? "" : "_debug"), src,
                 Shaderc.shaderc_mesh_shader);
+    }
+
+    private static Consumer<Compilation> embeddedExtra(boolean embedded) {
+        return embedded ? RenderPassShaders.EMBEDDED : ShaderAssembly.NO_EXTRA;
+    }
+
+    private static Consumer<Compilation> fragmentExtra(MeshKey mesh, DebugMode debug, boolean emission) {
+        return (VkCaps.BINDLESS_TEXTURES_NEGOTIATED ? VkPrograms.BINDLESS : ShaderAssembly.NO_EXTRA)
+                .andThen(MeshVisualShaders.VK_MESH_F16)
+                .andThen(MeshVisualShaders.clipExtra(mesh.type()))
+                .andThen(RenderPassShaders.debugExtra(debug))
+                .andThen(emission ? RenderPassShaders.EMISSION_PRODUCER : ShaderAssembly.NO_EXTRA)
+                .andThen(embeddedExtra(mesh.embedded()));
     }
 
     private static long compileTask(InstanceType<?> type) {
@@ -115,8 +132,10 @@ public final class VkMeshVisualPipelines {
         }
     }
 
-    public VkMeshPipeline crumblingPipeline(InstanceType<?> type, int colorFormat, int depthFormat) {
-        return crumbling.computeIfAbsent(new CrumblingKey(type, FrameUniforms.debugMode()), k -> {
+    public VkMeshPipeline crumblingPipeline(Material crumblingMaterial, InstanceType<?> type, int colorFormat,
+                                            int depthFormat) {
+        return crumbling.computeIfAbsent(new CrumblingKey(type, FrameUniforms.debugMode(),
+                crumblingMaterial.depthTest(), crumblingMaterial.backfaceCulling()), k -> {
             InstanceType<?> t = k.type();
             var debug = RenderPassShaders.debugExtra(k.debug());
             String debugName = k.debug() == DebugMode.OFF ? "" : "_debug";
@@ -126,9 +145,8 @@ public final class VkMeshVisualPipelines {
             try {
                 mesh = VkShaderCompiler.compileModule("meshvisual_vk_crumbling_mesh" + debugName,
                         MeshVisualShaders.assembleVkCrumblingMesh(t, debug), Shaderc.shaderc_mesh_shader);
-                frag = compileFragment(
-                        MeshVisualShaders.assembleFragment(true, StandardMaterialShaders.DEFAULT.fragmentSource(),
-                                debug), "meshvisual_vk_crumbling_frag" + debugName);
+                frag = compileFragment(MeshVisualShaders.assembleCrumblingFragment(debug),
+                        "meshvisual_vk_crumbling_frag" + debugName);
                 List<VkDescriptorLayout.Binding> b = List.of(
                         new VkDescriptorLayout.Binding(1, SSBO, MESH), new VkDescriptorLayout.Binding(5, SSBO, FRAG),
                         new VkDescriptorLayout.Binding(6, SSBO, FRAG),
@@ -143,7 +161,9 @@ public final class VkMeshVisualPipelines {
                 layout = new VkDescriptorLayout(b, PUSH_BYTES, MESH);
                 return new VkMeshPipeline(layout, 0L, mesh, frag,
                         new int[]{colorFormat}, new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.crumbling()},
-                        false, depthFormat, null, null, 10.0F, 1.0F);
+                        VkGraphicsPipeline.compareOp(k.depthTest()),
+                        k.cull() ? VK12.VK_CULL_MODE_BACK_BIT : VK12.VK_CULL_MODE_NONE, depthFormat, null, null,
+                        10.0F, 1.0F);
             } catch (Throwable ex) {
                 if (layout != null) {
                     layout.delete();
@@ -154,8 +174,12 @@ public final class VkMeshVisualPipelines {
         });
     }
 
-    public VkMeshPipeline solidPipeline(InstanceType<?> type, Material material, int colorFormat, int depthFormat) {
-        return solid.computeIfAbsent(SolidKey.of(type, material, colorFormat, depthFormat), key -> {
+    /**
+     * {@code embedded}: the {@link RenderPassShaders#readsEmbedded} variant of an embedded run.
+     */
+    public VkMeshPipeline solidPipeline(InstanceType<?> type, Material material, boolean embedded, int colorFormat,
+                                        int depthFormat) {
+        return solid.computeIfAbsent(SolidKey.of(type, material, embedded, colorFormat, depthFormat), key -> {
             boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
             long task = 0;
             long mesh = 0;
@@ -165,15 +189,8 @@ public final class VkMeshVisualPipelines {
                 task = compileTask(key.mesh()
                                       .type());
                 mesh = compileMesh(key.mesh(), key.debug());
-                String fsGl = MeshVisualShaders.assembleFragment(false, key.mesh()
-                                                                           .shaders()
-                                                                           .fragmentSource(),
-                        (bindless ? VkPrograms.BINDLESS : ShaderAssembly.NO_EXTRA).andThen(
-                                                                                          MeshVisualShaders.VK_MESH_F16)
-                                                                                  .andThen(MeshVisualShaders.clipExtra(
-                                                                                          type))
-                                                                                  .andThen(RenderPassShaders.debugExtra(
-                                                                                          key.debug())));
+                String fsGl = MeshVisualShaders.assembleFragment(key.light(), key.mesh().shaders().fragmentSource(),
+                        fragmentExtra(key.mesh(), key.debug(), false));
                 frag = compileFragment(fsGl, "meshvisual_vk_frag"
                         + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug().getSerializedName()));
                 layout = new VkDescriptorLayout(drawBindings(false, false), PUSH_BYTES, TASK | MESH, bindless);
@@ -191,12 +208,13 @@ public final class VkMeshVisualPipelines {
         });
     }
 
-    public VkMeshPipeline oitPipeline(InstanceType<?> type, Material material, OitMode mode, int depthFormat,
-                                      boolean folded) {
+    public VkMeshPipeline oitPipeline(InstanceType<?> type, Material material, boolean embedded, OitMode mode,
+                                      int depthFormat, boolean folded) {
         Map<OitKey, VkMeshPipeline[]> cache = folded ? oitFolded : oit;
-        OitKey key = OitKey.of(type, material);
-        VkMeshPipeline[] arr = cache.computeIfAbsent(key, k -> new VkMeshPipeline[OitMode.values().length]);
-        int idx = mode.ordinal();
+        OitKey key = OitKey.of(type, material, embedded);
+        VkMeshPipeline[] arr = cache.computeIfAbsent(key, k -> new VkMeshPipeline[OitMode.values().length + 1]);
+        boolean emission = mode == OitMode.EVALUATE && OitTransparency.additive(material);
+        int idx = emission ? OitMode.values().length : mode.ordinal();
         if (arr[idx] == null) {
             boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
             long task = 0;
@@ -206,16 +224,11 @@ public final class VkMeshVisualPipelines {
             try {
                 task = compileTask(type);
                 mesh = compileMesh(key.mesh(), key.debug());
-                String fsGl = MeshVisualShaders.assembleOitFragment(mode, key.mesh()
-                                                                             .shaders()
-                                                                             .fragmentSource(), folded,
-                        (bindless ? VkPrograms.BINDLESS : ShaderAssembly.NO_EXTRA).andThen(
-                                                                                          MeshVisualShaders.VK_MESH_F16)
-                                                                                  .andThen(MeshVisualShaders.clipExtra(
-                                                                                          type))
-                                                                                  .andThen(RenderPassShaders.debugExtra(
-                                                                                          key.debug())));
-                frag = compileFragment(fsGl, "meshvisual_vk_oit_" + mode.name + (folded ? "_folded" : "")
+                String fsGl = MeshVisualShaders.assembleOitFragment(mode, key.light(),
+                        key.mesh().shaders().fragmentSource(), folded,
+                        fragmentExtra(key.mesh(), key.debug(), emission));
+                frag = compileFragment(fsGl, "meshvisual_vk_oit_" + mode.name + (emission ? "_emission" : "")
+                        + (folded ? "_folded" : "")
                         + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug().getSerializedName()));
                 if (folded) {
                     layout = new VkDescriptorLayout(drawBindings(true, true), PUSH_BYTES, TASK | MESH, bindless);
@@ -248,11 +261,12 @@ public final class VkMeshVisualPipelines {
         return arr[idx];
     }
 
-    public VkMeshPipeline mlabPipeline(InstanceType<?> type, Material material, OitInsertMode oitMode,
-                                       int depthFormat) {
-        OitKey key = OitKey.of(type, material);
-        VkMeshPipeline[] arr = mlab.computeIfAbsent(key, k -> new VkMeshPipeline[OitInsertMode.values().length]);
-        int idx = oitMode.ordinal();
+    public VkMeshPipeline mlabPipeline(InstanceType<?> type, Material material, boolean embedded,
+                                       OitInsertMode oitMode, int depthFormat) {
+        OitKey key = OitKey.of(type, material, embedded);
+        VkMeshPipeline[] arr = mlab.computeIfAbsent(key, k -> new VkMeshPipeline[2 * OitInsertMode.values().length]);
+        boolean emission = OitTransparency.additive(material);
+        int idx = oitMode.ordinal() + (emission ? OitInsertMode.values().length : 0);
         if (arr[idx] == null) {
             boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
             long task = 0;
@@ -262,16 +276,9 @@ public final class VkMeshVisualPipelines {
             try {
                 task = compileTask(type);
                 mesh = compileMesh(key.mesh(), key.debug());
-                String fsGl = MeshVisualShaders.assembleMlabOitFragment(oitMode, key.mesh()
-                                                                                    .shaders()
-                                                                                    .fragmentSource(),
-                        (bindless ? VkPrograms.BINDLESS : ShaderAssembly.NO_EXTRA).andThen(
-                                                                                          MeshVisualShaders.VK_MESH_F16)
-                                                                                  .andThen(MeshVisualShaders.clipExtra(
-                                                                                          type))
-                                                                                  .andThen(RenderPassShaders.debugExtra(
-                                                                                          key.debug())));
-                frag = compileFragment(fsGl, "meshvisual_vk_mlab_" + oitMode
+                String fsGl = MeshVisualShaders.assembleMlabOitFragment(oitMode, key.light(),
+                        key.mesh().shaders().fragmentSource(), fragmentExtra(key.mesh(), key.debug(), emission));
+                frag = compileFragment(fsGl, "meshvisual_vk_mlab_" + oitMode + (emission ? "_emission" : "")
                         + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug().getSerializedName()));
                 List<VkDescriptorLayout.Binding> b = new ArrayList<>(drawBindings(false, false));
                 VkOitPipelines.mlabBindings(b, oitMode);
@@ -349,17 +356,18 @@ public final class VkMeshVisualPipelines {
         }
     }
 
-    private record MeshKey(InstanceType<?> type, MaterialShaders shaders) {
-        static MeshKey of(InstanceType<?> type, Material material) {
-            return new MeshKey(type, material.shaders());
+    private record MeshKey(InstanceType<?> type, MaterialShaders shaders, boolean embedded) {
+        static MeshKey of(InstanceType<?> type, Material material, boolean embedded) {
+            return new MeshKey(type, material.shaders(), embedded);
         }
     }
 
     // Fixed-function state as VkUberPipelines' OIT/insert producer keys (offset keeps the slope term).
-    private record OitKey(MeshKey mesh, DepthTest depthTest, boolean cull, boolean polygonOffset, int cutoutGen,
-                          int fogGen, DebugMode debug) {
-        static OitKey of(InstanceType<?> type, Material material) {
-            return new OitKey(MeshKey.of(type, material), material.depthTest(), material.backfaceCulling(),
+    private record OitKey(MeshKey mesh, LightShader light, DepthTest depthTest, boolean cull, boolean polygonOffset,
+                          int cutoutGen, int fogGen, DebugMode debug) {
+        static OitKey of(InstanceType<?> type, Material material, boolean embedded) {
+            return new OitKey(MeshKey.of(type, material, embedded), material.light(), material.depthTest(),
+                    material.backfaceCulling(),
                     material.polygonOffset(),
                     MaterialShaderIndices.cutoutSources()
                                          .all()
@@ -391,11 +399,13 @@ public final class VkMeshVisualPipelines {
      * Solid pipeline key: the mesh key + the material's fixed-function state (mirrors VkUberPipelines' draw key);
      * registry generations key fresh compiles covering later-registered sources.
      */
-    private record SolidKey(MeshKey mesh, int colorFormat, int depthFormat, Transparency transparency,
-                            DepthTest depthTest, boolean depthWrite, boolean colorWrite, boolean cull,
-                            boolean polygonOffset, int cutoutGen, int fogGen, DebugMode debug) {
-        static SolidKey of(InstanceType<?> type, Material material, int colorFormat, int depthFormat) {
-            return new SolidKey(MeshKey.of(type, material), colorFormat, depthFormat, material.transparency(),
+    private record SolidKey(MeshKey mesh, LightShader light, int colorFormat, int depthFormat,
+                            Transparency transparency, DepthTest depthTest, boolean depthWrite, boolean colorWrite,
+                            boolean cull, boolean polygonOffset, int cutoutGen, int fogGen, DebugMode debug) {
+        static SolidKey of(InstanceType<?> type, Material material, boolean embedded, int colorFormat,
+                           int depthFormat) {
+            return new SolidKey(MeshKey.of(type, material, embedded), material.light(), colorFormat, depthFormat,
+                    material.transparency(),
                     material.depthTest(), material.writeMask()
                                                   .depth(), material.writeMask()
                                                                     .color(), material.backfaceCulling(),
@@ -413,6 +423,6 @@ public final class VkMeshVisualPipelines {
         }
     }
 
-    private record CrumblingKey(InstanceType<?> type, DebugMode debug) {
+    private record CrumblingKey(InstanceType<?> type, DebugMode debug, DepthTest depthTest, boolean cull) {
     }
 }

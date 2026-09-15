@@ -30,6 +30,7 @@ public class OitFramebuffer {
     public static final GpuFormat DEPTH_BOUNDS_FORMAT = GpuFormat.RGBA32_FLOAT;
     public static final GpuFormat COEFFICIENTS_FORMAT = GpuFormat.RGBA16_FLOAT;
     public static final GpuFormat ACCUMULATE_FORMAT = GpuFormat.RGBA16_FLOAT;
+    public static final GpuFormat NEAREST_DEPTH_FORMAT = GpuFormat.R32_FLOAT;
 
     private static final int USAGE = GpuTexture.USAGE_COPY_DST | GpuTexture.USAGE_COPY_SRC
             | GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_RENDER_ATTACHMENT;
@@ -43,6 +44,12 @@ public class OitFramebuffer {
     private GpuTexture coefficientsArray;
     private GpuTextureView depthBoundsView;
     private GpuTextureView accumulateView;
+    private GpuTexture emission;
+    private GpuTextureView emissionView;
+    private long emissionBytes;
+    private GpuTexture nearestDepth;
+    private GpuTextureView nearestDepthView;
+    private long nearestDepthBytes;
 
     private GpuTexture cloudsColor;
     private GpuTexture cloudsDepth;
@@ -128,6 +135,41 @@ public class OitFramebuffer {
 
     public GpuTextureView accumulateView() {
         return accumulateView;
+    }
+
+    public GpuTextureView emissionView() {
+        return emissionView;
+    }
+
+    public GpuTextureView nearestDepthView() {
+        return nearestDepthView;
+    }
+
+    // Outside the chain targets: the insert paths release those every frame.
+    public void prepareNearestDepth() {
+        RenderTarget target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        maybeResize(target.width, target.height);
+        if (nearestDepth != null) {
+            return;
+        }
+        var device = RenderSystem.getDevice();
+        nearestDepth = device.createTexture(() -> "flywheel:oit/mlab_nearest_depth", USAGE, NEAREST_DEPTH_FORMAT,
+                lastWidth, lastHeight, 1, 1);
+        nearestDepthView = device.createTextureView(nearestDepth);
+        nearestDepthBytes = (long) lastWidth * lastHeight * 4L;
+        FlwMemoryTracker._allocGpuMemory(nearestDepthBytes);
+    }
+
+    public void prepareEmission() {
+        if (emission != null) {
+            return;
+        }
+        var device = RenderSystem.getDevice();
+        emission = device.createTexture(() -> "flywheel:oit/emission", USAGE, ACCUMULATE_FORMAT, lastWidth,
+                lastHeight, 1, 1);
+        emissionView = device.createTextureView(emission);
+        emissionBytes = (long) lastWidth * lastHeight * 8L;
+        FlwMemoryTracker._allocGpuMemory(emissionBytes);
     }
 
     public void prepareCloudsLayer() {
@@ -234,6 +276,14 @@ public class OitFramebuffer {
                                    .withRenderArea(fullArea());
     }
 
+    public RenderPassDescriptor emissionDescriptor(GpuTextureView mainDepth) {
+        return RenderPassDescriptor.create(() -> "flywheel:oit/emission")
+                                   .withColorAttachment(emissionView,
+                                           Optional.<Vector4fc>of(new Vector4f(0.0f, 0.0f, 0.0f, 0.0f)))
+                                   .withDepthAttachment(mainDepth, OptionalDouble.empty())
+                                   .withRenderArea(fullArea());
+    }
+
     private RenderPass.RenderArea fullArea() {
         return new RenderPass.RenderArea(0, 0, lastWidth, lastHeight);
     }
@@ -325,12 +375,32 @@ public class OitFramebuffer {
             accumulate.close();
             accumulate = null;
         }
+        if (emissionView != null) {
+            emissionView.close();
+            emissionView = null;
+        }
+        if (emission != null) {
+            emission.close();
+            emission = null;
+        }
+        FlwMemoryTracker._freeGpuMemory(emissionBytes);
+        emissionBytes = 0;
         FlwMemoryTracker._freeGpuMemory(trackedBytes);
         trackedBytes = 0;
     }
 
     private void deleteTargets() {
         deleteChainTargets();
+        if (nearestDepthView != null) {
+            nearestDepthView.close();
+            nearestDepthView = null;
+        }
+        if (nearestDepth != null) {
+            nearestDepth.close();
+            nearestDepth = null;
+        }
+        FlwMemoryTracker._freeGpuMemory(nearestDepthBytes);
+        nearestDepthBytes = 0;
         if (cloudsColorView != null) {
             cloudsColorView.close();
             cloudsColorView = null;

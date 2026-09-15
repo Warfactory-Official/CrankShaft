@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.backend.compile;
 
 import dev.engine_room.flywheel.api.instance.InstanceType;
+import dev.engine_room.flywheel.api.material.LightShader;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly.RawSource;
@@ -10,6 +11,7 @@ import dev.engine_room.flywheel.backend.compile.component.UberMaterialShaderComp
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
+import dev.engine_room.flywheel.lib.material.LightShaders;
 import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.resources.Identifier;
@@ -78,12 +80,14 @@ public final class MeshVisualShaders {
                 float _flw_mvGlintSpeed;
                 float _flw_mvGlintStrength;
             };
-            // The per-material fragment hook's globals (RenderPassShaders.FRAG_LIGHTING_PRELUDE parity): the
-            // fragment sets all three before flw_materialFragment(), which may rewrite flw_fragColor
-            // (nametag.frag turns R8 glyph coverage into alpha).
+            // RenderPassShaders.FRAG_LIGHTING_PRELUDE parity; main sets them from the mesh-stage varyings.
+            vec4 flw_vertexPos;
+            vec3 flw_vertexNormal;
             vec4 flw_fragColor;
+            vec2 flw_fragLight;
             vec4 flw_sampleColor;
             vec4 flw_vertexColor;
+            FlwMaterial flw_material;
             // The CLIP_* cutout predicates' input (compact ABI: x = dot(plane.xyz, slidPos), y = plane.w):
             // zero-init so non-clip programs compile (0 > 0 never discards -- the predicates degrade to the
             // plain alpha test). Under _FLW_MV_CLIP (clipExtra, clip-writing types only) the main overwrites
@@ -263,18 +267,25 @@ public final class MeshVisualShaders {
                               .appendDefines(ctx);
     }
 
-    public static String assembleFragment(boolean crumbling) {
-        return assembleFragment(crumbling, StandardMaterialShaders.DEFAULT.fragmentSource(), ShaderAssembly.NO_EXTRA);
+    public static String assembleCrumblingFragment(Consumer<Compilation> extra) {
+        return assembleFragment(true, LightShaders.SMOOTH_WHEN_EMBEDDED,
+                StandardMaterialShaders.DEFAULT.fragmentSource(), extra);
     }
 
-    public static String assembleFragment(boolean crumbling, Identifier materialFragment, Consumer<Compilation> extra) {
+    public static String assembleFragment(LightShader light, Identifier materialFragment, Consumer<Compilation> extra) {
+        return assembleFragment(false, light, materialFragment, extra);
+    }
+
+    private static String assembleFragment(boolean crumbling, LightShader light, Identifier materialFragment,
+                                           Consumer<Compilation> extra) {
         List<SourceComponent> roots = new ArrayList<>();
-        roots.add(new RawSource("meshvisual/frag_prelude", FRAG_PRELUDE));
         roots.add(FlwPrograms.SOURCES.get(MATERIAL));
+        roots.add(new RawSource("meshvisual/frag_prelude", FRAG_PRELUDE));
         roots.add(FlwPrograms.SOURCES.get(PACKED_MATERIAL));
         roots.add(FlwPrograms.SOURCES.get(DIFFUSE));
         roots.add(FlwPrograms.SOURCES.get(RenderPassShaders.COLORIZER));
         roots.add(FlwPrograms.SOURCES.get(INDIRECT_LIGHT));
+        roots.add(FlwPrograms.SOURCES.get(light.source()));
         if (!crumbling) {
             roots.add(new UberMaterialShaderComponent(FlwPrograms.SOURCES));
         }
@@ -295,15 +306,16 @@ public final class MeshVisualShaders {
         extra.accept(ctx);
     }
 
-    public static String assembleOitFragment(OitMode mode, Identifier materialFragment, boolean localRead,
-                                             Consumer<Compilation> extra) {
+    public static String assembleOitFragment(OitMode mode, LightShader light, Identifier materialFragment,
+                                             boolean localRead, Consumer<Compilation> extra) {
         List<SourceComponent> roots = List.of(
-                new RawSource("meshvisual/frag_prelude", FRAG_PRELUDE),
                 FlwPrograms.SOURCES.get(MATERIAL),
+                new RawSource("meshvisual/frag_prelude", FRAG_PRELUDE),
                 FlwPrograms.SOURCES.get(PACKED_MATERIAL),
                 FlwPrograms.SOURCES.get(DIFFUSE),
                 FlwPrograms.SOURCES.get(RenderPassShaders.COLORIZER),
                 FlwPrograms.SOURCES.get(INDIRECT_LIGHT),
+                FlwPrograms.SOURCES.get(light.source()),
                 new UberMaterialShaderComponent(FlwPrograms.SOURCES),
                 FlwPrograms.SOURCES.get(materialFragment),
                 FlwPrograms.SOURCES.get(WAVELET),
@@ -320,16 +332,17 @@ public final class MeshVisualShaders {
         }, roots);
     }
 
-    public static String assembleMlabOitFragment(OitInsertMode oitMode, Identifier materialFragment,
+    public static String assembleMlabOitFragment(OitInsertMode oitMode, LightShader light, Identifier materialFragment,
                                                  Consumer<Compilation> extra) {
         List<SourceComponent> roots = List.of(
                 FlwPrograms.SOURCES.get(RenderPassShaders.MLAB),
-                new RawSource("meshvisual/frag_prelude", FRAG_PRELUDE),
                 FlwPrograms.SOURCES.get(MATERIAL),
+                new RawSource("meshvisual/frag_prelude", FRAG_PRELUDE),
                 FlwPrograms.SOURCES.get(PACKED_MATERIAL),
                 FlwPrograms.SOURCES.get(DIFFUSE),
                 FlwPrograms.SOURCES.get(RenderPassShaders.COLORIZER),
                 FlwPrograms.SOURCES.get(INDIRECT_LIGHT),
+                FlwPrograms.SOURCES.get(light.source()),
                 new UberMaterialShaderComponent(FlwPrograms.SOURCES),
                 FlwPrograms.SOURCES.get(materialFragment),
                 FlwPrograms.SOURCES.get(MV_OIT_FRAGMENT));
