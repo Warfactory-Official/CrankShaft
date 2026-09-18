@@ -1,0 +1,31 @@
+{
+  "schema": 2,
+  "name": "Solas",
+  "testedVersions": [
+    "Solas Shader V3.7b"
+  ],
+  "matches": [
+    {
+      "path": "programs/gbuffers_entities.glsl",
+      "contains": [
+        "#define GBUFFERS_ENTITIES",
+        "fmix"
+      ]
+    },
+    {
+      "path": "lib/common.glsl",
+      "contains": [
+        "AURORA"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "target": "clrwl_gbuffers_entities",
+      "patch": "solas.patch"
+    }
+  ],
+  "wrappers": [],
+  "blends": [],
+  "properties": ""
+}

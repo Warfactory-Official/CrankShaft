@@ -13,6 +13,7 @@ import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.client.model.geom.builders.UVPair;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.util.ARGB;
 import net.neoforged.neoforge.client.model.quad.BakedNormals;
 
@@ -105,8 +106,8 @@ final class MeshEmitter {
         return positions.isEmpty();
     }
 
-    BakedMesh build() {
+    BakedMesh build(@Nullable BlockState blockState) {
         return new BakedMesh(positions.toFloatArray(), uvs.toFloatArray(), normals.toFloatArray(),
-                colors.toIntArray(), overlays.toIntArray());
+                colors.toIntArray(), overlays.toIntArray(), null, blockState);
     }
 }

@@ -1,4 +1,4 @@
-package dev.engine_room.flywheel.backend.engine;
+package dev.engine_room.flywheel.backend.lighting;
 
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.LevelAccessor;

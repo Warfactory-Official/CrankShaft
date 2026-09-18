@@ -1,5 +1,7 @@
 package dev.engine_room.flywheel.impl.visualization.storage;
 
+import dev.engine_room.flywheel.backend.engine.TaggedVisualizationContexts;
+
 import dev.engine_room.flywheel.api.backend.RenderContext;
 import dev.engine_room.flywheel.api.task.Plan;
 import dev.engine_room.flywheel.api.visual.BlockEntityVisual;
@@ -54,6 +56,9 @@ public class BlockEntityStorage extends Storage<BlockEntity> {
         var visualizer = VisualizationHelper.getVisualizer(obj);
         if (visualizer == null) {
             return null;
+        }
+        if (visualizationContext instanceof TaggedVisualizationContexts tagged) {
+            visualizationContext = tagged.forBlockEntity(obj);
         }
         var visual = visualizer.createVisual(visualizationContext, obj, partialTick);
 

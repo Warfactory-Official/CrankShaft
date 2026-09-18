@@ -48,7 +48,7 @@ public class IndirectCullingGroup<I extends Instance> {
     }
 
     public void add(IndirectInstancer<I> instancer, InstancerKey<I> key, MeshPool meshPool,
-                    ObjectStorage objectStorage) {
+                    ObjectStorage objectStorage, IndirectDrawManager drawManager) {
         instancer.mapping = objectStorage.createMapping(instanceType);
         instancer.update(instancers.size(), -1);
 
@@ -60,7 +60,8 @@ public class IndirectCullingGroup<I extends Instance> {
             var entry = meshes.get(i);
 
             MeshPool.PooledMesh mesh = meshPool.alloc(entry.mesh());
-            var draw = new IndirectDraw(instancer, entry.material(), mesh, key.bias(), i);
+            var draw = new IndirectDraw(instancer, entry.material(), mesh, key.bias(), i,
+                    drawManager.drawTags(key.environment(), key.model(), entry.material(), entry.mesh()));
             indirectDraws.add(draw);
             instancer.addDraw(draw);
             warmUp(entry.material(), draw.embeddedVariant());

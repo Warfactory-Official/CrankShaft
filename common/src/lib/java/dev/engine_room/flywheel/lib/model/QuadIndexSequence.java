@@ -18,10 +18,10 @@ public final class QuadIndexSequence implements IndexSequence {
             MemoryUtil.memPutInt(ptr, baseVertex);
             MemoryUtil.memPutInt(ptr + 4, baseVertex + 1);
             MemoryUtil.memPutInt(ptr + 8, baseVertex + 2);
-            // triangle b
-            MemoryUtil.memPutInt(ptr + 12, baseVertex);
-            MemoryUtil.memPutInt(ptr + 16, baseVertex + 2);
-            MemoryUtil.memPutInt(ptr + 20, baseVertex + 3);
+            // 26.2: preserve RenderSystem's quad order for geometry shaders and flat provoking vertices.
+            MemoryUtil.memPutInt(ptr + 12, baseVertex + 2);
+            MemoryUtil.memPutInt(ptr + 16, baseVertex + 3);
+            MemoryUtil.memPutInt(ptr + 20, baseVertex);
 
             baseVertex += 4;
             ptr += 24;

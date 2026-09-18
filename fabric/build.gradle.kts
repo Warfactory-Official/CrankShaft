@@ -106,12 +106,19 @@ dependencies {
 
     include(project(":meshlet"))
 
+    include(project(":iris"))
+
     localRuntime(project(":vanillinFabric"))
 
     localRuntime(project(":meshlet"))
 
-    if (project.hasProperty("sodium")) {
+    localRuntime(project(":iris"))
+
+    if (project.hasProperty("sodium") || project.hasProperty("iris")) {
         localRuntime("net.caffeinemc:sodium-fabric:${sodiumVersion}")
+    }
+    if (project.hasProperty("iris")) {
+        localRuntime("maven.modrinth:iris:${irisVersion}-fabric")
     }
 }
 

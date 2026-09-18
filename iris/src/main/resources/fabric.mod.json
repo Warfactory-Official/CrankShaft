@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "flywheel_iris",
+  "version": "${version}",
+  "name": "CrankShaft Iris",
+  "description": "Iris shaderpack guest backends for CrankShaft.",
+  "license": "MIT",
+  "environment": "client",
+  "mixins": [
+    "flywheel.iris.mixins.json"
+  ],
+  "depends": {
+    "minecraft": "*"
+  },
+  "breaks": {
+    "iris": "<1.11.4"
+  }
+}

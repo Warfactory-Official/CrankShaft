@@ -74,8 +74,13 @@ dependencies {
 
     jarJar(project(":meshlet"))
 
-    if (project.hasProperty("sodium")) {
+    jarJar(project(":iris"))
+
+    if (project.hasProperty("sodium") || project.hasProperty("iris")) {
         runtimeOnly("net.caffeinemc:sodium-neoforge:${sodiumVersion}")
+    }
+    if (project.hasProperty("iris")) {
+        runtimeOnly("maven.modrinth:iris:${irisVersion}-neoforge")
     }
 }
 
@@ -101,6 +106,11 @@ neoForge {
             quickPlay?.let { programArguments.addAll("--quickPlaySingleplayer", it) }
             if (vulkan) {
                 programArguments.addAll("--graphicsBackend", "vulkan")
+            }
+            // Iris 1.11.4 swaps in 1-entry vertex format binding arrays; IDE-only GlCommandEncoder.validateDraw
+            // indexes 16 => AIOOBE on the first Iris-mapped draw (also with flywheel:off).
+            if (project.hasProperty("iris")) {
+                jvmArguments.add("-Dneoforge.disableGlValidation=true")
             }
         }
     }
@@ -129,6 +139,7 @@ neoForge.runs.named("client") {
 
 dependencies {
     runtimeOnly(project(":meshlet"))
+    runtimeOnly(project(":iris"))
 }
 
 sourceSets {

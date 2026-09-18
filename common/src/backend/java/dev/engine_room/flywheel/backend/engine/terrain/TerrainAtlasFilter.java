@@ -18,9 +18,13 @@ public final class TerrainAtlasFilter {
     }
 
     public static boolean linear() {
-        return SODIUM_LOADED && SodiumClientMod.options().quality.pixelFilteringMode == FilterMode.LINEAR;
+        return !GuestTerrainGate.ownsTerrain() && SODIUM_LOADED
+                && SodiumClientMod.options().quality.pixelFilteringMode == FilterMode.LINEAR;
     }
 
+    // Iris's MixinDefaultChunkRenderer.iris$forceNearest substitutes clamp-to-edge NEAREST into
+    // ShaderChunkRenderer.begin, which discards the argument; Sodium 0.9.2 draws with the sampler the caller passed.
+    // A guest terrain draw therefore uses the same one every other path does.
     public static GpuSampler sampler() {
         return Objects.requireNonNull(Minecraft.getInstance().levelRenderer.chunkLayerSampler);
     }

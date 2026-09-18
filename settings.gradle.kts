@@ -15,6 +15,7 @@ plugins {
 
 include("common")
 include("meshlet")
+include("iris")
 include("neoforge")
 include("fabric")
 include("vanillinNeoForge")

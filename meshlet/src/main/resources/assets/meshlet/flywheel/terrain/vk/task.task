@@ -50,8 +50,7 @@ void main() {
     // Camera-direction backface cull: drop the section's facings whose outward normal points away from the
     // camera (the 6 axis facings; UNASSIGNED always kept). camRel = section block origin - camera, the same
     // camera-relative space the mesh stage projects in (sectionChunkOrigin*16 - cameraBlockPos - cameraPos).
-    vec3 camRel = vec3(sectionChunkOrigin(in4, sectionId)) * 16.0
-            - vec3(cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
+    vec3 camRel = vec3(sectionChunkOrigin(in4, sectionId) * 16 - cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
     uint camMask = cameraVisibleFacingMask(camRel);
 
     // Per-facing arena partition. Sodium's CompactChunkVertex arena stores a section's geometry partitioned

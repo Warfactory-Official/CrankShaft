@@ -2,7 +2,6 @@ package dev.engine_room.flywheel.backend.compile;
 
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.LightShader;
-import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly.RawSource;
 import dev.engine_room.flywheel.backend.compile.component.InstanceStructComponent;
@@ -79,6 +78,7 @@ public final class MeshVisualShaders {
                 float _flw_mvSystemSeconds;
                 float _flw_mvGlintSpeed;
                 float _flw_mvGlintStrength;
+                float _flw_mvPartialTick;
             };
             // RenderPassShaders.FRAG_LIGHTING_PRELUDE parity; main sets them from the mesh-stage varyings.
             vec4 flw_vertexPos;
@@ -155,7 +155,7 @@ public final class MeshVisualShaders {
         roots.add(new SsboInstanceComponent(type));
         roots.add(FlwPrograms.SOURCES.get(type.vertexShader()));
         roots.add(FlwPrograms.SOURCES.get(MV_CRUMBLING_MESH_MAIN));
-        return assembleRaw(NV_MESH_PREAMBLE.andThen(extra), roots);
+        return assembleRaw(NV_MESH_PREAMBLE.andThen(MeshVisualShaders::materialVertexDefines).andThen(extra), roots);
     }
 
     // The only frame/options uniforms material vertex shaders can read on the mesh tiers: the full blocks clash with the fragment's across the linked program.
@@ -163,7 +163,12 @@ public final class MeshVisualShaders {
         ctx.define("flw_systemSeconds", "_flw_mvSystemSeconds");
         ctx.define("flw_glintSpeedOption", "_flw_mvGlintSpeed");
         ctx.define("flw_glintStrengthOption", "_flw_mvGlintStrength");
+        instanceTimeDefine(ctx);
         ctx.define("flw_view", "_flw_mvModelView");
+    }
+
+    private static void instanceTimeDefine(Compilation ctx) {
+        ctx.define("flw_partialTick", "_flw_mvPartialTick");
     }
 
     // Optional NV task stage: per-meshlet frustum cull ahead of the mesh stage (large/unwelded models).
@@ -179,7 +184,8 @@ public final class MeshVisualShaders {
         roots.add(FlwPrograms.SOURCES.get(type.cullShader()));
         roots.add(FlwPrograms.SOURCES.get(MV_MESHLET_CULL));
         roots.add(FlwPrograms.SOURCES.get(MV_TASK_MAIN));
-        return assembleRaw(NV_MESH_PREAMBLE.andThen(ctx -> ctx.requireExtension("GL_KHR_shader_subgroup_ballot")),
+        return assembleRaw(NV_MESH_PREAMBLE.andThen(MeshVisualShaders::instanceTimeDefine)
+                                           .andThen(ctx -> ctx.requireExtension("GL_KHR_shader_subgroup_ballot")),
                 roots);
     }
 
@@ -221,7 +227,8 @@ public final class MeshVisualShaders {
         roots.add(new SsboInstanceComponent(type));
         roots.add(FlwPrograms.SOURCES.get(type.vertexShader()));
         roots.add(FlwPrograms.SOURCES.get(MV_VK_CRUMBLING_MESH_MAIN));
-        return assembleRaw(((Consumer<Compilation>) MeshVisualShaders::vkMeshPreamble).andThen(extra), roots);
+        return assembleRaw(((Consumer<Compilation>) MeshVisualShaders::vkMeshPreamble)
+                .andThen(MeshVisualShaders::materialVertexDefines).andThen(extra), roots);
     }
 
     // Vulkan twin of assembleTask: the K-batched EXT task stage (welded fan-out + unwelded per-meshlet frustum+HiZ cull).
@@ -239,6 +246,7 @@ public final class MeshVisualShaders {
         roots.add(FlwPrograms.SOURCES.get(MV_VK_MESHLET_CULL));
         roots.add(FlwPrograms.SOURCES.get(MV_VK_TASK_MAIN));
         return assembleRaw(((Consumer<Compilation>) MeshVisualShaders::vkMeshPreamble)
+                .andThen(MeshVisualShaders::instanceTimeDefine)
                 .andThen(ctx -> ctx.requireExtension("GL_KHR_shader_subgroup_ballot")), roots);
     }
 
@@ -256,28 +264,28 @@ public final class MeshVisualShaders {
         ctx.define("_FLW_MV_MAX_WG_X", String.valueOf(VkCaps.MESH_MAX_WORKGROUP_COUNT_X));
     }
 
-    private static void fragLightDefines(Compilation ctx) {
+    private static void fragLightDefines(Compilation ctx, LightSmoothness smoothness) {
         ctx.define("flw_light0Direction", "Light0_Direction");
         ctx.define("flw_light1Direction", "Light1_Direction");
         ctx.define("flw_renderOrigin", "(_flw_renderOrigin.xyz)");
         ctx.define("flw_constantAmbientLight", "_flw_constantAmbientLight");
         ctx.define("_FLW_LIGHT_LUT_BUFFER_BINDING", "5");
         ctx.define("_FLW_LIGHT_SECTIONS_BUFFER_BINDING", "6");
-        BackendConfig.INSTANCE.lightSmoothness()
-                              .appendDefines(ctx);
+        smoothness.appendDefines(ctx);
     }
 
-    public static String assembleCrumblingFragment(Consumer<Compilation> extra) {
+    public static String assembleCrumblingFragment(LightSmoothness smoothness, Consumer<Compilation> extra) {
         return assembleFragment(true, LightShaders.SMOOTH_WHEN_EMBEDDED,
-                StandardMaterialShaders.DEFAULT.fragmentSource(), extra);
+                StandardMaterialShaders.DEFAULT.fragmentSource(), smoothness, extra);
     }
 
-    public static String assembleFragment(LightShader light, Identifier materialFragment, Consumer<Compilation> extra) {
-        return assembleFragment(false, light, materialFragment, extra);
+    public static String assembleFragment(LightShader light, Identifier materialFragment, LightSmoothness smoothness,
+                                          Consumer<Compilation> extra) {
+        return assembleFragment(false, light, materialFragment, smoothness, extra);
     }
 
     private static String assembleFragment(boolean crumbling, LightShader light, Identifier materialFragment,
-                                           Consumer<Compilation> extra) {
+                                           LightSmoothness smoothness, Consumer<Compilation> extra) {
         List<SourceComponent> roots = new ArrayList<>();
         roots.add(FlwPrograms.SOURCES.get(MATERIAL));
         roots.add(new RawSource("meshvisual/frag_prelude", FRAG_PRELUDE));
@@ -295,19 +303,20 @@ public final class MeshVisualShaders {
             if (crumbling) {
                 ctx.define("_FLW_CRUMBLING");
             }
-            commonFragTail(ctx, extra);
+            commonFragTail(ctx, smoothness, extra);
         }, roots);
     }
 
-    private static void commonFragTail(Compilation ctx, Consumer<Compilation> extra) {
+    private static void commonFragTail(Compilation ctx, LightSmoothness smoothness, Consumer<Compilation> extra) {
         ctx.mojImport("minecraft:fog.glsl");
         ctx.mojImport("minecraft:dynamictransforms.glsl");
-        fragLightDefines(ctx);
+        fragLightDefines(ctx, smoothness);
         extra.accept(ctx);
     }
 
     public static String assembleOitFragment(OitMode mode, LightShader light, Identifier materialFragment,
-                                             boolean localRead, Consumer<Compilation> extra) {
+                                             LightSmoothness smoothness, boolean localRead,
+                                             Consumer<Compilation> extra) {
         List<SourceComponent> roots = List.of(
                 FlwPrograms.SOURCES.get(MATERIAL),
                 new RawSource("meshvisual/frag_prelude", FRAG_PRELUDE),
@@ -328,12 +337,12 @@ public final class MeshVisualShaders {
             if (localRead) {
                 ctx.define("_FLW_OIT_LOCAL_READ");
             }
-            commonFragTail(ctx, extra);
+            commonFragTail(ctx, smoothness, extra);
         }, roots);
     }
 
     public static String assembleMlabOitFragment(OitInsertMode oitMode, LightShader light, Identifier materialFragment,
-                                                 Consumer<Compilation> extra) {
+                                                 LightSmoothness smoothness, Consumer<Compilation> extra) {
         List<SourceComponent> roots = List.of(
                 FlwPrograms.SOURCES.get(RenderPassShaders.MLAB),
                 FlwPrograms.SOURCES.get(MATERIAL),
@@ -348,7 +357,7 @@ public final class MeshVisualShaders {
                 FlwPrograms.SOURCES.get(MV_OIT_FRAGMENT));
         return assembleFragment(ctx -> {
             RenderPassShaders.mlabProducerDefines(ctx, oitMode);
-            commonFragTail(ctx, extra);
+            commonFragTail(ctx, smoothness, extra);
         }, roots);
     }
 
@@ -360,5 +369,4 @@ public final class MeshVisualShaders {
         return assembleRaw(ctx -> {
         }, roots);
     }
-
 }

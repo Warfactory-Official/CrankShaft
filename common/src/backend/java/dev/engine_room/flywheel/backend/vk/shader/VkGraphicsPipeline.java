@@ -15,8 +15,8 @@ import java.nio.LongBuffer;
  * producers, and the fullscreen composite/depth passes differ only by their {@link Config}. Viewport and scissor are dynamic.
  */
 public final class VkGraphicsPipeline {
-    public static final int COLOR_WRITE_RGBA = VK12.VK_COLOR_COMPONENT_R_BIT | VK12.VK_COLOR_COMPONENT_G_BIT
-            | VK12.VK_COLOR_COMPONENT_B_BIT | VK12.VK_COLOR_COMPONENT_A_BIT;
+    public static final int COLOR_WRITE_RGBA = VK10.VK_COLOR_COMPONENT_R_BIT | VK10.VK_COLOR_COMPONENT_G_BIT
+            | VK10.VK_COLOR_COMPONENT_B_BIT | VK10.VK_COLOR_COMPONENT_A_BIT;
     private static final int INTERNAL_VERTEX_STRIDE = 36;
     private static final int COMPACT_CHUNK_STRIDE = 20;
     private static final int PARTICLE_STRIDE = 28;
@@ -34,69 +34,69 @@ public final class VkGraphicsPipeline {
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
-            stages.get(0).sType$Default().stage(VK12.VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule)
+            stages.get(0).sType$Default().stage(VK10.VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule)
                   .pName(stack.UTF8("main"));
-            stages.get(1).sType$Default().stage(VK12.VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
+            stages.get(1).sType$Default().stage(VK10.VK_SHADER_STAGE_FRAGMENT_BIT).module(fragmentModule)
                   .pName(stack.UTF8("main"));
 
             VkPipelineVertexInputStateCreateInfo vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
                                                                                                    .sType$Default();
             if (config.vertex() == Vertex.INTERNAL) {
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
-                binding.get(0).binding(0).stride(INTERNAL_VERTEX_STRIDE).inputRate(VK12.VK_VERTEX_INPUT_RATE_VERTEX);
+                binding.get(0).binding(0).stride(INTERNAL_VERTEX_STRIDE).inputRate(VK10.VK_VERTEX_INPUT_RATE_VERTEX);
 
                 VkVertexInputAttributeDescription.Buffer attrs = VkVertexInputAttributeDescription.calloc(5, stack);
-                attrs.get(0).location(0).binding(0).format(VK12.VK_FORMAT_R32G32B32_SFLOAT).offset(0);
-                attrs.get(1).location(1).binding(0).format(VK12.VK_FORMAT_R8G8B8A8_UNORM).offset(12);
-                attrs.get(2).location(2).binding(0).format(VK12.VK_FORMAT_R32G32_SFLOAT).offset(16);
-                attrs.get(3).location(4).binding(0).format(VK12.VK_FORMAT_R16G16_UINT).offset(28);
-                attrs.get(4).location(5).binding(0).format(VK12.VK_FORMAT_R8G8B8A8_SNORM).offset(32);
+                attrs.get(0).location(0).binding(0).format(VK10.VK_FORMAT_R32G32B32_SFLOAT).offset(0);
+                attrs.get(1).location(1).binding(0).format(VK10.VK_FORMAT_R8G8B8A8_UNORM).offset(12);
+                attrs.get(2).location(2).binding(0).format(VK10.VK_FORMAT_R32G32_SFLOAT).offset(16);
+                attrs.get(3).location(4).binding(0).format(VK10.VK_FORMAT_R16G16_UINT).offset(28);
+                attrs.get(4).location(5).binding(0).format(VK10.VK_FORMAT_R8G8B8A8_SNORM).offset(32);
 
                 vertexInput.pVertexBindingDescriptions(binding).pVertexAttributeDescriptions(attrs);
             } else if (config.vertex() == Vertex.COMPACT_CHUNK) {
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
-                binding.get(0).binding(0).stride(COMPACT_CHUNK_STRIDE).inputRate(VK12.VK_VERTEX_INPUT_RATE_VERTEX);
+                binding.get(0).binding(0).stride(COMPACT_CHUNK_STRIDE).inputRate(VK10.VK_VERTEX_INPUT_RATE_VERTEX);
 
                 VkVertexInputAttributeDescription.Buffer attrs = VkVertexInputAttributeDescription.calloc(4, stack);
-                attrs.get(0).location(0).binding(0).format(VK12.VK_FORMAT_R32G32_UINT).offset(0);
-                attrs.get(1).location(1).binding(0).format(VK12.VK_FORMAT_R8G8B8A8_UNORM).offset(8);
-                attrs.get(2).location(2).binding(0).format(VK12.VK_FORMAT_R16G16_UINT).offset(12);
-                attrs.get(3).location(3).binding(0).format(VK12.VK_FORMAT_R8G8B8A8_UINT).offset(16);
+                attrs.get(0).location(0).binding(0).format(VK10.VK_FORMAT_R32G32_UINT).offset(0);
+                attrs.get(1).location(1).binding(0).format(VK10.VK_FORMAT_R8G8B8A8_UNORM).offset(8);
+                attrs.get(2).location(2).binding(0).format(VK10.VK_FORMAT_R16G16_UINT).offset(12);
+                attrs.get(3).location(3).binding(0).format(VK10.VK_FORMAT_R8G8B8A8_UINT).offset(16);
 
                 vertexInput.pVertexBindingDescriptions(binding).pVertexAttributeDescriptions(attrs);
             } else if (config.vertex() == Vertex.PARTICLE) {
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
-                binding.get(0).binding(0).stride(PARTICLE_STRIDE).inputRate(VK12.VK_VERTEX_INPUT_RATE_VERTEX);
+                binding.get(0).binding(0).stride(PARTICLE_STRIDE).inputRate(VK10.VK_VERTEX_INPUT_RATE_VERTEX);
 
                 VkVertexInputAttributeDescription.Buffer attrs = VkVertexInputAttributeDescription.calloc(4, stack);
-                attrs.get(0).location(0).binding(0).format(VK12.VK_FORMAT_R32G32B32_SFLOAT).offset(0);
-                attrs.get(1).location(2).binding(0).format(VK12.VK_FORMAT_R32G32_SFLOAT).offset(12);
-                attrs.get(2).location(1).binding(0).format(VK12.VK_FORMAT_R8G8B8A8_UNORM).offset(20);
-                attrs.get(3).location(4).binding(0).format(VK12.VK_FORMAT_R16G16_SINT).offset(24);
+                attrs.get(0).location(0).binding(0).format(VK10.VK_FORMAT_R32G32B32_SFLOAT).offset(0);
+                attrs.get(1).location(2).binding(0).format(VK10.VK_FORMAT_R32G32_SFLOAT).offset(12);
+                attrs.get(2).location(1).binding(0).format(VK10.VK_FORMAT_R8G8B8A8_UNORM).offset(20);
+                attrs.get(3).location(4).binding(0).format(VK10.VK_FORMAT_R16G16_SINT).offset(24);
 
                 vertexInput.pVertexBindingDescriptions(binding).pVertexAttributeDescriptions(attrs);
             } else if (config.vertex() == Vertex.ENTITY) {
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
-                binding.get(0).binding(0).stride(ENTITY_STRIDE).inputRate(VK12.VK_VERTEX_INPUT_RATE_VERTEX);
+                binding.get(0).binding(0).stride(ENTITY_STRIDE).inputRate(VK10.VK_VERTEX_INPUT_RATE_VERTEX);
 
                 VkVertexInputAttributeDescription.Buffer attrs = VkVertexInputAttributeDescription.calloc(6, stack);
-                attrs.get(0).location(0).binding(0).format(VK12.VK_FORMAT_R32G32B32_SFLOAT).offset(0);
-                attrs.get(1).location(1).binding(0).format(VK12.VK_FORMAT_R8G8B8A8_UNORM).offset(12);
-                attrs.get(2).location(2).binding(0).format(VK12.VK_FORMAT_R32G32_SFLOAT).offset(16);
-                attrs.get(3).location(3).binding(0).format(VK12.VK_FORMAT_R16G16_SINT).offset(24);
-                attrs.get(4).location(4).binding(0).format(VK12.VK_FORMAT_R16G16_SINT).offset(28);
-                attrs.get(5).location(5).binding(0).format(VK12.VK_FORMAT_R8G8B8A8_SNORM).offset(32);
+                attrs.get(0).location(0).binding(0).format(VK10.VK_FORMAT_R32G32B32_SFLOAT).offset(0);
+                attrs.get(1).location(1).binding(0).format(VK10.VK_FORMAT_R8G8B8A8_UNORM).offset(12);
+                attrs.get(2).location(2).binding(0).format(VK10.VK_FORMAT_R32G32_SFLOAT).offset(16);
+                attrs.get(3).location(3).binding(0).format(VK10.VK_FORMAT_R16G16_SINT).offset(24);
+                attrs.get(4).location(4).binding(0).format(VK10.VK_FORMAT_R16G16_SINT).offset(28);
+                attrs.get(5).location(5).binding(0).format(VK10.VK_FORMAT_R8G8B8A8_SNORM).offset(32);
 
                 vertexInput.pVertexBindingDescriptions(binding).pVertexAttributeDescriptions(attrs);
             } else if (config.vertex() == Vertex.BLOCK) {
                 VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
-                binding.get(0).binding(0).stride(BLOCK_STRIDE).inputRate(VK12.VK_VERTEX_INPUT_RATE_VERTEX);
+                binding.get(0).binding(0).stride(BLOCK_STRIDE).inputRate(VK10.VK_VERTEX_INPUT_RATE_VERTEX);
 
                 VkVertexInputAttributeDescription.Buffer attrs = VkVertexInputAttributeDescription.calloc(4, stack);
-                attrs.get(0).location(0).binding(0).format(VK12.VK_FORMAT_R32G32B32_SFLOAT).offset(0);
-                attrs.get(1).location(1).binding(0).format(VK12.VK_FORMAT_R8G8B8A8_UNORM).offset(12);
-                attrs.get(2).location(2).binding(0).format(VK12.VK_FORMAT_R32G32_SFLOAT).offset(16);
-                attrs.get(3).location(4).binding(0).format(VK12.VK_FORMAT_R16G16_SINT).offset(24);
+                attrs.get(0).location(0).binding(0).format(VK10.VK_FORMAT_R32G32B32_SFLOAT).offset(0);
+                attrs.get(1).location(1).binding(0).format(VK10.VK_FORMAT_R8G8B8A8_UNORM).offset(12);
+                attrs.get(2).location(2).binding(0).format(VK10.VK_FORMAT_R32G32_SFLOAT).offset(16);
+                attrs.get(3).location(4).binding(0).format(VK10.VK_FORMAT_R16G16_SINT).offset(24);
 
                 vertexInput.pVertexBindingDescriptions(binding).pVertexAttributeDescriptions(attrs);
             }
@@ -104,7 +104,7 @@ public final class VkGraphicsPipeline {
             VkPipelineInputAssemblyStateCreateInfo inputAssembly = VkPipelineInputAssemblyStateCreateInfo.calloc(stack)
                                                                                                          .sType$Default()
                                                                                                          .topology(
-                                                                                                                 VK12.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+                                                                                                                 VK10.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 
             VkPipelineViewportStateCreateInfo viewport = VkPipelineViewportStateCreateInfo.calloc(stack)
                                                                                           .sType$Default()
@@ -114,12 +114,12 @@ public final class VkGraphicsPipeline {
             VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
                                                                                                   .sType$Default()
                                                                                                   .polygonMode(
-                                                                                                          VK12.VK_POLYGON_MODE_FILL)
+                                                                                                          VK10.VK_POLYGON_MODE_FILL)
                                                                                                   .cullMode(
                                                                                                           config.cullMode())
                                                                                                   // Vanilla's VK pipelines use frontFace=CLOCKWISE: the positive-height viewport + Y-flipped projection invert winding vs GL.
                                                                                                   .frontFace(
-                                                                                                          VK12.VK_FRONT_FACE_CLOCKWISE)
+                                                                                                          VK10.VK_FRONT_FACE_CLOCKWISE)
                                                                                                   .lineWidth(1.0F)
                                                                                                   .depthBiasEnable(
                                                                                                           config.depthBiasConstant() != 0.0F || config.depthBiasSlope() != 0.0F)
@@ -132,7 +132,7 @@ public final class VkGraphicsPipeline {
             VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
                                                                                                    .sType$Default()
                                                                                                    .rasterizationSamples(
-                                                                                                           VK12.VK_SAMPLE_COUNT_1_BIT);
+                                                                                                           VK10.VK_SAMPLE_COUNT_1_BIT);
 
             VkPipelineDepthStencilStateCreateInfo depth = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
                                                                                                .sType$Default()
@@ -162,8 +162,8 @@ public final class VkGraphicsPipeline {
             VkPipelineDynamicStateCreateInfo dynamic = VkPipelineDynamicStateCreateInfo.calloc(stack)
                                                                                        .sType$Default()
                                                                                        .pDynamicStates(stack.ints(
-                                                                                               VK12.VK_DYNAMIC_STATE_VIEWPORT,
-                                                                                               VK12.VK_DYNAMIC_STATE_SCISSOR));
+                                                                                               VK10.VK_DYNAMIC_STATE_VIEWPORT,
+                                                                                               VK10.VK_DYNAMIC_STATE_SCISSOR));
 
             VkPipelineRenderingCreateInfoKHR rendering = VkPipelineRenderingCreateInfoKHR.calloc(stack)
                                                                                          .sType$Default()
@@ -206,8 +206,8 @@ public final class VkGraphicsPipeline {
                 .layout(layout.pipelineLayout());
 
             LongBuffer pPipeline = stack.callocLong(1);
-            int result = VK12.vkCreateGraphicsPipelines(VkContext.vkDevice(), 0L, info, null, pPipeline);
-            if (result != VK12.VK_SUCCESS) {
+            int result = VK10.vkCreateGraphicsPipelines(VkContext.vkDevice(), 0L, info, null, pPipeline);
+            if (result != VK10.VK_SUCCESS) {
                 throw new IllegalStateException("Vulkan error " + result + " creating graphics pipeline");
             }
             this.pipeline = pPipeline.get(0);
@@ -219,68 +219,69 @@ public final class VkGraphicsPipeline {
     }
 
     public static Blend additive() {
-        return new Blend(true, VK12.VK_BLEND_FACTOR_ONE, VK12.VK_BLEND_FACTOR_ONE, VK12.VK_BLEND_OP_ADD,
-                VK12.VK_BLEND_FACTOR_ONE, VK12.VK_BLEND_FACTOR_ONE, VK12.VK_BLEND_OP_ADD, COLOR_WRITE_RGBA);
+        return new Blend(true, VK10.VK_BLEND_FACTOR_ONE, VK10.VK_BLEND_FACTOR_ONE, VK10.VK_BLEND_OP_ADD,
+                VK10.VK_BLEND_FACTOR_ONE, VK10.VK_BLEND_FACTOR_ONE, VK10.VK_BLEND_OP_ADD, COLOR_WRITE_RGBA);
     }
 
     public static Blend max() {
-        return new Blend(true, VK12.VK_BLEND_FACTOR_ONE, VK12.VK_BLEND_FACTOR_ONE, VK12.VK_BLEND_OP_MAX,
-                VK12.VK_BLEND_FACTOR_ONE, VK12.VK_BLEND_FACTOR_ONE, VK12.VK_BLEND_OP_MAX, COLOR_WRITE_RGBA);
+        return new Blend(true, VK10.VK_BLEND_FACTOR_ONE, VK10.VK_BLEND_FACTOR_ONE, VK10.VK_BLEND_OP_MAX,
+                VK10.VK_BLEND_FACTOR_ONE, VK10.VK_BLEND_FACTOR_ONE, VK10.VK_BLEND_OP_MAX, COLOR_WRITE_RGBA);
     }
 
     public static Blend composite() {
-        return new Blend(true, VK12.VK_BLEND_FACTOR_SRC_ALPHA, VK12.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-                VK12.VK_BLEND_OP_ADD,
-                VK12.VK_BLEND_FACTOR_ONE, VK12.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, VK12.VK_BLEND_OP_ADD,
+        return new Blend(true, VK10.VK_BLEND_FACTOR_SRC_ALPHA, VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                VK10.VK_BLEND_OP_ADD,
+                VK10.VK_BLEND_FACTOR_ONE, VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, VK10.VK_BLEND_OP_ADD,
                 COLOR_WRITE_RGBA);
     }
 
     public static Blend premultiplied() {
-        return new Blend(true, VK12.VK_BLEND_FACTOR_ONE, VK12.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, VK12.VK_BLEND_OP_ADD,
-                VK12.VK_BLEND_FACTOR_ONE, VK12.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, VK12.VK_BLEND_OP_ADD,
+        return new Blend(true, VK10.VK_BLEND_FACTOR_ONE, VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, VK10.VK_BLEND_OP_ADD,
+                VK10.VK_BLEND_FACTOR_ONE, VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, VK10.VK_BLEND_OP_ADD,
                 COLOR_WRITE_RGBA);
     }
 
     public static Blend crumbling() {
-        return new Blend(true, VK12.VK_BLEND_FACTOR_DST_COLOR, VK12.VK_BLEND_FACTOR_SRC_COLOR, VK12.VK_BLEND_OP_ADD,
-                VK12.VK_BLEND_FACTOR_ONE, VK12.VK_BLEND_FACTOR_ZERO, VK12.VK_BLEND_OP_ADD, COLOR_WRITE_RGBA);
+        return new Blend(true, VK10.VK_BLEND_FACTOR_DST_COLOR, VK10.VK_BLEND_FACTOR_SRC_COLOR, VK10.VK_BLEND_OP_ADD,
+                VK10.VK_BLEND_FACTOR_ONE, VK10.VK_BLEND_FACTOR_ZERO, VK10.VK_BLEND_OP_ADD, COLOR_WRITE_RGBA);
     }
 
     public static Config material(int colorFormat, int depthFormat, Transparency transparency, DepthTest depthTest,
                                   boolean depthWrite, boolean colorWrite, boolean cull, boolean polygonOffset) {
         return new Config(new int[]{colorFormat}, new Blend[]{blendFor(transparency, colorWrite)}, true, depthWrite,
-                compareOp(depthTest), Vertex.INTERNAL, cull ? VK12.VK_CULL_MODE_BACK_BIT : VK12.VK_CULL_MODE_NONE,
+                compareOp(depthTest), Vertex.INTERNAL, cull ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE,
                 depthFormat,
                 polygonOffset ? 10.0F : 0.0F, polygonOffset && transparency != Transparency.OPAQUE ? 1.0F : 0.0F);
     }
 
     private static Blend blendFor(Transparency transparency, boolean colorWrite) {
         int wm = colorWrite ? COLOR_WRITE_RGBA : 0;
-        int one = VK12.VK_BLEND_FACTOR_ONE;
-        int zero = VK12.VK_BLEND_FACTOR_ZERO;
-        int sa = VK12.VK_BLEND_FACTOR_SRC_ALPHA;
-        int omsa = VK12.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        int sc = VK12.VK_BLEND_FACTOR_SRC_COLOR;
-        int add = VK12.VK_BLEND_OP_ADD;
+        int one = VK10.VK_BLEND_FACTOR_ONE;
+        int zero = VK10.VK_BLEND_FACTOR_ZERO;
+        int sa = VK10.VK_BLEND_FACTOR_SRC_ALPHA;
+        int omsa = VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        int sc = VK10.VK_BLEND_FACTOR_SRC_COLOR;
+        int add = VK10.VK_BLEND_OP_ADD;
         return switch (transparency) {
             case OPAQUE -> new Blend(false, 0, 0, 0, 0, 0, 0, wm);
             case ADDITIVE -> new Blend(true, one, one, add, one, one, add, wm);
             case LIGHTNING, ORDER_INDEPENDENT_ADDITIVE -> new Blend(true, sa, one, add, sa, one, add, wm);
             case GLINT -> new Blend(true, sc, one, add, zero, one, add, wm);
             case CRUMBLING, TRANSLUCENT, ORDER_INDEPENDENT -> new Blend(true, sa, omsa, add, one, omsa, add, wm);
+            case TRANSLUCENT_ALPHA_REPLACE -> new Blend(true, sa, omsa, add, one, zero, add, wm);
         };
     }
 
     public static int compareOp(DepthTest depthTest) {
         return switch (depthTest) {
-            case OFF, ALWAYS -> VK12.VK_COMPARE_OP_ALWAYS;
-            case NEVER -> VK12.VK_COMPARE_OP_NEVER;
-            case LESS -> VK12.VK_COMPARE_OP_GREATER;
-            case EQUAL -> VK12.VK_COMPARE_OP_EQUAL;
-            case LEQUAL -> VK12.VK_COMPARE_OP_GREATER_OR_EQUAL;
-            case GREATER -> VK12.VK_COMPARE_OP_LESS;
-            case NOTEQUAL -> VK12.VK_COMPARE_OP_NOT_EQUAL;
-            case GEQUAL -> VK12.VK_COMPARE_OP_LESS_OR_EQUAL;
+            case OFF, ALWAYS -> VK10.VK_COMPARE_OP_ALWAYS;
+            case NEVER -> VK10.VK_COMPARE_OP_NEVER;
+            case LESS -> VK10.VK_COMPARE_OP_GREATER;
+            case EQUAL -> VK10.VK_COMPARE_OP_EQUAL;
+            case LEQUAL -> VK10.VK_COMPARE_OP_GREATER_OR_EQUAL;
+            case GREATER -> VK10.VK_COMPARE_OP_LESS;
+            case NOTEQUAL -> VK10.VK_COMPARE_OP_NOT_EQUAL;
+            case GEQUAL -> VK10.VK_COMPARE_OP_LESS_OR_EQUAL;
         };
     }
 
@@ -297,9 +298,9 @@ public final class VkGraphicsPipeline {
         long vs = vertexModule;
         long fs = fragmentModule;
         VkContext.deferDestroy(() -> {
-            VK12.vkDestroyPipeline(VkContext.vkDevice(), p, null);
-            VK12.vkDestroyShaderModule(VkContext.vkDevice(), vs, null);
-            VK12.vkDestroyShaderModule(VkContext.vkDevice(), fs, null);
+            VK10.vkDestroyPipeline(VkContext.vkDevice(), p, null);
+            VK10.vkDestroyShaderModule(VkContext.vkDevice(), vs, null);
+            VK10.vkDestroyShaderModule(VkContext.vkDevice(), fs, null);
         });
         layout.delete();
     }

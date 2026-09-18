@@ -1,13 +1,11 @@
 package dev.engine_room.flywheel.backend.compile;
 
 import dev.engine_room.flywheel.api.instance.InstanceType;
-import dev.engine_room.flywheel.api.material.DepthTest;
-import dev.engine_room.flywheel.api.material.LightShader;
-import dev.engine_room.flywheel.api.material.Material;
-import dev.engine_room.flywheel.api.material.MaterialShaders;
-import dev.engine_room.flywheel.api.material.Transparency;
+import dev.engine_room.flywheel.api.material.*;
+import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
+import dev.engine_room.flywheel.backend.engine.GeometryAtlas;
 import dev.engine_room.flywheel.backend.engine.OitTransparency;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
@@ -15,12 +13,10 @@ import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout;
 import dev.engine_room.flywheel.backend.vk.shader.*;
+import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.util.shaderc.Shaderc;
-import org.lwjgl.vulkan.EXTMeshShader;
-import org.lwjgl.vulkan.VK12;
-import org.lwjgl.vulkan.VkBufferDeviceAddressInfo;
-import org.lwjgl.vulkan.VkDevice;
+import org.lwjgl.vulkan.*;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -32,12 +28,12 @@ import java.util.function.Consumer;
 public final class VkMeshVisualPipelines {
     public static final int PUSH_BYTES = 48;
     public static final int COMMAND_STRIDE = 12;
-    private static final int FMT_RGBA32F = VK12.VK_FORMAT_R32G32B32A32_SFLOAT;
-    private static final int FMT_RGBA16F = VK12.VK_FORMAT_R16G16B16A16_SFLOAT;
+    private static final int FMT_RGBA32F = VK10.VK_FORMAT_R32G32B32A32_SFLOAT;
+    private static final int FMT_RGBA16F = VK10.VK_FORMAT_R16G16B16A16_SFLOAT;
     private static final int TASK = EXTMeshShader.VK_SHADER_STAGE_TASK_BIT_EXT;
     private static final int MESH = EXTMeshShader.VK_SHADER_STAGE_MESH_BIT_EXT;
-    private static final int FRAG = VK12.VK_SHADER_STAGE_FRAGMENT_BIT;
-    private static final int COMP = VK12.VK_SHADER_STAGE_COMPUTE_BIT;
+    private static final int FRAG = VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
+    private static final int COMP = VK10.VK_SHADER_STAGE_COMPUTE_BIT;
     private static final int SSBO = VkDescriptorLayout.TYPE_STORAGE_BUFFER;
     private static final int UBO = VkDescriptorLayout.TYPE_UNIFORM_BUFFER;
     private static final int SAMPLER = VkDescriptorLayout.TYPE_COMBINED_IMAGE_SAMPLER;
@@ -50,14 +46,18 @@ public final class VkMeshVisualPipelines {
     private final Map<OitKey, VkMeshPipeline[]> mlab = new HashMap<>();
     private VkComputePipeline builder;
 
-    private static List<VkDescriptorLayout.Binding> drawBindings(boolean oit, boolean localRead) {
+    private static List<VkDescriptorLayout.Binding> drawBindings(boolean oit, boolean localRead, LightShader light,
+                                                                 MaterialShaders shaders) {
         boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+        int frameStages = shaders.vertexSource().equals(StandardMaterialShaders.LINE.vertexSource())
+                ? TASK | MESH : TASK;
         List<VkDescriptorLayout.Binding> b = new ArrayList<>(List.of(
                 new VkDescriptorLayout.Binding(1, SSBO, TASK | MESH),
                 new VkDescriptorLayout.Binding(2, SSBO, TASK | MESH),
                 new VkDescriptorLayout.Binding(4, SSBO, TASK | MESH), new VkDescriptorLayout.Binding(5, SSBO, FRAG),
                 new VkDescriptorLayout.Binding(6, SSBO, FRAG), new VkDescriptorLayout.Binding(7, SSBO, TASK | MESH),
-                new VkDescriptorLayout.Binding(8, UBO, TASK), new VkDescriptorLayout.Binding(9, UBO, MESH | FRAG),
+                new VkDescriptorLayout.Binding(8, UBO, frameStages),
+                new VkDescriptorLayout.Binding(9, UBO, MESH | FRAG),
                 new VkDescriptorLayout.Binding(16, UBO, MESH), new VkDescriptorLayout.Binding(17, UBO, FRAG),
                 new VkDescriptorLayout.Binding(18, UBO, FRAG), new VkDescriptorLayout.Binding(19, UBO, FRAG),
                 new VkDescriptorLayout.Binding(22, UBO, FRAG), new VkDescriptorLayout.Binding(23, SAMPLER, TASK)));
@@ -66,6 +66,8 @@ public final class VkMeshVisualPipelines {
             b.add(new VkDescriptorLayout.Binding(11, SAMPLER, FRAG));
             b.add(new VkDescriptorLayout.Binding(12, SAMPLER, FRAG));
         }
+        if (RenderPassShaders.readsGeometry(light))
+            b.add(new VkDescriptorLayout.Binding(GeometryAtlas.VK_BINDING, SAMPLER, FRAG));
         if (oit) {
             int oitRead = localRead ? VkDescriptorLayout.TYPE_INPUT_ATTACHMENT : SAMPLER;
             if (localRead || !bindless) {
@@ -88,7 +90,9 @@ public final class VkMeshVisualPipelines {
                 (VkCaps.BINDLESS_TEXTURES_NEGOTIATED ? VkPrograms.BINDLESS : ShaderAssembly.NO_EXTRA)
                         .andThen(MeshVisualShaders.clipExtra(key.type()))
                         .andThen(RenderPassShaders.debugExtra(debug))
-                        .andThen(embeddedExtra(key.embedded())));
+                        .andThen(embeddedExtra(key.embedded()))
+                        .andThen(key.shaders().vertexSource().equals(StandardMaterialShaders.LINE.vertexSource())
+                                ? ctx -> ctx.define("FLW_LINE_VK_MESH") : ShaderAssembly.NO_EXTRA));
         return VkShaderCompiler.compileModule("meshvisual_vk_mesh" + (debug == DebugMode.OFF ? "" : "_debug"), src,
                 Shaderc.shaderc_mesh_shader);
     }
@@ -120,7 +124,7 @@ public final class VkMeshVisualPipelines {
         VkDevice device = VkContext.vkDevice();
         for (long module : modules) {
             if (module != 0L) {
-                VK12.vkDestroyShaderModule(device, module, null);
+                VK10.vkDestroyShaderModule(device, module, null);
             }
         }
     }
@@ -135,7 +139,8 @@ public final class VkMeshVisualPipelines {
     public VkMeshPipeline crumblingPipeline(Material crumblingMaterial, InstanceType<?> type, int colorFormat,
                                             int depthFormat) {
         return crumbling.computeIfAbsent(new CrumblingKey(type, FrameUniforms.debugMode(),
-                crumblingMaterial.depthTest(), crumblingMaterial.backfaceCulling()), k -> {
+                crumblingMaterial.depthTest(), crumblingMaterial.backfaceCulling(),
+                BackendConfig.INSTANCE.lightSmoothness()), k -> {
             InstanceType<?> t = k.type();
             var debug = RenderPassShaders.debugExtra(k.debug());
             String debugName = k.debug() == DebugMode.OFF ? "" : "_debug";
@@ -145,7 +150,7 @@ public final class VkMeshVisualPipelines {
             try {
                 mesh = VkShaderCompiler.compileModule("meshvisual_vk_crumbling_mesh" + debugName,
                         MeshVisualShaders.assembleVkCrumblingMesh(t, debug), Shaderc.shaderc_mesh_shader);
-                frag = compileFragment(MeshVisualShaders.assembleCrumblingFragment(debug),
+                frag = compileFragment(MeshVisualShaders.assembleCrumblingFragment(k.smoothness(), debug),
                         "meshvisual_vk_crumbling_frag" + debugName);
                 List<VkDescriptorLayout.Binding> b = List.of(
                         new VkDescriptorLayout.Binding(1, SSBO, MESH), new VkDescriptorLayout.Binding(5, SSBO, FRAG),
@@ -162,7 +167,7 @@ public final class VkMeshVisualPipelines {
                 return new VkMeshPipeline(layout, 0L, mesh, frag,
                         new int[]{colorFormat}, new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.crumbling()},
                         VkGraphicsPipeline.compareOp(k.depthTest()),
-                        k.cull() ? VK12.VK_CULL_MODE_BACK_BIT : VK12.VK_CULL_MODE_NONE, depthFormat, null, null,
+                        k.cull() ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE, depthFormat, null, null,
                         10.0F, 1.0F);
             } catch (Throwable ex) {
                 if (layout != null) {
@@ -190,10 +195,12 @@ public final class VkMeshVisualPipelines {
                                       .type());
                 mesh = compileMesh(key.mesh(), key.debug());
                 String fsGl = MeshVisualShaders.assembleFragment(key.light(), key.mesh().shaders().fragmentSource(),
-                        fragmentExtra(key.mesh(), key.debug(), false));
+                        key.smoothness(), fragmentExtra(key.mesh(), key.debug(), false));
                 frag = compileFragment(fsGl, "meshvisual_vk_frag"
                         + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug().getSerializedName()));
-                layout = new VkDescriptorLayout(drawBindings(false, false), PUSH_BYTES, TASK | MESH, bindless);
+                layout = new VkDescriptorLayout(drawBindings(false, false, key.light(), key.mesh().shaders()),
+                        PUSH_BYTES,
+                        TASK | MESH, bindless);
                 VkGraphicsPipeline.Config config = VkGraphicsPipeline.material(key.colorFormat(), key.depthFormat(),
                         key.transparency(), key.depthTest(), key.depthWrite(), key.colorWrite(), key.cull(),
                         key.polygonOffset());
@@ -225,13 +232,15 @@ public final class VkMeshVisualPipelines {
                 task = compileTask(type);
                 mesh = compileMesh(key.mesh(), key.debug());
                 String fsGl = MeshVisualShaders.assembleOitFragment(mode, key.light(),
-                        key.mesh().shaders().fragmentSource(), folded,
+                        key.mesh().shaders().fragmentSource(), key.smoothness(), folded,
                         fragmentExtra(key.mesh(), key.debug(), emission));
                 frag = compileFragment(fsGl, "meshvisual_vk_oit_" + mode.name + (emission ? "_emission" : "")
                         + (folded ? "_folded" : "")
                         + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug().getSerializedName()));
                 if (folded) {
-                    layout = new VkDescriptorLayout(drawBindings(true, true), PUSH_BYTES, TASK | MESH, bindless);
+                    layout = new VkDescriptorLayout(drawBindings(true, true, key.light(), key.mesh().shaders()),
+                            PUSH_BYTES,
+                            TASK | MESH, bindless);
                     arr[idx] = new VkMeshPipeline(layout, task, mesh, frag, VkOitPipelines.FOLDED_FORMATS,
                             VkOitPipelines.foldedBlends(mode), key.compareOp(), key.cullMode(), depthFormat,
                             VkOitPipelines.foldedLocations(mode), VkOitPipelines.FOLDED_INPUT_INDICES,
@@ -246,7 +255,9 @@ public final class VkMeshVisualPipelines {
                     VkGraphicsPipeline.Blend[] blends = new VkGraphicsPipeline.Blend[colorFormats.length];
                     Arrays.fill(blends,
                             mode == OitMode.DEPTH_RANGE ? VkGraphicsPipeline.max() : VkGraphicsPipeline.additive());
-                    layout = new VkDescriptorLayout(drawBindings(true, false), PUSH_BYTES, TASK | MESH, bindless);
+                    layout = new VkDescriptorLayout(drawBindings(true, false, key.light(), key.mesh().shaders()),
+                            PUSH_BYTES,
+                            TASK | MESH, bindless);
                     arr[idx] = new VkMeshPipeline(layout, task, mesh, frag, colorFormats, blends, key.compareOp(),
                             key.cullMode(), depthFormat, null, null, key.biasConstant(), key.biasSlope());
                 }
@@ -277,10 +288,12 @@ public final class VkMeshVisualPipelines {
                 task = compileTask(type);
                 mesh = compileMesh(key.mesh(), key.debug());
                 String fsGl = MeshVisualShaders.assembleMlabOitFragment(oitMode, key.light(),
-                        key.mesh().shaders().fragmentSource(), fragmentExtra(key.mesh(), key.debug(), emission));
+                        key.mesh().shaders().fragmentSource(), key.smoothness(),
+                        fragmentExtra(key.mesh(), key.debug(), emission));
                 frag = compileFragment(fsGl, "meshvisual_vk_mlab_" + oitMode + (emission ? "_emission" : "")
                         + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug().getSerializedName()));
-                List<VkDescriptorLayout.Binding> b = new ArrayList<>(drawBindings(false, false));
+                List<VkDescriptorLayout.Binding> b = new ArrayList<>(drawBindings(false, false, key.light(),
+                        key.mesh().shaders()));
                 VkOitPipelines.mlabBindings(b, oitMode);
                 layout = new VkDescriptorLayout(b, PUSH_BYTES, TASK | MESH, bindless);
                 arr[idx] = new VkMeshPipeline(layout, task, mesh, frag, new int[0], new VkGraphicsPipeline.Blend[0],
@@ -364,7 +377,7 @@ public final class VkMeshVisualPipelines {
 
     // Fixed-function state as VkUberPipelines' OIT/insert producer keys (offset keeps the slope term).
     private record OitKey(MeshKey mesh, LightShader light, DepthTest depthTest, boolean cull, boolean polygonOffset,
-                          int cutoutGen, int fogGen, DebugMode debug) {
+                          int cutoutGen, int fogGen, DebugMode debug, LightSmoothness smoothness) {
         static OitKey of(InstanceType<?> type, Material material, boolean embedded) {
             return new OitKey(MeshKey.of(type, material, embedded), material.light(), material.depthTest(),
                     material.backfaceCulling(),
@@ -375,7 +388,7 @@ public final class VkMeshVisualPipelines {
                     MaterialShaderIndices.fogSources()
                                          .all()
                                          .size(),
-                    FrameUniforms.debugMode());
+                    FrameUniforms.debugMode(), BackendConfig.INSTANCE.lightSmoothness());
         }
 
         int compareOp() {
@@ -383,7 +396,7 @@ public final class VkMeshVisualPipelines {
         }
 
         int cullMode() {
-            return cull ? VK12.VK_CULL_MODE_BACK_BIT : VK12.VK_CULL_MODE_NONE;
+            return cull ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE;
         }
 
         float biasConstant() {
@@ -401,7 +414,8 @@ public final class VkMeshVisualPipelines {
      */
     private record SolidKey(MeshKey mesh, LightShader light, int colorFormat, int depthFormat,
                             Transparency transparency, DepthTest depthTest, boolean depthWrite, boolean colorWrite,
-                            boolean cull, boolean polygonOffset, int cutoutGen, int fogGen, DebugMode debug) {
+                            boolean cull, boolean polygonOffset, int cutoutGen, int fogGen, DebugMode debug,
+                            LightSmoothness smoothness) {
         static SolidKey of(InstanceType<?> type, Material material, boolean embedded, int colorFormat,
                            int depthFormat) {
             return new SolidKey(MeshKey.of(type, material, embedded), material.light(), colorFormat, depthFormat,
@@ -416,13 +430,13 @@ public final class VkMeshVisualPipelines {
                     MaterialShaderIndices.fogSources()
                                          .all()
                                          .size(),
-                    // Read per request like the registry generations: a /flywheel debug shader toggle keys a
-                    // fresh pipeline next frame (solidPipeline resolves per multiDraw per frame). OIT/crumbling
-                    // stay debug-free, matching the vertex paths.
-                    FrameUniforms.debugMode());
+                    // Read per request like the registry generations: debug/smoothness changes key a fresh
+                    // pipeline next frame (callers resolve per multiDraw per frame).
+                    FrameUniforms.debugMode(), BackendConfig.INSTANCE.lightSmoothness());
         }
     }
 
-    private record CrumblingKey(InstanceType<?> type, DebugMode debug, DepthTest depthTest, boolean cull) {
+    private record CrumblingKey(InstanceType<?> type, DebugMode debug, DepthTest depthTest, boolean cull,
+                                LightSmoothness smoothness) {
     }
 }

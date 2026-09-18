@@ -2,6 +2,8 @@
 // Copyright (C) 2023-2026 Cortex and Nvidium contributors
 // Copyright (C) 2026 movblock
 
+#include "flywheel:internal/terrain_region_input.glsl"
+
 #ifndef MESHLET_VK_TRANSLUCENT_SECTION_DATA_GLSL
 #define MESHLET_VK_TRANSLUCENT_SECTION_DATA_GLSL
 
@@ -38,11 +40,7 @@ ivec3 unpackSectionOffset(uint sectionId) {
 }
 
 ivec3 unpackRegionChunkOrigin(uvec4 regionInputEntry) {
-    int packedXZ = int(regionInputEntry.x);
-    int cx = (packedXZ << 16) >> 16;
-    int cz = packedXZ >> 16;
-    int cy = (int(regionInputEntry.y) << 16) >> 16;
-    return ivec3(cx, cy, cz);
+    return _flw_unpackRegionOrigin(regionInputEntry);
 }
 
 ivec3 sectionChunkOrigin(uvec4 regionInputEntry, uint sectionId) {

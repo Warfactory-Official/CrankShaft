@@ -10,7 +10,10 @@ import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.client.model.geom.builders.UVPair;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.LightCoordsUtil;
+import net.minecraft.world.item.Item;
+import org.jspecify.annotations.Nullable;
 
 // Item variant of FabricMeshEmitter: consumes raw BakedQuads with a full display-space transform + a flat per-quad
 // tint. Vanilla's (Fabric) BakedQuad has no bakedColors(), so the flat tint is used alone (no baked-shade multiply;
@@ -58,8 +61,8 @@ final class ItemMeshEmitter {
         return positions.isEmpty();
     }
 
-    BakedMesh build() {
+    BakedMesh build(Item item, @Nullable Identifier itemModel) {
         return new BakedMesh(positions.toFloatArray(), uvs.toFloatArray(), normals.toFloatArray(),
-                colors.toIntArray(), overlays.toIntArray(), lights.toIntArray());
+                colors.toIntArray(), overlays.toIntArray(), lights.toIntArray(), item, itemModel);
     }
 }

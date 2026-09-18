@@ -4,7 +4,7 @@ const uint _FLW_MIPMAP_LENGTH = 1u;
 const uint _FLW_BACKFACE_CULLING_LENGTH = 1u;
 const uint _FLW_POLYGON_OFFSET_LENGTH = 1u;
 const uint _FLW_DEPTH_TEST_LENGTH = 4u;
-const uint _FLW_TRANSPARENCY_LENGTH = 3u;
+const uint _FLW_TRANSPARENCY_LENGTH = 4u;
 const uint _FLW_WRITE_MASK_LENGTH = 2u;
 const uint _FLW_USE_OVERLAY_LENGTH = 1u;
 const uint _FLW_USE_LIGHT_LENGTH = 1u;
@@ -38,7 +38,7 @@ const uint _FLW_CARDINAL_LIGHTING_MODE_MASK = ((1u << _FLW_CARDINAL_LIGHTING_MOD
 const uint _FLW_AMBIENT_OCCLUSION_MASK = ((1u << _FLW_AMBIENT_OCCLUSION_LENGTH) - 1u) << _FLW_AMBIENT_OCCLUSION_OFFSET;
 
 // Packed format:
-// ambientOcclusion[1] | cardinalLightingMode[2] | useLight[1] | useOverlay[1] | writeMask[2] | transparency[3] | depthTest[4] | polygonOffset[1] | backfaceCulling[1] | mipmap[1] | blur[1]
+// ambientOcclusion[1] | cardinalLightingMode[2] | useLight[1] | useOverlay[1] | writeMask[2] | transparency[4] | depthTest[4] | polygonOffset[1] | backfaceCulling[1] | mipmap[1] | blur[1]
 void _flw_unpackMaterialProperties(uint p, out FlwMaterial m) {
     m.blur = (p & _FLW_BLUR_MASK) != 0u;
     m.mipmap = (p & _FLW_MIPMAP_MASK) != 0u;

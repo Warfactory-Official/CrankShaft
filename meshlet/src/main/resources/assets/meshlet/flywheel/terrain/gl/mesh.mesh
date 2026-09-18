@@ -62,7 +62,7 @@ layout(location = 1) out PerVertex {
 #endif
 
 Vertex fetchVertex(restrict Vertex *base, uint vertexIndex) {
-    return base[vertexIndex]; // one struct load; the arena's stride-20 layout IS sizeof(Vertex), so no 5x scalar fetch
+    return base[vertexIndex];// one struct load: the arena's stride IS sizeof(Vertex), so no per-field fetch
 }
 
 void emitTriangle(uint primId, uint v0, uint v1, uint v2) {
@@ -86,7 +86,7 @@ void main() {
     // Adding the fraction instead double-counts it -> a per-block sawtooth that resets at every integer block boundary.
     // Region origin comes from u_regionInput[slot] (scene UBO pointer) -- no per-region UBO 10 rebind under one multidraw.
     ivec3 chunkOrigin = sectionChunkOrigin(u_regionInput[slot], sectionId);
-    vec3 sectionOriginBlocks = vec3(chunkOrigin) * 16.0 - vec3(cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
+    vec3 sectionOriginBlocks = vec3(chunkOrigin * 16 - cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
 
     // This mesh workgroup owns a 16-quad slice of the section; the task spawned
     // ceil(quadCount*2/32) = ceil(quadCount/16) child workgroups.

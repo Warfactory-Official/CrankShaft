@@ -47,11 +47,11 @@ public final class LineModelBuilder {
 
         if (data == null) {
             vertexView = new FullVertexView();
-            data = MemoryBlock.mallocTracked(segmentCount * 4 * vertexView.stride());
+            data = MemoryBlock.mallocTracked(segmentCount * 4L * vertexView.stride());
             vertexView.ptr(data.ptr());
             vertexCount = 0;
         } else {
-            long requiredCapacity = (vertexCount + segmentCount * 4) * vertexView.stride();
+            long requiredCapacity = (vertexCount + segmentCount * 4L) * vertexView.stride();
 
             if (requiredCapacity > data.size()) {
                 data = data.realloc(requiredCapacity);
@@ -88,7 +88,7 @@ public final class LineModelBuilder {
             vertexView.b(vertexCount + i, 1);
             vertexView.a(vertexCount + i, 1);
             vertexView.u(vertexCount + i, 0);
-            vertexView.v(vertexCount + i, 0);
+            vertexView.v(vertexCount + i, i & 1);
             vertexView.overlay(vertexCount + i, OverlayTexture.NO_OVERLAY);
             vertexView.light(vertexCount + i, LightCoordsUtil.FULL_BRIGHT);
             vertexView.normalX(vertexCount + i, normalX);
@@ -127,7 +127,7 @@ public final class LineModelBuilder {
         return model;
     }
 
-    private static class LineMesh implements Mesh {
+    private record LineMesh(VertexList vertexList, Vector4fc boundingSphere) implements Mesh {
         private static final IndexSequence INDEX_SEQUENCE = (ptr, count) -> {
             int numVertices = 2 * count / 3;
             int baseVertex = 0;
@@ -145,13 +145,6 @@ public final class LineModelBuilder {
                 ptr += 24;
             }
         };
-        private final VertexList vertexList;
-        private final Vector4fc boundingSphere;
-
-        public LineMesh(VertexList vertexList, Vector4fc boundingSphere) {
-            this.vertexList = vertexList;
-            this.boundingSphere = boundingSphere;
-        }
 
         @Override
         public int vertexCount() {
@@ -171,11 +164,6 @@ public final class LineModelBuilder {
         @Override
         public int indexCount() {
             return vertexCount() / 2 * 3;
-        }
-
-        @Override
-        public Vector4fc boundingSphere() {
-            return boundingSphere;
         }
     }
 }

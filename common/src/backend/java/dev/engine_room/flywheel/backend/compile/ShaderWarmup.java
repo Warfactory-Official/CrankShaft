@@ -4,11 +4,11 @@ import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.CutoutShader;
 import dev.engine_room.flywheel.api.material.FogShader;
 import dev.engine_room.flywheel.api.material.Material;
-import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.engine.BerFamily;
 import dev.engine_room.flywheel.backend.engine.CrumblingPipelines;
+import dev.engine_room.flywheel.backend.engine.OitTransparency;
 import dev.engine_room.flywheel.backend.engine.indirect.IndirectPipeline;
 import dev.engine_room.flywheel.backend.engine.indirect.InstanceTypeIds;
 import dev.engine_room.flywheel.backend.engine.indirect.MeshVisualDrawManager;
@@ -22,6 +22,7 @@ import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.FogShaders;
 import dev.engine_room.flywheel.lib.material.Materials;
 import dev.engine_room.flywheel.lib.util.ShadersModHelper;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 
 import java.lang.reflect.Field;
@@ -161,7 +162,7 @@ public final class ShaderWarmup {
         List<Material> materials = warmMaterials();
         for (Material material : materials) {
             IndirectPipeline.uberPipelineFor(material, false);
-            if (material.transparency() != Transparency.OPAQUE) {
+            if (OitTransparency.orderIndependent(material)) {
                 for (OitMode mode : OitMode.values()) {
                     if (mode != OitMode.OFF) {
                         OitPipelines.uberProducer(material, mode, false);
@@ -245,8 +246,8 @@ public final class ShaderWarmup {
             terrain.sectionTestPipeline();
             terrain.commandBuilderPipeline();
             terrain.translucentOitCullPipeline();
-            terrain.drawPipeline(false, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
-            terrain.drawPipeline(true, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
+            terrain.drawPipeline(false, VK10.VK_FORMAT_R8G8B8A8_UNORM, VK10.VK_FORMAT_D32_SFLOAT);
+            terrain.drawPipeline(true, VK10.VK_FORMAT_R8G8B8A8_UNORM, VK10.VK_FORMAT_D32_SFLOAT);
             for (OitMode mode : OitMode.values()) {
                 if (mode == OitMode.OFF) {
                     continue;
@@ -265,8 +266,8 @@ public final class ShaderWarmup {
         VkUberPipelines uber = programs.uber();
         List<Material> materials = warmMaterials();
         for (Material material : materials) {
-            uber.drawPipeline(material, false, smoothness, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
-            if (material.transparency() != Transparency.OPAQUE) {
+            uber.drawPipeline(material, false, smoothness, VK10.VK_FORMAT_R8G8B8A8_UNORM, VK10.VK_FORMAT_D32_SFLOAT);
+            if (OitTransparency.orderIndependent(material)) {
                 for (OitMode mode : OitMode.values()) {
                     if (mode == OitMode.OFF) {
                         continue;
@@ -281,32 +282,32 @@ public final class ShaderWarmup {
             }
         }
         for (InstanceType<?> type : STANDARD_TYPES) {
-            uber.crumblingPipeline(Materials.CRUMBLING, type, smoothness, VK12.VK_FORMAT_R8G8B8A8_UNORM,
-                    VK12.VK_FORMAT_D32_SFLOAT);
+            uber.crumblingPipeline(Materials.CRUMBLING, type, smoothness, VK10.VK_FORMAT_R8G8B8A8_UNORM,
+                    VK10.VK_FORMAT_D32_SFLOAT);
         }
 
         if (VkCaps.MESH_SHADER_NEGOTIATED) {
             VkMeshVisualPipelines mesh = programs.meshVisual();
             mesh.builderPipeline();
             for (InstanceType<?> type : STANDARD_TYPES) {
-                mesh.crumblingPipeline(Materials.CRUMBLING, type, VK12.VK_FORMAT_R8G8B8A8_UNORM,
-                        VK12.VK_FORMAT_D32_SFLOAT);
+                mesh.crumblingPipeline(Materials.CRUMBLING, type, VK10.VK_FORMAT_R8G8B8A8_UNORM,
+                        VK10.VK_FORMAT_D32_SFLOAT);
             }
             for (InstanceType<?> type : MESH_VISUAL_TYPES) {
                 for (Material material : materials) {
-                    if (material.transparency() == Transparency.OPAQUE) {
-                        mesh.solidPipeline(type, material, false, VK12.VK_FORMAT_R8G8B8A8_UNORM,
-                                VK12.VK_FORMAT_D32_SFLOAT);
+                    if (!OitTransparency.orderIndependent(material)) {
+                        mesh.solidPipeline(type, material, false, VK10.VK_FORMAT_R8G8B8A8_UNORM,
+                                VK10.VK_FORMAT_D32_SFLOAT);
                     } else {
                         for (OitMode mode : OitMode.values()) {
                             if (mode == OitMode.OFF) {
                                 continue;
                             }
-                            mesh.oitPipeline(type, material, false, mode, VK12.VK_FORMAT_D32_SFLOAT, localRead);
+                            mesh.oitPipeline(type, material, false, mode, VK10.VK_FORMAT_D32_SFLOAT, localRead);
                         }
                         for (OitInsertMode mode : OitInsertMode.values()) {
                             if (mode != OitInsertMode.MLAB || interlock) {
-                                mesh.mlabPipeline(type, material, false, mode, VK12.VK_FORMAT_D32_SFLOAT);
+                                mesh.mlabPipeline(type, material, false, mode, VK10.VK_FORMAT_D32_SFLOAT);
                             }
                         }
                     }

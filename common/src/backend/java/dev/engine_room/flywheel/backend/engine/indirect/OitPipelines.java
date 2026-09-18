@@ -10,6 +10,7 @@ import com.mojang.blaze3d.shaders.ShaderSource;
 import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
@@ -21,14 +22,16 @@ import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.BerFamily;
 import dev.engine_room.flywheel.backend.engine.OitTransparency;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainVertexFormat;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
+import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
-import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.impl.CompactChunkVertex;
 import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
+import org.jspecify.annotations.Nullable;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -67,7 +70,8 @@ public final class OitPipelines {
     private static final Identifier CHUNK_SODIUM_VERTEX = ResourceUtil.rl("codegen/oit/chunk_sodium");
     private static final Identifier CHUNK_SODIUM_VERTEX_MDI = ResourceUtil.rl("codegen/oit/chunk_sodium_mdi");
     private static final Identifier CHUNK_SODIUM_VERTEX_MDI_FADE = ResourceUtil.rl("codegen/oit/chunk_sodium_mdi_fade");
-    private static final Consumer<Compilation> DRAW_PARAMETERS = ctx -> ctx.requireExtension("GL_ARB_shader_draw_parameters");
+    private static final Consumer<Compilation> DRAW_PARAMETERS = ctx -> ctx.requireExtension(
+            "GL_ARB_shader_draw_parameters");
     private static final Identifier[] BER_VERTEX = new Identifier[BerFamily.VALUES.length];
     private static final Map<Identifier, BerFamily> BER_VERTEX_FAMILY = new HashMap<>();
     private static final Identifier[][] BER_FRAGMENT = new Identifier[BerFamily.VALUES.length][OitMode.values().length];
@@ -153,8 +157,10 @@ public final class OitPipelines {
             if (mlabUber != null) {
                 yield RenderPassShaders.assembleUberMlabFragment(mlabUber.mode(), mlabUber.light(), mlabUber.material(),
                         mlabUber.smoothness(), mlabUber.debug(), RenderPassShaders.maybeBindlessGl()
-                                .andThen(emissionExtra(mlabUber.emission()))
-                                .andThen(embeddedExtra(mlabUber.embedded())));
+                                                                                  .andThen(emissionExtra(
+                                                                                          mlabUber.emission()))
+                                                                                  .andThen(embeddedExtra(
+                                                                                          mlabUber.embedded())));
             }
             ChunkMlabKey mlabChunk = CHUNK_MLAB_KEY.get(id);
             if (mlabChunk != null) {
@@ -230,6 +236,8 @@ public final class OitPipelines {
             WEATHER_FRAGMENT_MODE.put(weatherId, mode);
         }
     }
+    // Sodium-arena producers read the live chunk vertex layout; Iris swaps it, invalidating every cached pipeline.
+    private static @Nullable VertexFormat sodiumBuiltFor;
 
     private OitPipelines() {
     }
@@ -352,7 +360,7 @@ public final class OitPipelines {
                                                                        key.polygonOffset() ? 10.0f : 0.0f))
                                                        .withCull(key.cull());
 
-        builder.withBindGroupLayout(producerBindGroup(mode, true, false));
+        builder.withBindGroupLayout(producerBindGroup(mode, true, false, key.light()));
 
         return withOitColorTargets(builder, mode, "OIT").build();
     }
@@ -434,7 +442,20 @@ public final class OitPipelines {
         return withOitColorTargets(builder, mode, "Chunk-OIT").build();
     }
 
+    private static void dropSodiumOnFormatChange() {
+        VertexFormat format = TerrainVertexFormat.current();
+        if (sodiumBuiltFor == format) {
+            return;
+        }
+        sodiumBuiltFor = format;
+        CHUNK_SODIUM_CACHE.clear();
+        CHUNK_SODIUM_SETTLED_CACHE.clear();
+        CHUNK_SODIUM_FADING_CACHE.clear();
+        CHUNK_SODIUM_MLAB_CACHE.clear();
+    }
+
     public static RenderPipeline chunkSodiumProducer(OitMode mode) {
+        dropSodiumOnFormatChange();
         ChunkFragmentKey key = new ChunkFragmentKey(mode, TerrainAtlasFilter.linear());
         RenderPipeline pipeline = CHUNK_SODIUM_CACHE.computeIfAbsent(key,
                 k -> buildChunkSodiumProducer(k, CHUNK_SODIUM_VERTEX, "chunk_sodium"));
@@ -444,6 +465,7 @@ public final class OitPipelines {
     }
 
     public static RenderPipeline chunkSodiumProducer(OitMode mode, boolean fading) {
+        dropSodiumOnFormatChange();
         ChunkFragmentKey key = new ChunkFragmentKey(mode, TerrainAtlasFilter.linear());
         Map<ChunkFragmentKey, RenderPipeline> cache = fading ? CHUNK_SODIUM_FADING_CACHE : CHUNK_SODIUM_SETTLED_CACHE;
         Identifier vsh = fading ? CHUNK_SODIUM_VERTEX_MDI_FADE : CHUNK_SODIUM_VERTEX_MDI;
@@ -459,10 +481,11 @@ public final class OitPipelines {
         OitMode mode = key.mode();
         RenderPipeline.Builder builder = RenderPipeline.builder()
                                                        .withLocation(ResourceUtil.rl(
-                                                               "pipeline/oit/" + nameSuffix + mode.name + (key.linear() ? "_linear" : "")))
+                                                               "pipeline/oit/" + nameSuffix + mode.name + (key.linear() ? "_linear" : "")
+                                                                       + (TerrainVertexFormat.extended() ? "_ext" : "")))
                                                        .withVertexShader(vertexId)
                                                        .withFragmentShader(chunkFragmentId(mode, key.linear()))
-                                                       .withVertexBinding(0, CompactChunkVertex.VERTEX_FORMAT)
+                                                       .withVertexBinding(0, TerrainVertexFormat.current())
                                                        .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                                                        .withDepthStencilState(OIT_PRODUCER_DEPTH_STATE)
                                                        .withCull(true)
@@ -649,12 +672,17 @@ public final class OitPipelines {
                                                                        key.polygonOffset() ? 10.0f : 0.0f))
                                                        .withCull(key.cull());
 
-        builder.withBindGroupLayout(producerBindGroup(mode, key.indirect(), key.embedded()));
+        builder.withBindGroupLayout(producerBindGroup(mode, key.indirect(), key.embedded(), key.light()));
+        if (!key.indirect() && key.materialShaders().vertexSource().equals(StandardMaterialShaders.LINE.vertexSource()))
+            builder.withBindGroupLayout(BindGroupLayout.builder()
+                                                       .withUniform("_FlwLineFrameUniforms", UniformType.UNIFORM_BUFFER)
+                                                       .build());
 
         return withOitColorTargets(builder, mode, "OIT").build();
     }
 
-    private static BindGroupLayout producerBindGroup(OitMode mode, boolean indirect, boolean embedded) {
+    private static BindGroupLayout producerBindGroup(OitMode mode, boolean indirect, boolean embedded,
+                                                     LightShader light) {
         BindGroupLayout.Builder b = BindGroupLayout.builder();
         if (mode == OitMode.DEPTH_RANGE) {
             if (!indirect) {
@@ -662,6 +690,7 @@ public final class OitPipelines {
                 b.withUniform("_FlwInstanceDraw", UniformType.UNIFORM_BUFFER);
             }
         } else {
+            if (RenderPassShaders.readsGeometry(light)) b.withSampler("_flw_geometryAtlas");
             if (!(indirect && GlCompat.SUPPORTS_BINDLESS_TEXTURES)) {
                 b.withSampler("Sampler0");
             }
@@ -799,13 +828,14 @@ public final class OitPipelines {
                                                                        key.polygonOffset() ? 1.0f : 0.0f,
                                                                        key.polygonOffset() ? 10.0f : 0.0f))
                                                        .withCull(key.cull())
-                                                       .withBindGroupLayout(uberMlabBindGroup())
+                                                       .withBindGroupLayout(uberMlabBindGroup(key.light()))
                                                        .withColorTargetState(0, MLAB_NO_COLOR);
         return builder.build();
     }
 
-    private static BindGroupLayout uberMlabBindGroup() {
+    private static BindGroupLayout uberMlabBindGroup(LightShader light) {
         BindGroupLayout.Builder b = BindGroupLayout.builder();
+        if (RenderPassShaders.readsGeometry(light)) b.withSampler("_flw_geometryAtlas");
         if (!GlCompat.SUPPORTS_BINDLESS_TEXTURES) {
             b.withSampler("Sampler0");
         }
@@ -871,28 +901,40 @@ public final class OitPipelines {
 
     private static RenderPipeline buildMlabResolve(MlabResolveKey key) {
         RenderPipeline.Builder builder = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                             .withLocation(ResourceUtil.rl(
-                                     "pipeline/oit/mlab/resolve_" + key.mode().name().toLowerCase(Locale.ROOT)
-                                             + key.variant().suffix))
-                             .withVertexShader(FULLSCREEN_VERTEX)
-                             .withFragmentShader(mlabResolveFragmentId(key))
-                             .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-                             .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS,
-                                     key.variant().writesDepth(), 0.0f, 0.0f))
-                             .withCull(false)
-                             .withBindGroupLayout(BindGroupLayout.builder()
-                                                                 .withSampler("_flw_layerColor")
-                                                                 .withSampler("_flw_layerDepth")
-                                                                 .withSampler("_flw_layerColor1")
-                                                                 .withSampler("_flw_layerDepth1")
-                                                                 .withSampler("_flw_layerColor2")
-                                                                 .withSampler("_flw_layerDepth2")
-                                                                 .withSampler("_flw_layerColor3")
-                                                                 .withSampler("_flw_layerDepth3")
-                                                                 .build())
-                             .withColorTargetState(0,
-                                     new ColorTargetState(Optional.of(PREMULT_BLEND), GpuFormat.RGBA8_UNORM,
-                                             ColorTargetState.WRITE_ALL));
+                                                       .withLocation(ResourceUtil.rl(
+                                                               "pipeline/oit/mlab/resolve_" + key.mode().name()
+                                                                                                 .toLowerCase(
+                                                                                                         Locale.ROOT)
+                                                                       + key.variant().suffix))
+                                                       .withVertexShader(FULLSCREEN_VERTEX)
+                                                       .withFragmentShader(mlabResolveFragmentId(key))
+                                                       .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                                                       .withDepthStencilState(
+                                                               new DepthStencilState(CompareOp.ALWAYS_PASS,
+                                                                       key.variant().writesDepth(), 0.0f, 0.0f))
+                                                       .withCull(false)
+                                                       .withBindGroupLayout(BindGroupLayout.builder()
+                                                                                           .withSampler(
+                                                                                                   "_flw_layerColor")
+                                                                                           .withSampler(
+                                                                                                   "_flw_layerDepth")
+                                                                                           .withSampler(
+                                                                                                   "_flw_layerColor1")
+                                                                                           .withSampler(
+                                                                                                   "_flw_layerDepth1")
+                                                                                           .withSampler(
+                                                                                                   "_flw_layerColor2")
+                                                                                           .withSampler(
+                                                                                                   "_flw_layerDepth2")
+                                                                                           .withSampler(
+                                                                                                   "_flw_layerColor3")
+                                                                                           .withSampler(
+                                                                                                   "_flw_layerDepth3")
+                                                                                           .build())
+                                                       .withColorTargetState(0,
+                                                               new ColorTargetState(Optional.of(PREMULT_BLEND),
+                                                                       GpuFormat.RGBA8_UNORM,
+                                                                       ColorTargetState.WRITE_ALL));
         if (key.variant() == MlabResolveVariant.ADDITIVE) {
             builder.withColorTargetState(1, new ColorTargetState(Optional.empty(),
                     OitFramebuffer.NEAREST_DEPTH_FORMAT, ColorTargetState.WRITE_ALL));
@@ -970,6 +1012,7 @@ public final class OitPipelines {
     }
 
     public static RenderPipeline chunkSodiumMlab(OitInsertMode mode, boolean fading) {
+        dropSodiumOnFormatChange();
         ChunkSodiumMlabKey key = new ChunkSodiumMlabKey(mode, fading, TerrainAtlasFilter.linear());
         RenderPipeline pipeline = CHUNK_SODIUM_MLAB_CACHE.computeIfAbsent(key, OitPipelines::buildChunkSodiumMlab);
         RenderSystem.getDevice().precompilePipeline(pipeline, SHADER_SOURCE);
@@ -982,10 +1025,11 @@ public final class OitPipelines {
                              .withLocation(
                                      ResourceUtil.rl("pipeline/oit/mlab/chunk_sodium_" + (key.fading() ? "fade_" : "")
                                              + key.mode().name()
-                                                  .toLowerCase(Locale.ROOT) + (key.linear() ? "_linear" : "")))
+                                                  .toLowerCase(Locale.ROOT) + (key.linear() ? "_linear" : "")
+                                             + (TerrainVertexFormat.extended() ? "_ext" : "")))
                              .withVertexShader(vertexId)
                              .withFragmentShader(chunkMlabFragmentId(key.mode(), key.linear()))
-                             .withVertexBinding(0, CompactChunkVertex.VERTEX_FORMAT)
+                             .withVertexBinding(0, TerrainVertexFormat.current())
                              .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                              .withDepthStencilState(OIT_PRODUCER_DEPTH_STATE)
                              .withCull(true)
@@ -1023,7 +1067,7 @@ public final class OitPipelines {
                     + "_" + smoothness.getSerializedName() + mode.name + (emission ? "_emission" : "")
                     + (embedded ? "_embedded" : "")
                     + (debug == DebugMode.OFF ? "" : "_debug_" + debug.getSerializedName())
-                    + "_" + depthTest.name().toLowerCase(java.util.Locale.ROOT)
+                    + "_" + depthTest.name().toLowerCase(Locale.ROOT)
                     + (cull ? "_cull" : "") + (polygonOffset ? "_po" : "");
         }
     }

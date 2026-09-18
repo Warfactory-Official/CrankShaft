@@ -4,14 +4,15 @@
 package me.mlbv.meshlet.mesh.shared;
 
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainVertexFormat;
 
 public final class MeshShaderPrep {
-    public static final int VERTEX_STRIDE = 20;
-
     private MeshShaderPrep() {
     }
 
     public static void applyGlobalDefines(Compilation ctx) {
+        // Sizes the arena's Vertex struct; every fetch indexes by it, so it must follow the live chunk format.
+        TerrainVertexFormat.appendDefines(ctx);
         if (Boolean.getBoolean("meshlet.debug")) {
             ctx.define("DEBUG");
         }

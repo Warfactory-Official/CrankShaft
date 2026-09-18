@@ -4,11 +4,13 @@ import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.engine.BindlessSlots;
+import dev.engine_room.flywheel.backend.engine.DrawTags;
 import dev.engine_room.flywheel.backend.engine.MaterialEncoder;
 import dev.engine_room.flywheel.backend.engine.MeshPool;
 import dev.engine_room.flywheel.backend.engine.embed.EmbeddedEnvironment;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
+import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
 
 public class IndirectDraw {
@@ -21,15 +23,17 @@ public class IndirectDraw {
     private final int packedFogAndCutout;
     private final int packedMaterialProperties;
     private final int packedTexIndices;
+    private final @Nullable DrawTags tags;
     private boolean deleted;
 
     public IndirectDraw(IndirectInstancer<?> instancer, Material material, MeshPool.PooledMesh mesh, int bias,
-                        int indexOfMeshInModel) {
+                        int indexOfMeshInModel, @Nullable DrawTags tags) {
         this.instancer = instancer;
         this.material = material;
         this.mesh = mesh;
         this.bias = bias;
         this.indexOfMeshInModel = indexOfMeshInModel;
+        this.tags = tags;
 
         mesh.acquire();
 
@@ -54,6 +58,10 @@ public class IndirectDraw {
 
     public boolean isEmbedded() {
         return instancer.environment instanceof EmbeddedEnvironment;
+    }
+
+    public int drawTag() {
+        return tags == null ? 0 : tags.drawTag();
     }
 
     public boolean embeddedVariant() {
@@ -85,8 +93,9 @@ public class IndirectDraw {
 
         MemoryUtil.memPutInt(ptr + 28, packedFogAndCutout); // packedFogAndCutout
         MemoryUtil.memPutInt(ptr + 32, packedMaterialProperties); // packedMaterialProperties
-        MemoryUtil.memPutInt(ptr + 36, mesh.vertexCount());
-        MemoryUtil.memPutInt(ptr + 40, mesh.meshletBase());
+        // Tags exist only under a shaderpack guest, where no mesh tier reads vertexCount/meshletBase.
+        MemoryUtil.memPutInt(ptr + 36, tags != null ? tags.itemTag() : mesh.vertexCount());
+        MemoryUtil.memPutInt(ptr + 40, tags != null ? tags.drawTag() : mesh.meshletBase());
         MemoryUtil.memPutInt(ptr + 44, packedTexIndices);
     }
 

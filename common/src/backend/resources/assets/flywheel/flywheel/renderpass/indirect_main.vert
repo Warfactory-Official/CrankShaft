@@ -107,6 +107,7 @@ void main() {
     lightCoord = flw_vertexLight;
     overlayCoord = flw_vertexOverlay;
 
-    sphericalVertexDistance = fog_spherical_distance(viewPos.xyz);
-    cylindricalVertexDistance = fog_cylindrical_distance(viewPos.xyz);
+    vec2 fogDistances = flw_fogDistances(viewPos.xyz, ModelViewMat);
+    sphericalVertexDistance = fogDistances.x;
+    cylindricalVertexDistance = fogDistances.y;
 }

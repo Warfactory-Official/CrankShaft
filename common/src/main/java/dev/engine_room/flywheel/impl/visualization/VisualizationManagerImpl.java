@@ -14,8 +14,10 @@ import dev.engine_room.flywheel.api.visualization.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.TerrainMode;
 import dev.engine_room.flywheel.backend.engine.*;
+import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDispatcher;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDispatchers;
+import dev.engine_room.flywheel.backend.lighting.WorldLighting;
 import dev.engine_room.flywheel.impl.*;
 import dev.engine_room.flywheel.impl.extension.LevelExtension;
 import dev.engine_room.flywheel.impl.mixin.sodium.RenderSectionManagerAccessor;
@@ -40,6 +42,7 @@ import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionManager;
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayerGroup;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.core.BlockPos;
@@ -66,7 +69,6 @@ import java.util.SortedSet;
 public class VisualizationManagerImpl implements VisualizationManager {
     private static final LevelAttached<VisualizationManagerImpl> MANAGERS = new LevelAttached<>(
             VisualizationManagerImpl::new, VisualizationManagerImpl::delete);
-
 
     private final TaskExecutorImpl taskExecutor;
     private final DistanceUpdateLimiterImpl frameLimiter;
@@ -209,6 +211,22 @@ public class VisualizationManagerImpl implements VisualizationManager {
     }
 
     /**
+     * The engine with this frame's plan synced, for a host pass drawing before the post-opaque seam (Iris runs its
+     * shadow pass while building the frame graph). {@code null} before the first frame.
+     */
+    public @Nullable EngineImpl syncFrameEngine() {
+        if (lastFrameCtx == null) {
+            return null;
+        }
+        taskExecutor.syncUntil(frameFlag::isRaised);
+        return getEngineImpl();
+    }
+
+    public boolean isShaderPackGuest() {
+        return lateInit != null && lateInit.engine instanceof EngineImpl impl && impl.drawManager().isShaderPackGuest();
+    }
+
+    /**
      * Begin execution of the tick plan.
      */
     public void tick() {
@@ -291,6 +309,10 @@ public class VisualizationManagerImpl implements VisualizationManager {
         if (ctx == null) {
             return false;
         }
+        if (isShaderPackGuest()) {
+            renderOit(ctx, null, null, null, null);
+            return false;
+        }
         if (FabulousLayerTargets.windowOpen()) {
             oitDeferred = true;
             oitDeferredSodium = false;
@@ -317,6 +339,13 @@ public class VisualizationManagerImpl implements VisualizationManager {
         RenderContext ctx = lastFrameCtx;
         if (ctx == null) {
             return false;
+        }
+        if (isShaderPackGuest()) {
+            // The guest OIT chain accumulates terrain alongside the instance producers, so one composite resolves
+            // both; without terrain it stays out and Sodium draws its own sorted translucent.
+            SodiumTerrainOitReplay guestTerrain = GuestTerrainGate.ownsTerrain() && terrainDrawDispatcher != null
+                    ? terrainDrawDispatcher.translucentOitReplay() : null;
+            return renderOit(ctx, null, null, guestTerrain, null);
         }
         if (FabulousLayerTargets.windowOpen()) {
             oitDeferred = true;
@@ -390,7 +419,22 @@ public class VisualizationManagerImpl implements VisualizationManager {
         }
     }
 
+    /**
+     * Iris shadow-pass terrain seam: {@code true} iff the engine drew it (so Sodium's own draw is cancelled).
+     */
+    public boolean renderShadowTerrain(ChunkRenderMatrices matrices, RenderSectionManager sectionManager) {
+        if (!GuestTerrainGate.ownsShadowTerrain() || terrainDrawDispatcher == null
+                || !BackendConfig.INSTANCE.terrainMode().ownsOpaque() || !BackendManagerImpl.isGpuDriven()) {
+            return false;
+        }
+        return terrainDrawDispatcher.drawShadowTerrain(matrices, sectionManager);
+    }
+
     public boolean renderOpaqueSolidTerrain(ChunkRenderMatrices matrices, RenderSectionManager sectionManager) {
+        // Terrain is the one seam a guest may still own; the OIT/BER captures above stay inert either way.
+        if (isShaderPackGuest() && !GuestTerrainGate.ownsTerrain()) {
+            return false;
+        }
         TerrainMode terrainMode = BackendConfig.INSTANCE.terrainMode();
         boolean opaqueMdi = terrainMode.ownsOpaque();
         // Mode OFF: leave all terrain to Sodium; unpublish so the hooks go
@@ -414,6 +458,11 @@ public class VisualizationManagerImpl implements VisualizationManager {
             }
             FlwImpl.LOGGER.info("Flywheel terrain engaged: backend={}, terrainMode={}",
                     BackendManagerImpl.getBackendString(), terrainMode);
+            if (isShaderPackGuest()) {
+                FlwImpl.LOGGER.warn("Terrain guest is EXPERIMENTAL. Translucent terrain joins the engine's OIT "
+                        + "chain only where the pack declares an OIT contract; otherwise the shaderpack keeps its "
+                        + "own sorted draw. Unset crankshaft.iris.terrain to hand terrain back.");
+            }
         }
 
         boolean gpuDriven = BackendManagerImpl.isGpuDriven();
@@ -423,7 +472,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
             // SODIUM_CULL arm: the extract seam cancelled Sodium's render-list build; hand the dispatcher the
             // loaded regions to self-enumerate (same FULL-only/GL-only predicate, so the halves cannot diverge).
             Collection<RenderRegion> selfEnum = TerrainCullGate.shouldCancelSodiumCull()
-                    ? ((RenderSectionManagerAccessor) (Object) sectionManager).flywheel$getRegions().getLoadedRegions()
+                    ? ((RenderSectionManagerAccessor) sectionManager).flywheel$getRegions().getLoadedRegions()
                     : null;
             return terrainDrawDispatcher.drawOpaqueSolid(matrices, sectionManager, selfEnum);
         }
@@ -540,6 +589,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
         effects.invalidate();
         if (lateInit != null) {
             lateInit.engine.delete();
+            if (lateInit.lightingBarrier != null) lateInit.lightingBarrier.close();
         }
         if (terrainDrawDispatcher != null) {
             terrainDrawDispatcher.delete();
@@ -570,12 +620,16 @@ public class VisualizationManagerImpl implements VisualizationManager {
 
     private class LateInit {
         private final Engine engine;
+        private final WorldLighting.@Nullable Subscription lightingBarrier;
 
         private final Plan<RenderContext> framePlan;
         private final Plan<TickableVisual.Context> tickPlan;
 
         private LateInit(LevelAccessor level) {
             engine = BackendManager.currentBackend().createEngine(level);
+            lightingBarrier = level instanceof ClientLevel client
+                    ? WorldLighting.of(client).subscribe() : null;
+            if (lightingBarrier != null) lightingBarrier.barrier(taskExecutor::syncPoint);
 
             var visualizationContext = engine.createVisualizationContext();
 
@@ -615,6 +669,11 @@ public class VisualizationManagerImpl implements VisualizationManager {
                                           out.addAll(entities.gpuLightSections());
                                           out.addAll(effects.gpuLightSections());
                                           engine.lightSections(out);
+                                          var geometry = new LongOpenHashSet();
+                                          geometry.addAll(blockEntities.geometryLightSections());
+                                          geometry.addAll(entities.geometryLightSections());
+                                          geometry.addAll(effects.geometryLightSections());
+                                          engine.geometryLightSections(geometry);
                                       }
                                   }))
                                   .then(enginePhase)

@@ -2,6 +2,7 @@
 #moj_import <minecraft:dynamictransforms.glsl>
 #moj_import <minecraft:fog.glsl>
 #moj_import <minecraft:light.glsl>
+#include "flywheel:internal/fog_coordinates.glsl"
 
 #define flw_view ModelViewMat
 
@@ -34,6 +35,8 @@ layout(std140, binding = 11) uniform _FlwInstanceDraw {
     float flw_systemSeconds;
     float flw_glintSpeedOption;
     float flw_glintStrengthOption;
+    uint _flw_drawItemTag;
+    float flw_partialTick;
 };
 
 out vec2 _flw_clipData;

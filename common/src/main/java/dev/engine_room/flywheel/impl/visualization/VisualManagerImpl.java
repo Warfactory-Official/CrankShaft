@@ -28,12 +28,12 @@ public class VisualManagerImpl<T, S extends Storage<T>> implements VisualManager
 
     @Override
     public int visualCount() {
-        return getStorage().getAllVisuals().size();
+        return storage.getAllVisuals().size();
     }
 
     @Override
     public void queueAdd(T obj) {
-        if (!getStorage().willAccept(obj)) {
+        if (!storage.willAccept(obj)) {
             return;
         }
 
@@ -47,7 +47,7 @@ public class VisualManagerImpl<T, S extends Storage<T>> implements VisualManager
 
     @Override
     public void queueUpdate(T obj) {
-        if (!getStorage().willAccept(obj)) {
+        if (!storage.willAccept(obj)) {
             return;
         }
 
@@ -55,7 +55,7 @@ public class VisualManagerImpl<T, S extends Storage<T>> implements VisualManager
     }
 
     public void processQueue(VisualizationContext visualizationContext, float partialTick) {
-        var storage = getStorage();
+        var storage = this.storage;
         Transaction<T> transaction;
         while ((transaction = queue.poll()) != null) {
             switch (transaction.action()) {
@@ -78,22 +78,26 @@ public class VisualManagerImpl<T, S extends Storage<T>> implements VisualManager
     }
 
     public void onLightUpdate(long section) {
-        getStorage().lightUpdatedVisuals().onLightUpdate(section);
+        storage.lightUpdatedVisuals().onLightUpdate(section);
     }
 
     public boolean hasLightUpdatedVisualIn(long section) {
-        return getStorage().lightUpdatedVisuals().hasUpdatersIn(section);
+        return storage.lightUpdatedVisuals().hasUpdatersIn(section);
     }
 
     public boolean areGpuLightSectionsDirty() {
-        return getStorage().shaderLightVisuals().isDirty();
+        return storage.shaderLightVisuals().isDirty();
     }
 
     public LongSet gpuLightSections() {
-        return getStorage().shaderLightVisuals().sections();
+        return storage.shaderLightVisuals().sections();
+    }
+
+    public LongSet geometryLightSections() {
+        return storage.shaderLightVisuals().geometrySections();
     }
 
     public void invalidate() {
-        getStorage().invalidate();
+        storage.invalidate();
     }
 }

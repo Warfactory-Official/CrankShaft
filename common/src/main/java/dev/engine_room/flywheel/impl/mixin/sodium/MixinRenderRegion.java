@@ -8,7 +8,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(value = RenderRegion.class, remap = false)
+@Mixin(RenderRegion.class)
 public class MixinRenderRegion {
     @Inject(method = "removeSection(Lnet/caffeinemc/mods/sodium/client/render/chunk/RenderSection;)V",
             at = @At("HEAD"), require = 1)

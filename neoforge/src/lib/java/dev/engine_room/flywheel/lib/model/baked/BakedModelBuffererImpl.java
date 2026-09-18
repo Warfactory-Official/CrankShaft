@@ -27,6 +27,7 @@ import net.minecraft.client.renderer.item.TrackingItemStackRenderState;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.ItemOwner;
 import net.minecraft.world.item.ItemDisplayContext;
@@ -72,7 +73,7 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
         EnumMap<ChunkSectionLayer, BakedMesh> result = new EnumMap<>(ChunkSectionLayer.class);
         for (var entry : emitters.entrySet()) {
             if (!entry.getValue().isEmpty()) {
-                result.put(entry.getKey(), entry.getValue().build());
+                result.put(entry.getKey(), entry.getValue().build(state));
             }
         }
         return result;
@@ -106,7 +107,7 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
         EnumMap<ChunkSectionLayer, BakedMesh> result = new EnumMap<>(ChunkSectionLayer.class);
         for (var entry : emitters.entrySet()) {
             if (!entry.getValue().isEmpty()) {
-                result.put(entry.getKey(), entry.getValue().build());
+                result.put(entry.getKey(), entry.getValue().build(null));
             }
         }
         return result;
@@ -162,7 +163,7 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
         EnumMap<ItemMeshKey, BakedMesh> meshes = new EnumMap<>(ItemMeshKey.class);
         for (var entry : emitters.entrySet()) {
             if (!entry.getValue().isEmpty()) {
-                meshes.put(entry.getKey(), entry.getValue().build());
+                meshes.put(entry.getKey(), entry.getValue().build(stack.getItem(), stack.get(DataComponents.ITEM_MODEL)));
             }
         }
         if (meshes.isEmpty()) {

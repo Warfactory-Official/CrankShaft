@@ -179,7 +179,7 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
                             + "culling-benchmark mode; requires Sodium and a gpu-driven backend, else it falls back to "
                             + "OFF. FULL: take over OPAQUE terrain plus translucent OIT -- requires Sodium and a "
                             + "gpu-driven backend, else it falls back to TRANSLUCENT_OIT.")
-                    .defineEnum("terrain", TerrainMode.OFF);
+                    .defineEnum("terrain", TerrainMode.TRANSLUCENT_OIT);
 
             oitPath = builder.comment("Order-independent transparency path. AUTO: best available (MLAB on interlock "
                             + "hardware, else the wavelet chain). WAVELET: the multi-pass moment/wavelet chain. "

@@ -1,17 +1,27 @@
 // _FLW_VK_BDA: bindless arena by device address; extensions declared in Java (VkPrograms).
 
+#include "flywheel:internal/terrain_region_input.glsl"
+
 #moj_import <minecraft:fog.glsl>
 #moj_import <minecraft:globals.glsl>
 #moj_import <minecraft:chunksection.glsl>
 #moj_import <minecraft:projection.glsl>
 
 #ifdef _FLW_VK_BDA
+// verts[] indexes by sizeof(_FlwVertex): under Iris's extended layout a compact-sized struct reads the WRONG
+// vertex, so the tail must be declared even though nothing here reads it.
 struct _FlwVertex {
     uint posHi;
     uint posLo;
     uint color;
     uint uv;
     uint light;
+#ifdef _FLW_TERRAIN_VERTEX_EXTENDED
+    uint entity;
+    uint normal;
+    uint midTexCoord;
+    uint midBlock;
+#endif
 };
 layout(buffer_reference, std430, buffer_reference_align = 4) restrict readonly buffer _FlwGeoRef {
     _FlwVertex verts[];
@@ -36,7 +46,7 @@ layout(std430, binding = 2) restrict readonly buffer _flw_DrawDataBuf {
     _FlwDrawData _flw_drawData[];
 };
 #else
-// [baseInstance = visible-region slot] = (originChunkX lo16 | Z hi16, originChunkY lo16, regionId, run slot).
+// [baseInstance = visible-region slot] = (packed X/Z24 + Y16, regionId, run slot).
 layout(std430, binding = 10) restrict readonly buffer _flw_RegionInputBuf {
     uvec4 _flw_regionInput[];
 };
@@ -105,12 +115,12 @@ void main() {
 #ifdef _FLW_VK
     ivec3 chunkOrigin = _flw_dd.regionChunkOrigin + _unpackSectionOffset(a_LightAndData.w);
 #else
-    ivec3 regionOrigin = ivec3(int(_flw_region.x << 16) >> 16, int(_flw_region.y << 16) >> 16, int(_flw_region.x) >> 16);
+    ivec3 regionOrigin = _flw_unpackRegionOrigin(_flw_region);
     ivec3 chunkOrigin = regionOrigin + _unpackSectionOffset(a_LightAndData.w);
 #endif
-    vec3 sectionOriginBlocks = vec3(chunkOrigin) * 16.0;
+    vec3 sectionOriginBlocks = vec3(chunkOrigin * 16 - CameraBlockPos);
 
-    precise vec3 pos = (sectionOriginBlocks + sectionRelativeBlocks) - CameraBlockPos + CameraOffset;
+    precise vec3 pos = (sectionOriginBlocks + sectionRelativeBlocks) + CameraOffset;
     precise vec4 flwClipPos = ProjMat * ModelViewMat * vec4(pos, 1.0);
     gl_Position = flwClipPos;
 

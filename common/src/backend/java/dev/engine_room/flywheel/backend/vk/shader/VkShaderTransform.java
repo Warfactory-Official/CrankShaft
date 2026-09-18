@@ -22,6 +22,7 @@ public final class VkShaderTransform {
             Map.entry("_FlwEmbedDraw", 23),
             Map.entry("ChunkSection", 21),
             Map.entry("_FlwFrameUniforms", 16),
+            Map.entry("_FlwLineFrameUniforms", 41),
             Map.entry("_FlwOptionsUniforms", 17),
             Map.entry("_FlwPlayerUniforms", 18),
             Map.entry("_FlwLevelUniforms", 19),
@@ -50,7 +51,8 @@ public final class VkShaderTransform {
             Map.entry("_flw_layerColor3", 36),
             Map.entry("_flw_layerDepth3", 37),
             Map.entry("_flw_emission", 38),
-            Map.entry("_flw_mlabNearest", 39));
+            Map.entry("_flw_mlabNearest", 39),
+            Map.entry("_flw_geometryAtlas", 40));
     private static final Map<String, Integer> VERTEX_INPUT_LOCATIONS = Map.of(
             "Position", 0, "Color", 1, "UV0", 2, "UV1", 3, "UV2", 4, "Normal", 5);
     private static final Map<String, Integer> VARYING_LOCATIONS = Map.ofEntries(
@@ -89,6 +91,7 @@ public final class VkShaderTransform {
     private static final Pattern BARE_UNIFORM = Pattern.compile(
             "(?m)^[ \\t]*uniform\\s+(uint|int|float)\\s+(\\w+)\\s*;[ \\t]*$");
     private static final Pattern VERSION_DIRECTIVE = Pattern.compile("(?m)^#version[^\\n]*\\n");
+
     private VkShaderTransform() {
     }
 

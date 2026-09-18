@@ -1,0 +1,29 @@
+{
+  "schema": 2,
+  "name": "BSL",
+  "testedVersions": [
+    "BSL v10.1.5"
+  ],
+  "matches": [
+    {
+      "path": "program/gbuffers_water.glsl",
+      "contains": [
+        "BSL Shaders",
+        "/lib/settings.glsl"
+      ]
+    }
+  ],
+  "files": [],
+  "wrappers": [],
+  "blends": [],
+  "properties": "",
+  "forwardOit": {
+    "programs": [
+      "gbuffers_water"
+    ],
+    "paths": [],
+    "fingerprints": [
+      "a2e283adefcf8024c72cec9c5962841037cfc65aa049b0467109f1c81acdcf41"
+    ]
+  }
+}

@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
+import dev.engine_room.flywheel.backend.engine.GeometryAtlas;
 import dev.engine_room.flywheel.backend.engine.OitTransparency;
 import dev.engine_room.flywheel.backend.engine.indirect.InstanceTypeIds;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
@@ -14,6 +15,8 @@ import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout;
 import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline;
 import dev.engine_room.flywheel.backend.vk.shader.VkShaderCompiler;
 import dev.engine_room.flywheel.backend.vk.shader.VkShaderTransform;
+import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkDevice;
 
@@ -43,12 +46,18 @@ public final class VkUberPipelines {
         VkDevice device = VkContext.vkDevice();
         for (long module : modules) {
             if (module != 0L) {
-                VK12.vkDestroyShaderModule(device, module, null);
+                VK10.vkDestroyShaderModule(device, module, null);
             }
         }
     }
 
-    private static List<Binding> drawBindings(boolean embedded, boolean bindless) {
+    private static List<Binding> withLineFrame(List<Binding> bindings, MaterialShaders shaders) {
+        if (shaders.vertexSource().equals(StandardMaterialShaders.LINE.vertexSource()))
+            bindings.add(new Binding(41, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
+        return bindings;
+    }
+
+    private static List<Binding> drawBindings(boolean embedded, boolean bindless, LightShader light) {
         List<Binding> b = new ArrayList<>();
         int vsfs = STAGE_VERTEX | STAGE_FRAGMENT;
         b.add(new Binding(1, TYPE_STORAGE_BUFFER, STAGE_VERTEX));
@@ -70,13 +79,16 @@ public final class VkUberPipelines {
             b.add(new Binding(11, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
             b.add(new Binding(12, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
         }
+        if (RenderPassShaders.readsGeometry(light))
+            b.add(new Binding(GeometryAtlas.VK_BINDING, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
         if (embedded || bindless) {
             b.add(new Binding(23, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
         }
         return b;
     }
 
-    private static List<Binding> oitProducerBindings(OitMode mode, boolean embedded, boolean folded, boolean bindless) {
+    private static List<Binding> oitProducerBindings(OitMode mode, boolean embedded, boolean folded, boolean bindless,
+                                                     LightShader light) {
         List<Binding> b = new ArrayList<>();
         int vsfs = STAGE_VERTEX | STAGE_FRAGMENT;
         b.add(new Binding(1, TYPE_STORAGE_BUFFER, STAGE_VERTEX));
@@ -112,13 +124,15 @@ public final class VkUberPipelines {
         if (embedded) {
             b.add(new Binding(7, TYPE_STORAGE_BUFFER, STAGE_VERTEX));
         }
+        if (RenderPassShaders.readsGeometry(light))
+            b.add(new Binding(GeometryAtlas.VK_BINDING, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
         if (embedded || bindless) {
             b.add(new Binding(23, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
         }
         return b;
     }
 
-    private static List<Binding> mlabProducerBindings(boolean bindless, OitInsertMode oitMode) {
+    private static List<Binding> mlabProducerBindings(boolean bindless, OitInsertMode oitMode, LightShader light) {
         List<Binding> b = new ArrayList<>();
         int vsfs = STAGE_VERTEX | STAGE_FRAGMENT;
         b.add(new Binding(1, TYPE_STORAGE_BUFFER, STAGE_VERTEX));
@@ -140,6 +154,8 @@ public final class VkUberPipelines {
         }
         b.add(new Binding(7, TYPE_STORAGE_BUFFER, STAGE_VERTEX));
         b.add(new Binding(23, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
+        if (RenderPassShaders.readsGeometry(light))
+            b.add(new Binding(GeometryAtlas.VK_BINDING, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
         VkOitPipelines.mlabBindings(b, oitMode);
         return b;
     }
@@ -164,6 +180,11 @@ public final class VkUberPipelines {
         return b;
     }
 
+    private static Consumer<Compilation> baseExtra(boolean bindless, boolean embedded) {
+        return (bindless ? VkPrograms.BINDLESS : ShaderAssembly.NO_EXTRA)
+                .andThen(embedded ? RenderPassShaders.EMBEDDED : ShaderAssembly.NO_EXTRA);
+    }
+
     public VkGraphicsPipeline drawPipeline(Material material, boolean embedded, LightSmoothness smoothness,
                                            int colorFormat, int depthFormat) {
         var key = new UberDrawKey(material.shaders(), material.light(), smoothness, FrameUniforms.debugMode(),
@@ -172,11 +193,6 @@ public final class VkUberPipelines {
                 material.writeMask().color(),
                 material.backfaceCulling(), material.polygonOffset(), Generations.current(), embedded);
         return drawCache.computeIfAbsent(key, this::buildDraw);
-    }
-
-    private static Consumer<Compilation> baseExtra(boolean bindless, boolean embedded) {
-        return (bindless ? VkPrograms.BINDLESS : ShaderAssembly.NO_EXTRA)
-                .andThen(embedded ? RenderPassShaders.EMBEDDED : ShaderAssembly.NO_EXTRA);
     }
 
     private VkGraphicsPipeline buildDraw(UberDrawKey key) {
@@ -199,7 +215,8 @@ public final class VkUberPipelines {
             var config = VkGraphicsPipeline.material(key.colorFormat(), key.depthFormat(), key.transparency(),
                     key.depthTest(),
                     key.depthWrite(), key.colorWrite(), key.cull(), key.polygonOffset());
-            layout = new VkDescriptorLayout(drawBindings(true, bindless), 0, 0, bindless);
+            layout = new VkDescriptorLayout(withLineFrame(drawBindings(true, bindless, key.light()),
+                    key.materialShaders()), 0, 0, bindless);
             return new VkGraphicsPipeline(layout, vs, fs, config);
         } catch (Throwable t) {
             if (layout != null) {
@@ -237,7 +254,7 @@ public final class VkUberPipelines {
             fs = VkShaderCompiler.compileModule(
                     "oit_uber_" + key.mode() + (key.emission() ? "_emission" : "")
                             + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug()
-                                                                                                   .getSerializedName()),
+                                                                                  .getSerializedName()),
                     VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
             // GL OitPipelines.uberProducer parity: producer offsets keep the slope term (constant 10, slope 1);
             // the entity-shadow decal z-fights at grazing without it.
@@ -246,11 +263,11 @@ public final class VkUberPipelines {
             var config = new VkGraphicsPipeline.Config(base.colorFormats(), base.blends(), base.depthTest(),
                     base.depthWrite(),
                     VkGraphicsPipeline.compareOp(key.depthTest()), base.vertex(),
-                    key.cull() ? VK12.VK_CULL_MODE_BACK_BIT : VK12.VK_CULL_MODE_NONE, base.depthFormat(),
+                    key.cull() ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE, base.depthFormat(),
                     key.polygonOffset() ? 10.0F : 0.0F, key.polygonOffset() ? 1.0F : 0.0F,
                     base.attachmentLocations(), base.inputAttachmentIndices());
-            layout = new VkDescriptorLayout(oitProducerBindings(key.mode(), true, key.folded(), bindless), 0, 0,
-                    bindless);
+            layout = new VkDescriptorLayout(withLineFrame(oitProducerBindings(key.mode(), true, key.folded(), bindless,
+                    key.light()), key.materialShaders()), 0, 0, bindless);
             return new VkGraphicsPipeline(layout, vs, fs, config);
         } catch (Throwable t) {
             if (layout != null) {
@@ -286,14 +303,15 @@ public final class VkUberPipelines {
             fs = VkShaderCompiler.compileModule(
                     "mlab_uber_" + key.oitMode() + (key.emission() ? "_emission" : "")
                             + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug()
-                                                                                                       .getSerializedName()),
+                                                                                  .getSerializedName()),
                     VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
             var config = new VkGraphicsPipeline.Config(VkOitPipelines.MLAB_NO_COLOR, VkOitPipelines.MLAB_NO_BLEND, true,
                     false,
                     VkGraphicsPipeline.compareOp(key.depthTest()), VkGraphicsPipeline.Vertex.INTERNAL,
-                    key.cull() ? VK12.VK_CULL_MODE_BACK_BIT : VK12.VK_CULL_MODE_NONE, VkOitPipelines.FMT_D32,
+                    key.cull() ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE, VkOitPipelines.FMT_D32,
                     key.polygonOffset() ? 10.0F : 0.0F, key.polygonOffset() ? 1.0F : 0.0F);
-            layout = new VkDescriptorLayout(mlabProducerBindings(bindless, key.oitMode()), 0, 0, bindless);
+            layout = new VkDescriptorLayout(withLineFrame(mlabProducerBindings(bindless, key.oitMode(), key.light()),
+                    key.materialShaders()), 0, 0, bindless);
             return new VkGraphicsPipeline(layout, vs, fs, config);
         } catch (Throwable t) {
             if (layout != null) {
@@ -329,7 +347,7 @@ public final class VkUberPipelines {
             var config = new VkGraphicsPipeline.Config(new int[]{key.colorFormat()},
                     new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.crumbling()},
                     true, false, VkGraphicsPipeline.compareOp(key.depthTest()), VkGraphicsPipeline.Vertex.INTERNAL,
-                    key.cull() ? VK12.VK_CULL_MODE_BACK_BIT : VK12.VK_CULL_MODE_NONE, key.depthFormat(), 10.0F, 1.0F);
+                    key.cull() ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE, key.depthFormat(), 10.0F, 1.0F);
             layout = new VkDescriptorLayout(crumblingBindings(), 0, 0);
             return new VkGraphicsPipeline(layout, vs, fs, config);
         } catch (Throwable t) {

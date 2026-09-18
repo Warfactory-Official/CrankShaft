@@ -9,6 +9,7 @@ import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.backend.compile.*;
 import dev.engine_room.flywheel.backend.engine.MaterialEncoder;
 import dev.engine_room.flywheel.backend.engine.MaterialSamplers;
+import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkCmd;
 import dev.engine_room.flywheel.backend.vk.VkContext;
@@ -23,6 +24,7 @@ import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.EXTMeshShader;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
@@ -44,7 +46,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
             MemoryUtil.memPutLong(pc + 8L, in.indicesAddr());
             MemoryUtil.memPutLong(pc + 16L, in.boundsAddr());
             MemoryUtil.memPutInt(pc + 24L, baseDraw);
-            VK12.nvkCmdPushConstants(cmd, pipeline.layout().pipelineLayout(),
+            VK10.nvkCmdPushConstants(cmd, pipeline.layout().pipelineLayout(),
                     EXTMeshShader.VK_SHADER_STAGE_TASK_BIT_EXT | EXTMeshShader.VK_SHADER_STAGE_MESH_BIT_EXT,
                     0, VkMeshVisualPipelines.PUSH_BYTES, pc);
         }
@@ -74,7 +76,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
     void emitMeshVisualCommands(VkCommandBuffer cmd) {
         FrameSet fs = frame();
         if (fs.meshVisualModelView == null) {
-            fs.meshVisualModelView = new VkBuffer(VK12.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            fs.meshVisualModelView = new VkBuffer(VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                     MeshVisualShaders.FRAME_UBO_BYTES);
         }
         long framePtr = fs.meshVisualModelView.mappedAddress();
@@ -86,32 +88,33 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         MemoryUtil.memPutFloat(framePtr + 72L, Minecraft.getInstance().options.glintStrength()
                                                                               .get()
                                                                               .floatValue());
+        MemoryUtil.memPutFloat(framePtr + 76L, FrameUniforms.partialTick());
 
         int n = frameDrawCount;
         if (n == 0) {
             return;
         }
-        VkCmd.memoryBarrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK12.VK_ACCESS_SHADER_WRITE_BIT, VK12.VK_ACCESS_SHADER_READ_BIT);
+        VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK10.VK_ACCESS_SHADER_WRITE_BIT, VK10.VK_ACCESS_SHADER_READ_BIT);
         VkComputePipeline pipeline = meshVisualPipelines().builderPipeline();
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle());
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle());
         VkContext.pushLabel(cmd, "flywheel:vk/mesh_visual_emit");
         long bytes = (long) n * VkMeshVisualPipelines.COMMAND_STRIDE;
         if (fs.meshTaskCommands == null) {
             fs.meshTaskCommands = new VkBuffer(
-                    VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK12.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, bytes);
+                    VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, bytes);
         } else {
             fs.meshTaskCommands.ensureCapacity(bytes);
         }
         writer.storage(4, fs.draw).storage(15, fs.meshTaskCommands);
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.layout());
+        writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.layout());
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long pc = stack.nmalloc(Integer.BYTES);
             MemoryUtil.memPutInt(pc, n);
-            VK12.nvkCmdPushConstants(cmd, pipeline.layout().pipelineLayout(), VK12.VK_SHADER_STAGE_COMPUTE_BIT,
+            VK10.nvkCmdPushConstants(cmd, pipeline.layout().pipelineLayout(), VK10.VK_SHADER_STAGE_COMPUTE_BIT,
                     0, Integer.BYTES, pc);
         }
-        VK12.vkCmdDispatch(cmd, Mth.positiveCeilDiv(n, 64), 1, 1);
+        VK10.vkCmdDispatch(cmd, Mth.positiveCeilDiv(n, 64), 1, 1);
         VkContext.popLabel(cmd);
     }
 
@@ -179,6 +182,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
                 writeAtlasTrio(textureManager, material.texture(), VkContext.sampler(MaterialSamplers.get(material)),
                         overlayView, overlaySampler, lightmapView);
             }
+            writeGeometryAtlas(material);
             writeMeshVisualCommon(fs, in, pyramidSampler);
             writeLight(fs);
             writer.uniform(16, projection)
@@ -186,7 +190,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
                   .uniform(18, fog)
                   .uniform(19, lights)
                   .uniform(22, renderOriginSlice);
-            writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
             pushMeshVisualConstants(cmd, pipeline, in, multiDraw.start());
 
             drawMeshTasksIndirect(cmd, in.commands(), multiDraw);
@@ -221,6 +225,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
             writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms());
             if (needsColor) {
                 Material material = multiDraw.material();
+                writeGeometryAtlas(material);
                 if (!bindless) {
                     writeAtlasTrio(f.textureManager(), material.texture(),
                             VkContext.sampler(MaterialSamplers.get(material)),
@@ -231,7 +236,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
                 writer.uniform(18, f.fog()).uniform(19, f.lights()).uniform(22, f.renderOriginSlice());
                 VkWaveletOitChain.writeOitReads(writer, f, mode, folded);
             }
-            writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
             pushMeshVisualConstants(cmd, pipeline, in, multiDraw.start());
 
             drawMeshTasksIndirect(cmd, in.commands(), multiDraw);
@@ -269,6 +274,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
             writeMeshVisualCommon(fs, in, pyramidSampler);
             writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms());
             Material material = multiDraw.material();
+            writeGeometryAtlas(material);
             if (!bindless) {
                 writeAtlasTrio(f.textureManager(), material.texture(),
                         VkContext.sampler(MaterialSamplers.get(material)),
@@ -277,7 +283,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
             writeLight(fs);
             writer.uniform(18, f.fog()).uniform(19, f.lights()).uniform(22, f.renderOriginSlice());
             mlab.bind(writer);
-            writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
             pushMeshVisualConstants(cmd, pipeline, in, multiDraw.start());
 
             drawMeshTasksIndirect(cmd, in.commands(), multiDraw);
@@ -298,7 +304,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         }
         VkMeshPipeline pipeline = meshVisualPipelines().crumblingPipeline(crumblingMaterial, instanceType, COLOR_FORMAT,
                 DEPTH_FORMAT);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
 
         Material material = draw.material();
         writer.storage(1, cf.objectBuffer());
@@ -312,7 +318,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
               .uniform(18, cf.fog())
               .uniform(19, cf.lights())
               .uniform(22, cf.renderOriginSlice());
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+        writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long pc = stack.nmalloc(VkMeshVisualPipelines.PUSH_BYTES);
@@ -325,7 +331,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
             MemoryUtil.memPutInt(pc + 36L, mesh.baseVertex());
             MemoryUtil.memPutInt(pc + 40L, triCount);
             MemoryUtil.memPutInt(pc + 44L, MaterialEncoder.packProperties(crumblingMaterial));
-            VK12.nvkCmdPushConstants(cmd, pipeline.layout().pipelineLayout(),
+            VK10.nvkCmdPushConstants(cmd, pipeline.layout().pipelineLayout(),
                     EXTMeshShader.VK_SHADER_STAGE_MESH_BIT_EXT, 0, VkMeshVisualPipelines.PUSH_BYTES, pc);
         }
         EXTMeshShader.vkCmdDrawMeshTasksEXT(cmd, (triCount + 63) / 64, 1, 1);

@@ -18,7 +18,9 @@ import dev.engine_room.flywheel.lib.backend.SimpleBackend;
 
 
 import net.minecraft.resources.Identifier;
+import net.minecraft.client.Minecraft;
 import net.minecraft.world.level.LevelAccessor;
+import org.jspecify.annotations.Nullable;
 
 public final class VkMeshShaderBackends {
     private static final int PRIORITY = 1900;
@@ -62,20 +64,28 @@ public final class VkMeshShaderBackends {
     }
 
     private static final class MeshEngine extends EngineImpl {
+        private static @Nullable MeshEngine terrainOwner;
         private final VkMeshPipelines pipelines = new VkMeshPipelines();
         private final VkPrimaryTerrainRasterizer rasterizer = new VkPrimaryTerrainRasterizer(pipelines);
         private final VkTranslucentTerrainRasterizer translucentRasterizer = new VkTranslucentTerrainRasterizer(pipelines);
 
         MeshEngine(LevelAccessor level) {
             super(level, new VkMeshVisualDrawManager(VkPrograms.get()), Backends.MAX_ORIGIN_DISTANCE);
-            VkTerrainDrawManager.setMeshDrawStrategy(rasterizer);
-            VkTerrainDrawManager.setTranslucentMeshDrawStrategy(translucentRasterizer);
+            // Auxiliary VisualizationLevels own visuals, not Sodium's main-world terrain arena.
+            if (level == Minecraft.getInstance().level) {
+                terrainOwner = this;
+                VkTerrainDrawManager.setMeshDrawStrategy(rasterizer);
+                VkTerrainDrawManager.setTranslucentMeshDrawStrategy(translucentRasterizer);
+            }
         }
 
         @Override
         public void delete() {
-            VkTerrainDrawManager.setMeshDrawStrategy(null);
-            VkTerrainDrawManager.setTranslucentMeshDrawStrategy(null);
+            if (terrainOwner == this) {
+                terrainOwner = null;
+                VkTerrainDrawManager.setMeshDrawStrategy(null);
+                VkTerrainDrawManager.setTranslucentMeshDrawStrategy(null);
+            }
             rasterizer.destroy();
             translucentRasterizer.destroy();
             pipelines.destroy();

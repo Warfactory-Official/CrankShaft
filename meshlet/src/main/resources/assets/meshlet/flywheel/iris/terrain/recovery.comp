@@ -1,0 +1,29 @@
+#include "meshlet:iris/terrain/scene.glsl"
+
+layout(local_size_x = 32) in;
+uniform uint _flw_quadsPerTask;
+uniform uint _flw_runIndex;
+
+void main() {
+    _FlwGuestRun run = _flw_runs[_flw_runIndex];
+    // The API guarantees 65535 X groups; indirect dispatch does not perform the direct-call limit check.
+    for (uint commandIndex = gl_WorkGroupID.x; commandIndex < run.dispatch.w; commandIndex += gl_NumWorkGroups.x) {
+        uint command = (run.draw.x + commandIndex) * 5u;
+        uint quads = _flw_commands[command] / 6u;
+        uint slot = _flw_commands[command + 4u];
+        uint firstVertex = _flw_commands[command + 3u] + (_flw_commands[command + 2u] / 6u) * 4u;
+        restrict uint * history = _flw_geometryPointers[slot].visibility;
+        uint recover = 0u;
+        // A warp walks each command's contiguous history. One invocation per command serialized every quad load.
+        for (uint base = 0u; base < quads; base += 32u) {
+            uint quad = base + gl_LocalInvocationID.x;
+            uint reject = quad < quads && history[(firstVertex >> 2u) + quad] == 0u ? 1u : 0u;
+            recover = subgroupOr(reject);
+            if (recover != 0u) break;
+        }
+        if (gl_LocalInvocationID.x == 0u) {
+            _flw_commands[command] = recover != 0u ? (quads + _flw_quadsPerTask - 1u) / _flw_quadsPerTask : 0u;
+            _flw_commands[command + 1u] = quads;
+        }
+    }
+}

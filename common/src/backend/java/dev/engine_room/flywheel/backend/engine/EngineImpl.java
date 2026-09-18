@@ -6,29 +6,31 @@ import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.instance.Instancer;
 import dev.engine_room.flywheel.api.instance.InstancerProvider;
+import dev.engine_room.flywheel.api.lighting.GeometryOcclusion;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.api.task.Plan;
 import dev.engine_room.flywheel.api.visualization.VisualEmbedding;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.GpuTimer;
-import dev.engine_room.flywheel.backend.engine.embed.EmbeddedEnvironment;
-import dev.engine_room.flywheel.backend.engine.embed.Environment;
-import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
+import dev.engine_room.flywheel.backend.engine.embed.*;
 import dev.engine_room.flywheel.backend.engine.uniform.Uniforms;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.client.Camera;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Vec3i;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.CardinalLighting;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.jspecify.annotations.Nullable;
 
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class EngineImpl implements Engine {
     private final DrawManager<? extends AbstractInstancer<?>> drawManager;
@@ -58,8 +60,7 @@ public class EngineImpl implements Engine {
 
     @Override
     public Plan<RenderContext> createFramePlan() {
-        return drawManager.createFramePlan()
-                          .and(lightStorage.createFramePlan());
+        return drawManager.createFramePlan().and(lightStorage.createFramePlan());
     }
 
     @Override
@@ -84,6 +85,7 @@ public class EngineImpl implements Engine {
         FlwBackend.LOGGER.info("Attempting render origin change: {} -> {} (camera drift {} blocks)",
                 oldOrigin, newOrigin, (int) Math.sqrt(distanceSqr));
         renderOrigin = newOrigin;
+        lightStorage.renderOrigin(newOrigin);
         drawManager.onRenderOriginChanged();
         FlwBackend.LOGGER.debug("Render origin snap: {} -> {} (camera drift {} blocks); recreating all visuals",
                 oldOrigin, renderOrigin, Integer.toString((int) Math.sqrt(distanceSqr)));
@@ -96,6 +98,11 @@ public class EngineImpl implements Engine {
     }
 
     @Override
+    public void geometryLightSections(LongSet sections) {
+        lightStorage.geometrySections(sections);
+    }
+
+    @Override
     public void onLightUpdate(long sectionPos, LightLayer layer) {
         lightStorage.onLightUpdate(sectionPos);
     }
@@ -104,6 +111,7 @@ public class EngineImpl implements Engine {
     public void render(RenderContext context) {
         // 26.2: no GlStateTracker save/restore -- Mojang RHI leaves GL caches consistent; raw restore() would desync them.
         try {
+            lightStorage.flushTerrainRequests();
             Uniforms.update(context);
             // Rotate the GL GPU-timer's per-frame query ring here, before the frame's labeled visual GL work
             // (no-op on a Vulkan host, which self-rotates on its submit index).
@@ -183,16 +191,60 @@ public class EngineImpl implements Engine {
         return drawManager;
     }
 
-    private class VisualizationContextImpl implements VisualizationContext {
+    /**
+     * Shaderpack guest draw tag ({@link TaggedEnvironment#tag}) of a visual's block entity; {@code 0} = shared
+     * context. Called on visual-creation worker threads.
+     */
+    public int drawTag(BlockEntity blockEntity) {
+        return 0;
+    }
+
+    public int drawTag(Entity entity) {
+        return 0;
+    }
+
+    private class VisualizationContextImpl implements VisualizationContext, TaggedVisualizationContexts {
         private final InstancerProviderImpl instancerProvider;
+        private final int drawTag;
+        // Base context only.
+        private final @Nullable ConcurrentHashMap<Integer, VisualizationContextImpl> tagged;
 
         public VisualizationContextImpl() {
-            instancerProvider = new InstancerProviderImpl(EngineImpl.this);
+            this(0);
+        }
+
+        private VisualizationContextImpl(int drawTag) {
+            this.drawTag = drawTag;
+            tagged = drawTag == 0 ? new ConcurrentHashMap<>() : null;
+            instancerProvider = new InstancerProviderImpl(EngineImpl.this,
+                    drawTag == 0 ? GlobalEnvironment.INSTANCE : new TaggedEnvironment(drawTag));
+        }
+
+        @Override
+        public VisualizationContext forBlockEntity(BlockEntity blockEntity) {
+            return forTag(drawTag(blockEntity));
+        }
+
+        @Override
+        public VisualizationContext forEntity(Entity entity) {
+            return forTag(drawTag(entity));
+        }
+
+        private VisualizationContext forTag(int tag) {
+            if (tag == 0 || tagged == null) {
+                return this;
+            }
+            return tagged.computeIfAbsent(tag, VisualizationContextImpl::new);
         }
 
         @Override
         public InstancerProvider instancerProvider() {
             return instancerProvider;
+        }
+
+        @Override
+        public GeometryOcclusion geometryOcclusion() {
+            return lightStorage.geometryOcclusion();
         }
 
         @Override
@@ -202,7 +254,7 @@ public class EngineImpl implements Engine {
 
         @Override
         public VisualEmbedding createEmbedding(Vec3i renderOrigin) {
-            var out = new EmbeddedEnvironment(EngineImpl.this, renderOrigin);
+            var out = new EmbeddedEnvironment(EngineImpl.this, renderOrigin, drawTag);
             environmentStorage.track(out);
             return out;
         }

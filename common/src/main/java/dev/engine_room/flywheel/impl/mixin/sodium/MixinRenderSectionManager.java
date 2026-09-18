@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /**
  * Cancels Sodium's per-frame render-list materialization when the engine's GPU-driven terrain takeover is live.
  */
-@Mixin(value = RenderSectionManager.class, remap = false)
+@Mixin(RenderSectionManager.class)
 public class MixinRenderSectionManager {
     @Unique
     private boolean flywheel$cancelledLastCall;

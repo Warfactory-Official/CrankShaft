@@ -5,6 +5,7 @@
   "plugin": "dev.engine_room.flywheel.impl.FlwImplMixinPlugin",
   "compatibilityLevel": "JAVA_25",
   "client": [
+    "ChunkRenderListAccessor",
     "MixinRenderRegion",
     "MixinRenderRegionManager",
     "MixinRenderSectionManager",

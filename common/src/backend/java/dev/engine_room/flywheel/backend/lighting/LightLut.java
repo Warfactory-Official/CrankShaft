@@ -1,4 +1,4 @@
-package dev.engine_room.flywheel.backend.engine;
+package dev.engine_room.flywheel.backend.lighting;
 
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.core.SectionPos;

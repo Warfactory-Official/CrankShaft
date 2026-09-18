@@ -5,12 +5,20 @@
 #ifndef MESHLET_VK_VERTEX_FORMAT_GLSL
 #define MESHLET_VK_VERTEX_FORMAT_GLSL
 
+// Sizing matters as much as decoding: every vertex fetch indexes by sizeof(Vertex), so under Iris's extended
+// layout (compact + 4 shader-input fields) a compact-sized struct reads the wrong vertex, not wrong bits.
 struct Vertex {
     uint posHi;
     uint posLo;
     uint color;
     uint uv;
     uint light;
+#ifdef _FLW_TERRAIN_VERTEX_EXTENDED
+    uint entity;// mc_Entity: block id + render type
+    uint normal;// iris_Normal: oct normal + diamond tangent
+    uint midTexCoord;// mc_midTexCoord
+    uint midBlock;// at_midBlock + block light emission
+#endif
 };
 
 const uint POSITION_BITS = 20u;

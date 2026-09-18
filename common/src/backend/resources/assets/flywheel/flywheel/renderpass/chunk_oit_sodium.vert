@@ -1,5 +1,7 @@
 // _FLW_TRANSLUCENT_INSTANCED: GPU-driven bindless replay; extensions declared in Java (VkPrograms).
 
+#include "flywheel:internal/terrain_region_input.glsl"
+
 #moj_import <minecraft:fog.glsl>
 #moj_import <minecraft:globals.glsl>
 #moj_import <minecraft:chunksection.glsl>
@@ -8,12 +10,20 @@
 // Sodium CompactChunkVertex: pos uvec2 (20-bit), color RGBA8 (AO pre-baked), uv RG16,
 // light RGBA8_UINT (w = section id).
 #ifdef _FLW_TRANSLUCENT_INSTANCED
+// verts[] indexes by sizeof(_FlwVertex): under Iris's extended layout a compact-sized struct reads the WRONG
+// vertex, so the tail must be declared even though nothing here reads it.
 struct _FlwVertex {
     uint posHi;
     uint posLo;
     uint color;
     uint uv;
     uint light;
+#ifdef _FLW_TERRAIN_VERTEX_EXTENDED
+    uint entity;
+    uint normal;
+    uint midTexCoord;
+    uint midBlock;
+#endif
 };
 layout(buffer_reference, std430, buffer_reference_align = 4) restrict readonly buffer _FlwGeoRef {
     _FlwVertex verts[];
@@ -38,7 +48,7 @@ layout(std140, binding = 23) uniform u_RegionChunkOrigin {
     int _flw_regionPadding;
 };
 #elif defined(_FLW_TRANSLUCENT_MDI)
-// [baseInstance = visible-region slot] = (originChunkX lo16 | Z hi16, originChunkY lo16, regionId, run).
+// [baseInstance = visible-region slot] = (packed X/Z24 + Y16, regionId, run).
 layout(std430, binding = 10) restrict readonly buffer _flw_RegionInputBuf {
     uvec4 _flw_regionInput[];
 };
@@ -101,7 +111,7 @@ void main() {
     uvec4 a_LightAndData = uvec4(_flw_v.light, _flw_v.light >> 8u, _flw_v.light >> 16u, _flw_v.light >> 24u) & 0xFFu;
 #elif defined(_FLW_TRANSLUCENT_MDI) && !defined(_FLW_VK)
     uvec4 _flw_region = _flw_regionInput[gl_BaseInstanceARB];
-    ivec3 regionChunkOrigin = ivec3(int(_flw_region.x << 16) >> 16, int(_flw_region.y << 16) >> 16, int(_flw_region.x) >> 16);
+    ivec3 regionChunkOrigin = _flw_unpackRegionOrigin(_flw_region);
 #else
     ivec3 regionChunkOrigin = _flw_regionChunkOrigin;
 #endif
@@ -109,9 +119,9 @@ void main() {
     vec3 sectionRelativeBlocks = (_deinterleave_u20x3(a_Position) * VERTEX_SCALE) + VERTEX_OFFSET;
 
     ivec3 chunkOrigin = regionChunkOrigin + _unpackSectionOffset(a_LightAndData.w);
-    vec3 sectionOriginBlocks = vec3(chunkOrigin) * 16.0;
+    vec3 sectionOriginBlocks = vec3(chunkOrigin * 16 - CameraBlockPos);
 
-    vec3 pos = (sectionOriginBlocks + sectionRelativeBlocks) - CameraBlockPos + CameraOffset;
+    vec3 pos = (sectionOriginBlocks + sectionRelativeBlocks) + CameraOffset;
     vec4 viewPos = ModelViewMat * vec4(pos, 1.0);
     gl_Position = ProjMat * viewPos;
     flw_oitViewZ = viewPos.z;

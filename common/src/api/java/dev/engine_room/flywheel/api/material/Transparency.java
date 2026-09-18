@@ -86,4 +86,11 @@ public enum Transparency {
      * <p>If a backend does not support OIT, it must treat this the same as {@code LIGHTNING}.
      */
     ORDER_INDEPENDENT_ADDITIVE,
+
+    /**
+     * Ordered alpha blend with RGB source-over and replacement alpha. Unlike {@link #TRANSLUCENT},
+     * the destination alpha does not accumulate: {@code alpha_out = alpha_src}. Depth writes remain
+     * controlled by the material's write mask.
+     */
+    TRANSLUCENT_ALPHA_REPLACE,
 }

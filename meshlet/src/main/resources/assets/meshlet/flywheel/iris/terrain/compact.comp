@@ -1,0 +1,24 @@
+#include "meshlet:iris/terrain/scene.glsl"
+
+layout(local_size_x = 32) in;
+
+void main() {
+    uvec4 run = _flw_runs[gl_WorkGroupID.x].draw;
+    uint count = min(run.y, (run.z & 1u) == 0u ? _flw_drawCounts[run.z >> 1u].x : _flw_drawCounts[run.z >> 1u].y);
+    uint written = 0u;
+    // A single subgroup retains the original draw order, including across each 32-command tile.
+    for (uint base = 0u; base < count; base += 32u) {
+        uint index = base + gl_SubgroupInvocationID;
+        uint command = (run.x + index) * 5u;
+        uint keep = index < count && _flw_commands[command] != 0u ? 1u : 0u;
+        uint destination = (run.x + written + subgroupExclusiveAdd(keep)) * 5u;
+        written += subgroupAdd(keep);
+        if (keep != 0u) {
+            for (uint word = 0u; word < 5u; word++) _flw_compactedCommands[destination + word] = _flw_commands[command + word];
+        }
+    }
+    if (gl_LocalInvocationID.x == 0u) {
+        if ((run.z & 1u) == 0u) _flw_drawCounts[run.z >> 1u].x = written;
+        else _flw_drawCounts[run.z >> 1u].y = written;
+    }
+}

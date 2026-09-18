@@ -1,4 +1,4 @@
-package dev.engine_room.flywheel.backend.engine;
+package dev.engine_room.flywheel.backend.lighting;
 
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.LevelAccessor;
@@ -15,7 +15,7 @@ import org.lwjgl.system.MemoryUtil;
  * fetch is in {@link VanillaLightDataCollector}.
  */
 public abstract class LightDataCollector {
-    static final int SOLID_LONGS = (LightStorage.BLOCKS_PER_SECTION + 63) >>> 6;
+    static final int SOLID_LONGS = (LightPacking.BLOCKS_PER_SECTION + 63) >>> 6;
 
     final int defaultSkyLight;
     final LevelChunkSection[] sections = new LevelChunkSection[27];
@@ -56,7 +56,7 @@ public abstract class LightDataCollector {
 
         for (int i = 0; i < SOLID_LONGS; i++) solid[i] = 0L;
 
-        final long lightPtr = ptr + LightStorage.SOLID_SIZE_BYTES;
+        final long lightPtr = ptr + LightPacking.SOLID_SIZE_BYTES;
 
         int idx = 0;
         for (int y = -1; y < 17; y++) {

@@ -19,6 +19,7 @@ import dev.engine_room.flywheel.backend.BackendDebugFlags;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
+import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
@@ -35,6 +36,7 @@ import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorWriter;
 import dev.engine_room.flywheel.backend.vk.shader.VkComputePipeline;
 import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
+import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
@@ -47,6 +49,7 @@ import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkBufferCopy;
 import org.lwjgl.vulkan.VkCommandBuffer;
@@ -54,8 +57,8 @@ import org.lwjgl.vulkan.VkCommandBuffer;
 import java.util.*;
 
 public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
-    static final int COLOR_FORMAT = VK12.VK_FORMAT_R8G8B8A8_UNORM;
-    static final int DEPTH_FORMAT = VK12.VK_FORMAT_D32_SFLOAT;
+    static final int COLOR_FORMAT = VK10.VK_FORMAT_R8G8B8A8_UNORM;
+    static final int DEPTH_FORMAT = VK10.VK_FORMAT_D32_SFLOAT;
     static final int DRAW_COMMAND_STRIDE = (int) IndirectBuffers.DRAW_COMMAND_STRIDE;
     private static final long ZERO_BYTES = 1L << 18;
     private static final int MODEL_STRIDE = 28;
@@ -77,7 +80,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     final List<MeshDrawRun> meshMultiDraws = new ArrayList<>();
     final List<MeshDrawRun> meshOitMultiDraws = new ArrayList<>();
     final List<MeshDrawRun> meshOitAdditiveMultiDraws = new ArrayList<>();
-    final VkBuffer zeroBuffer = new VkBuffer(VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, ZERO_BYTES);
+    final VkBuffer zeroBuffer = new VkBuffer(VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, ZERO_BYTES);
     final VkDescriptorWriter writer = new VkDescriptorWriter();
     final VkOitRenderer oit = new VkOitRenderer(this);
     final Matrix4f renderModelView = new Matrix4f();
@@ -94,12 +97,12 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     private boolean needsDrawSort;
     @Nullable
     private IntArrayList cachedLut;
-    private int lutPropagateFrames;
     private boolean carriedActive;
     private boolean pass2Pending;
     private long copySrcBuffer;
     private int copyRegionCount;
     private int frameParity;
+
     public VkIndirectDrawManager(VkPrograms programs) {
         this.programs = programs;
         programs.acquire();
@@ -119,14 +122,14 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     }
 
     static void bindGraphicsPipeline(VkCommandBuffer cmd, long handle, VkDescriptorLayout layout) {
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, handle);
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, handle);
         if (VkCaps.BINDLESS_TEXTURES_NEGOTIATED) {
             VkBindlessTable.bind(cmd, layout.pipelineLayout());
         }
     }
 
     static void drawUberIndirect(VkCommandBuffer cmd, VkBuffer drawBuffer, UberDraw batch) {
-        VK12.vkCmdDrawIndexedIndirect(cmd, drawBuffer.vkBuffer(),
+        VK10.vkCmdDrawIndexedIndirect(cmd, drawBuffer.vkBuffer(),
                 (long) batch.start() * DRAW_COMMAND_STRIDE, batch.end() - batch.start(), DRAW_COMMAND_STRIDE);
     }
 
@@ -284,7 +287,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         }
         copyRegions.position(0)
                    .limit(copyRegionCount);
-        VK12.vkCmdCopyBuffer(cmd, copySrcBuffer, dstBuffer, copyRegions);
+        VK10.vkCmdCopyBuffer(cmd, copySrcBuffer, dstBuffer, copyRegions);
         copyRegions.clear();
         copyRegionCount = 0;
     }
@@ -341,13 +344,13 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         VkContext.pushLabel(cmd, "flywheel:vk/instance_pass2");
         long pyramidSampler = VkContext.sampler(RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
         dispatchCullPass(cmd, pyramidSampler, programs.cullPass2Pipeline(), true);
-        VkCmd.memoryBarrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK12.VK_ACCESS_SHADER_WRITE_BIT, VK12.VK_ACCESS_SHADER_READ_BIT);
+        VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK10.VK_ACCESS_SHADER_WRITE_BIT, VK10.VK_ACCESS_SHADER_READ_BIT);
         dispatchApplyPass(cmd, true);
-        VkCmd.memoryBarrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK12.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK12.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-                VK12.VK_ACCESS_SHADER_WRITE_BIT,
-                VK12.VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK12.VK_ACCESS_SHADER_READ_BIT);
+        VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK10.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK10.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+                VK10.VK_ACCESS_SHADER_WRITE_BIT,
+                VK10.VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK10.VK_ACCESS_SHADER_READ_BIT);
         VkContext.popLabel(cmd);
         VkContext.submitCommands(cmd);
         pass2Pending = true;
@@ -356,7 +359,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     private void dispatchCullPass(VkCommandBuffer cmd, long pyramidSampler, VkComputePipeline pipeline, boolean pass2) {
         FrameSet fs = frame();
         VkContext.pushLabel(cmd, "flywheel:vk/instance_cull");
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle());
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle());
         writer.storage(0, objectStorage.frameDescriptorBuffer())
               .storage(1, objectStorage.objectBuffer())
               .storage(2, pass2 ? fs.indexTable2 : fs.indexTable)
@@ -368,8 +371,8 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
               .uniform(18, fs.frameUbo)
               .uniform(19, fs.frameUbo)
               .sampler(10, cullPyramidView, pyramidSampler);
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.layout());
-        VK12.vkCmdDispatch(cmd, objectStorage.pageSlotCount(), 1, 1);
+        writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.layout());
+        VK10.vkCmdDispatch(cmd, objectStorage.pageSlotCount(), 1, 1);
         VkContext.popLabel(cmd);
     }
 
@@ -377,10 +380,10 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         FrameSet fs = frame();
         VkContext.pushLabel(cmd, "flywheel:vk/instance_apply");
         VkComputePipeline pipeline = programs.applyPipeline();
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle());
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle());
         writer.storage(3, pass2 ? fs.model2 : fs.model).storage(4, pass2 ? fs.draw2 : fs.draw);
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.layout());
-        VK12.vkCmdDispatch(cmd, Mth.positiveCeilDiv(frameDrawCount, VkCaps.SUBGROUP_SIZE), 1, 1);
+        writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.layout());
+        VK10.vkCmdDispatch(cmd, Mth.positiveCeilDiv(frameDrawCount, VkCaps.SUBGROUP_SIZE), 1, 1);
         VkContext.popLabel(cmd);
     }
 
@@ -401,19 +404,19 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         generatePyramid(cmd, pyramidSampler);
         VkContext.popLabel(cmd);
 
-        VkCmd.memoryBarrier(cmd, VK12.VK_PIPELINE_STAGE_TRANSFER_BIT,
-                VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK12.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | meshVisualDstStageBits(),
-                VK12.VK_ACCESS_TRANSFER_WRITE_BIT, VK12.VK_ACCESS_SHADER_READ_BIT);
+        VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK10.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | meshVisualDstStageBits(),
+                VK10.VK_ACCESS_TRANSFER_WRITE_BIT, VK10.VK_ACCESS_SHADER_READ_BIT);
 
         dispatchCullPass(cmd, pyramidSampler, programs.cullPipeline(), false);
-        VkCmd.memoryBarrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK12.VK_ACCESS_SHADER_WRITE_BIT, VK12.VK_ACCESS_SHADER_READ_BIT);
+        VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK10.VK_ACCESS_SHADER_WRITE_BIT, VK10.VK_ACCESS_SHADER_READ_BIT);
         dispatchApplyPass(cmd, false);
         emitMeshVisualCommands(cmd);
-        VkCmd.memoryBarrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK12.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK12.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | meshVisualDstStageBits(),
-                VK12.VK_ACCESS_SHADER_WRITE_BIT,
-                VK12.VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK12.VK_ACCESS_SHADER_READ_BIT);
+        VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK10.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK10.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | meshVisualDstStageBits(),
+                VK10.VK_ACCESS_SHADER_WRITE_BIT,
+                VK10.VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK10.VK_ACCESS_SHADER_READ_BIT);
         VkContext.popLabel(cmd);
         VkContext.submitCommands(cmd);
     }
@@ -488,7 +491,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
             VkCmd.setViewportScissor(cmd, width, height);
 
-            VK12.vkCmdBindIndexBuffer(cmd, indexVk, 0L, VK12.VK_INDEX_TYPE_UINT32);
+            VK10.vkCmdBindIndexBuffer(cmd, indexVk, 0L, VK10.VK_INDEX_TYPE_UINT32);
             VkCmd.bindVertexBuffer(cmd, vertexVk);
 
             VkContext.pushLabel(cmd, pass2 ? "flywheel:vk/opaque_pass2" : "flywheel:vk/opaque");
@@ -521,20 +524,47 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             }
             pending.clear();
         }
-        if (light.checkNeedsLutRebuildAndClear()) {
-            cachedLut = light.createLut();
-            lutPropagateFrames = 2;
+        var update = light.pollLutUpdates();
+        if (update != null) {
+            if (update.fullWords() != null) {
+                cachedLut = update.fullWords();
+                for (FrameSet frame : frames) {
+                    frame.lutPending.clear();
+                    frame.lutPending.set(0, cachedLut.size());
+                }
+            } else {
+                assert cachedLut != null && cachedLut.size() == update.totalWords();
+                for (int span = 0; span < update.count(); span++) {
+                    int offset = update.offset(span);
+                    int source = update.source(span);
+                    int length = update.length(span);
+                    for (int i = 0; i < length; i++) cachedLut.set(offset + i, update.word(source + i));
+                    for (FrameSet frame : frames) frame.lutPending.set(offset, offset + length);
+                }
+            }
         }
-        if (lutPropagateFrames > 0 && cachedLut != null) {
+        if (!fs.lutPending.isEmpty()) {
+            assert cachedLut != null;
             int size = cachedLut.size();
             fs.lightLut.ensureCapacity((long) size * Integer.BYTES);
             long ptr = fs.lightLut.mappedAddress();
-            for (int i = 0; i < size; i++) {
-                MemoryUtil.memPutInt(ptr + (long) i * Integer.BYTES, cachedLut.getInt(i));
+            for (int start = fs.lutPending.nextSetBit(0); start >= 0; ) {
+                int end = fs.lutPending.nextClearBit(start);
+                for (int i = start; i < end; i++) {
+                    MemoryUtil.memPutInt(ptr + (long) i * Integer.BYTES, cachedLut.getInt(i));
+                }
+                start = fs.lutPending.nextSetBit(end);
             }
-            lutPropagateFrames--;
+            fs.lutPending.clear();
         }
         lightReady = true;
+    }
+
+    void writeGeometryAtlas(Material material) {
+        if (RenderPassShaders.readsGeometry(material.light())) {
+            writer.sampler(GeometryAtlas.VK_BINDING, VkContext.imageView(GeometryAtlas.view()),
+                    VkContext.sampler(GeometryAtlas.sampler()));
+        }
     }
 
     void writeAtlasTrio(TextureManager textureManager, Identifier texture, long atlasSampler,
@@ -552,6 +582,12 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
               .storage(7, fs.matrices)
               .uniform(21, renderPassUniforms.material(0))
               .uniform(23, renderPassUniforms.embedDraw(batchStart));
+    }
+
+    private void writeLineFrame(FrameSet fs, Material material) {
+        // Graphics binding 16 carries Mojang Projection; line expansion also needs this frame at 41.
+        if (material.shaders().vertexSource().equals(StandardMaterialShaders.LINE.vertexSource()))
+            writer.uniform(41, fs.frameUbo);
     }
 
     void writeLight(FrameSet fs) {
@@ -592,8 +628,10 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                 lastPipeline = pipeline;
             }
             writeUberCommon(fs, fs.indexTable, fs.draw, multiDraw.start());
+            writeLineFrame(fs, material);
             writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms());
             if (needsColor) {
+                writeGeometryAtlas(material);
                 if (!bindless) {
                     writeAtlasTrio(f.textureManager(), material.texture(),
                             VkContext.sampler(MaterialSamplers.get(material)),
@@ -603,7 +641,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                 writeLightFog(fs, f.fog(), f.lights(), f.globals(), f.renderOriginSlice());
                 VkWaveletOitChain.writeOitReads(writer, f, mode, folded);
             }
-            writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
             drawUberIndirect(cmd, fs.draw, multiDraw);
         }
     }
@@ -632,15 +670,17 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                 lastPipeline = pipeline;
             }
             writeUberCommon(fs, fs.indexTable, fs.draw, multiDraw.start());
+            writeLineFrame(fs, material);
             writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms());
             if (!bindless) {
                 writeAtlasTrio(f.textureManager(), material.texture(),
                         VkContext.sampler(MaterialSamplers.get(material)),
                         f.overlayView(), f.overlaySampler(), f.lightmapView());
             }
+            writeGeometryAtlas(material);
             writeLightFog(fs, f.fog(), f.lights(), f.globals(), f.renderOriginSlice());
             mlab.bind(writer);
-            writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
             drawUberIndirect(cmd, fs.draw, multiDraw);
         }
     }
@@ -681,10 +721,12 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                 writeAtlasTrio(textureManager, material.texture(), VkContext.sampler(MaterialSamplers.get(material)),
                         overlayView, overlaySampler, lightmapView);
             }
+            writeGeometryAtlas(material);
             writeUberCommon(fs, indexTable, drawBuffer, multiDraw.start());
+            writeLineFrame(fs, material);
             writer.uniform(16, projection).uniform(17, dynamicTransforms);
             writeLightFog(fs, fog, lights, globals, renderOriginSlice);
-            writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
 
             drawUberIndirect(cmd, drawBuffer, multiDraw);
         }
@@ -751,7 +793,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                 colorView, Optional.empty(), depthView, OptionalDouble.empty())) {
             VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
             VkCmd.setViewportScissor(cmd, width, height);
-            VK12.vkCmdBindIndexBuffer(cmd, indexVk, 0L, VK12.VK_INDEX_TYPE_UINT32);
+            VK10.vkCmdBindIndexBuffer(cmd, indexVk, 0L, VK10.VK_INDEX_TYPE_UINT32);
             VkCmd.bindVertexBuffer(cmd, vertexVk);
 
             VkContext.pushLabel(cmd, "flywheel:vk/crumbling");
@@ -781,7 +823,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                             }
                             VkGraphicsPipeline pipeline = programs.uber().crumblingPipeline(crumblingMaterial,
                                     instanceType, smoothness, COLOR_FORMAT, DEPTH_FORMAT);
-                            VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+                            VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
 
                             writer.storage(1, objectBuffer);
                             writeLight(fs);
@@ -796,9 +838,9 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                                   .uniform(21, renderPassUniforms.material(
                                           MaterialEncoder.packProperties(crumblingMaterial)))
                                   .uniform(22, renderOriginSlice);
-                            writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+                            writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
 
-                            VK12.vkCmdDrawIndexed(cmd, mesh.indexCount(), 1, mesh.firstIndex(), mesh.baseVertex(),
+                            VK10.vkCmdDrawIndexed(cmd, mesh.indexCount(), 1, mesh.firstIndex(), mesh.baseVertex(),
                                     firstInstance);
                         }
                     }
@@ -852,6 +894,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     }
 
     static final class FrameSet {
+        final BitSet lutPending = new BitSet();
         final VkBuffer indexTable = storage(256);                 // binding 2: written by the cull
         final VkBuffer model = storage(256);                      // binding 3: cull-zeroed + apply-read
         final VkBuffer draw = indirectStorage(256);               // binding 4
@@ -865,7 +908,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         final VkBuffer lightSections = storage(1L << 16);
         final BitSet lightPending = new BitSet();
         // Frame UBO (binding 16): single-buffered would race the next frame's overwrite -> corrupted frustum.
-        final VkBuffer frameUbo = new VkBuffer(VK12.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, FrameUniforms.size());
+        final VkBuffer frameUbo = new VkBuffer(VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, FrameUniforms.size());
         // Embedded pose matrices SSBO (binding 7), host-copied; slot 0 is the reserved identity, so matrixIndex 0
         // never indexes past it. The cull reads them too, so the copy must be complete before dispatchCompute.
         final VkBuffer matrices = storage(1L << 12);
@@ -877,11 +920,11 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         VkBuffer meshVisualModelView;
 
         private static VkBuffer storage(long size) {
-            return new VkBuffer(VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, size);
+            return new VkBuffer(VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, size);
         }
 
         private static VkBuffer indirectStorage(long size) {
-            return new VkBuffer(VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK12.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+            return new VkBuffer(VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
                     size);
         }
 
@@ -930,7 +973,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             for (int i = 0; i < meshes.size(); i++) {
                 Model.ConfiguredMesh entry = meshes.get(i);
                 MeshPool.PooledMesh mesh = meshPool.alloc(entry.mesh());
-                IndirectDraw draw = new IndirectDraw(instancer, entry.material(), mesh, key.bias(), i);
+                IndirectDraw draw = new IndirectDraw(instancer, entry.material(), mesh, key.bias(), i, null);
                 indirectDraws.add(draw);
                 instancer.addDraw(draw);
             }

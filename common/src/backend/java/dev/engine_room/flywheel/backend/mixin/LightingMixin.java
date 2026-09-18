@@ -10,8 +10,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 // 26.2 moved the level light seam to Lighting#updateBuffer; grab the untransformed vectors
 // here so flw_light*Direction tracks whatever vanilla/mods actually set.
-// remap=false: blaze3d names survive unchanged on both loaders.
-@Mixin(value = Lighting.class, remap = false)
+@Mixin(Lighting.class)
 abstract class LightingMixin {
     @Inject(method = "updateBuffer", at = @At("HEAD"), require = 1)
     private void flywheel$onUpdateLevelLight(Lighting.Entry entry, Vector3fc light0, Vector3fc light1,

@@ -1,0 +1,20 @@
+#include "meshlet:iris/terrain/scene.glsl"
+
+layout(local_size_x = 256) in;
+uniform uint _flw_quadsPerTask;
+
+void main() {
+    uvec4 run = _flw_runs[gl_WorkGroupID.x].draw;
+    uint count = min(run.y, (run.z & 1u) == 0u ? _flw_drawCounts[run.z >> 1u].x : _flw_drawCounts[run.z >> 1u].y);
+    if (_flw_taskPhase == 2u) {
+        if (gl_LocalInvocationID.x == 0u) _flw_runs[gl_WorkGroupID.x].dispatch = uvec4(min(count, 65535u), 1, 1, count);
+        return;
+    }
+    for (uint i = gl_LocalInvocationID.x; i < count; i += 256u) {
+        uint command = (run.x + i) * 5u;
+        uint quads = _flw_commands[command] / 6u;
+        // NV sees count/first at bytes 0/4. Preserve firstIndex, baseVertex and baseInstance at 8/12/16.
+        _flw_commands[command] = (quads + _flw_quadsPerTask - 1u) / _flw_quadsPerTask;
+        _flw_commands[command + 1u] = quads;
+    }
+}

@@ -7,7 +7,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
 // Exposes fields {@link MixinRenderSectionManager} needs for render-list cancellation + coherent stats.
-@Mixin(value = RenderSectionManager.class, remap = false)
+@Mixin(RenderSectionManager.class)
 public interface RenderSectionManagerAccessor {
     @Accessor("regions")
     RenderRegionManager flywheel$getRegions();

@@ -11,6 +11,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Math;
 import org.joml.Matrix4f;
+import org.joml.Matrix4fc;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
 import org.lwjgl.system.MemoryUtil;
@@ -18,7 +19,7 @@ import org.lwjgl.system.MemoryUtil;
 import java.util.function.IntSupplier;
 
 public final class FrameUniforms extends UniformWriter {
-    private static final int SIZE = 96 + 64 * 9 + 16 * 5 + 8 * 2 + 8 + 4 * 19;
+    private static final int SIZE = 96 + 64 * 9 + 16 * 5 + 8 * 2 + 8 + 4 * 21;
     static final UniformBuffer BUFFER = new UniformBuffer(Uniforms.FRAME_INDEX, SIZE);
 
     private static final float Z_NEAR = 0.05f;
@@ -43,11 +44,12 @@ public final class FrameUniforms extends UniformWriter {
     private static boolean frustumPaused = false;
     private static boolean frustumCapture = false;
     private static IntSupplier tickProvider = () -> 0;
+    private static float partialTick;
 
     private FrameUniforms() {
     }
 
-    public static org.joml.Matrix4fc view() {
+    public static Matrix4fc view() {
         return VIEW;
     }
 
@@ -86,11 +88,16 @@ public final class FrameUniforms extends UniformWriter {
         return SIZE;
     }
 
+    public static float partialTick() {
+        return partialTick;
+    }
+
     public static void bind() {
         BUFFER.bind();
     }
 
     public static void update(RenderContext context) {
+        partialTick = context.partialTick();
         long ptr = BUFFER.ptr();
         setPrev();
 
@@ -190,7 +197,7 @@ public final class FrameUniforms extends UniformWriter {
         int ticks = tickProvider.getAsInt();
         float partialTick = context.partialTick();
         float renderTicks = ticks + partialTick;
-        float renderSeconds = renderTicks / 20f;
+        float renderSeconds = renderTicks / 20.0f;
         long utilMillis = System.nanoTime() / 1000000L;
         float systemSeconds = (float) ((double) utilMillis / 1000.0);
         int systemMillis = (int) (utilMillis % Integer.MAX_VALUE);

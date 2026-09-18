@@ -1,0 +1,18 @@
+#version 430 compatibility
+layout(local_size_x = 8, local_size_y = 8) in;
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+uniform vec2 screenSize;
+uniform bool flw_oitActive;
+
+layout(std430, binding = 0) coherent buffer FlwHeads { uint flw_heads[]; };
+layout(std430, binding = 1) coherent buffer FlwNodes { uvec4 flw_nodes[]; };
+layout(std430, binding = 2) coherent buffer FlwCounts { uint flw_count; uint flw_overflow; uint flw_maxLayers; uint flw_pad; };
+
+void main() {
+    if (!flw_oitActive) return;
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(pixel, uvec2(screenSize)))) return;
+    uint offset = pixel.y * uint(screenSize.x) + pixel.x;
+    flw_heads[offset] = 0xffffffffu;
+    if (offset == 0u) { flw_count = 0u; flw_overflow = 0u; flw_maxLayers = 0u; flw_pad = 0u; }
+}

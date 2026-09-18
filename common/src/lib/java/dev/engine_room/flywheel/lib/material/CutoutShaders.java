@@ -20,6 +20,8 @@ public final class CutoutShaders {
      * Discard fragments with alpha less than to 0.5.
      */
     public static final CutoutShader HALF = new SimpleCutoutShader(ResourceUtil.rl("cutout/half.glsl"));
+    public static final CutoutShader ONE = new SimpleCutoutShader(ResourceUtil.rl("cutout/one.glsl"));
+    public static final CutoutShader TINY = new SimpleCutoutShader(ResourceUtil.rl("cutout/tiny.glsl"));
 
     /**
      * Two-sided slab clip in OBJ-local space; requires the CLIP_TRANSFORMED instance type.

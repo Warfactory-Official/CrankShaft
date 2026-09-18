@@ -26,7 +26,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Bakes an {@link ItemStack} into a flywheel {@link Model} via the 26.2 {@code ItemStackRenderState} extraction,
- * cached on the resolved model identity so identical geometry shares a model -- and an instancer.
+ * cached on the resolved model identity so identical geometry shares a model -- and an instancer. The key also holds
+ * the item and {@code item_model}: baked meshes record them (shaderpack item ids).
  */
 public final class ItemModels {
     public static final Model EMPTY = new SimpleModel(List.of());
@@ -65,7 +66,8 @@ public final class ItemModels {
                     false);
             return EMPTY_BAKED;
         }
-        return MODEL_CACHE.computeIfAbsent(new ModelKey(displayContext, result.identity()), $ -> buildModel(result));
+        return MODEL_CACHE.computeIfAbsent(new ModelKey(displayContext, result.identity(), stack.getItem(),
+                stack.get(DataComponents.ITEM_MODEL)), $ -> buildModel(result));
     }
 
     // TODO: revisit -- rebake was consolidated onto ItemModels from a per-visual helper; reconsider
@@ -111,7 +113,8 @@ public final class ItemModels {
     public record Baked(Model model, float modelMinY, float modelZSize) {
     }
 
-    private record ModelKey(ItemDisplayContext displayContext, Object identity) {
+    private record ModelKey(ItemDisplayContext displayContext, Object identity, Item item,
+                            @Nullable Identifier itemModel) {
     }
 
     private record SupportKey(Item item, @Nullable Identifier modelId, ItemDisplayContext displayContext) {

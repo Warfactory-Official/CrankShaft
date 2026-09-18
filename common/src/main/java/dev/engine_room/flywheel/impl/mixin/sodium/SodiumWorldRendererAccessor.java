@@ -6,7 +6,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
 // Exposes {@code renderSectionManager} for the terrain engine to read off the cancelled SodiumWorldRenderer.
-@Mixin(value = SodiumWorldRenderer.class, remap = false)
+@Mixin(SodiumWorldRenderer.class)
 public interface SodiumWorldRendererAccessor {
     @Accessor("renderSectionManager")
     RenderSectionManager flywheel$getRenderSectionManager();

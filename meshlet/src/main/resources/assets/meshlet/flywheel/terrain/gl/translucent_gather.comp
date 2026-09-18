@@ -62,8 +62,7 @@ void main() {
             uint baseVertex = compactGeom[idx * 2u + 0u];
             uint quadCount = compactGeom[idx * 2u + 1u];
             float fade = stream == 0u ? 1.0 : u_translucentVis[regionId * REGION_SIZE + sectionId];
-            vec3 sectionOriginBlocks = vec3(sectionChunkOrigin(in4, sectionId)) * 16.0
-                    - vec3(cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
+            vec3 sectionOriginBlocks = vec3(sectionChunkOrigin(in4, sectionId) * 16 - cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
 
             for (uint q = lane; q < quadCount; q += 256u) {
                 uint quadVertexBase = baseVertex + q * 4u;

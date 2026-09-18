@@ -1,0 +1,15 @@
+#include "flywheel:internal/geometry_ao.glsl"
+#include "flywheel:internal/lighting_factors.glsl"
+#define _FLW_TRACKED_LIGHTING
+
+void flw_surfaceLight(bool cardinal, bool sampleWorld) {
+    vec3 normal = gl_FrontFacing ? flw_vertexNormal : -flw_vertexNormal;
+    FlwLightAo light;
+    if (sampleWorld && flw_light(flw_vertexPos.xyz, normal, light)) {
+        flw_fragLight = max(flw_fragLight, light.light + vec2(.5 / 16.));
+    }
+    if (flw_aoEnabled()) {
+        flw_applyAo(flw_geometryOcclusion(flw_vertexPos.xyz, normal, 2., 1e-4, 64u));
+    }
+    if (cardinal) flw_applyCardinal(flw_constantAmbientLight == 1u ? diffuseNether(normal) : diffuse(normal));
+}

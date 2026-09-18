@@ -63,16 +63,17 @@ public final class BackendManagerImpl {
 
     public static void init() {
         FlwBackend.init(FlwConfig.INSTANCE.backendConfig());
-        // Port: :meshlet (LGPL) can't be named from :common at compile time; force-load its self-registering backends.
-        forceLoadMeshBackend("me.mlbv.meshlet.mesh.gl.MeshShaderBackends");
-        forceLoadMeshBackend("me.mlbv.meshlet.mesh.vk.VkMeshShaderBackends");
+        // Port: :meshlet and :iris can't be named from :common at compile time; force-load their self-registering backends.
+        forceLoadModuleBackend("me.mlbv.meshlet.mesh.gl.MeshShaderBackends");
+        forceLoadModuleBackend("me.mlbv.meshlet.mesh.vk.VkMeshShaderBackends");
+        forceLoadModuleBackend("dev.engine_room.flywheel.iris.IrisBackends");
     }
 
-    private static void forceLoadMeshBackend(String fqn) {
+    private static void forceLoadModuleBackend(String fqn) {
         try {
             Class.forName(fqn);
         } catch (ClassNotFoundException e) {
-            throw new RuntimeException("Meshlet mesh-shader backend (" + fqn + ") not on classpath", e);
+            throw new RuntimeException("Module backend (" + fqn + ") not on classpath", e);
         }
     }
 

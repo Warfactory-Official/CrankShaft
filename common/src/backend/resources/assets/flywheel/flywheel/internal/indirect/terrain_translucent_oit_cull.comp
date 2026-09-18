@@ -30,8 +30,7 @@ ivec3 sectionRelativeBlocks(uint s) {
 }
 
 bool sectionVisible(ivec3 originChunk, uint s) {
-    vec3 camDelta = vec3(cameraBlockPosAndPad.xyz);
-    vec3 cornerBase = vec3(originChunk * 16) + vec3(sectionRelativeBlocks(s)) - camDelta;
+    vec3 cornerBase = vec3(originChunk * 16 + sectionRelativeBlocks(s) - cameraBlockPosAndPad.xyz);
     vec3 mins = cornerBase - _FLW_HIZ_ADD_BLOCKS;
     vec3 maxs = cornerBase + vec3(16.0) + _FLW_HIZ_ADD_BLOCKS;
 

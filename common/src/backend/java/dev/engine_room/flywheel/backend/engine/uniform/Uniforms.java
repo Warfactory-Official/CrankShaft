@@ -10,6 +10,7 @@ public final class Uniforms {
     public static final int LEVEL_INDEX = 12;
 
     public static final String FRAME_BLOCK_NAME = "_FlwFrameUniforms";
+    public static final String LINE_FRAME_BLOCK_NAME = "_FlwLineFrameUniforms";
     public static final String OPTIONS_BLOCK_NAME = "_FlwOptionsUniforms";
     public static final String PLAYER_BLOCK_NAME = "_FlwPlayerUniforms";
     public static final String LEVEL_BLOCK_NAME = "_FlwLevelUniforms";
@@ -39,6 +40,7 @@ public final class Uniforms {
 
     public static void setUniformBlockBindings(GlProgram program) {
         program.setUniformBlockBinding(FRAME_BLOCK_NAME, FRAME_INDEX);
+        program.setUniformBlockBinding(LINE_FRAME_BLOCK_NAME, FRAME_INDEX);
         program.setUniformBlockBinding(OPTIONS_BLOCK_NAME, OPTIONS_INDEX);
         program.setUniformBlockBinding(PLAYER_BLOCK_NAME, PLAYER_INDEX);
         program.setUniformBlockBinding(LEVEL_BLOCK_NAME, LEVEL_INDEX);

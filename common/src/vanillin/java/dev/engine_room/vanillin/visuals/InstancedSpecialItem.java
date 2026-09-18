@@ -10,6 +10,7 @@ import dev.engine_room.flywheel.api.material.WriteMask;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.lib.material.Materials;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
+import dev.engine_room.flywheel.lib.model.ItemTaggedModel;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTrees;
@@ -28,6 +29,9 @@ import net.minecraft.client.resources.model.sprite.SpriteId;
 import net.minecraft.data.AtlasIds;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.DyeColor;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.SkullBlock;
 import net.minecraft.world.level.block.entity.BannerPatternLayers;
 import org.joml.Matrix4f;
@@ -68,6 +72,8 @@ final class InstancedSpecialItem {
     private static final float PATTERN_INFLATE_STEP = 0.001F;
 
     private final InstancerProvider provider;
+    // The item of the layer being rebuilt; its models carry it.
+    private @Nullable Item item;
     private final Matrix4f scratch = new Matrix4f();
     private final List<Draw> draws = new ArrayList<>();
     private List<SpecialItemModels.Resolved> current = List.of();
@@ -174,15 +180,19 @@ final class InstancedSpecialItem {
         hidden = false;
         current = List.copyOf(resolved);
         for (SpecialItemModels.Resolved layer : resolved) {
+            item = null;
             switch (layer.key()) {
                 case SpecialItemModels.TridentKey k -> {
+                    item = Items.TRIDENT;
                     add(ModelTrees.of(ModelLayers.TRIDENT, TridentVisual.MATERIAL), layer.transform(), -1, true, 0);
                     if (k.foil()) {
                         add(ModelTrees.of(ModelLayers.TRIDENT, Materials.GLINT_ENTITY), layer.transform(), -1, true, 1);
                     }
                 }
+                // Iris reports no item id for skull special renderers.
                 case SpecialItemModels.SkullKey k -> addSkull(k, layer.transform());
                 case SpecialItemModels.ShieldKey k -> {
+                    item = Items.SHIELD;
                     boolean patterned = !k.patterns().layers().isEmpty() || k.baseColor() != null;
                     TextureAtlasSprite base = sprite(AtlasIds.SHIELD_PATTERNS,
                             patterned ? Sheets.SHIELD_BASE : Sheets.SHIELD_BASE_NO_PATTERN);
@@ -197,6 +207,8 @@ final class InstancedSpecialItem {
                     }
                 }
                 case SpecialItemModels.BannerKey k -> {
+                    item = Blocks.BANNER.pick(k.baseColor())
+                                        .asItem();
                     TextureAtlasSprite base = sprite(AtlasIds.BANNER_PATTERNS, Sheets.BANNER_BASE);
                     add(ModelTrees.of(ModelLayers.STANDING_BANNER, base, BANNER_BASE_MATERIAL), layer.transform(), -1,
                             true, 0);
@@ -288,12 +300,12 @@ final class InstancedSpecialItem {
         return draw;
     }
 
-    // InstanceTree.create requests bias 0; pin the layer's.
+    // InstanceTree.create requests bias 0; pin the layer's. The item rides the model (shaderpack item ids).
     private InstancerProvider biased(int bias) {
-        return bias == 0 ? provider : new InstancerProvider() {
+        return new InstancerProvider() {
             @Override
             public <I extends Instance> Instancer<I> instancer(InstanceType<I> type, Model model, int ignored) {
-                return provider.instancer(type, model, bias);
+                return provider.instancer(type, item == null ? model : new ItemTaggedModel(model, item), bias);
             }
         };
     }

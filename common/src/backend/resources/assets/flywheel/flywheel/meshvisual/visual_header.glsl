@@ -1,3 +1,5 @@
+#include "flywheel:internal/fog_coordinates.glsl"
+
 vec4 flw_vertexPos;
 vec3 flw_vertexNormal;
 vec4 flw_vertexColor;
@@ -31,6 +33,7 @@ layout(std140, binding = 9) uniform _FlwMeshVisualFrame {
     float _flw_mvSystemSeconds;
     float _flw_mvGlintSpeed;
     float _flw_mvGlintStrength;
+    float _flw_mvPartialTick;
 };
 
 // Live bob-included ProjMat (26.2 bobs the projection, not the camera): clip with this to bob exactly like MDI.

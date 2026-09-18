@@ -5,9 +5,18 @@ import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL43;
 import org.lwjgl.system.MemoryUtil;
 
+import java.util.function.LongConsumer;
+
 public class LightBuffers {
     private final ResizableStorageArray lut = new ResizableStorageArray(4);
     private final ResizableStorageArray sections = new ResizableStorageArray(LightStorage.SECTION_SIZE_BYTES);
+    private int[] copyWords;
+    private int copySource, copyLength;
+    private final LongConsumer copyWriter = ptr -> {
+        for (int i = 0; i < copyLength; i++) {
+            MemoryUtil.memPutInt(ptr + (long) i * Integer.BYTES, copyWords[copySource + i]);
+        }
+    };
 
     public void flush(StagingBuffer staging, LightStorage light) {
         var capacity = light.capacity();
@@ -19,16 +28,14 @@ public class LightBuffers {
         sections.ensureCapacity(capacity);
         light.uploadChangedSections(staging, sections.handle());
 
-        if (light.checkNeedsLutRebuildAndClear()) {
-            var lut = light.createLut();
-
-            this.lut.ensureCapacity(lut.size());
-
-            staging.enqueueCopy((long) lut.size() * Integer.BYTES, this.lut.handle(), 0, ptr -> {
-                for (int i = 0; i < lut.size(); i++) {
-                    MemoryUtil.memPutInt(ptr + (long) i * Integer.BYTES, lut.getInt(i));
-                }
-            });
+        var update = light.pollLutUpdates();
+        if (update != null) for (int span = 0; span < update.count(); span++) {
+            this.lut.ensureCapacity(update.totalWords());
+            copyWords = update.words();
+            copySource = update.source(span);
+            copyLength = update.length(span);
+            staging.enqueueCopy((long) copyLength * Integer.BYTES, this.lut.handle(),
+                    (long) update.offset(span) * Integer.BYTES, copyWriter);
         }
     }
 

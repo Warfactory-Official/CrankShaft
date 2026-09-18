@@ -259,7 +259,7 @@ public final class FabricFlwConfig implements FlwConfig {
 
 	public static final class FabricBackendConfig implements BackendConfig {
 		public static final LightSmoothness LIGHT_SMOOTHNESS_DEFAULT = LightSmoothness.SMOOTH;
-		public static final TerrainMode TERRAIN_MODE_DEFAULT = TerrainMode.OFF;
+		public static final TerrainMode TERRAIN_MODE_DEFAULT = TerrainMode.TRANSLUCENT_OIT;
 
         public LightSmoothness lightSmoothness = LIGHT_SMOOTHNESS_DEFAULT;
 		public TerrainMode terrainMode = TERRAIN_MODE_DEFAULT;

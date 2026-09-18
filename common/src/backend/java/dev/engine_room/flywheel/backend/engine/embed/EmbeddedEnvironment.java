@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.instance.Instancer;
 import dev.engine_room.flywheel.api.instance.InstancerProvider;
+import dev.engine_room.flywheel.api.lighting.GeometryOcclusion;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.api.visualization.VisualEmbedding;
 import dev.engine_room.flywheel.backend.compile.ContextShader;
@@ -23,6 +24,7 @@ public class EmbeddedEnvironment implements VisualEmbedding, Environment {
     @Nullable
     private final EmbeddedEnvironment parent;
     private final InstancerProvider instancerProvider;
+    private final int drawTag;
 
     private final Matrix4f pose = new Matrix4f();
     private final Matrix3f normal = new Matrix3f();
@@ -33,10 +35,12 @@ public class EmbeddedEnvironment implements VisualEmbedding, Environment {
 
     private boolean deleted = false;
 
-    public EmbeddedEnvironment(EngineImpl engine, Vec3i renderOrigin, @Nullable EmbeddedEnvironment parent) {
+    public EmbeddedEnvironment(EngineImpl engine, Vec3i renderOrigin, @Nullable EmbeddedEnvironment parent,
+                               int drawTag) {
         this.engine = engine;
         this.renderOrigin = renderOrigin;
         this.parent = parent;
+        this.drawTag = drawTag;
 
         instancerProvider = new InstancerProvider() {
             @Override
@@ -47,8 +51,8 @@ public class EmbeddedEnvironment implements VisualEmbedding, Environment {
         };
     }
 
-    public EmbeddedEnvironment(EngineImpl engine, Vec3i renderOrigin) {
-        this(engine, renderOrigin, null);
+    public EmbeddedEnvironment(EngineImpl engine, Vec3i renderOrigin, int drawTag) {
+        this(engine, renderOrigin, null, drawTag);
     }
 
     @Override
@@ -63,13 +67,18 @@ public class EmbeddedEnvironment implements VisualEmbedding, Environment {
     }
 
     @Override
+    public GeometryOcclusion geometryOcclusion() {
+        return engine.lightStorage().geometryOcclusion();
+    }
+
+    @Override
     public Vec3i renderOrigin() {
         return renderOrigin;
     }
 
     @Override
     public VisualEmbedding createEmbedding(Vec3i renderOrigin) {
-        var out = new EmbeddedEnvironment(engine, renderOrigin, this);
+        var out = new EmbeddedEnvironment(engine, renderOrigin, this, drawTag);
         engine.environmentStorage()
               .track(out);
         return out;
@@ -89,6 +98,11 @@ public class EmbeddedEnvironment implements VisualEmbedding, Environment {
     @Override
     public int matrixIndex() {
         return matrixIndex;
+    }
+
+    @Override
+    public int drawTag() {
+        return drawTag;
     }
 
     public Matrix4fc pose() {

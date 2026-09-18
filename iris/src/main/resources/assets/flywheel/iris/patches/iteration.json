@@ -1,0 +1,31 @@
+{
+  "schema": 2,
+  "name": "iterationRP",
+  "testedVersions": [
+    "iterationRP Alpha 0.8.28"
+  ],
+  "matches": [
+    {
+      "path": "gbuffers_water.fsh",
+      "contains": [
+        "/Lib/Programs/Gbuffers/Water_FS.glsl"
+      ]
+    },
+    {
+      "path": "clrwl_gbuffers.fsh",
+      "contains": [
+        "/Lib/Programs/Gbuffers/Entities_FS.glsl"
+      ]
+    }
+  ],
+  "files": [],
+  "wrappers": [],
+  "blends": [
+    {
+      "target": "clrwl_gbuffers_translucent",
+      "nativeProgram": "gbuffers_water",
+      "global": false
+    }
+  ],
+  "properties": ""
+}

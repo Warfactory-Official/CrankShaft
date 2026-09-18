@@ -83,11 +83,18 @@ public final class CrumblingPipelines {
     }
 
     private static RenderPipeline build(Key key) {
+        return stateBuilder(key.depthTest(), key.cull(), key.indirect())
+                .withLocation(ResourceUtil.rl("pipeline/crumbling/" + key.cacheName()))
+                .withVertexShader(vertexId(key.instanceType(), key.indirect(), key.debug() != DebugMode.OFF))
+                .withFragmentShader(fragmentId(key.indirect(), key.smoothness(), key.debug()))
+                .build();
+    }
+
+    /**
+     * Everything but location and shaders.
+     */
+    public static RenderPipeline.Builder stateBuilder(DepthTest depthTest, boolean cull, boolean indirect) {
         return RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                             .withLocation(ResourceUtil.rl("pipeline/crumbling/" + key.cacheName()))
-                             .withVertexShader(
-                                     vertexId(key.instanceType(), key.indirect(), key.debug() != DebugMode.OFF))
-                             .withFragmentShader(fragmentId(key.indirect(), key.smoothness(), key.debug()))
                              .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
                              .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                              // No depth write; polygon offset (1.0, 10.0) == vanilla RenderPipelines.CRUMBLING. The 26.2 GL
@@ -96,13 +103,12 @@ public final class CrumblingPipelines {
                              // camera so it wins the GREATER_THAN_OR_EQUAL test against the block instead of z-fighting it.
                              // (The opaque pipelines' -1/-10 is the legacy conventional-Z sign, inverted under reversed-Z.)
                              .withDepthStencilState(
-                                     new DepthStencilState(key.depthTest().compareOp, false, 1.0f, 10.0f))
-                             .withCull(key.cull())
-                             .withBindGroupLayout(bindGroup(key.indirect()))
+                                     new DepthStencilState(depthTest.compareOp, false, 1.0f, 10.0f))
+                             .withCull(cull)
+                             .withBindGroupLayout(bindGroup(indirect))
                              .withColorTargetState(
                                      new ColorTargetState(Optional.of(CRUMBLING_BLEND), GpuFormat.RGBA8_UNORM,
-                                             ColorTargetState.WRITE_ALL))
-                             .build();
+                                             ColorTargetState.WRITE_ALL));
     }
 
     // Mirrors the opaque pipeline's bind group + the per-stage crack sampler. Instancing carries the instance

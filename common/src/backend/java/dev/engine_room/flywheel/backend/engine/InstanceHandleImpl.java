@@ -33,7 +33,8 @@ public class InstanceHandleImpl<I extends Instance> implements InstanceHandle {
 
     @Override
     public boolean isVisible() {
-        return state instanceof AbstractInstancer<?>;
+        // Port: indirect storage keeps a page, not its instancer, as the live state.
+        return !(state instanceof Hidden<?> || state instanceof Deleted<?>);
     }
 
     @Override

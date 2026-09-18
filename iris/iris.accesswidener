@@ -1,0 +1,8 @@
+accessWidener v1 official
+
+accessible method com/mojang/blaze3d/opengl/GlProgram <init> (ILjava/lang/String;)V
+accessible field com/mojang/blaze3d/opengl/GlProgram uniformsByName Ljava/util/Map;
+accessible class com/mojang/blaze3d/opengl/GlDevice
+accessible class com/mojang/blaze3d/opengl/GlRenderPass
+accessible class com/mojang/blaze3d/opengl/GlRenderPass$TextureViewAndSampler
+accessible field net/minecraft/client/renderer/RenderPipelines MATRICES_FOG_LIGHT_DIR_SNIPPET Lcom/mojang/blaze3d/pipeline/RenderPipeline$Snippet;

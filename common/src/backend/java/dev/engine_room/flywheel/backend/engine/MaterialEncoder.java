@@ -62,7 +62,7 @@ public final class MaterialEncoder {
     }
 
     // Packed format:
-    // ambientOcclusion[1] | cardinalLightingMode[2] | useLight[1] | useOverlay[1] | writeMask[2] | transparency[3] | depthTest[4] | polygonOffset[1] | backfaceCulling[1] | mipmap[1] | blur[1]
+    // ambientOcclusion[1] | cardinalLightingMode[2] | useLight[1] | useOverlay[1] | writeMask[2] | transparency[4] | depthTest[4] | polygonOffset[1] | backfaceCulling[1] | mipmap[1] | blur[1]
     public static int packProperties(Material material) {
         int bits = 0;
 

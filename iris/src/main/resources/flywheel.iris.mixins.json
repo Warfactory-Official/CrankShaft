@@ -1,0 +1,37 @@
+{
+  "required": false,
+  "minVersion": "0.8.7",
+  "package": "dev.engine_room.flywheel.iris.mixin",
+  "plugin": "dev.engine_room.flywheel.iris.IrisMixinPlugin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "BlendModeOverrideAccessor",
+    "CommonUniformsMixin",
+    "CompositePassAccessor",
+    "CompositeRendererMixin",
+    "CustomUniformsAccessor",
+    "EntityConversionMixin",
+    "GlCommandEncoderMeshMixin",
+    "GlDeviceMixin",
+    "IncludeGraphMixin",
+    "IrisRenderingPipelineAccessor",
+    "IrisRenderingPipelineMixin",
+    "ProgramFallbackResolverAccessor",
+    "ProgramSetMixin",
+    "ProgramSourceMixin",
+    "ShaderPackMixin",
+    "ShaderPackSourceNamesMixin",
+    "ShaderStorageBufferHolderAccessor",
+    "ShadowFrustumAccessors$Advanced",
+    "ShadowFrustumAccessors$Box",
+    "ShadowFrustumAccessors$Culler",
+    "ShadowFrustumAccessors$SafeZone",
+    "ShadowRendererMixin",
+    "TerrainDrawDispatcherMixin",
+    "VisualizationManagerMixin",
+    "ZombieVillagerAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

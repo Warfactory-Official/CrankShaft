@@ -3,7 +3,10 @@ package dev.engine_room.flywheel.lib.model.baked;
 import dev.engine_room.flywheel.api.vertex.MutableVertexList;
 import dev.engine_room.flywheel.lib.model.ModelUtil;
 import dev.engine_room.flywheel.lib.model.QuadMesh;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.state.BlockState;
 import org.joml.Vector4f;
 import org.joml.Vector4fc;
 import org.jspecify.annotations.Nullable;
@@ -15,21 +18,49 @@ public final class BakedMesh implements QuadMesh {
     private final int[] colors;
     private final int[] overlays;
     private final int @Nullable [] lights;
+    private final @Nullable BlockState blockState;
+    private final @Nullable Item item;
+    private final @Nullable Identifier itemModel;
     private final int vertexCount;
     private final Vector4f boundingSphere;
 
     public BakedMesh(float[] positions, float[] uvs, float[] normals, int[] colors, int[] overlays) {
-        this(positions, uvs, normals, colors, overlays, null);
+        this(positions, uvs, normals, colors, overlays, null, null);
     }
 
     public BakedMesh(float[] positions, float[] uvs, float[] normals, int[] colors, int[] overlays,
                      int @Nullable [] lights) {
+        this(positions, uvs, normals, colors, overlays, lights, null);
+    }
+
+    /**
+     * {@code blockState}: the single state this mesh was baked from, at block position zero.
+     */
+    public BakedMesh(float[] positions, float[] uvs, float[] normals, int[] colors, int[] overlays,
+                     int @Nullable [] lights, @Nullable BlockState blockState) {
+        this(positions, uvs, normals, colors, overlays, lights, blockState, null, null);
+    }
+
+    /**
+     * {@code item} / {@code itemModel}: the stack's item and {@code item_model} component this mesh was baked from.
+     */
+    public BakedMesh(float[] positions, float[] uvs, float[] normals, int[] colors, int[] overlays,
+                     int @Nullable [] lights, Item item, @Nullable Identifier itemModel) {
+        this(positions, uvs, normals, colors, overlays, lights, null, item, itemModel);
+    }
+
+    private BakedMesh(float[] positions, float[] uvs, float[] normals, int[] colors, int[] overlays,
+                      int @Nullable [] lights, @Nullable BlockState blockState, @Nullable Item item,
+                      @Nullable Identifier itemModel) {
         this.positions = positions;
         this.uvs = uvs;
         this.normals = normals;
         this.colors = colors;
         this.overlays = overlays;
         this.lights = lights;
+        this.blockState = blockState;
+        this.item = item;
+        this.itemModel = itemModel;
         this.vertexCount = positions.length / 3;
         this.boundingSphere = computeBoundingSphere(positions, vertexCount);
     }
@@ -89,6 +120,18 @@ public final class BakedMesh implements QuadMesh {
             dst.normalY(i, normals[i * 3 + 1]);
             dst.normalZ(i, normals[i * 3 + 2]);
         }
+    }
+
+    public @Nullable BlockState blockState() {
+        return blockState;
+    }
+
+    public @Nullable Item item() {
+        return item;
+    }
+
+    public @Nullable Identifier itemModel() {
+        return itemModel;
     }
 
     @Override

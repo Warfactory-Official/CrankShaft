@@ -52,7 +52,6 @@ void main() {
     }
     uint visible = cmdWords[slot * MESH_TASK_WORDS + 0u];
     vec2 screenSize = vec2(cameraPosAndPad.w, float(cameraBlockPosAndPad.w));
-    vec3 camera = vec3(cameraBlockPosAndPad.xyz) + cameraPosAndPad.xyz;
     GeoRef geo = GeoRef(geoAddr[slot]);
     uint lane = gl_LocalInvocationID.x;
 
@@ -61,7 +60,7 @@ void main() {
         SectionFields f = decodeSection(regionId, sectionId);
         uint quadCount = f.totalVerts >> 2u;
         float fade = translucentVis[regionId * REGION_SIZE + sectionId];
-        vec3 sectionOriginBlocks = vec3(sectionChunkOrigin(regionInput[slot], sectionId)) * 16.0 - camera;
+        vec3 sectionOriginBlocks = vec3(sectionChunkOrigin(regionInput[slot], sectionId) * 16 - cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
 
         for (uint q = lane; q < quadCount; q += 256u) {
             uint quadVertexBase = f.baseVertex + q * 4u;

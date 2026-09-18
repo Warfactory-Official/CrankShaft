@@ -7,6 +7,7 @@ val Project.neoVersion: String get() = stringProp("neo_version")
 val Project.fabricLoaderVersion: String get() = stringProp("fabric_loader_version")
 val Project.fabricApiVersion: String get() = stringProp("fabric_api_version")
 val Project.sodiumVersion: String get() = stringProp("sodium_version")
+val Project.irisVersion: String get() = stringProp("iris_version")
 val Project.modVersion: String get() = stringProp("mod_version")
 
 val Project.minecraftVersionShort: String

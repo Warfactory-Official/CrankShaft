@@ -1,0 +1,35 @@
+{
+  "schema": 2,
+  "name": "MakeUp UltraFast",
+  "testedVersions": [
+    "MakeUp UltraFast 9.5e"
+  ],
+  "matches": [
+    {
+      "path": "common/water_blocks_fragment.glsl",
+      "contains": [
+        "/lib/config.glsl"
+      ]
+    },
+    {
+      "path": "world0/gbuffers_water.fsh",
+      "contains": [
+        "MakeUp",
+        "/common/water_blocks_fragment.glsl"
+      ]
+    }
+  ],
+  "files": [],
+  "wrappers": [],
+  "blends": [],
+  "properties": "",
+  "forwardOit": {
+    "programs": [
+      "gbuffers_water"
+    ],
+    "paths": [],
+    "fingerprints": [
+      "767a0e162f3da9705ab2e198ac978a9f5fbf17190bf7806986912284f59c4a0b"
+    ]
+  }
+}

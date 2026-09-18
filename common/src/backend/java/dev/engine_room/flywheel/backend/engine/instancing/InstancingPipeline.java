@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.backend.engine.instancing;
 import com.mojang.blaze3d.GpuFormat;
 import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.pipeline.*;
+import com.mojang.blaze3d.platform.BlendFactor;
 import com.mojang.blaze3d.shaders.ShaderSource;
 import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -15,6 +16,7 @@ import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
+import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
@@ -99,6 +101,30 @@ public final class InstancingPipeline {
     }
 
     private static RenderPipeline build(PipelineKey key) {
+        var builder = stateBuilder(key.transparency(), key.depthTest(), key.depthWrite(), key.colorWrite(), key.cull(),
+                key.polygonOffset(), key.embedded())
+                .withLocation(ResourceUtil.rl("pipeline/instanced/" + key.cacheName()))
+                .withVertexShader(vertexId(key.instanceType(), key.embedded(), key.materialShaders(),
+                        key.debug() != DebugMode.OFF))
+                .withFragmentShader(fragmentId(key.light(), key.materialShaders(), key.smoothness(), key.cutout(),
+                        key.fog(), key.debug(), key.embeddedFragment()));
+        if (RenderPassShaders.readsGeometry(key.light())) {
+            builder.withBindGroupLayout(BindGroupLayout.builder().withSampler("_flw_geometryAtlas").build());
+        }
+        if (key.materialShaders().vertexSource().equals(StandardMaterialShaders.LINE.vertexSource()))
+            builder.withBindGroupLayout(BindGroupLayout.builder()
+                                                       .withUniform("_FlwLineFrameUniforms", UniformType.UNIFORM_BUFFER)
+                                                       .build());
+        return builder.build();
+    }
+
+    /**
+     * Everything but location and shaders: the bind group {@link InstancedDrawManager} binds by name, plus the
+     * material's depth/cull/blend state.
+     */
+    public static RenderPipeline.Builder stateBuilder(Transparency transparency, DepthTest depthTest,
+                                                      boolean depthWrite, boolean colorWrite, boolean cull,
+                                                      boolean polygonOffset, boolean embedded) {
         BindGroupLayout.Builder bindGroup = BindGroupLayout.builder()
                                                            .withSampler("Sampler0")
                                                            .withSampler("Sampler1")
@@ -111,53 +137,47 @@ public final class InstancingPipeline {
                                                                    GpuFormat.R32_UINT)
                                                            .withUniform("_FlwInstanceDraw", UniformType.UNIFORM_BUFFER)
                                                            .withUniform("_FlwRenderOrigin", UniformType.UNIFORM_BUFFER);
-        if (key.embedded()) {
+        if (embedded) {
             bindGroup.withUniform("_FlwEmbed", UniformType.UNIFORM_BUFFER);
         }
 
         RenderPipeline.Builder builder = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                                                       .withLocation(
-                                                               ResourceUtil.rl("pipeline/instanced/" + key.cacheName()))
-                                                       .withVertexShader(vertexId(key.instanceType(), key.embedded(),
-                                                               key.materialShaders(), key.debug() != DebugMode.OFF))
-                                                       .withFragmentShader(
-                                                               fragmentId(key.light(), key.materialShaders(),
-                                                                       key.smoothness(), key.cutout(), key.fog(),
-                                                                       key.debug(), key.embeddedFragment()))
                                                        .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
                                                        .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                                                        // Positive offset wins GREATER_THAN_OR_EQUAL under reversed-Z (26.2 feeds bias straight to
                                                        // glPolygonOffset, no sign flip). OPAQUE offsets are units-only: slope terms beat real geometry
                                                        // at grazing angles; non-opaque (entity shadow decal) keeps the slope.
                                                        .withDepthStencilState(
-                                                               new DepthStencilState(key.depthTest().compareOp,
-                                                                       key.depthWrite(),
-                                                                       key.polygonOffset() && key.transparency() != Transparency.OPAQUE ? 1.0f : 0.0f,
-                                                                       key.polygonOffset() ? 10.0f : 0.0f))
-                                                       .withCull(key.cull())
+                                                               new DepthStencilState(depthTest.compareOp,
+                                                                       depthWrite,
+                                                                       polygonOffset && transparency != Transparency.OPAQUE ? 1.0f : 0.0f,
+                                                                       polygonOffset ? 10.0f : 0.0f))
+                                                       .withCull(cull)
                                                        .withBindGroupLayout(bindGroup.build());
 
-        ColorTargetState colorTarget = colorTarget(key);
+        ColorTargetState colorTarget = colorTarget(transparency, colorWrite);
         if (colorTarget != null) {
             builder.withColorTargetState(colorTarget);
         }
-        return builder.build();
+        return builder;
     }
 
-    private static ColorTargetState colorTarget(PipelineKey key) {
-        BlendFunction blend = switch (key.transparency()) {
+    private static ColorTargetState colorTarget(Transparency transparency, boolean colorWrite) {
+        BlendFunction blend = switch (transparency) {
             case OPAQUE -> null;
             case ADDITIVE -> BlendFunction.ADDITIVE;
             case LIGHTNING, ORDER_INDEPENDENT_ADDITIVE -> BlendFunction.LIGHTNING;
             case GLINT -> BlendFunction.GLINT;
             case CRUMBLING, TRANSLUCENT, ORDER_INDEPENDENT -> BlendFunction.TRANSLUCENT;
+            case TRANSLUCENT_ALPHA_REPLACE -> new BlendFunction(BlendFactor.SRC_ALPHA,
+                    BlendFactor.ONE_MINUS_SRC_ALPHA, BlendFactor.ONE, BlendFactor.ZERO);
         };
 
-        if (blend == null && key.colorWrite()) {
+        if (blend == null && colorWrite) {
             return null;
         }
 
-        int writeMask = key.colorWrite() ? ColorTargetState.WRITE_ALL : ColorTargetState.WRITE_NONE;
+        int writeMask = colorWrite ? ColorTargetState.WRITE_ALL : ColorTargetState.WRITE_NONE;
         return new ColorTargetState(Optional.ofNullable(blend), GpuFormat.RGBA8_UNORM, writeMask);
     }
 

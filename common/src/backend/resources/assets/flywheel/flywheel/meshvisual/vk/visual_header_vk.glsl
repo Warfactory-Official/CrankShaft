@@ -1,4 +1,5 @@
 // VK twin of visual_header.glsl: geometry by BDA push constant (GL's SSBO 13/14); Projection at slot 16, frame at 9.
+#include "flywheel:internal/fog_coordinates.glsl"
 vec4 flw_vertexPos;
 vec3 flw_vertexNormal;
 vec4 flw_vertexColor;
@@ -42,6 +43,7 @@ layout(std140, binding = 9) uniform _FlwMeshVisualFrame {
     float _flw_mvSystemSeconds;
     float _flw_mvGlintSpeed;
     float _flw_mvGlintStrength;
+    float _flw_mvPartialTick;
 };
 
 layout(std140, binding = 16) uniform Projection {

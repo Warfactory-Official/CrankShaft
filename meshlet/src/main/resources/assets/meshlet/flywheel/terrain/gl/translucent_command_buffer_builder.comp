@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 // Copyright (C) 2026 Cortex and Nvidium contributors
 // Copyright (C) 2026 movblock
+#include "flywheel:internal/terrain_region_input.glsl"
+
 #extension GL_NV_gpu_shader5 : require
 #extension GL_NV_shader_buffer_load : require
 
@@ -47,12 +49,6 @@ TranslucentSection decodeSection(uint regionId, uint s) {
     return t;
 }
 
-ivec3 unpackOriginChunkXZ(uint packed0) {
-    return ivec3(int(packed0 << 16) >> 16, 0, int(packed0) >> 16);
-}
-int unpackOriginChunkY(uint packed1) {
-    return int(packed1 << 16) >> 16;
-}
 ivec3 sectionRelativeBlocks(uint s) {
     uint sx = (s >> 5u) & 0x7u;
     uint sy = s & 0x3u;
@@ -61,9 +57,8 @@ ivec3 sectionRelativeBlocks(uint s) {
 }
 
 bool sectionVisible(ivec3 originChunk, uint s) {
-    vec3 camDelta = vec3(cameraBlockPosAndPad.xyz);
     // viewProjection is rotation-only: corners are camera-relative, fractional offset included.
-    vec3 cornerBase = vec3(originChunk * 16) + vec3(sectionRelativeBlocks(s)) - camDelta - cameraPosAndPad.xyz;
+    vec3 cornerBase = vec3(originChunk * 16 + sectionRelativeBlocks(s) - cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
     vec3 mins = cornerBase - SECTION_ADD_BLOCKS;
     vec3 maxs = cornerBase + vec3(16.0) + SECTION_ADD_BLOCKS;
 
@@ -150,8 +145,7 @@ void main() {
     TranslucentSection t = decodeSection(regionId, s);
     bool live = (liveMask[slot * 8u + (s >> 5u)] & (1u << (s & 31u))) != 0u;
     if (t.sumVertexCount != 0u && live) {
-        ivec3 originChunk = unpackOriginChunkXZ(in4.x);
-        originChunk.y = unpackOriginChunkY(in4.y);
+        ivec3 originChunk = _flw_unpackRegionOrigin(in4);
         if (sectionVisible(originChunk, s)) {
             uint quadCount = t.sumVertexCount >> 2u;
             if (u_translucentVis[regionId * REGION_SIZE + s] < 1.0) {

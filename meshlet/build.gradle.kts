@@ -39,6 +39,8 @@ dependencies {
     minecraft("com.mojang:minecraft:${minecraftVersion}")
 
     compileOnly("net.caffeinemc:sodium-fabric:${sodiumVersion}")
+    compileOnly(project(":iris"))
+    compileOnly("maven.modrinth:iris:${irisVersion}-fabric")
 
     compileOnly("org.jspecify:jspecify:1.0.1")
 

@@ -46,8 +46,7 @@ void main() {
             continue;
         }
         SectionFields f = decodeSection(regionId, s);
-        vec3 camRel = vec3(sectionChunkOrigin(in4, s)) * 16.0
-                - vec3(cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
+        vec3 camRel = vec3(sectionChunkOrigin(in4, s) * 16 - cameraBlockPosAndPad.xyz) - cameraPosAndPad.xyz;
         if (sectionQuadCount(f, cameraVisibleFacingMask(camRel)) == 0u) {
             continue;
         }

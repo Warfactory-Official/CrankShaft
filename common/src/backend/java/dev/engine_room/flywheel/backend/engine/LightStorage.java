@@ -1,16 +1,20 @@
 package dev.engine_room.flywheel.backend.engine;
 
+import dev.engine_room.flywheel.api.lighting.GeometryOcclusion;
 import dev.engine_room.flywheel.api.task.Plan;
 import dev.engine_room.flywheel.backend.engine.indirect.StagingBuffer;
 import dev.engine_room.flywheel.backend.gl.buffer.GlBuffer;
+import dev.engine_room.flywheel.backend.lighting.*;
 import dev.engine_room.flywheel.lib.task.SimplePlan;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
-import net.minecraft.util.Mth;
+import net.minecraft.core.Vec3i;
 import net.minecraft.world.level.LevelAccessor;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
@@ -18,24 +22,15 @@ import org.lwjgl.system.MemoryUtil;
 import java.util.BitSet;
 
 /**
- * A managed arena of light sections for uploading to the GPU.
- *
- * <p>Each section represents an 18x18x18 block volume of light data.
- * The "edges" are taken from the neighboring sections, so that each
- * shader invocation only needs to access a single section of data.
- * Even still, neighboring shader invocations may need to access other sections.
- *
- * <p>Sections are logically stored as a 9x9x9 array of longs,
- * where each long holds a 2x2x2 array of light data.
- * <br>Both the greater array and the longs are packed in x, z, y order.
- *
- * <p>Thus, each section occupies 5832 bytes.
+ * Shared GPU light data: 18-cubed section neighborhoods with light bytes and solid bits.
+ * The LUT also carries opt-in occlusion geometry. Frame preparation follows visual updates;
+ * backend uploads consume the prepared arrays after the frame plan joins.
  */
 public class LightStorage {
-    public static final int BLOCKS_PER_SECTION = 18 * 18 * 18;
-    public static final int LIGHT_SIZE_BYTES = BLOCKS_PER_SECTION;
-    public static final int SOLID_SIZE_BYTES = Mth.positiveCeilDiv(BLOCKS_PER_SECTION, Integer.SIZE) * Integer.BYTES;
-    public static final int SECTION_SIZE_BYTES = SOLID_SIZE_BYTES + LIGHT_SIZE_BYTES;
+    public static final int BLOCKS_PER_SECTION = LightPacking.BLOCKS_PER_SECTION;
+    public static final int LIGHT_SIZE_BYTES = LightPacking.LIGHT_SIZE_BYTES;
+    public static final int SOLID_SIZE_BYTES = LightPacking.SOLID_SIZE_BYTES;
+    public static final int SECTION_SIZE_BYTES = LightPacking.SECTION_SIZE_BYTES;
     private static final int DEFAULT_ARENA_CAPACITY_SECTIONS = 64;
     private static final int INVALID_SECTION = -1;
     public final CpuArena arena;
@@ -44,8 +39,18 @@ public class LightStorage {
     private final LightLut lut;
     private final Long2IntMap section2ArenaIndex;
     private final LightDataCollector collector;
+    private final GeometryAoStorage geometry;
+    private final @Nullable WorldLighting worldLighting;
+    private final WorldLighting.@Nullable Subscription geometryInterest;
+    private long geometryLayoutRevision = -1, geometryPoseRevision = -1;
+    private Vec3i renderOrigin = BlockPos.ZERO;
     private final LongSet updatedSections = new LongOpenHashSet();
-    private boolean needsLutRebuild = false;
+    private boolean needsLutRebuild = true;
+    private boolean geometryPosesChanged;
+    private int geometryPoseOffset;
+    private int lutWords;
+    private final IntArrayList geometryRanges = new IntArrayList();
+    private final LutUpdates lutUpdates = new LutUpdates(geometryRanges);
     @Nullable
     private LongSet requestedSections;
 
@@ -56,6 +61,9 @@ public class LightStorage {
         section2ArenaIndex = new Long2IntOpenHashMap();
         section2ArenaIndex.defaultReturnValue(INVALID_SECTION);
         collector = LightDataCollector.of(level);
+        worldLighting = level instanceof ClientLevel client ? WorldLighting.of(client) : null;
+        geometryInterest = worldLighting == null ? null : worldLighting.subscribe();
+        geometry = worldLighting == null ? new GeometryAoStorage() : worldLighting.geometry();
     }
 
     public LevelAccessor level() {
@@ -69,7 +77,26 @@ public class LightStorage {
      * @param sections The set of sections requested by the impl.
      */
     public void sections(LongSet sections) {
-        requestedSections = sections;
+        requestedSections = new LongOpenHashSet(sections);
+    }
+
+    public GeometryOcclusion geometryOcclusion() {
+        return geometry;
+    }
+
+    public void renderOrigin(Vec3i origin) {
+        renderOrigin = origin;
+    }
+
+    public void geometrySections(LongSet sections) {
+        if (geometryInterest != null) geometryInterest.sections(sections);
+        else if (!sections.isEmpty())
+            throw new UnsupportedOperationException("Terrain lighting requires a client world");
+    }
+
+    public void flushTerrainRequests() {
+        if (worldLighting != null) worldLighting.prepare();
+        else geometry.prepare(renderOrigin);
     }
 
     public void onLightUpdate(long section) {
@@ -187,18 +214,43 @@ public class LightStorage {
     }
 
     public void delete() {
+        if (geometryInterest != null) geometryInterest.close();
+        else geometry.delete();
         arena.delete();
     }
 
-    public boolean checkNeedsLutRebuildAndClear() {
-        var out = needsLutRebuild;
-        needsLutRebuild = false;
-        return out;
+    public @Nullable LutUpdates pollLutUpdates() {
+        flushTerrainRequests();
+        long previousPoseRevision = geometryPoseRevision;
+        if (geometryLayoutRevision != geometry.layoutRevision()) needsLutRebuild = true;
+        else if (geometryPoseRevision != geometry.poseRevision()) geometryPosesChanged = true;
+        geometryLayoutRevision = geometry.layoutRevision();
+        geometryPoseRevision = geometry.poseRevision();
+        if (needsLutRebuild) {
+            IntArrayList words = createLut();
+            lutWords = words.size();
+            geometryPoseOffset = geometry.isEmpty() ? 0 : words.getInt(0) + geometry.staticWords();
+            needsLutRebuild = false;
+            geometryPosesChanged = false;
+            geometryRanges.clear();
+            geometryRanges.add(0);
+            geometryRanges.add(lutWords);
+            lutUpdates.set(0, lutWords, words.elements(), words);
+            return lutUpdates;
+        }
+        if (geometryPosesChanged) {
+            geometryPosesChanged = false;
+            geometry.fillDynamicRanges(previousPoseRevision, geometryRanges);
+            if (geometryRanges.isEmpty()) return null;
+            lutUpdates.set(geometryPoseOffset, lutWords, geometry.preparedDynamicWords(), null);
+            return lutUpdates;
+        }
+        return null;
     }
 
     public void uploadChangedSections(StagingBuffer staging, int dstVbo) {
         for (int i = changed.nextSetBit(0); i >= 0; i = changed.nextSetBit(i + 1)) {
-            staging.enqueueCopy(arena.indexToPointer(i), SECTION_SIZE_BYTES, dstVbo, i * SECTION_SIZE_BYTES);
+            staging.enqueueCopy(arena.indexToPointer(i), SECTION_SIZE_BYTES, dstVbo, (long) i * SECTION_SIZE_BYTES);
         }
         changed.clear();
     }
@@ -208,7 +260,7 @@ public class LightStorage {
             return;
         }
 
-        buffer.upload(arena.indexToPointer(0), arena.capacity() * SECTION_SIZE_BYTES);
+        buffer.upload(arena.indexToPointer(0), (long) arena.capacity() * SECTION_SIZE_BYTES);
         changed.clear();
     }
 
@@ -232,6 +284,66 @@ public class LightStorage {
     }
 
     public IntArrayList createLut() {
-        return lut.flatten();
+        var words = new IntArrayList();
+        words.add(0);
+        lut.indices.fillLut(words, (y, out) -> y.fillLut(out, LightLut.IntLayer::fillLut));
+        if (!geometry.isEmpty()) {
+            words.set(0, words.size());
+            geometry.append(words);
+        }
+        return words;
+    }
+
+    /**
+     * Reused until the next poll; callers consume all spans before returning to the draw manager.
+     */
+    public static final class LutUpdates {
+        private final IntArrayList ranges;
+        private int baseOffset, totalWords;
+        private int[] words;
+        private @Nullable IntArrayList fullWords;
+
+        private LutUpdates(IntArrayList ranges) {
+            this.ranges = ranges;
+        }
+
+        private void set(int baseOffset, int totalWords, int[] words, @Nullable IntArrayList fullWords) {
+            this.baseOffset = baseOffset;
+            this.totalWords = totalWords;
+            this.words = words;
+            this.fullWords = fullWords;
+        }
+
+        public int count() {
+            return ranges.size() / 2;
+        }
+
+        public int offset(int index) {
+            return baseOffset + ranges.getInt(index * 2);
+        }
+
+        public int source(int index) {
+            return ranges.getInt(index * 2);
+        }
+
+        public int length(int index) {
+            return ranges.getInt(index * 2 + 1) - source(index);
+        }
+
+        public int[] words() {
+            return words;
+        }
+
+        public int word(int index) {
+            return words[index];
+        }
+
+        public int totalWords() {
+            return totalWords;
+        }
+
+        public @Nullable IntArrayList fullWords() {
+            return fullWords;
+        }
     }
 }

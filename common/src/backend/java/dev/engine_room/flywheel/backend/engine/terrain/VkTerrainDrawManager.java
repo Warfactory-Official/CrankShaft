@@ -69,7 +69,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     private static final int MAX_COMMANDS_PER_REGION = 7 * REGION_SIZE;
     private static final int MAX_TEMPORAL_COMMANDS_PER_REGION = MAX_COMMANDS_PER_REGION;
     private static final int COMMAND_STRIDE = 20;
-    private static final int REGION_INPUT_STRIDE = 16;
+    private static final int REGION_INPUT_STRIDE = TerrainRegionInput.STRIDE;
     private static final long CMD_BYTES_PER_REGION = ((long) MAX_COMMANDS_PER_REGION + MAX_TEMPORAL_COMMANDS_PER_REGION) * COMMAND_STRIDE;
     private static final long REGION_GEO_STRIDE = 8;  // uvec2 arena device address per visible-region slot
     private static final long DRAW_DATA_STRIDE = 32;  // 8 uints: origin xyz, visBase, geoAddr lo/hi, pad, pad
@@ -203,11 +203,8 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         long ptr = b.regionInput.mappedAddress();
         for (int i = 0; i < visible.count; i++) {
             long dst = ptr + (long) i * REGION_INPUT_STRIDE;
-            int x0 = (visible.originChunkX[i] & 0xFFFF) | ((visible.originChunkZ[i] & 0xFFFF) << 16);
-            MemoryUtil.memPutInt(dst, x0);
-            MemoryUtil.memPutInt(dst + 4L, visible.originChunkY[i] & 0xFFFF);
-            MemoryUtil.memPutInt(dst + 8L, visible.regionIds[i]);
-            MemoryUtil.memPutInt(dst + 12L, 0);
+            TerrainRegionInput.write(dst, visible.originChunkX[i], visible.originChunkY[i],
+                    visible.originChunkZ[i], visible.regionIds[i], 0);
         }
     }
 

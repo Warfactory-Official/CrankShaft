@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.backend.engine.indirect;
 import com.mojang.blaze3d.GpuFormat;
 import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.pipeline.*;
+import com.mojang.blaze3d.platform.BlendFactor;
 import com.mojang.blaze3d.shaders.ShaderSource;
 import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -96,8 +97,27 @@ public final class IndirectPipeline {
     }
 
     private static RenderPipeline buildUber(UberKey key) {
+        var builder = stateBuilder(key.transparency(), key.depthTest(), key.depthWrite(), key.colorWrite(), key.cull(),
+                key.polygonOffset(), GlCompat.SUPPORTS_BINDLESS_TEXTURES)
+                .withLocation(ResourceUtil.rl("pipeline/indirect/uber_" + key.uberCacheName()))
+                .withVertexShader(uberVertexId(key.materialShaders(), key.debug() != DebugMode.OFF, key.embedded()))
+                .withFragmentShader(uberFragmentId(key.light(), key.materialShaders(), key.smoothness(), key.debug(),
+                        key.embedded()));
+        if (RenderPassShaders.readsGeometry(key.light())) {
+            builder.withBindGroupLayout(BindGroupLayout.builder().withSampler("_flw_geometryAtlas").build());
+        }
+        return builder.build();
+    }
+
+    /**
+     * Everything but location and shaders: the bind group {@link IndirectDrawManager} binds by name, plus the
+     * material's depth/cull/blend state. {@code bindless}: no {@code Sampler0}.
+     */
+    public static RenderPipeline.Builder stateBuilder(Transparency transparency, DepthTest depthTest,
+                                                      boolean depthWrite, boolean colorWrite, boolean cull,
+                                                      boolean polygonOffset, boolean bindless) {
         BindGroupLayout.Builder bindGroup = BindGroupLayout.builder();
-        if (!GlCompat.SUPPORTS_BINDLESS_TEXTURES) {
+        if (!bindless) {
             bindGroup.withSampler("Sampler0");
         }
         bindGroup.withSampler("Sampler1")
@@ -105,44 +125,39 @@ public final class IndirectPipeline {
                  .withUniform("_FlwRenderOrigin", UniformType.UNIFORM_BUFFER);
 
         RenderPipeline.Builder builder = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                                                       .withLocation(ResourceUtil.rl(
-                                                               "pipeline/indirect/uber_" + key.uberCacheName()))
-                                                       .withVertexShader(uberVertexId(key.materialShaders(),
-                                                               key.debug() != DebugMode.OFF, key.embedded()))
-                                                       .withFragmentShader(
-                                                               uberFragmentId(key.light(), key.materialShaders(),
-                                                                       key.smoothness(), key.debug(), key.embedded()))
                                                        .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
                                                        .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                                                        .withDepthStencilState(
-                                                               new DepthStencilState(key.depthTest().compareOp,
-                                                                       key.depthWrite(),
-                                                                       key.polygonOffset() && key.transparency() != Transparency.OPAQUE ? 1.0f : 0.0f,
-                                                                       key.polygonOffset() ? 10.0f : 0.0f))
-                                                       .withCull(key.cull())
+                                                               new DepthStencilState(depthTest.compareOp,
+                                                                       depthWrite,
+                                                                       polygonOffset && transparency != Transparency.OPAQUE ? 1.0f : 0.0f,
+                                                                       polygonOffset ? 10.0f : 0.0f))
+                                                       .withCull(cull)
                                                        .withBindGroupLayout(bindGroup.build());
 
-        ColorTargetState colorTarget = uberColorTarget(key);
+        ColorTargetState colorTarget = uberColorTarget(transparency, colorWrite);
         if (colorTarget != null) {
             builder.withColorTargetState(colorTarget);
         }
-        return builder.build();
+        return builder;
     }
 
-    private static ColorTargetState uberColorTarget(UberKey key) {
-        BlendFunction blend = switch (key.transparency()) {
+    private static ColorTargetState uberColorTarget(Transparency transparency, boolean colorWrite) {
+        BlendFunction blend = switch (transparency) {
             case OPAQUE -> null;
             case ADDITIVE -> BlendFunction.ADDITIVE;
             case LIGHTNING, ORDER_INDEPENDENT_ADDITIVE -> BlendFunction.LIGHTNING;
             case GLINT -> BlendFunction.GLINT;
             case CRUMBLING, TRANSLUCENT, ORDER_INDEPENDENT -> BlendFunction.TRANSLUCENT;
+            case TRANSLUCENT_ALPHA_REPLACE -> new BlendFunction(BlendFactor.SRC_ALPHA,
+                    BlendFactor.ONE_MINUS_SRC_ALPHA, BlendFactor.ONE, BlendFactor.ZERO);
         };
 
-        if (blend == null && key.colorWrite()) {
+        if (blend == null && colorWrite) {
             return null;
         }
 
-        int writeMask = key.colorWrite() ? ColorTargetState.WRITE_ALL : ColorTargetState.WRITE_NONE;
+        int writeMask = colorWrite ? ColorTargetState.WRITE_ALL : ColorTargetState.WRITE_NONE;
         return new ColorTargetState(Optional.ofNullable(blend), GpuFormat.RGBA8_UNORM, writeMask);
     }
 

@@ -15,24 +15,14 @@ import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.InstanceType;
-import dev.engine_room.flywheel.api.material.DepthTest;
-import dev.engine_room.flywheel.api.material.LightShader;
-import dev.engine_room.flywheel.api.material.Material;
-import dev.engine_room.flywheel.api.material.MaterialShaders;
-import dev.engine_room.flywheel.api.material.Transparency;
+import dev.engine_room.flywheel.api.material.*;
+import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.NoiseTextures;
 import dev.engine_room.flywheel.backend.OitConfig;
-import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
-import dev.engine_room.flywheel.backend.compile.MeshVisualShaders;
-import dev.engine_room.flywheel.backend.compile.OitMode;
-import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
-import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
+import dev.engine_room.flywheel.backend.compile.*;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
-import dev.engine_room.flywheel.backend.engine.CommonCrumbling;
-import dev.engine_room.flywheel.backend.engine.MaterialEncoder;
-import dev.engine_room.flywheel.backend.engine.MaterialSamplers;
-import dev.engine_room.flywheel.backend.engine.OitFrame;
+import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.backend.gl.GlBindlessTable;
@@ -85,6 +75,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
     private int atlasSampler = 0;
     private int lightmapSampler = 0;
     private int crackSampler = 0;
+
     public MeshVisualDrawManager(IndirectPrograms programs) {
         super(programs);
     }
@@ -108,6 +99,11 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                 GlStateManager._enableBlend(0);
                 GlStateManager._blendFuncSeparate(GL11C.GL_SRC_ALPHA, GL11C.GL_ONE_MINUS_SRC_ALPHA,
                         GL11C.GL_ONE, GL11C.GL_ONE_MINUS_SRC_ALPHA);
+            }
+            case TRANSLUCENT_ALPHA_REPLACE -> {
+                GlStateManager._enableBlend(0);
+                GlStateManager._blendFuncSeparate(GL11C.GL_SRC_ALPHA, GL11C.GL_ONE_MINUS_SRC_ALPHA,
+                        GL11C.GL_ONE, GL11C.GL_ZERO);
             }
         }
         GlStateManager._depthFunc(depthFunc(material.depthTest()));
@@ -153,7 +149,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                 MeshVisualShaders.assembleTask(key.type()));
         int frag = MeshGlPrograms.compileShader("meshvisual", GL20C.GL_FRAGMENT_SHADER, "meshvisual frag",
                 MeshVisualShaders.assembleFragment(key.light(), key.shaders()
-                                                                   .fragmentSource(),
+                                                                   .fragmentSource(), key.smoothness(),
                         RenderPassShaders.maybeBindlessGl().andThen(MeshVisualShaders.GL_MESH_F16).andThen(stages)
                                          .andThen(RenderPassShaders.debugExtra(key.debug()))));
         if (mesh != 0 && task != 0 && frag != 0) {
@@ -185,7 +181,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         int mesh = MeshGlPrograms.compileShader("meshvisual", NVMeshShader.GL_MESH_SHADER_NV,
                 "meshvisual crumbling mesh", MeshVisualShaders.assembleCrumblingMesh(key.type(), debug));
         int frag = MeshGlPrograms.compileShader("meshvisual", GL20C.GL_FRAGMENT_SHADER, "meshvisual crumbling frag",
-                MeshVisualShaders.assembleCrumblingFragment(debug));
+                MeshVisualShaders.assembleCrumblingFragment(key.smoothness(), debug));
         if (mesh != 0 && frag != 0) {
             program = MeshGlPrograms.linkProgram("meshvisual", "meshvisual:crumbling:" + key.type()
                     + (key.debug() == DebugMode.OFF ? "" : ":debug_" + key.debug().getSerializedName()), mesh, frag);
@@ -220,7 +216,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                 MeshVisualShaders.assembleTask(key.type()));
         int frag = MeshGlPrograms.compileShader("meshvisual", GL20C.GL_FRAGMENT_SHADER,
                 "meshvisual oit frag" + mode.name, MeshVisualShaders.assembleOitFragment(mode, key.light(),
-                        key.shaders().fragmentSource(), false,
+                        key.shaders().fragmentSource(), key.smoothness(), false,
                         RenderPassShaders.maybeBindlessGl().andThen(MeshVisualShaders.GL_MESH_F16).andThen(stages)
                                          .andThen(debug)
                                          .andThen(emission ? RenderPassShaders.EMISSION_PRODUCER
@@ -263,6 +259,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         setSampler(program, "Sampler0", UNIT_ATLAS);
         setSampler(program, "Sampler1", UNIT_OVERLAY);
         setSampler(program, "Sampler2", UNIT_LIGHTMAP);
+        setSampler(program, GeometryAtlas.SAMPLER, GeometryAtlas.GL_MESH_UNIT);
     }
 
     private static int buildCommandBuilder() {
@@ -280,14 +277,14 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                               List<Material> materials) {
         deleteWarm(buildCommandBuilder());
         for (InstanceType<?> type : crumblingTypes) {
-            deleteWarm(buildCrumblingProgram(new CrumblingProgramKey(type, DebugMode.OFF)));
+            deleteWarm(buildCrumblingProgram(CrumblingProgramKey.of(type, DebugMode.OFF)));
         }
         Set<MeshProgramKey> solidDone = new HashSet<>();
         Set<MeshProgramKey> oitDone = new HashSet<>();
         for (InstanceType<?> type : types) {
             for (Material material : materials) {
                 MeshProgramKey key = MeshProgramKey.of(type, material, false, DebugMode.OFF);
-                if (material.transparency() == Transparency.OPAQUE) {
+                if (!OitTransparency.orderIndependent(material)) {
                     if (solidDone.add(key)) {
                         deleteWarm(buildMeshProgram(key));
                     }
@@ -346,6 +343,21 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         int index = GL31C.glGetUniformBlockIndex(program, name);
         if (index != GL31C.GL_INVALID_INDEX) {
             GL31C.glUniformBlockBinding(program, index, binding);
+        }
+    }
+
+    private static void applyOitMaterialState(Material material) {
+        GlStateManager._depthFunc(depthFunc(material.depthTest()));
+        if (material.backfaceCulling()) {
+            GlStateManager._enableCull();
+        } else {
+            GlStateManager._disableCull();
+        }
+        if (material.polygonOffset()) {
+            GlStateManager._polygonOffset(1.0f, 10.0f);
+            GlStateManager._enablePolygonOffset();
+        } else {
+            GlStateManager._disablePolygonOffset();
         }
     }
 
@@ -429,6 +441,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                 GlBindlessTable.bind();
             }
 
+            boolean geometryBound = false;
             int lastProgram = 0;
             int baseDrawLoc = -1;
             Identifier lastTexture = null;
@@ -444,6 +457,10 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                 if (program != lastProgram) {
                     lastProgram = program;
                     GlStateTracker.useProgram(program);
+                    if (RenderPassShaders.readsGeometry(material.light())) {
+                        GeometryAtlas.bindRaw();
+                        geometryBound = true;
+                    }
                     baseDrawLoc = GL20C.glGetUniformLocation(program, "_flw_baseDraw");
                 }
                 if (!GlCompat.SUPPORTS_BINDLESS_TEXTURES) {
@@ -456,7 +473,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                     GpuSampler sampler = MaterialSamplers.get(material);
                     if (sampler != lastSampler) {
                         lastSampler = sampler;
-                        GL33C.glBindSampler(UNIT_ATLAS, (int) ((GlSampler) sampler).getId());
+                        GL33C.glBindSampler(UNIT_ATLAS, ((GlSampler) sampler).getId());
                     }
                 }
                 if (baseDrawLoc >= 0) {
@@ -467,6 +484,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                 NVMeshShader.glMultiDrawMeshTasksIndirectNV(indirect, count, MESH_TASK_COMMAND_STRIDE);
             }
             setupOpaqueState();
+            if (geometryBound) GeometryAtlas.clearRawSampler();
             GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
             GlStateTracker.useProgram(0);
         }
@@ -505,10 +523,10 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         GL14C.glBlendEquation(depthRange ? GL14C.GL_MAX : GL14C.GL_FUNC_ADD);
 
         if (mode == OitMode.GENERATE_COEFFICIENTS) {
-            GL30C.glDrawBuffers(
+            GL20C.glDrawBuffers(
                     new int[]{GL30C.GL_COLOR_ATTACHMENT0, GL30C.GL_COLOR_ATTACHMENT1, GL30C.GL_COLOR_ATTACHMENT2, GL30C.GL_COLOR_ATTACHMENT3});
         } else {
-            GL30C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
+            GL20C.glDrawBuffers(GL30C.GL_COLOR_ATTACHMENT0);
         }
 
         bindSharedFrameUbos(projSlice, lightSlice, fogSlice, dynamicTransforms,
@@ -545,6 +563,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
             GlBindlessTable.bind();
         }
 
+        boolean geometryBound = false;
         int lastProgram = 0;
         int baseDrawLoc = -1;
         for (var run : additive ? meshOitAdditiveMultiDraws : meshOitMultiDraws) {
@@ -557,6 +576,10 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
             if (program != lastProgram) {
                 lastProgram = program;
                 GlStateTracker.useProgram(program);
+                if (!depthRange && RenderPassShaders.readsGeometry(run.material().light())) {
+                    GeometryAtlas.bindRaw();
+                    geometryBound = true;
+                }
                 baseDrawLoc = GL20C.glGetUniformLocation(program, "_flw_baseDraw");
             }
             if (!depthRange && !GlCompat.SUPPORTS_BINDLESS_TEXTURES) {
@@ -572,25 +595,11 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
             NVMeshShader.glMultiDrawMeshTasksIndirectNV(indirect, count, MESH_TASK_COMMAND_STRIDE);
         }
 
+        if (geometryBound) GeometryAtlas.clearRawSampler();
         GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
         GlStateTracker.useProgram(0);
         GL14C.glBlendEquation(GL14C.GL_FUNC_ADD);
         GlStateManager._disablePolygonOffset();
-    }
-
-    private static void applyOitMaterialState(Material material) {
-        GlStateManager._depthFunc(depthFunc(material.depthTest()));
-        if (material.backfaceCulling()) {
-            GlStateManager._enableCull();
-        } else {
-            GlStateManager._disableCull();
-        }
-        if (material.polygonOffset()) {
-            GlStateManager._polygonOffset(1.0f, 10.0f);
-            GlStateManager._enablePolygonOffset();
-        } else {
-            GlStateManager._disablePolygonOffset();
-        }
     }
 
     @Override
@@ -729,7 +738,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
     }
 
     private int crumblingProgram(InstanceType<?> type) {
-        CrumblingProgramKey key = new CrumblingProgramKey(type, FrameUniforms.debugMode());
+        CrumblingProgramKey key = CrumblingProgramKey.of(type, FrameUniforms.debugMode());
         Integer cached = crumblingPrograms.get(key);
         if (cached != null) {
             return cached;
@@ -775,6 +784,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
             scratch.putFloat(72, Minecraft.getInstance().options.glintStrength()
                                                                 .get()
                                                                 .floatValue());
+            scratch.putFloat(76, FrameUniforms.partialTick());
             GL45C.glNamedBufferSubData(matrixUbo, 0L, scratch);
         }
     }
@@ -901,7 +911,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
     }
 
     private record MeshProgramKey(InstanceType<?> type, MaterialShaders shaders, LightShader light, int cutoutGen,
-                                  int fogGen, DebugMode debug, boolean embedded) {
+                                  int fogGen, DebugMode debug, boolean embedded, LightSmoothness smoothness) {
         static MeshProgramKey of(InstanceType<?> type, Material material, boolean embedded, DebugMode debug) {
             return new MeshProgramKey(type, material.shaders(), material.light(),
                     MaterialShaderIndices.cutoutSources()
@@ -910,10 +920,13 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                     MaterialShaderIndices.fogSources()
                                          .all()
                                          .size(),
-                    debug, embedded);
+                    debug, embedded, BackendConfig.INSTANCE.lightSmoothness());
         }
     }
 
-    private record CrumblingProgramKey(InstanceType<?> type, DebugMode debug) {
+    private record CrumblingProgramKey(InstanceType<?> type, DebugMode debug, LightSmoothness smoothness) {
+        static CrumblingProgramKey of(InstanceType<?> type, DebugMode debug) {
+            return new CrumblingProgramKey(type, debug, BackendConfig.INSTANCE.lightSmoothness());
+        }
     }
 }

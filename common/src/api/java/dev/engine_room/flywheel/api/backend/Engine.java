@@ -52,6 +52,13 @@ public interface Engine {
      */
     void lightSections(LongSet sections);
 
+    /**
+     * Assign sections containing geometry-AO receivers, after the same visual-update boundary.
+     */
+    default void geometryLightSections(LongSet sections) {
+        if (!sections.isEmpty()) throw new UnsupportedOperationException();
+    }
+
     void onLightUpdate(long sectionPos, LightLayer layer);
 
     /**

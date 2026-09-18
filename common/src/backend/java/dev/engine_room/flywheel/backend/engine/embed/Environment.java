@@ -9,4 +9,11 @@ public interface Environment {
     void setupDraw(GlProgram drawProgram);
 
     int matrixIndex();
+
+    /**
+     * Shaderpack guest per-visual tag ({@link TaggedEnvironment}); {@code 0} otherwise.
+     */
+    default int drawTag() {
+        return 0;
+    }
 }

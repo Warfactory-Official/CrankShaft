@@ -28,7 +28,7 @@ abstract class PreparedFrameMixin {
     @Nullable
     private static BerTranslucentCapture flw$capture() {
         VisualizationManagerImpl manager = VisualizationManagerImpl.get(Minecraft.getInstance().level);
-        return manager != null ? manager.berTranslucent() : null;
+        return manager != null && !manager.isShaderPackGuest() ? manager.berTranslucent() : null;
     }
 
     @Inject(method = "executeTranslucent", at = @At("HEAD"), require = 1)

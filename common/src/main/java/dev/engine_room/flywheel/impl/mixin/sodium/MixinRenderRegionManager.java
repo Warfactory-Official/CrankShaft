@@ -19,7 +19,7 @@ import java.util.Collection;
 /**
  * GPU-resident terrain section registry hooks; render-thread only.
  */
-@Mixin(value = RenderRegionManager.class, remap = false)
+@Mixin(RenderRegionManager.class)
 public class MixinRenderRegionManager {
     @Shadow
     @Final

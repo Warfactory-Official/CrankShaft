@@ -83,17 +83,18 @@ void _flw_emitVertex(uint outV, FlwInstance instance, uint matrixIndex, uint pac
 
     // Clip via Mojang's bob-included ProjMat (26.2: bob is in the projection, not the camera).
     vec4 viewPos = _flw_mvModelView * flw_vertexPos;
+    vec2 fogDistances = flw_fogDistances(viewPos.xyz, _flw_mvModelView);
     gl_MeshVerticesNV[outV].gl_Position = ProjMat * viewPos;
     v_out[outV].texCoord = flw_vertexTexCoord;
 #ifdef _FLW_MV_F16_VARYINGS
     v_out[outV].color = f16vec4(flw_vertexColor);
     // NV GL trap: a multi-argument f16vecN(...) constructor writes zero; convert a built vecN.
-    vec4 lightFog = vec4(flw_vertexLight, length(viewPos.xyz), max(length(viewPos.xz), abs(viewPos.y)));
+    vec4 lightFog = vec4(flw_vertexLight, fogDistances);
     v_out[outV].light = f16vec4(lightFog);
     v_out[outV].normal = f16vec3(normalize(flw_vertexNormal));
 #else
     v_out[outV].color = flw_vertexColor;
-    v_out[outV].light = vec4(flw_vertexLight, length(viewPos.xyz), max(length(viewPos.xz), abs(viewPos.y)));
+    v_out[outV].light = vec4(flw_vertexLight, fogDistances);
     v_out[outV].normal = normalize(flw_vertexNormal);
 #endif
     v_out[outV].worldPos = flw_vertexPos.xyz;

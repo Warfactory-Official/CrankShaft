@@ -64,7 +64,7 @@ layout(location = 4) out vec2 fogDistance[];               // x = spherical, y =
 layout(location = 13) perprimitiveEXT out float flw_chunkVisibility[]; // vanilla ChunkVisibility (chunk-load fade)
 
 Vertex fetchVertex(GeoRef geo, uint vertexIndex) {
-    return geo.verts[vertexIndex]; // one struct load; scalar stride-20 IS sizeof(Vertex), no 5x scalar fetch
+    return geo.verts[vertexIndex];// one struct load: scalar stride IS sizeof(Vertex), no per-field fetch
 }
 
 // 16 quads per mesh workgroup -> 64 verts / 32 prims (the NV opaque meshlet size).
@@ -76,11 +76,9 @@ void main() {
     uint sectionId = payload.sectionId;
     uint slot = payload.slot;
 
-    // Section world origin in blocks (NO camera fold-in). The camera subtraction happens per-vertex below in the
-    // EXACT order + terms terrain_solid.vsh uses (- CameraBlockPos + CameraOffset, from the Globals UBO), so the
-    // resulting depth matches the MDI draw's to the bit. Region origin comes from regionInput[slot] (no per-region UBO).
+    // Match terrain_solid.vert's integer camera subtraction and floating-point order for identical depth.
     ivec3 chunkOrigin = sectionChunkOrigin(regionInput[slot], sectionId);
-    vec3 sectionOriginBlocks = vec3(chunkOrigin) * 16.0;
+    vec3 sectionOriginBlocks = vec3(chunkOrigin * 16 - CameraBlockPos);
 
     // This mesh workgroup owns a 16-quad slice of the section; the task spawned
     // ceil(quadCount*2/32) = ceil(quadCount/16) child workgroups.
@@ -138,7 +136,7 @@ void main() {
             // vsh's implicit uvec3->vec3 conversion. `pos` is camera-relative (== that shader's `pos`).
             precise vec3 sectionRelativeBlocks =
                     (vec3(_deinterleave_u20x3(vert.posHi, vert.posLo)) * VERTEX_SCALE) + VERTEX_OFFSET;
-            precise vec3 pos = (sectionOriginBlocks + sectionRelativeBlocks) - CameraBlockPos + CameraOffset;
+            precise vec3 pos = (sectionOriginBlocks + sectionRelativeBlocks) + CameraOffset;
             precise vec4 clip = ProjMat * ModelViewMat * vec4(pos, 1.0);
             // vertexColor = AO-baked vertex tint * lightmap (LOD0, no derivatives in the mesh stage) -- identical to
             // terrain_solid.vsh's vertexColor, so the frag's flw_sampleAtlas(atlas) * vertexColor matches the MDI path.

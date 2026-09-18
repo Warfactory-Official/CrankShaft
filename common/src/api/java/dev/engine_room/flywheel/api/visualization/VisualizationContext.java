@@ -2,7 +2,7 @@ package dev.engine_room.flywheel.api.visualization;
 
 import dev.engine_room.flywheel.api.backend.BackendImplemented;
 import dev.engine_room.flywheel.api.instance.InstancerProvider;
-
+import dev.engine_room.flywheel.api.lighting.GeometryOcclusion;
 import net.minecraft.core.Vec3i;
 
 /**
@@ -14,6 +14,13 @@ public interface VisualizationContext {
      * @return The {@link InstancerProvider} that the visual can use to get instancers to render models.
      */
     InstancerProvider instancerProvider();
+
+    /**
+     * The shared occlusion scene; an unsupported backend fails explicitly when opted in.
+     */
+    default GeometryOcclusion geometryOcclusion() {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * All models render as if this position is (0, 0, 0).

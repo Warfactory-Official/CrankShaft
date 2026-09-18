@@ -32,7 +32,8 @@ import org.joml.Vector4fc;
  * A component that uses instances to render the fire animation on an entity.
  */
 public final class FireComponent implements EntityComponent {
-    private static final Material FIRE_MATERIAL = SimpleMaterial.builderOf(Materials.CUTOUT_UNSHADED_BLOCK)
+    // Port: public for shaderpack guests (Iris entity_flame id).
+    public static final Material FIRE_MATERIAL = SimpleMaterial.builderOf(Materials.CUTOUT_UNSHADED_BLOCK)
                                                                 .backfaceCulling(false) // Disable backface because we want to be able to flip the model.
                                                                 .build();
 

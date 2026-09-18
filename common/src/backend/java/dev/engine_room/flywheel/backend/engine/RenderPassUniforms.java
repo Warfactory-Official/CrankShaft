@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.backend.engine;
 
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.DynamicUniformStorage;
@@ -9,8 +10,12 @@ import net.minecraft.util.Util;
 import org.joml.Matrix3fc;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
+import org.jspecify.annotations.Nullable;
+import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Per-frame UBO ring buffers backing the RenderPass producer's fragment-side lighting (upstream common.frag
@@ -24,7 +29,7 @@ import java.nio.ByteBuffer;
 public final class RenderPassUniforms {
     // DynamicUniformStorage rounds the block to the device's min uniform-offset alignment,
     // so the small declared sizes are just the written-byte counts.
-    private final DynamicUniformStorage<MaterialUniform> material = new DynamicUniformStorage<>("flywheel:material", 20,
+    private final DynamicUniformStorage<MaterialUniform> material = new DynamicUniformStorage<>("flywheel:material", 32,
             64);
     private final DynamicUniformStorage<RenderOriginUniform> renderOrigin = new DynamicUniformStorage<>(
             "flywheel:render_origin", 20, 2);
@@ -33,16 +38,22 @@ public final class RenderPassUniforms {
     private final DynamicUniformStorage<EmbedUniform> embed = new DynamicUniformStorage<>("flywheel:embed", 128, 16);
     private final DynamicUniformStorage<EmbedDrawUniform> embedDraw = new DynamicUniformStorage<>("flywheel:embed_draw",
             4, 16);
+    private final DynamicUniformStorage<LineFrameUniform> lineFrame = new DynamicUniformStorage<>(
+            "flywheel:line_frame", FrameUniforms.size(), 2);
 
     // Per-frame reuse: each write flushes its mapped range (NV GPU copy). gl_instancing 150-mob lineup: 1420 -> 24
     // writes, 111 -> 138 fps.
     private final Int2ObjectOpenHashMap<GpuBufferSlice> materialSlices = new Int2ObjectOpenHashMap<>();
+    // Inner maps outlive the frame: few distinct guest tags.
+    private final Map<DrawTags, Int2ObjectOpenHashMap<GpuBufferSlice>> taggedMaterialSlices = new HashMap<>();
     private GpuBufferSlice renderOriginSlice;
+    private GpuBufferSlice lineFrameSlice;
     // Frame-constant glint inputs the per-material vertex shaders read; written into every _FlwInstanceDraw
     // slice (the RenderPass port has no flywheel frame/options UBO -- see header.vsh).
     private float frameSystemSeconds;
     private float frameGlintSpeedOption;
     private float frameGlintStrengthOption;
+    private float framePartialTick;
 
     /**
      * Rotate the rings for a new frame and write this frame's render origin (constant across every pass, so it
@@ -53,18 +64,30 @@ public final class RenderPassUniforms {
         renderOrigin.endFrame();
         embed.endFrame();
         embedDraw.endFrame();
+        lineFrame.endFrame();
+        lineFrameSlice = null;
         materialSlices.clear();
+        taggedMaterialSlices.values()
+                            .forEach(Int2ObjectOpenHashMap::clear);
         renderOriginSlice = renderOrigin.writeUniform(
-                new RenderOriginUniform(origin.getX(), origin.getY(), origin.getZ(), constantAmbientLight ? 1 : 0));
+                new RenderOriginUniform(origin.getX(), origin.getY(), origin.getZ(),
+                        Minecraft.getInstance().options.ambientOcclusion().get() ? 1 : 0,
+                        constantAmbientLight ? 1 : 0));
         // Glint animation inputs, constant across the frame (upstream FrameUniforms.writeTime +
         // OptionsUniforms parity: Util.getMillis()/1000 + the glintSpeed accessibility option).
-        frameSystemSeconds = Util.getMillis() / 1000f;
+        frameSystemSeconds = Util.getMillis() / 1000.0f;
         frameGlintSpeedOption = Minecraft.getInstance().options.glintSpeed().get().floatValue();
         frameGlintStrengthOption = Minecraft.getInstance().options.glintStrength().get().floatValue();
+        framePartialTick = FrameUniforms.partialTick();
     }
 
     public GpuBufferSlice renderOriginSlice() {
         return renderOriginSlice;
+    }
+
+    public GpuBufferSlice lineFrameSlice() {
+        if (lineFrameSlice == null) lineFrameSlice = lineFrame.writeUniform(new LineFrameUniform());
+        return lineFrameSlice;
     }
 
     /**
@@ -73,11 +96,21 @@ public final class RenderPassUniforms {
      * per-material glint vertex shaders).
      */
     public GpuBufferSlice material(int packedProperties) {
-        GpuBufferSlice slice = materialSlices.get(packedProperties);
+        return material(packedProperties, null);
+    }
+
+    /**
+     * {@code tags} ride {@code _flw_drawPackedMaterial.x} and {@code _flw_drawItemTag} (shaderpack guests).
+     */
+    public GpuBufferSlice material(int packedProperties, @Nullable DrawTags tags) {
+        Int2ObjectOpenHashMap<GpuBufferSlice> slices = tags == null ? materialSlices
+                : taggedMaterialSlices.computeIfAbsent(tags, $ -> new Int2ObjectOpenHashMap<>());
+        GpuBufferSlice slice = slices.get(packedProperties);
         if (slice == null) {
-            slice = material.writeUniform(new MaterialUniform(packedProperties, frameSystemSeconds,
-                    frameGlintSpeedOption, frameGlintStrengthOption));
-            materialSlices.put(packedProperties, slice);
+            slice = material.writeUniform(new MaterialUniform(tags == null ? 0 : tags.drawTag(), packedProperties,
+                    frameSystemSeconds, frameGlintSpeedOption, frameGlintStrengthOption,
+                    tags == null ? 0 : tags.itemTag(), framePartialTick));
+            slices.put(packedProperties, slice);
         }
         return slice;
     }
@@ -101,26 +134,30 @@ public final class RenderPassUniforms {
         renderOrigin.close();
         embed.close();
         embedDraw.close();
+        lineFrame.close();
     }
 
-    private record MaterialUniform(int packedProperties, float systemSeconds, float glintSpeedOption,
-                                   float glintStrengthOption) implements DynamicUniformStorage.DynamicUniform {
+    private record MaterialUniform(int drawTag, int packedProperties, float systemSeconds, float glintSpeedOption,
+                                   float glintStrengthOption, int itemTag,
+                                   float partialTick) implements DynamicUniformStorage.DynamicUniform {
         @Override
         public void write(ByteBuffer buf) {
-            buf.putInt(
-                    0);                     // _flw_drawPackedMaterial.x (packedFogAndCutout -- unused by the fragment)
+            buf.putInt(drawTag);               // _flw_drawPackedMaterial.x
             buf.putInt(packedProperties);      // _flw_drawPackedMaterial.y
             buf.putFloat(systemSeconds);       // flw_systemSeconds
             buf.putFloat(glintSpeedOption);    // flw_glintSpeedOption
             buf.putFloat(glintStrengthOption); // flw_glintStrengthOption
+            buf.putInt(itemTag);               // _flw_drawItemTag (shaderpack guests)
+            buf.putFloat(partialTick);          // flw_partialTick
+            buf.putInt(0);                      // std140 block padding
         }
     }
 
-    private record RenderOriginUniform(int x, int y, int z,
+    private record RenderOriginUniform(int x, int y, int z, int ambientOcclusion,
                                        int constantAmbientLight) implements DynamicUniformStorage.DynamicUniform {
         @Override
         public void write(ByteBuffer buf) {
-            buf.putInt(x).putInt(y).putInt(z).putInt(0); // ivec4 _flw_renderOrigin (w padding)
+            buf.putInt(x).putInt(y).putInt(z).putInt(ambientOcclusion); // xyz: origin; w: guest AO option.
             buf.putInt(constantAmbientLight);            // uint _flw_constantAmbientLight
         }
     }
@@ -139,6 +176,13 @@ public final class RenderPassUniforms {
         @Override
         public void write(ByteBuffer buf) {
             buf.putInt(baseDraw); // uint _flw_baseDraw
+        }
+    }
+
+    private record LineFrameUniform() implements DynamicUniformStorage.DynamicUniform {
+        @Override
+        public void write(ByteBuffer buf) {
+            buf.put(MemoryUtil.memByteBuffer(FrameUniforms.ptr(), FrameUniforms.size()));
         }
     }
 }

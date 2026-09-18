@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.backend.engine;
 
 import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.engine_room.flywheel.api.model.Mesh;
 import dev.engine_room.flywheel.backend.InternalVertex;
@@ -39,6 +40,11 @@ public class MeshPool {
     @Nullable
     private GpuBuffer meshletBounds;
     private boolean computeMeshletBounds;
+
+    @Nullable
+    private MeshVertexExtras extras;
+    @Nullable
+    private GpuBuffer extrasVbo;
 
     private boolean dirty;
     private boolean anyToRemove;
@@ -124,6 +130,10 @@ public class MeshPool {
 
         final var vertexBlock = MemoryBlock.malloc(neededSize);
         final long vertexPtr = vertexBlock.ptr();
+        final int extrasStride = extras != null ? extras.format()
+                                                        .getVertexSize() : 0;
+        final MemoryBlock extrasBlock = extrasStride > 0 && neededSize > 0 ? MemoryBlock.malloc(
+                neededSize / InternalVertex.STRIDE * extrasStride) : null;
 
         // Model-space per-meshlet bounding spheres for the task-cull tier: filled from the just-written vertex
         // positions + the mesh's index order (same order the mesh shader walks), so bounds map 1:1 to meshlets.
@@ -142,6 +152,9 @@ public class MeshPool {
                 vertexView.ptr(vertexPtr + byteIndex);
                 vertexView.vertexCount(mesh.vertexCount());
                 mesh.mesh.write(vertexView);
+                if (extrasBlock != null) {
+                    extras.write(mesh.mesh, vertexView, extrasBlock.ptr() + (long) baseVertex * extrasStride);
+                }
 
                 if (boundsBlock != null) {
                     writeMeshletBounds(mesh, vertexPtr + byteIndex, boundsBlock.ptr() + (long) mesh.meshletBase * 16L,
@@ -165,6 +178,16 @@ public class MeshPool {
                                         .createBuffer(() -> "flywheel mesh pool",
                                                 GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_COPY_DST, vertexData);
             }
+            if (extrasVbo != null) {
+                BufferRetirement.retire(extrasVbo);
+                extrasVbo = null;
+            }
+            if (extrasBlock != null) {
+                extrasVbo = RenderSystem.getDevice()
+                                        .createBuffer(() -> "flywheel mesh pool extras",
+                                                GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_COPY_DST,
+                                                MemoryUtil.memByteBuffer(extrasBlock.ptr(), (int) extrasBlock.size()));
+            }
 
             uploadMeshletBounds(boundsBlock, totalMeshlets);
         } finally {
@@ -173,6 +196,9 @@ public class MeshPool {
             }
             if (boundsBlock != null) {
                 boundsBlock.free();
+            }
+            if (extrasBlock != null) {
+                extrasBlock.free();
             }
             vertexBlock.free();
         }
@@ -252,6 +278,34 @@ public class MeshPool {
     }
 
     /**
+     * Install or remove the binding-1 stream; {@code null} drops it. Re-flushes when changed.
+     */
+    public void extras(@Nullable MeshVertexExtras extras) {
+        if (extras != this.extras) {
+            this.extras = extras;
+            dirty = true;
+        }
+    }
+
+    /**
+     * Rewrite the binding-1 stream at the next flush (its source data changed).
+     */
+    public void invalidateExtras() {
+        if (extras != null) {
+            dirty = true;
+        }
+    }
+
+    /**
+     * Sets vertex binding 1 when extras are installed; every pipeline drawn in {@code pass} must then declare it.
+     */
+    public void bindExtras(RenderPass pass) {
+        if (extrasVbo != null) {
+            pass.setVertexBuffer(1, extrasVbo.slice());
+        }
+    }
+
+    /**
      * The per-meshlet bounding-sphere buffer, or null when not built.
      */
     @Nullable
@@ -283,6 +337,10 @@ public class MeshPool {
         if (meshletBounds != null) {
             BufferRetirement.retire(meshletBounds);
             meshletBounds = null;
+        }
+        if (extrasVbo != null) {
+            BufferRetirement.retire(extrasVbo);
+            extrasVbo = null;
         }
         indexPool.delete();
         meshes.clear();

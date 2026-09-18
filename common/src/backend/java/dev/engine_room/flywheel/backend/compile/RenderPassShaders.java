@@ -1,11 +1,7 @@
 package dev.engine_room.flywheel.backend.compile;
 
 import dev.engine_room.flywheel.api.instance.InstanceType;
-import dev.engine_room.flywheel.api.material.CutoutShader;
-import dev.engine_room.flywheel.api.material.FogShader;
-import dev.engine_room.flywheel.api.material.LightShader;
-import dev.engine_room.flywheel.api.material.Material;
-import dev.engine_room.flywheel.api.material.MaterialShaders;
+import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly.RawSource;
@@ -14,6 +10,7 @@ import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.BerFamily;
 import dev.engine_room.flywheel.backend.engine.indirect.InstanceTypeIds;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainVertexFormat;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.glsl.ShaderSources;
@@ -31,6 +28,7 @@ import java.io.FileWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
@@ -49,6 +47,8 @@ public final class RenderPassShaders {
     private static final Pattern EMBEDDED_TOKEN = Pattern.compile("\\bFLW_EMBEDDED\\b");
     // Render-thread only; keyed per loaded ShaderSources.
     private static final Map<Identifier, Boolean> READS_EMBEDDED = new HashMap<>();
+    private static final Map<Identifier, Boolean> READS_GEOMETRY = new HashMap<>();
+    private static @Nullable ShaderSources readsGeometrySources;
     private static @Nullable ShaderSources readsEmbeddedSources;
     private static long registeredReadsEmbeddedGen = -1;
     private static boolean registeredReadsEmbedded;
@@ -86,7 +86,6 @@ public final class RenderPassShaders {
                 uint _flw_constantAmbientLight;
             };
             """;
-
     // Runtime cardinalLightingMode branch (upstream common.frag _flw_diffuseFactor); the ENTITY branch flips the normal per fragment (26.2 vanilla PER_FACE_LIGHTING).
     private static final String FRAG_DIFFUSE_FACTOR = """
             float _flw_diffuseFactor() {
@@ -99,12 +98,10 @@ public final class RenderPassShaders {
                 }
             }
             """;
-
     // Declared for the cutout-predicate splice (CLIP_SLAB/CLIP_HALFSPACE read it; header.vsh emits the out unconditionally).
     private static final String FRAG_CLIP_VARYINGS = """
             in vec2 _flw_clipData;
             """;
-
     private static final Identifier WAVELET = ResourceUtil.rl("internal/wavelet.glsl");
     private static final Identifier OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_oit.frag");
     private static final Identifier OIT_COMPOSITE = ResourceUtil.rl("internal/oit_composite.frag");
@@ -157,6 +154,20 @@ public final class RenderPassShaders {
         MaterialShaders shaders = material.shaders();
         return readsEmbedded(material.light().source()) || readsEmbedded(shaders.vertexSource())
                 || readsEmbedded(shaders.fragmentSource()) || registeredReadsEmbedded();
+    }
+
+    public static boolean readsGeometry(LightShader light) {
+        if (readsGeometrySources != FlwPrograms.SOURCES) {
+            readsGeometrySources = FlwPrograms.SOURCES;
+            READS_GEOMETRY.clear();
+        }
+        return READS_GEOMETRY.computeIfAbsent(light.source(), id -> readsGeometry(FlwPrograms.SOURCES.get(id)));
+    }
+
+    private static boolean readsGeometry(SourceComponent component) {
+        if (component.source().contains("_flw_geometryAtlas")) return true;
+        for (var included : component.included()) if (readsGeometry(included)) return true;
+        return false;
     }
 
     private static boolean registeredReadsEmbedded() {
@@ -442,7 +453,7 @@ public final class RenderPassShaders {
         roots.add(new UberMaterialShaderComponent(FlwPrograms.SOURCES));
         roots.add(FlwPrograms.SOURCES.get(OIT_FRAGMENT));
 
-        return assemble("mlab_uber_" + oitMode.name().toLowerCase(java.util.Locale.ROOT) + "_"
+        return assemble("mlab_uber_" + oitMode.name().toLowerCase(Locale.ROOT) + "_"
                         + ResourceUtil.toDebugFileNameNoExtension(light.source()) + "_"
                         + ResourceUtil.toDebugFileNameNoExtension(materialShaders.fragmentSource())
                         + "_" + smoothness.getSerializedName() + debugSuffix(debug) + ".fsh",
@@ -468,7 +479,7 @@ public final class RenderPassShaders {
                 FlwPrograms.SOURCES.get(CHUNK_OIT_FRAGMENT));
 
         return assemble(
-                "chunk_mlab_" + oitMode.name().toLowerCase(java.util.Locale.ROOT) + (linear ? "_linear" : "") + ".fsh",
+                "chunk_mlab_" + oitMode.name().toLowerCase(Locale.ROOT) + (linear ? "_linear" : "") + ".fsh",
                 ctx -> {
                     mlabProducerDefines(ctx, oitMode);
                     ctx.define("_FLW_OIT");
@@ -484,7 +495,7 @@ public final class RenderPassShaders {
         List<SourceComponent> roots = List.of(
                 FlwPrograms.SOURCES.get(MLAB),
                 FlwPrograms.SOURCES.get(berFragmentSource(family)));
-        return assemble("ber_mlab" + family.suffix + "_" + oitMode.name().toLowerCase(java.util.Locale.ROOT) + ".fsh",
+        return assemble("ber_mlab" + family.suffix + "_" + oitMode.name().toLowerCase(Locale.ROOT) + ".fsh",
                 ctx -> {
                     mlabProducerDefines(ctx, oitMode);
                     ctx.define("_FLW_OIT");
@@ -496,7 +507,7 @@ public final class RenderPassShaders {
         List<SourceComponent> roots = List.of(
                 FlwPrograms.SOURCES.get(MLAB),
                 FlwPrograms.SOURCES.get(WEATHER_OIT_FRAGMENT));
-        return assemble("weather_mlab_" + oitMode.name().toLowerCase(java.util.Locale.ROOT) + ".fsh",
+        return assemble("weather_mlab_" + oitMode.name().toLowerCase(Locale.ROOT) + ".fsh",
                 ctx -> {
                     mlabProducerDefines(ctx, oitMode);
                     ctx.define("_FLW_OIT");
@@ -510,7 +521,7 @@ public final class RenderPassShaders {
         List<SourceComponent> roots = List.of(
                 FlwPrograms.SOURCES.get(MLAB),
                 FlwPrograms.SOURCES.get(MLAB_RESOLVE));
-        return assemble("mlab_resolve_" + oitMode.name().toLowerCase(java.util.Locale.ROOT) + variant.suffix + ".fsh",
+        return assemble("mlab_resolve_" + oitMode.name().toLowerCase(Locale.ROOT) + variant.suffix + ".fsh",
                 ctx -> {
                     mlabResolveDefines(ctx, oitMode);
                     if (variant.define != null) {
@@ -615,6 +626,7 @@ public final class RenderPassShaders {
                     if (fade) {
                         ctx.define("_FLW_TRANSLUCENT_FADE");
                     }
+                    TerrainVertexFormat.appendDefines(ctx);
                     extra.accept(ctx);
                 }, List.of(FlwPrograms.SOURCES.get(CHUNK_OIT_SODIUM_VERTEX)));
     }
@@ -786,5 +798,4 @@ public final class RenderPassShaders {
             FlwPrograms.LOGGER.error("Could not dump RenderPass source {}", fileName, e);
         }
     }
-
 }

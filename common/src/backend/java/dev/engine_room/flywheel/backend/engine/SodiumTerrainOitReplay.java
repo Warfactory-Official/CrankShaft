@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.backend.engine;
 
+import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
@@ -38,6 +39,15 @@ public interface SodiumTerrainOitReplay {
     void replay(RenderPass pass, OitMode mode, OitFramebuffer framebuffer,
                 GpuTextureView lightmapView, GpuTextureView blueNoiseView,
                 GpuSampler clampLinear, GpuSampler oitSampler, GpuSampler noiseSampler);
+
+    /**
+     * Replay into one of a shaderpack guest's OIT producer passes. The guest owns the framebuffer (its program
+     * binds it) and the pack's own translucent shading. {@code pass} is 0 depth range, 1 coefficients, 2 evaluate,
+     * or 3 deferred material capture;
+     * {@code producer} is the claimed terrain pipeline for that pass. Called on the render thread.
+     */
+    default void replayGuest(RenderPipeline producer, int pass, GpuTextureView lightmapView, GpuSampler clampLinear) {
+    }
 
     /**
      * Whether this replay supports the insert (single-geometry-pass) OIT path: true for the GPU-driven translucent

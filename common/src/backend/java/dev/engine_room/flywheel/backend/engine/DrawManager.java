@@ -157,6 +157,14 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
         return false;
     }
 
+    /**
+     * Draws inside a shaderpack pipeline that owns terrain, translucency and the targets: engine terrain, the OIT
+     * chain and BER translucent capture stay inert; {@link #renderOit} draws translucent instances only.
+     */
+    public boolean isShaderPackGuest() {
+        return false;
+    }
+
     public void onRenderOriginChanged() {
         instancers.values()
                   .forEach(AbstractInstancer::clear);

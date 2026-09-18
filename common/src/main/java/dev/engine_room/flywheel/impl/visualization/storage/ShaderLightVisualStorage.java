@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.impl.visualization.storage;
 
+import dev.engine_room.flywheel.api.visual.GeometryLightVisual;
 import dev.engine_room.flywheel.api.visual.ShaderLightVisual;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
@@ -11,17 +12,25 @@ public class ShaderLightVisualStorage {
     private final Map<ShaderLightVisual, SectionTracker> trackers = new Reference2ReferenceOpenHashMap<>();
 
     private final LongSet sections = new LongOpenHashSet();
+    private final LongSet geometrySections = new LongOpenHashSet();
     private boolean isDirty;
 
     public LongSet sections() {
         if (isDirty) {
             sections.clear();
-            for (var tracker : trackers.values()) {
-                sections.addAll(tracker.sections());
+            geometrySections.clear();
+            for (var entry : trackers.entrySet()) {
+                sections.addAll(entry.getValue().sections());
+                if (entry.getKey() instanceof GeometryLightVisual) geometrySections.addAll(entry.getValue().sections());
             }
             isDirty = false;
         }
         return sections;
+    }
+
+    public LongSet geometrySections() {
+        sections();
+        return geometrySections;
     }
 
     public boolean isDirty() {

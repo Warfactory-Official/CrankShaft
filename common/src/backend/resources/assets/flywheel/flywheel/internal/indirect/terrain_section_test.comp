@@ -2,6 +2,8 @@
 // sectionVis bit0 = visible vs carried pyramid (phase 1); bit1 = phase-1 reject visible vs fresh pyramid (phase 2).
 // Conservative texel-gather HiZ
 
+#include "flywheel:internal/terrain_region_input.glsl"
+
 #include "flywheel:internal/indirect/hiz_aabb.glsl"
 
 layout(local_size_x = 256) in;
@@ -20,6 +22,7 @@ layout(std430, binding = 3) restrict buffer SectionVisBuf { uint sectionVis[]; }
 layout(std430, binding = 6) restrict readonly buffer GeometryMaskBuf { uint geometryMask[]; };
 layout(std140, binding = 9) uniform TerrainRegionCount { uint regionCount; uint phase; uint _rcPad1; uint _rcPad2; };
 #else
+layout(std430, binding = 6) restrict readonly buffer ShadowSectionMaskBuf { uint shadowSectionMask[]; };
 layout(std140, binding = 7) uniform TerrainSceneUbo {
     restrict readonly uvec4 *regionInput;
     restrict readonly uvec4 *sectionData0;      // 3 uvec4 / section, region-id-keyed
@@ -37,12 +40,6 @@ layout(binding = 10) uniform sampler2D hizPyramid;
 const uint REGION_SIZE = 256u; // sections per CrankShaft region (8 x 4 x 8)
 const uint GEOMETRY_MASK_WORDS = REGION_SIZE / 32u;
 
-ivec3 unpackOriginChunkXZ(uint packed0) {
-    return ivec3(int(packed0 << 16) >> 16, 0, int(packed0) >> 16);
-}
-int unpackOriginChunkY(uint packed1) {
-    return int(packed1 << 16) >> 16;
-}
 struct SectionFields {
     uint sliceMask;
     uint vertexCount[7];
@@ -74,7 +71,7 @@ ivec3 sectionRelativeBlocks(uint s) {
 }
 
 void store(uint visIndex, bool present, bool visible) {
-    if (phase == 1u) {
+    if ((phase & 3u) == 1u) {
         sectionVis[visIndex] = (present && visible) ? 1u : 0u;
     } else if ((sectionVis[visIndex] & 1u) == 0u) {
         sectionVis[visIndex] = (present && visible) ? 2u : 0u;
@@ -96,13 +93,18 @@ void main() {
 
     // Occluded: phase 1 clears; phase 2 keeps phase-1's result.
     if (regionVis[slot] == 0u) {
-        if (phase == 1u) {
+        if ((phase & 3u) == 1u) {
             sectionVis[visIndex] = 0u;
         }
         return;
     }
 
     uint geometryWord = geometryMask[regionId * GEOMETRY_MASK_WORDS + (s >> 5u)];
+#ifndef _FLW_VK
+    if ((phase & 12u) != 0u) {
+        geometryWord &= shadowSectionMask[slot * GEOMETRY_MASK_WORDS + (s >> 5u)];
+    }
+#endif
     bool present = (geometryWord & (1u << (s & 31u))) != 0u;
     if (present) {
         SectionFields f = decodeSection(regionId, s);
@@ -113,10 +115,17 @@ void main() {
         return;
     }
 
-    ivec3 originChunk = unpackOriginChunkXZ(in4.x);
-    originChunk.y = unpackOriginChunkY(in4.y);
-    vec3 camDelta = vec3(cameraBlockPosAndPad.xyz);
-    vec3 cornerBase = vec3(originChunk * 16) + vec3(sectionRelativeBlocks(s)) - camDelta;
+#ifndef _FLW_VK
+    if ((phase & 12u) != 0u) {
+        // The mesh guest replays native commands; task masks, not raw section bounds, own temporal recovery.
+        if ((phase & 16u) != 0u && (phase & 3u) == 2u) sectionVis[visIndex] = 2u;
+        else store(visIndex, true, true);
+        return;
+    }
+#endif
+
+    ivec3 originChunk = _flw_unpackRegionOrigin(in4);
+    vec3 cornerBase = vec3(originChunk * 16 + sectionRelativeBlocks(s) - cameraBlockPosAndPad.xyz);
 
     vec3 mins = cornerBase - _FLW_HIZ_ADD_BLOCKS;
     vec3 maxs = cornerBase + vec3(16.0) + _FLW_HIZ_ADD_BLOCKS;

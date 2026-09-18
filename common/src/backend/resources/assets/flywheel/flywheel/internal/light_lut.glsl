@@ -46,7 +46,7 @@ bool _flw_nextLut(uint base, int coord, out uint next) {
 
 bool _flw_chunkCoordToSectionIndex(ivec3 sectionPos, out uint index) {
     uint first;
-    if (_flw_nextLut(0u, sectionPos.y, first) || first == 0u) {
+    if (_flw_nextLut(1u, sectionPos.y, first) || first == 0u) {
         return true;
     }
 
@@ -185,10 +185,7 @@ vec3 _flw_lightForDirection(uint[27] lights, vec3 interpolant, uint c00, uint c0
 
     // @formatter:off
 
-    #define _FLW_SUM_CORNER(_x, _y, _z, i) { \
-        const uint corner = _flw_index3x3x3(_x, _y, _z); \
-        summed[i] = lights[c00 + corner] + lights[c01 + corner] + lights[c10 + corner] + lights[c11 + corner]; \
-    }
+    #define _FLW_SUM_CORNER(_x, _y, _z, i) {          const uint corner = _flw_index3x3x3(_x, _y, _z);          summed[i] = lights[c00 + corner] + lights[c01 + corner] + lights[c10 + corner] + lights[c11 + corner];      }
 
     _FLW_SUM_CORNER(0u, 0u, 0u, 0)
     _FLW_SUM_CORNER(1u, 0u, 0u, 1)
@@ -218,12 +215,7 @@ vec3 _flw_lightForDirection(uint[27] lights, vec3 interpolant, uint c00, uint c0
 
     // @formatter:off
 
-    #define _FLW_ADJUST_CORNER(i) { \
-        uint corner = summed[_FLW_CORNER_INDEX(i)]; \
-        uint validCount = corner >> 20u; \
-        adjusted[i].xy = vec2(corner & _FLW_LOWER_10_BITS, (corner >> 10u) & _FLW_LOWER_10_BITS) * normalizers[validCount]; \
-        adjusted[i].z = float(validCount); \
-    }
+    #define _FLW_ADJUST_CORNER(i) {          uint corner = summed[_FLW_CORNER_INDEX(i)];          uint validCount = corner >> 20u;          adjusted[i].xy = vec2(corner & _FLW_LOWER_10_BITS, (corner >> 10u) & _FLW_LOWER_10_BITS) * normalizers[validCount];          adjusted[i].z = float(validCount);      }
 
     _FLW_ADJUST_CORNER(0)
     _FLW_ADJUST_CORNER(1)
@@ -307,6 +299,8 @@ bool flw_light(vec3 worldPos, vec3 normal, out FlwLightAo light) {
     // Lighting and AO accurate to chunk baking
     #elif _FLW_LIGHT_SMOOTHNESS == 2
 
+    // Unit vertex normals lose their length when interpolated across a surface.
+    normal = normalize(normal);
     uint solid = _flw_fetchSolid3x3x3(sectionOffset, blockInSectionPos);
 
     if (solid == _FLW_COMPLETELY_SOLID) {

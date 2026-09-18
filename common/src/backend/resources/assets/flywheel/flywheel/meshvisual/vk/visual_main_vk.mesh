@@ -57,8 +57,10 @@ shared uint _flw_debugInstanceIds[_FLW_MAX_VERTS / 3u];
 
 void _flw_emitVertex(uint outV, FlwInstance instance, uint matrixIndex, uint packedMaterial, uint packedFogAndCutout) {
     flw_instanceVertex(instance);
+#ifndef FLW_LINE_VK_MESH
     // Spliced per-material vertex shader (glint UV scroll et al.), BEFORE the embed transform like the vertex paths.
     flw_materialVertex();
+#endif
 
     // One branch replaces the MDI path's separate embedded variant.
     if (matrixIndex > 0u) {
@@ -66,14 +68,26 @@ void _flw_emitVertex(uint outV, FlwInstance instance, uint matrixIndex, uint pac
         mat3 embedNormal;
         _flw_unpackMatrices(_flw_matrices[matrixIndex], embedPose, embedNormal);
         flw_vertexPos = embedPose * flw_vertexPos;
+#ifdef FLW_LINE_VK_MESH
+        flw_vertexNormal = mat3(embedPose) * flw_vertexNormal;
+#else
         flw_vertexNormal = embedNormal * flw_vertexNormal;
+#endif
     }
+#ifdef FLW_LINE_VK_MESH
+    flw_materialVertex();
+#endif
 
     // Clip via Mojang's bob-included ProjMat (26.2: bob is in the projection, not the camera).
     vec4 viewPos = _flw_mvModelView * flw_vertexPos;
+    vec2 fogDistances = flw_fogDistances(viewPos.xyz, _flw_mvModelView);
+#ifdef FLW_LINE_VK_MESH
+    gl_MeshVerticesEXT[outV].gl_Position = flw_lineClipPosition;
+#else
     gl_MeshVerticesEXT[outV].gl_Position = ProjMat * viewPos;
+#endif
     v_out[outV].texCoord = flw_vertexTexCoord;
-    vec4 lightFog = vec4(flw_vertexLight, length(viewPos.xyz), max(length(viewPos.xz), abs(viewPos.y)));
+    vec4 lightFog = vec4(flw_vertexLight, fogDistances);
 #ifdef _FLW_MV_F16_VARYINGS
     v_out[outV].color = f16vec4(flw_vertexColor);
     v_out[outV].light = f16vec4(lightFog);

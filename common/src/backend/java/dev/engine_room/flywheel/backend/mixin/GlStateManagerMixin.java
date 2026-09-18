@@ -9,8 +9,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 // 26.2: Mojang RHI binds through GlStateManager behind flywheel's back; reconcile the tracker
 // cache so bind-skip guards don't elide needed re-binds.
-// remap=false: blaze3d names survive unchanged on both loaders.
-@Mixin(value = GlStateManager.class, remap = false)
+@Mixin(GlStateManager.class)
 abstract class GlStateManagerMixin {
     @Inject(method = "_glBindBuffer(II)V", at = @At("RETURN"), require = 1)
     private static void flywheel$onBindBuffer(int target, int buffer, CallbackInfo ci) {

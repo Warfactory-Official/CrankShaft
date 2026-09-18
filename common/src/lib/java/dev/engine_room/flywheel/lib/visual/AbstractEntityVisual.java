@@ -64,9 +64,16 @@ public abstract class AbstractEntityVisual<T extends Entity> extends AbstractVis
      * @return The position this visual should be rendered at to appear in the correct location.
      */
     public Vector3f getVisualPosition() {
+        return getVisualPosition(new Vector3f());
+    }
+
+    /**
+     * Writes render-origin-relative coordinates into caller-owned scratch; no shared mutable result.
+     */
+    public Vector3f getVisualPosition(Vector3f destination) {
         Vec3 pos = entity.position();
         var renderOrigin = renderOrigin();
-        return new Vector3f((float) (pos.x - renderOrigin.getX()),
+        return destination.set((float) (pos.x - renderOrigin.getX()),
                 (float) (pos.y - renderOrigin.getY()),
                 (float) (pos.z - renderOrigin.getZ()));
     }
@@ -79,9 +86,16 @@ public abstract class AbstractEntityVisual<T extends Entity> extends AbstractVis
      * @return The position this visual should be rendered at to appear in the correct location.
      */
     public Vector3f getVisualPosition(float partialTick) {
+        return getVisualPosition(partialTick, new Vector3f());
+    }
+
+    /**
+     * Writes interpolated render-origin-relative coordinates into scratch owned by this visual's update task.
+     */
+    public Vector3f getVisualPosition(float partialTick, Vector3f destination) {
         Vec3 pos = entity.position();
         var renderOrigin = renderOrigin();
-        return new Vector3f((float) (Mth.lerp(partialTick, entity.xOld, pos.x) - renderOrigin.getX()),
+        return destination.set((float) (Mth.lerp(partialTick, entity.xOld, pos.x) - renderOrigin.getX()),
                 (float) (Mth.lerp(partialTick, entity.yOld, pos.y) - renderOrigin.getY()),
                 (float) (Mth.lerp(partialTick, entity.zOld, pos.z) - renderOrigin.getZ()));
     }

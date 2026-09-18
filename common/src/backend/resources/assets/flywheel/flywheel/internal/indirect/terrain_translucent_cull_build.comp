@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // SETTLED (vis==1.0) and FADING (vis<1.0) streams; GL-bindless-only (VK uses terrain_translucent_oit_cull.comp).
 
+#include "flywheel:internal/terrain_region_input.glsl"
+
 #include "flywheel:internal/indirect/hiz_aabb.glsl"
 
 // Field order mirrors the opaque cull scene UBO; region_test reads regionInput@0 / regionVis@16 identically.
@@ -21,7 +23,9 @@ layout(std140, binding = 7) uniform TerrainSceneUbo {
     restrict uvec2 *regionCommandCount;
     restrict readonly uint *unused48;
     uint regionCount;                           // visible-region count (replaces regionInput.length())
+    uint phase;
 };
+layout(std430, binding = 6) restrict readonly buffer NativeSectionMaskBuf { uint nativeSectionMask[]; };
 // atomicAdd takes a buffer variable, not a bindless dereference. [run start] = (settledCount, fadingCount).
 layout(std430, binding = 5) restrict buffer RunCommandCountBuf { uvec2 runCommandCount[]; };
 layout(binding = 10) uniform sampler2D hizPyramid;
@@ -45,12 +49,6 @@ TranslucentSection decodeSection(uint regionId, uint s) {
     return t;
 }
 
-ivec3 unpackOriginChunkXZ(uint packed0) {
-    return ivec3(int(packed0 << 16) >> 16, 0, int(packed0) >> 16);
-}
-int unpackOriginChunkY(uint packed1) {
-    return int(packed1 << 16) >> 16;
-}
 ivec3 sectionRelativeBlocks(uint s) {
     uint sx = (s >> 5u) & 0x7u;
     uint sy = s & 0x3u;
@@ -59,8 +57,7 @@ ivec3 sectionRelativeBlocks(uint s) {
 }
 
 bool sectionVisible(ivec3 originChunk, uint s) {
-    vec3 camDelta = vec3(cameraBlockPosAndPad.xyz);
-    vec3 cornerBase = vec3(originChunk * 16) + vec3(sectionRelativeBlocks(s)) - camDelta;
+    vec3 cornerBase = vec3(originChunk * 16 + sectionRelativeBlocks(s) - cameraBlockPosAndPad.xyz);
     vec3 mins = cornerBase - _FLW_HIZ_ADD_BLOCKS;
     vec3 maxs = cornerBase + vec3(16.0) + _FLW_HIZ_ADD_BLOCKS;
 
@@ -94,11 +91,12 @@ void main() {
     uint settledBase = runStart * 2u * MAX_COMMANDS_PER_STREAM;
 
     uint s = gl_LocalInvocationID.x;
+    bool guest = (phase & 8u) != 0u;
+    if (guest && (nativeSectionMask[slot * 8u + (s >> 5u)] & (1u << (s & 31u))) == 0u) return;
     TranslucentSection t = decodeSection(regionId, s);
     if (t.sumVertexCount != 0u) {
-        ivec3 originChunk = unpackOriginChunkXZ(in4.x);
-        originChunk.y = unpackOriginChunkY(in4.y);
-        if (sectionVisible(originChunk, s)) {
+        ivec3 originChunk = _flw_unpackRegionOrigin(in4);
+        if (guest || sectionVisible(originChunk, s)) {
             uint indexCount = (t.sumVertexCount >> 2u) * 6u;
             // Route by resident fade: settled (vis == 1.0) avoids the per-vertex SSBO fetch in its producer.
             if (translucentVis[regionId * REGION_SIZE + s] < 1.0) {

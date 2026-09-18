@@ -3,18 +3,18 @@ package dev.engine_room.flywheel.backend.engine.instancing;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.engine_room.flywheel.backend.engine.LightStorage;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
 
 public class InstancedLight {
-    private static final long MIN_BYTES = 2L * Integer.BYTES;
+    private static final long MIN_BYTES = 3L * Integer.BYTES;
 
     private GpuBuffer lut;
     private GpuBuffer sections;
     private long lutCapacity;
     private long sectionsCapacity;
+    private ByteBuffer staging;
 
     public InstancedLight() {
         lut = createZeroed("flywheel light lut", MIN_BYTES);
@@ -68,28 +68,34 @@ public class InstancedLight {
             light.clearSectionChanges();
         }
 
-        if (light.checkNeedsLutRebuildAndClear()) {
-            IntArrayList lutData = light.createLut();
-            long bytes = (long) lutData.size() * Integer.BYTES;
-            if (lut == null || lutCapacity < bytes) {
-                if (lut != null) {
-                    lut.close();
+        var update = light.pollLutUpdates();
+        if (update != null) {
+            var encoder = RenderSystem.getDevice().createCommandEncoder();
+            for (int span = 0; span < update.count(); span++) {
+                long bytes = (long) update.length(span) * Integer.BYTES;
+                long capacity = (long) update.totalWords() * Integer.BYTES;
+                if (lut == null || lutCapacity < capacity) {
+                    assert update.offset(span) == 0;
+                    if (lut != null) lut.close();
+                    lut = createTexelBuffer("flywheel light lut", capacity);
+                    lutCapacity = capacity;
                 }
-                lut = createTexelBuffer("flywheel light lut", bytes);
-                lutCapacity = bytes;
+                if (staging == null || staging.capacity() < bytes) {
+                    staging = staging == null ? MemoryUtil.memAlloc((int) bytes)
+                            : MemoryUtil.memRealloc(staging, Math.max((int) bytes, staging.capacity() * 2));
+                }
+                staging.clear().limit((int) bytes);
+                int source = update.source(span);
+                for (int i = 0; i < update.length(span); i++) {
+                    staging.putInt(i * Integer.BYTES, update.word(source + i));
+                }
+                encoder.writeToBuffer(lut.slice((long) update.offset(span) * Integer.BYTES, bytes), staging);
             }
-            ByteBuffer staging = MemoryUtil.memAlloc((int) bytes);
-            for (int i = 0; i < lutData.size(); i++) {
-                staging.putInt(i * Integer.BYTES, lutData.getInt(i));
-            }
-            RenderSystem.getDevice()
-                        .createCommandEncoder()
-                        .writeToBuffer(lut.slice(0L, bytes), staging);
-            MemoryUtil.memFree(staging);
         }
     }
 
     public void delete() {
+        if (staging != null) MemoryUtil.memFree(staging);
         lut.close();
         sections.close();
     }

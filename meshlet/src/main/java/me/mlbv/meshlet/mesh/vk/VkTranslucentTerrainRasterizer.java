@@ -5,6 +5,8 @@
 
 package me.mlbv.meshlet.mesh.vk;
 
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainRegionInput;
+
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -50,7 +52,7 @@ import java.nio.ByteBuffer;
  * {@code draw} runs once per OitMode producer pass, reusing flw_chunk_oit's fragment.
  */
 public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucentMeshDrawStrategy {
-    private static final int REGION_INPUT_STRIDE = 16;
+    private static final int REGION_INPUT_STRIDE = TerrainRegionInput.STRIDE;
     private static final int COMMAND_STRIDE = 32;
     private static final int STORAGE = VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     private static final int INDIRECT = VK12.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
@@ -249,10 +251,8 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
         long ptr = regionInput[p].mappedAddress();
         for (int i = 0; i < n; i++) {
             long dst = ptr + (long) i * REGION_INPUT_STRIDE;
-            MemoryUtil.memPutInt(dst, (batch.originChunkX[i] & 0xFFFF) | ((batch.originChunkZ[i] & 0xFFFF) << 16));
-            MemoryUtil.memPutInt(dst + 4L, batch.originChunkY[i] & 0xFFFF);
-            MemoryUtil.memPutInt(dst + 8L, batch.regionIds[i]);
-            MemoryUtil.memPutInt(dst + 12L, 0);
+            TerrainRegionInput.write(dst, batch.originChunkX[i], batch.originChunkY[i],
+                    batch.originChunkZ[i], batch.regionIds[i], 0);
         }
     }
 
