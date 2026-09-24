@@ -1,12 +1,8 @@
 package dev.engine_room.flywheel.impl;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.backend.compile.FlwProgramsReloader;
+import dev.engine_room.flywheel.impl.compat.LambDynLightsCompat;
 import dev.engine_room.flywheel.impl.test.OitDemoContent;
 import dev.engine_room.flywheel.impl.test.OitDemoVisual;
 import dev.engine_room.flywheel.impl.visualization.VisualizationEventHandler;
@@ -16,9 +12,9 @@ import dev.engine_room.flywheel.lib.model.baked.PartialModelEventHandler;
 import dev.engine_room.flywheel.lib.visualization.SimpleBlockEntityVisualizer;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
-import net.fabricmc.fabric.api.client.model.loading.v1.ModelLoadingPlugin;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.model.loading.v1.ModelLoadingPlugin;
 import net.fabricmc.fabric.api.resource.v1.ResourceLoader;
 import net.fabricmc.fabric.api.resource.v1.reloader.ResourceReloaderKeys;
 import net.fabricmc.loader.api.FabricLoader;
@@ -31,10 +27,16 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.world.level.Level;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 public final class FlywheelFabric implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		BackendManagerImpl.init();
+		LambDynLightsCompat.init();
 		InstanceTypes.TRANSFORMED.hashCode();
 		Materials.SOLID_BLOCK.hashCode();
 		FlwImpl.freezeRegistries();

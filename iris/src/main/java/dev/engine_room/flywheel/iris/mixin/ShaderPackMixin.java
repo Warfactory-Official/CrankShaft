@@ -44,6 +44,15 @@ abstract class ShaderPackMixin implements ContractShaderPack {
     @Unique
     private @Nullable DeferredOitProfile flywheel$deferredOit;
 
+    @Unique
+    private boolean flywheel$deferredEmissive;
+
+    @Unique
+    private boolean flywheel$deferredTranslucent;
+
+    @Unique
+    private boolean flywheel$emissiveLight;
+
     // Root not retained past construction; defines = program-source preprocessing set.
     @Inject(method = "<init>(Ljava/nio/file/Path;Ljava/util/Map;Lcom/google/common/collect/ImmutableList;Z)V",
             at = @At("RETURN"))
@@ -65,6 +74,9 @@ abstract class ShaderPackMixin implements ContractShaderPack {
             flywheel$patchPlan = ContractPatches.begin(root, starts);
             flywheel$forwardOit = flywheel$patchPlan.forwardOit();
             flywheel$deferredOit = flywheel$patchPlan.deferred();
+            flywheel$deferredEmissive = flywheel$patchPlan.deferredEmissive();
+            flywheel$deferredTranslucent = flywheel$patchPlan.deferredTranslucent();
+            flywheel$emissiveLight = flywheel$patchPlan.emissiveLight();
             return original.call(root, flywheel$patchPlan.starts(), isZip);
         } finally {
             ContractPatches.end();
@@ -93,5 +105,20 @@ abstract class ShaderPackMixin implements ContractShaderPack {
     @Override
     public @Nullable DeferredOitProfile flywheel$deferredOit() {
         return flywheel$deferredOit;
+    }
+
+    @Override
+    public boolean flywheel$deferredEmissive() {
+        return flywheel$deferredEmissive;
+    }
+
+    @Override
+    public boolean flywheel$deferredTranslucent() {
+        return flywheel$deferredTranslucent;
+    }
+
+    @Override
+    public boolean flywheel$emissiveLight() {
+        return flywheel$emissiveLight;
     }
 }

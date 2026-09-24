@@ -9,19 +9,17 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
-
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.backend.BackendDebugFlags;
+import dev.engine_room.flywheel.backend.GpuTimer;
 import dev.engine_room.flywheel.backend.OitConfig;
+import dev.engine_room.flywheel.backend.TerrainMode;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDebug;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
-import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.vk.VkContext;
-import dev.engine_room.flywheel.backend.GpuTimer;
-import dev.engine_room.flywheel.backend.TerrainMode;
 import dev.engine_room.flywheel.impl.compat.SodiumCompat;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
@@ -132,12 +130,14 @@ public final class FlwCommands {
 				.then(ClientCommands.literal("off")
 						.executes(context -> {
 							FabricFlwConfig.INSTANCE.setTerrainMode(TerrainMode.OFF);
+                            reloadRenderers();
 							context.getSource().sendFeedback(Component.literal("terrain: off"));
 							return Command.SINGLE_SUCCESS;
 						}))
 				.then(ClientCommands.literal("translucent")
 						.executes(context -> {
 							FabricFlwConfig.INSTANCE.setTerrainMode(TerrainMode.TRANSLUCENT_OIT);
+                            reloadRenderers();
 							context.getSource().sendFeedback(Component.literal("terrain: translucent"));
 							return Command.SINGLE_SUCCESS;
 						}))
@@ -149,6 +149,7 @@ public final class FlwCommands {
 								return 0;
 							}
 							FabricFlwConfig.INSTANCE.setTerrainMode(TerrainMode.OPAQUE);
+                            reloadRenderers();
 							context.getSource().sendFeedback(Component.literal("terrain: opaque -- flywheel culls + "
 									+ "draws opaque terrain, Sodium keeps translucent (no terrain OIT; culling A/B mode)"));
 							return Command.SINGLE_SUCCESS;
@@ -161,6 +162,7 @@ public final class FlwCommands {
 								return 0;
 							}
 							FabricFlwConfig.INSTANCE.setTerrainMode(TerrainMode.FULL);
+                            reloadRenderers();
 							context.getSource().sendFeedback(Component.literal("terrain: full"));
 							return Command.SINGLE_SUCCESS;
 						})));

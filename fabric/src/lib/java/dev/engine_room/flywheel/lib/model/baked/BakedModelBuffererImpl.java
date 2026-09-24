@@ -1,18 +1,7 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
-import java.util.EnumMap;
-import java.util.List;
-import java.util.function.Consumer;
-
-import org.joml.Matrix3fc;
-import org.joml.Matrix4fc;
-import org.jspecify.annotations.Nullable;
-
 import com.mojang.blaze3d.vertex.PoseStack;
-
-import dev.engine_room.flywheel.lib.model.baked.BakedMesh;
-import dev.engine_room.flywheel.lib.model.baked.BakedModelBufferer;
-import dev.engine_room.flywheel.lib.model.baked.SinglePosVirtualBlockGetter;
+import dev.engine_room.flywheel.lib.util.ItemFoil;
 import net.fabricmc.fabric.api.client.renderer.v1.Renderer;
 import net.fabricmc.fabric.api.client.renderer.v1.mesh.MutableQuadView;
 import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadEmitter;
@@ -21,21 +10,29 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.renderer.block.BlockModelLighter;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
+import net.minecraft.client.renderer.block.model.BlockDisplayContext;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
-import net.minecraft.client.renderer.item.ConditionalItemModel;
-import net.minecraft.client.renderer.item.ItemStackRenderState;
-import net.minecraft.client.renderer.item.RangeSelectItemModel;
-import net.minecraft.client.renderer.item.SelectItemModel;
-import net.minecraft.client.renderer.item.TrackingItemStackRenderState;
+import net.minecraft.client.renderer.item.*;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.ItemOwner;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import org.joml.Matrix3fc;
+import org.joml.Matrix4f;
+import org.joml.Matrix4fc;
+import org.jspecify.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.function.Consumer;
 
 public class BakedModelBuffererImpl implements BakedModelBufferer {
     @Override
@@ -118,7 +115,68 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
 
     @Override
     @Nullable
+    public List<DisplayMesh> bufferDisplayBlock(BlockState state, BlockDisplayContext context, boolean zOffset) {
+        FabricDisplayBlockCapture capture = new FabricDisplayBlockCapture();
+        if (!capture.run(state, context, zOffset)) {
+            return null;
+        }
+        List<DisplayMesh> meshes = new ArrayList<>();
+        for (DisplayBlockCapture.Captured submit : capture.captured()) {
+            ItemMeshEmitter emitter = new ItemMeshEmitter();
+            emitParts(emitter, submit.parts(), submit.pose(), submit.tints());
+            meshes.add(new DisplayMesh(submit.renderType(), emitter.build(state)));
+        }
+        for (FabricDisplayBlockCapture.MeshSubmit submit : capture.meshes) {
+            ItemMeshEmitter emitter = new ItemMeshEmitter();
+            emitParts(emitter, submit.parts(), submit.pose(), submit.tints());
+            if (submit.mesh() != null) {
+                // Indigo ExtendedBlockModelFeatureRenderer.bufferQuad: color x tint layer, emissive => full bright.
+                submit.mesh().forEach(quad -> {
+                    int tintIndex = quad.tintIndex();
+                    int tint = tintIndex != -1 && tintIndex < submit.tints().length ? submit.tints()[tintIndex] : -1;
+                    emitter.accept(submit.pose().pose(), submit.pose().normal(), quad, tint);
+                });
+            }
+            meshes.add(new DisplayMesh(submit.renderType(), emitter.build(state)));
+        }
+        return meshes;
+    }
+
+    private static void emitParts(ItemMeshEmitter emitter, List<BlockStateModelPart> parts, PoseStack.Pose pose,
+                                  int[] tints) {
+        for (BlockStateModelPart part : parts) {
+            for (Direction direction : Direction.values()) {
+                emitQuads(emitter, part.getQuads(direction), pose, tints);
+            }
+            emitQuads(emitter, part.getQuads(null), pose, tints);
+        }
+    }
+
+    // BlockModelFeatureRenderer.putQuad with the submit's -1 base tint.
+    private static void emitQuads(ItemMeshEmitter emitter, List<BakedQuad> quads, PoseStack.Pose pose, int[] tints) {
+        for (BakedQuad quad : quads) {
+            int tintIndex = quad.materialInfo().tintIndex();
+            int tint = tintIndex != -1 && tintIndex < tints.length ? tints[tintIndex] : -1;
+            emitter.accept(pose.pose(), pose.normal(), quad, tint);
+        }
+    }
+
+    @Override
+    @Nullable
     public ItemMeshes bufferItem(ItemStack stack, ItemDisplayContext displayContext, @Nullable ItemOwner owner, int seed) {
+        return bufferItem(stack, displayContext, owner, seed, false);
+    }
+
+    @Override
+    @Nullable
+    public ItemMeshes bufferItemInVisualFrame(ItemStack stack, ItemDisplayContext displayContext,
+                                              @Nullable ItemOwner owner, int seed) {
+        return bufferItem(stack, displayContext, owner, seed, true);
+    }
+
+    @Nullable
+    private static ItemMeshes bufferItem(ItemStack stack, ItemDisplayContext displayContext, @Nullable ItemOwner owner,
+                                         int seed, boolean visualFrame) {
         Minecraft minecraft = Minecraft.getInstance();
         // Fresh scratch state per bake (cached upstream by model identity); Tracking* captures the model-identity elements for the cache key.
         TrackingItemStackRenderState renderState = new TrackingItemStackRenderState();
@@ -128,17 +186,15 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
         }
 
         EnumMap<ItemMeshKey, ItemMeshEmitter> emitters = new EnumMap<>(ItemMeshKey.class);
-        boolean foil = false;
+        boolean foil = ItemFoil.of(stack);
         // The combined display transform (ItemTransform + localTransform, incl. the -0.5 recenter) per layer.
         PoseStack.Pose pose = new PoseStack.Pose();
+        @Nullable Matrix4f first = null;
 
         for (int i = 0; i < renderState.activeLayerCount; i++) {
             ItemStackRenderState.LayerRenderState layer = renderState.layers[i];
             if (layer.specialRenderer != null) {
                 return null; // special / block-entity-renderer item (skull, banner, shield, ...) -> vanilla renders it
-            }
-            if (layer.foilType != ItemStackRenderState.FoilType.NONE) {
-                foil = true;
             }
             List<BakedQuad> quads = layer.prepareQuadList();
             if (quads.isEmpty()) {
@@ -148,6 +204,14 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
 
             pose.setIdentity();
             layer.applyTransform(pose);
+            if (visualFrame) {
+                if (first == null) {
+                    first = new Matrix4f(pose.pose());
+                } else if (!first.equals(pose.pose())) {
+                    throw new IllegalStateException("layers of " + stack + " differ in display transform");
+                }
+                pose.setIdentity();
+            }
             Matrix4fc poseMatrix = pose.pose();
             Matrix3fc normalMatrix = pose.normal();
 
@@ -174,22 +238,37 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
         }
         var boundingBox = renderState.getModelBoundingBox();
         return new ItemMeshes(meshes, foil, (float) boundingBox.minY, (float) boundingBox.getZsize(),
-                isStackDetermined(renderState), renderState.getModelIdentity());
+                isStackDetermined(renderState), isOwnerDependent(renderState), renderState.getModelIdentity());
     }
 
     // The tracked identity IS the resolved path; it stays time-stable iff every on-path decision node selects by a stack-determined property.
     private static boolean isStackDetermined(TrackingItemStackRenderState renderState) {
         for (Object element : (List<?>) renderState.getModelIdentity()) {
-            Object property = switch (element) {
-                case ConditionalItemModel model -> model.property;
-                case SelectItemModel<?> model -> model.property;
-                case RangeSelectItemModel model -> model.property;
-                default -> null;
-            };
+            Object property = property(element);
             if (property != null && !ItemModelProperties.STACK_DETERMINED.contains(property.getClass())) {
                 return false;
             }
         }
         return true;
+    }
+
+    private static boolean isOwnerDependent(TrackingItemStackRenderState renderState) {
+        for (Object element : (List<?>) renderState.getModelIdentity()) {
+            Object property = property(element);
+            if (property != null && ItemModelProperties.OWNER_STATE.contains(property.getClass())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Nullable
+    private static Object property(Object element) {
+        return switch (element) {
+            case ConditionalItemModel model -> model.property;
+            case SelectItemModel<?> model -> model.property;
+            case RangeSelectItemModel model -> model.property;
+            default -> null;
+        };
     }
 }

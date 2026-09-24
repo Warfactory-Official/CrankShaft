@@ -39,10 +39,6 @@ layout(location = 0) out vec4 fragColor;
 layout(early_fragment_tests) in;
 #endif
 
-float alphaCutoff(uint id) {
-    return float[](0.0, 0.0001, 0.5, 1.0)[id];
-}
-
 float linear_fog_value(float vertexDistance, float fogStart, float fogEnd) {
     if (vertexDistance <= fogStart) {
         return 0.0;
@@ -114,14 +110,12 @@ void main() {
     vec2 lightUV = bary.x * decodeLightUV(V0) + bary.y * decodeLightUV(V1) + bary.z * decodeLightUV(V2);
     vec3 tint = bary.x * decodeVertexColour(V0).rgb + bary.y * decodeVertexColour(V1).rgb
               + bary.z * decodeVertexColour(V2).rgb;
-    uint cutoffId = decodeAlphaCutoffId(V0);
     float fade = float((uint(gl_PrimitiveID) >> 4u) & 0xFFFu) * (1.0 / 4095.0);
     vec2 fogDist = v_in.fog;
 #else
     vec2 uv = v_in.uvLight.xy;
     vec2 lightUV = v_in.uvLight.zw;
     vec3 tint = v_in.colour;
-    uint cutoffId = (uint(gl_PrimitiveID) >> 2u) & 3u;
     float fade = float((uint(gl_PrimitiveID) >> 4u) & 0xFFFu) * (1.0 / 4095.0);
     vec2 fogDist = v_in.fog;
 #endif
@@ -146,7 +140,8 @@ void main() {
 #endif
 
 #ifndef MESHLET_SOLID_PASS
-    if (texel.a < alphaCutoff(cutoffId)) {
+    // Sodium 26.2's cutout material: HALF only (= terrain_cutout.frag).
+    if (texel.a < 0.5) {
         discard;
     }
 #endif

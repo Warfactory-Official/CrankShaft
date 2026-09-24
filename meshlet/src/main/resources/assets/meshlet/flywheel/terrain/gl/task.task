@@ -61,7 +61,7 @@ void main() {
 
     // Per-facing arena partition. Sodium's CompactChunkVertex arena stores a section's geometry partitioned
     // into up to 7 per-facing groups (each a distinct contiguous sub-range), NOT one flat run from baseVertex
-    // (CrankShaft terrain_command_builder.comp:171-216 / Nvidium populateTasks). Precompute, per facing i, the
+    // (CrankShaft terrain_cull.comp / Nvidium populateTasks). Precompute, per facing i, the
     // running ARENA quad offset (over EVERY facing with geometry -- masked-out ones still consume arena space,
     // mirroring runBaseVertex += vertexCount) and the running VISIBLE quad index (over DRAWN facings only -- the
     // index space `gii` lives in). The mesh shader maps a sequential gii back to its facing via these bins.

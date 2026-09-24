@@ -21,6 +21,7 @@
     "ProgramSourceMixin",
     "ShaderPackMixin",
     "ShaderPackSourceNamesMixin",
+    "ShaderStorageBufferAccessor",
     "ShaderStorageBufferHolderAccessor",
     "ShadowFrustumAccessors$Advanced",
     "ShadowFrustumAccessors$Box",

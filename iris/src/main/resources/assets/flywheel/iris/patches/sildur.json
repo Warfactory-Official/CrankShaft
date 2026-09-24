@@ -1,0 +1,29 @@
+{
+  "schema": 2,
+  "name": "Sildur's Vibrant",
+  "testedVersions": [
+    "Sildur's Vibrant Shaders v2.01 Extreme"
+  ],
+  "matches": [
+    {
+      "path": "gbuffers_water.fsh",
+      "contains": [
+        "Sildur's Vibrant Shaders",
+        "DRAWBUFFERS:41"
+      ]
+    }
+  ],
+  "files": [],
+  "wrappers": [],
+  "blends": [],
+  "properties": "oit.gbuffers = true\noit.gbuffers.colortex4 = 0\noit.gbuffers.colortex1 = frontmost\noit.gbuffers.colortex2 = frontmost\n",
+  "forwardOit": {
+    "programs": [
+      "gbuffers_water"
+    ],
+    "paths": [],
+    "fingerprints": [
+      "1d3f626f95f036b340444c2b0acd48974d8e2f1dce113014d1847d21b13eccde"
+    ]
+  }
+}

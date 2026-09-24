@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.impl.mixin.sodium;
 import com.mojang.blaze3d.textures.GpuSampler;
 import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.impl.compat.SodiumCompat;
+import dev.engine_room.flywheel.impl.compat.VoxyCompat;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
 import net.caffeinemc.mods.sodium.client.render.SodiumWorldRenderer;
 import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
@@ -44,7 +45,7 @@ public class MixinSodiumWorldRenderer {
         if (manager == null) {
             return;
         }
-        if (GuestTerrainGate.ENABLED) {
+        if (GuestTerrainGate.enabled()) {
             CameraTransform camera = new CameraTransform(x, y, z);
             GuestTerrainGate.setSodiumCamera(camera.intX, camera.intY, camera.intZ, camera.fracX, camera.fracY,
                     camera.fracZ);
@@ -62,19 +63,21 @@ public class MixinSodiumWorldRenderer {
                         this.uniformBufferManager.getSectionTimeInfo());
                 if (manager.renderShadowTerrain(matrices, sectionManager)) {
                     ci.cancel();
+                    VoxyCompat.renderInPlaceOfCutout(matrices, this.lastFogParameters, x, y, z);
                 }
                 return;
             }
             // Sodium refreshes these inside renderLayer, which the cancel below skips. The engine's terrain pipeline
             // declares both whenever the gate is on, so they must be current for every draw it makes, not only the
             // ones a pack owns.
-            if (GuestTerrainGate.ENABLED) {
+            if (GuestTerrainGate.enabled()) {
                 this.uniformBufferManager.update(matrices, this.lastFogParameters);
                 GuestTerrainGate.setSodiumUniforms(this.uniformBufferManager.getUniformBuffer(),
                         this.uniformBufferManager.getSectionTimeInfo());
             }
             if (manager.renderOpaqueSolidTerrain(matrices, sectionManager)) {
                 ci.cancel();
+                VoxyCompat.renderInPlaceOfCutout(matrices, this.lastFogParameters, x, y, z);
             }
             return;
         }

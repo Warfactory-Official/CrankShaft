@@ -16,5 +16,7 @@ public interface FlwConfig {
 
     boolean useCommonPool();
 
+    boolean concurrentExtraction();
+
     BackendConfig backendConfig();
 }

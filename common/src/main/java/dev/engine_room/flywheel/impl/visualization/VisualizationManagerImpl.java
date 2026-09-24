@@ -17,7 +17,6 @@ import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDispatcher;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDispatchers;
-import dev.engine_room.flywheel.backend.lighting.WorldLighting;
 import dev.engine_room.flywheel.impl.*;
 import dev.engine_room.flywheel.impl.extension.LevelExtension;
 import dev.engine_room.flywheel.impl.mixin.sodium.RenderSectionManagerAccessor;
@@ -42,7 +41,6 @@ import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionManager;
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayerGroup;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.core.BlockPos;
@@ -461,7 +459,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
             if (isShaderPackGuest()) {
                 FlwImpl.LOGGER.warn("Terrain guest is EXPERIMENTAL. Translucent terrain joins the engine's OIT "
                         + "chain only where the pack declares an OIT contract; otherwise the shaderpack keeps its "
-                        + "own sorted draw. Unset crankshaft.iris.terrain to hand terrain back.");
+                        + "own sorted draw. Set terrain mode off to hand terrain back.");
             }
         }
 
@@ -589,7 +587,6 @@ public class VisualizationManagerImpl implements VisualizationManager {
         effects.invalidate();
         if (lateInit != null) {
             lateInit.engine.delete();
-            if (lateInit.lightingBarrier != null) lateInit.lightingBarrier.close();
         }
         if (terrainDrawDispatcher != null) {
             terrainDrawDispatcher.delete();
@@ -620,16 +617,12 @@ public class VisualizationManagerImpl implements VisualizationManager {
 
     private class LateInit {
         private final Engine engine;
-        private final WorldLighting.@Nullable Subscription lightingBarrier;
 
         private final Plan<RenderContext> framePlan;
         private final Plan<TickableVisual.Context> tickPlan;
 
         private LateInit(LevelAccessor level) {
             engine = BackendManager.currentBackend().createEngine(level);
-            lightingBarrier = level instanceof ClientLevel client
-                    ? WorldLighting.of(client).subscribe() : null;
-            if (lightingBarrier != null) lightingBarrier.barrier(taskExecutor::syncPoint);
 
             var visualizationContext = engine.createVisualizationContext();
 
@@ -669,11 +662,6 @@ public class VisualizationManagerImpl implements VisualizationManager {
                                           out.addAll(entities.gpuLightSections());
                                           out.addAll(effects.gpuLightSections());
                                           engine.lightSections(out);
-                                          var geometry = new LongOpenHashSet();
-                                          geometry.addAll(blockEntities.geometryLightSections());
-                                          geometry.addAll(entities.geometryLightSections());
-                                          geometry.addAll(effects.geometryLightSections());
-                                          engine.geometryLightSections(geometry);
                                       }
                                   }))
                                   .then(enginePhase)

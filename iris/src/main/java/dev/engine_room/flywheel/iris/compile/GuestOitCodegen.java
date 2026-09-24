@@ -168,10 +168,7 @@ final class GuestOitCodegen {
         }
         out.append("void main() {\n")
            .append("    vec4 range = texelFetch(_flw_depthRange, ivec2(gl_FragCoord.xy), 0);\n")
-           .append("    if (range.b <= 0.0) {\n        discard;\n    }\n")
-           .append("    gl_FragDepth = ")
-           .append(spec.shadow() ? "1.0 - range.b" : "range.b")
-           .append(";\n");
+           .append("    if (range.b <= 0.0) {\n        discard;\n    }\n");
         for (int set = 0; set < ranks.length; set++) {
             out.append("    float total")
                .append(set)
@@ -209,6 +206,24 @@ final class GuestOitCodegen {
         }
         return out.append("}\n")
                   .toString();
+    }
+
+    /**
+     * The composite's depth, written after it under a nearer-or-equal test: a depth-test-off fragment behind the scene
+     * must not push its depth back. Discard == {@link #compositeFragment}.
+     */
+    static String depthFragment(boolean shadow) {
+        return """
+                #version 460 core
+                uniform sampler2D _flw_depthRange;
+                void main() {
+                    float depth = texelFetch(_flw_depthRange, ivec2(gl_FragCoord.xy), 0).b;
+                    if (depth <= 0.0) {
+                        discard;
+                    }
+                    gl_FragDepth = %s;
+                }
+                """.formatted(shadow ? "1.0 - depth" : "depth");
     }
 
     private static int coefficientSet(GuestShaders.OitSpec spec, int slot) {

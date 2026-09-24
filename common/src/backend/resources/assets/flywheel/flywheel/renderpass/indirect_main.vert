@@ -33,7 +33,7 @@ void _flw_layoutVertex() {
     flw_vertexColor = Color;
     flw_vertexTexCoord = UV0;
     flw_vertexOverlay = ivec2(0, 10);
-    flw_vertexLight = (vec2(UV2) + 8.0) / 256.0;
+    flw_vertexLight = vec2(UV2) / 256.0;
     flw_vertexNormal = Normal;
 }
 
@@ -104,7 +104,7 @@ void main() {
     #endif
     vertexColor = flw_vertexColor;
     texCoord0 = flw_vertexTexCoord;
-    lightCoord = flw_vertexLight;
+    lightCoord = vec2(max(flw_vertexLight.x, _flw_dynamicBlockLight(flw_vertexPos.xyz) / 16.0), flw_vertexLight.y);
     overlayCoord = flw_vertexOverlay;
 
     vec2 fogDistances = flw_fogDistances(viewPos.xyz, ModelViewMat);

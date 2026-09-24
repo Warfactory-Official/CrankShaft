@@ -10,6 +10,7 @@ import dev.engine_room.flywheel.lib.model.baked.BakedMesh;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import net.irisshaders.iris.shaderpack.materialmap.WorldRenderingSettings;
 import net.irisshaders.iris.vertices.ExtendedDataHelper;
+import net.irisshaders.iris.vertices.NormI8;
 import net.irisshaders.iris.vertices.NormalHelper;
 import net.minecraft.world.level.block.state.BlockState;
 import org.joml.Vector3f;
@@ -18,7 +19,8 @@ import org.lwjgl.system.MemoryUtil;
 
 /**
  * Iris {@code TERRAIN} extended attributes for pooled meshes, written as Iris's {@code BufferBuilder} does for
- * block geometry: {@code mc_Entity}, {@code mc_midTexCoord}, {@code at_tangent} (per quad), {@code at_midBlock}.
+ * block geometry: {@code mc_Entity}, {@code mc_midTexCoord}, {@code at_tangent} (per quad), {@code at_midBlock}, and
+ * the face normal it writes over every in-level quad's normal (zero off quads: the mesh normal stands).
  * Baked block meshes sit at block position zero; other meshes carry no block (id -1, zero mid-block).
  */
 public final class GuestVertexExtras implements MeshVertexExtras {
@@ -27,7 +29,9 @@ public final class GuestVertexExtras implements MeshVertexExtras {
                                                           .addAttribute("MidTexCoord", GpuFormat.RG32_FLOAT)
                                                           .addAttribute("Tangent", GpuFormat.RGBA8_SNORM)
                                                           .addAttribute("MidBlock", GpuFormat.RGBA8_SNORM)
+                                                          .addAttribute("FaceNormal", GpuFormat.RGBA8_SNORM)
                                                           .build();
+    private static final long STRIDE = 24L;
 
     private final Vector3f normal = new Vector3f();
     private @Nullable Object2IntMap<BlockState> blockIds;
@@ -53,7 +57,7 @@ public final class GuestVertexExtras implements MeshVertexExtras {
         int vertexCount = mesh.vertexCount();
 
         for (int vertex = 0; vertex < vertexCount; vertex++) {
-            long p = ptr + (long) vertex * 20L;
+            long p = ptr + vertex * STRIDE;
             MemoryUtil.memPutShort(p, blockId);
             MemoryUtil.memPutShort(p + 2L, ExtendedDataHelper.BLOCK_RENDER_TYPE);
             if (state != null) {
@@ -67,7 +71,9 @@ public final class GuestVertexExtras implements MeshVertexExtras {
 
         int quadVertices = mesh instanceof QuadMesh ? vertexCount - vertexCount % 4 : 0;
         for (int vertex = quadVertices; vertex < vertexCount; vertex++) {
-            MemoryUtil.memSet(ptr + (long) vertex * 20L + 4L, 0, 12L);
+            long p = ptr + vertex * STRIDE;
+            MemoryUtil.memSet(p + 4L, 0, 12L);
+            MemoryUtil.memPutInt(p + 20L, 0);
         }
         for (int quad = 0; quad < quadVertices; quad += 4) {
             float midU = 0;
@@ -87,11 +93,13 @@ public final class GuestVertexExtras implements MeshVertexExtras {
                     vertices.y(quad + 1), vertices.z(quad + 1), vertices.u(quad + 1), vertices.v(quad + 1),
                     vertices.x(quad + 2), vertices.y(quad + 2), vertices.z(quad + 2), vertices.u(quad + 2),
                     vertices.v(quad + 2));
+            int faceNormal = NormI8.pack(normal.x, normal.y, normal.z, 0.0f);
             for (int vertex = quad; vertex < quad + 4; vertex++) {
-                long p = ptr + (long) vertex * 20L;
+                long p = ptr + vertex * STRIDE;
                 MemoryUtil.memPutFloat(p + 4L, midU);
                 MemoryUtil.memPutFloat(p + 8L, midV);
                 MemoryUtil.memPutInt(p + 12L, tangent);
+                MemoryUtil.memPutInt(p + 20L, faceNormal);
             }
         }
     }

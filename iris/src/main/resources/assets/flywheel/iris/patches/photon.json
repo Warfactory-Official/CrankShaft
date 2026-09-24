@@ -1,0 +1,37 @@
+{
+  "schema": 2,
+  "name": "Photon",
+  "testedVersions": [
+    "photon v1.3b"
+  ],
+  "matches": [
+    {
+      "path": "program/gbuffers_all_solid.fsh",
+      "contains": [
+        "Photon Shader by SixthSurge",
+        "PROGRAM_GBUFFERS_BEACONBEAM"
+      ]
+    },
+    {
+      "path": "world0/gbuffers_beaconbeam.fsh",
+      "contains": [
+        "PROGRAM_GBUFFERS_BEACONBEAM",
+        "/program/gbuffers_all_solid.fsh"
+      ]
+    }
+  ],
+  "files": [],
+  "wrappers": [],
+  "blends": [],
+  "properties": "oit.gbuffers = true\noit.gbuffers.colortex13 = 0\noit.gbuffers.colortex3 = frontmost\n",
+  "forwardOit": {
+    "programs": [
+      "gbuffers_water"
+    ],
+    "paths": [],
+    "fingerprints": [
+      "ed7dcb1e51aba50f553d918f72759ca3dd33b6aa45873c68ee0a43d92a1eb8bb"
+    ]
+  },
+  "deferredEmissive": true
+}

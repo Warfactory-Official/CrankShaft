@@ -14,11 +14,11 @@ import dev.engine_room.flywheel.backend.NoiseTextures;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.engine.*;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkBindlessTable;
-import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.client.renderer.texture.TextureManager;
@@ -184,7 +184,7 @@ final class VkOitRenderer {
 
         if (insert) {
             insertChain.render(encoder, frame, chunks, ber, terrain, fabulous, lightmapView, loSampler,
-                    vertexVk, indexVk, width, height, useOit, hasAdditive, colorView, depthView, compositeDescriptor);
+                    vertexVk, indexVk, width, height, useOit, colorView, depthView, compositeDescriptor);
         } else {
             boolean folded = VkCaps.DYNAMIC_RENDERING_LOCAL_READ_NEGOTIATED
                     && (terrain == null || terrain instanceof VkFoldedOitReplay);

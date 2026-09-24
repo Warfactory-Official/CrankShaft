@@ -27,9 +27,7 @@ import static dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout.
  * draw over Sodium's arena (BDA, no vertex input), and the Sodium translucent-OIT producers (wavelet/folded/insert).
  */
 public final class VkTerrainPrograms {
-    private static final Identifier REGION_TEST = ResourceUtil.rl("internal/indirect/terrain_region_test.comp");
-    private static final Identifier SECTION_TEST = ResourceUtil.rl("internal/indirect/terrain_section_test.comp");
-    private static final Identifier COMMAND_BUILDER = ResourceUtil.rl("internal/indirect/terrain_command_builder.comp");
+    private static final Identifier CULL = ResourceUtil.rl("internal/indirect/terrain_cull.comp");
     private static final Identifier TRANSLUCENT_OIT_CULL = ResourceUtil.rl(
             "internal/indirect/terrain_translucent_oit_cull.comp");
 
@@ -57,11 +55,7 @@ public final class VkTerrainPrograms {
     private final VkGraphicsPipeline[][] translucentProducerFolded = new VkGraphicsPipeline[2][OitMode.values().length];
     private final VkGraphicsPipeline[][] translucentMlab = new VkGraphicsPipeline[2][OitInsertMode.values().length];
     @Nullable
-    private VkComputePipeline regionTest;
-    @Nullable
-    private VkComputePipeline sectionTest;
-    @Nullable
-    private VkComputePipeline commandBuilder;
+    private VkComputePipeline cull;
     @Nullable
     private VkComputePipeline translucentOitCull;
 
@@ -69,41 +63,15 @@ public final class VkTerrainPrograms {
         this.sources = sources;
     }
 
-    private static List<Binding> regionTestBindings() {
+    private static List<Binding> cullBindings() {
         List<Binding> b = new ArrayList<>();
-        b.add(new Binding(0, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(2, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
+        for (int i = 0; i <= 7; i++) {
+            b.add(new Binding(i, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
+        }
         b.add(new Binding(8, TYPE_UNIFORM_BUFFER, STAGE_COMPUTE));
         b.add(new Binding(9, TYPE_UNIFORM_BUFFER, STAGE_COMPUTE));
         b.add(new Binding(10, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_COMPUTE));
-        return b;
-    }
-
-    private static List<Binding> sectionTestBindings() {
-        List<Binding> b = new ArrayList<>();
-        b.add(new Binding(0, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(1, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(2, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(3, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(6, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(8, TYPE_UNIFORM_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(9, TYPE_UNIFORM_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(10, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_COMPUTE));
-        return b;
-    }
-
-    private static List<Binding> commandBuilderBindings() {
-        List<Binding> b = new ArrayList<>();
-        b.add(new Binding(0, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(1, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(2, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(3, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(4, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(5, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(6, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(7, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(8, TYPE_UNIFORM_BUFFER, STAGE_COMPUTE));
-        b.add(new Binding(9, TYPE_UNIFORM_BUFFER, STAGE_COMPUTE));
+        b.add(new Binding(11, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
         return b;
     }
 
@@ -170,25 +138,11 @@ public final class VkTerrainPrograms {
         }
     }
 
-    public VkComputePipeline regionTestPipeline() {
-        if (regionTest == null) {
-            regionTest = buildCompute("terrain/region_test", REGION_TEST, regionTestBindings());
+    public VkComputePipeline cullPipeline() {
+        if (cull == null) {
+            cull = buildCompute("terrain/cull", CULL, cullBindings());
         }
-        return regionTest;
-    }
-
-    public VkComputePipeline sectionTestPipeline() {
-        if (sectionTest == null) {
-            sectionTest = buildCompute("terrain/section_test", SECTION_TEST, sectionTestBindings());
-        }
-        return sectionTest;
-    }
-
-    public VkComputePipeline commandBuilderPipeline() {
-        if (commandBuilder == null) {
-            commandBuilder = buildCompute("terrain/command_builder", COMMAND_BUILDER, commandBuilderBindings());
-        }
-        return commandBuilder;
+        return cull;
     }
 
     public VkComputePipeline translucentOitCullPipeline() {
@@ -334,14 +288,12 @@ public final class VkTerrainPrograms {
     }
 
     void delete() {
-        for (VkComputePipeline p : new VkComputePipeline[]{regionTest, sectionTest, commandBuilder, translucentOitCull}) {
+        for (VkComputePipeline p : new VkComputePipeline[]{cull, translucentOitCull}) {
             if (p != null) {
                 p.delete();
             }
         }
-        regionTest = null;
-        sectionTest = null;
-        commandBuilder = null;
+        cull = null;
         translucentOitCull = null;
         for (int lin = 0; lin < 2; lin++) {
             if (solid[lin] != null) {

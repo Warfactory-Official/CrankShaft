@@ -119,6 +119,7 @@ bool _flw_isVisible(uint objectUint, uint modelIndex, uint typeId, out bool frus
 #endif
     frustumVisible = isVisible;
 
+#ifndef _FLW_CULL_FRUSTUM_ONLY
     if (isVisible && (matrixIndexRaw & 0x80000000u) == 0u) {
         transformBoundingSphere(flw_view, center, radius);
 
@@ -133,6 +134,7 @@ bool _flw_isVisible(uint objectUint, uint modelIndex, uint typeId, out bool frus
             isVisible = isVisible && depthSphere >= depth;
         }
     }
+#endif
 
     return isVisible;
 }

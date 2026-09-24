@@ -23,7 +23,6 @@ import dev.engine_room.flywheel.backend.SodiumClassLoadCheck;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
-import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.embed.Environment;
 import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
@@ -84,6 +83,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     protected final Matrix4f renderModelView = new Matrix4f();
     private final IndirectPrograms programs;
     private final StagingBuffer stagingBuffer;
+    private final GlSlabArena slabArena;
     private final Map<InstanceType<?>, IndirectCullingGroup<?>> cullingGroups = new HashMap<>();
     private final List<IndirectCullingGroup<?>> frameGroups = new ArrayList<>();
     private final List<IndirectDraw> allDraws = new ArrayList<>();
@@ -97,6 +97,11 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     private boolean needsDrawBarrier;
     private boolean needsDrawSort;
     private boolean pass2Pending;
+    // Port: two-phase HiZ occlusion pays only past this instanced vertex workload; below it (on again above 2x) one
+    // frustum-culled pass: no copies, pyramid or pass 2. Re-entering two-phase with a stale pyramid is safe: pass 2
+    // re-tests what pass 1 culled.
+    private static final long OCCLUSION_VERTICES = 1L << 18;
+    private boolean occlusion = true;
 
     public IndirectDrawManager(IndirectPrograms programs) {
         this.programs = programs;
@@ -105,6 +110,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         // WARN: We should avoid eagerly grabbing GlPrograms here as catching compile
         // errors and falling back during construction is a bit more complicated.
         stagingBuffer = new StagingBuffer(this.programs);
+        slabArena = new GlSlabArena(this.programs);
         meshPool = new MeshPool();
         lightBuffers = new LightBuffers();
         matrixBuffer = new MatrixBuffer();
@@ -136,7 +142,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
     @Override
     protected <I extends Instance> IndirectInstancer<?> create(InstancerKey<I> key) {
-        return new IndirectInstancer<>(key, new AbstractInstancer.Recreate<>(key, this), GlSlab::new);
+        return new IndirectInstancer<>(key, new AbstractInstancer.Recreate<>(key, this), slabArena::create);
     }
 
     @SuppressWarnings("unchecked")
@@ -173,6 +179,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
         renderModelView.set(modelViewMatrix);
         pass2Pending = false;
+        slabArena.beginFrame();
         renderPassUniforms.beginFrame(renderOrigin, constantAmbientLight);
 
         cullingGroups.values()
@@ -222,14 +229,21 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         frameGroups.addAll(cullingGroups.values());
         int modelCount = 0;
         int instanceCount = 0;
+        long vertices = 0;
         for (var group : frameGroups) {
             for (var instancer : group.instancers()) {
                 var count = instancer.instanceCount();
                 instancer.update(modelCount++, instanceCount);
                 instanceCount += count;
+                vertices += (long) count * instancer.modelVertexCount();
             }
         }
         frameModelCount = modelCount;
+        if (!occlusionOptional()) {
+            occlusion = true;
+        } else if (occlusion ? vertices < OCCLUSION_VERTICES : vertices > 2 * OCCLUSION_VERTICES) {
+            occlusion = !occlusion;
+        }
 
         if (needsDrawSort) {
             sortDraws();
@@ -283,7 +297,8 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         dispatchApply();
         GlCompat.popDebugGroup();
 
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        // The apply wrote the indirect commands; drawBarrier's one-shot may already be spent (a guest shadow pass).
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
 
         GlCompat.pushDebugGroup("flywheel:gl/opaque");
         submitSolid(modelViewMatrix);
@@ -291,6 +306,9 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
         if (SodiumClassLoadCheck.PRESENT) {
             TerrainDrawDispatcher.runDeferredPostVisuals();
+        }
+        if (!occlusion) {
+            return;
         }
 
         GlCompat.pushDebugGroup("flywheel:gl/hiz");
@@ -306,6 +324,13 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
         GlCompat.popDebugGroup();
         pass2Pending = true;
+    }
+
+    /**
+     * {@code false}: every frame takes the two-phase HiZ path (a consumer relies on its pyramid).
+     */
+    boolean occlusionOptional() {
+        return true;
     }
 
     /**
@@ -332,14 +357,15 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     }
 
     private void dispatchCull() {
-        GL45C.glCopyNamedBufferSubData(buffers.model.handle(), buffers.model2.handle(), 0, 0,
-                IndirectBuffers.MODEL_STRIDE * frameModelCount);
-        GL45C.glCopyNamedBufferSubData(buffers.draw.handle(), buffers.draw2.handle(), 0, 0,
-                IndirectBuffers.DRAW_COMMAND_STRIDE * frameDrawCount);
+        if (occlusion) {
+            GL45C.glCopyNamedBufferSubData(buffers.model.handle(), buffers.model2.handle(), 0, 0,
+                    IndirectBuffers.MODEL_STRIDE * frameModelCount);
+            GL45C.glCopyNamedBufferSubData(buffers.draw.handle(), buffers.draw2.handle(), 0, 0,
+                    IndirectBuffers.DRAW_COMMAND_STRIDE * frameDrawCount);
+        }
 
         Uniforms.bindAll();
-        programs.getCullingProgram()
-                .bind();
+        (occlusion ? programs.getCullingProgram() : programs.getCullingFrustumProgram()).bind();
 
         buffers.bindForCull();
         glDispatchCompute(buffers.objectStorage.pageSlotCount(), 1, 1);
@@ -365,15 +391,12 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     }
 
     private void uploadInstances() {
-        int objectVbo = buffers.objectStorage.objectBuffer.handle();
-        SlabPageCopier copier = (slab, srcByteOffset, dstByteOffset, byteSize) ->
-                GL45C.glCopyNamedBufferSubData(((GlSlab) slab).handle(), objectVbo, srcByteOffset, dstByteOffset,
-                        byteSize);
         for (var group : frameGroups) {
             for (var instancer : group.instancers()) {
-                instancer.uploadInstances(copier);
+                instancer.uploadInstances(slabArena);
             }
         }
+        slabArena.flush(buffers.objectStorage.objectBuffer.handle());
     }
 
     private void uploadModels(StagingBuffer stagingBuffer) {
@@ -418,8 +441,8 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             IndirectDraw draw = allDraws.get(i);
             IndirectDraw next = i == allDraws.size() - 1 ? null : allDraws.get(i + 1);
             boolean uberSplit = next == null || incompatibleUber(draw, next);
-            boolean additive = OitTransparency.additive(draw.material());
-            boolean oit = drawnInTranslucentPass(draw.material());
+            boolean additive = drawnInAdditivePass(draw);
+            boolean oit = drawnInTranslucentPass(draw);
             if (uberSplit || draw.instanceType() != next.instanceType()) {
                 (additive ? meshOitAdditiveMultiDraws : oit ? meshOitMultiDraws : meshMultiDraws).add(
                         new MeshDrawRun(draw.material(), draw.embeddedVariant(), draw.instanceType(), meshStart,
@@ -450,9 +473,9 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     }
 
     void submitOitProducerGeometry(RenderPass pass, OitMode mode, OitFrame f, boolean additive) {
+        pass.setUniform("_FlwRenderOrigin", renderPassUniforms.renderOriginSlice());
         if (mode != OitMode.DEPTH_RANGE) {
             lightBuffers.bind();
-            pass.setUniform("_FlwRenderOrigin", renderPassUniforms.renderOriginSlice());
         }
         matrixBuffer.bind();
 
@@ -491,8 +514,12 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         GlCompat.popDebugGroup();
     }
 
-    protected boolean drawnInTranslucentPass(Material material) {
-        return OitTransparency.orderIndependent(material);
+    protected boolean drawnInTranslucentPass(IndirectDraw draw) {
+        return OitTransparency.orderIndependent(draw.material());
+    }
+
+    protected boolean drawnInAdditivePass(IndirectDraw draw) {
+        return OitTransparency.additive(draw.material());
     }
 
     protected boolean bindlessTextures() {
@@ -584,7 +611,6 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             if (pipeline != lastPipeline) {
                 lastPipeline = pipeline;
                 pass.setPipeline(pipeline);
-                if (bindColor && RenderPassShaders.readsGeometry(batch.material().light())) GeometryAtlas.bind(pass);
                 needPrime = true;
             }
 
@@ -624,8 +650,8 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         boolean insertCompatible = insertMode != null && terrainOk;
         if (insertCompatible) {
             return insertChain.render(renderModelView, meshPool.vertexBuffer(), meshPool.indexBuffer(),
-                    !uberOitMultiDraws.isEmpty() || !uberOitAdditiveMultiDraws.isEmpty(),
-                    !uberOitAdditiveMultiDraws.isEmpty(), null, chunks, ber, terrain, fabulous, insertMode,
+                    !uberOitMultiDraws.isEmpty() || !uberOitAdditiveMultiDraws.isEmpty(), null, chunks, ber, terrain,
+                    fabulous, insertMode,
                     this::submitOitInsertProducerGeometry);
         }
         return oitChain.render(renderModelView, meshPool.vertexBuffer(), meshPool.indexBuffer(),
@@ -647,6 +673,8 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         buffers.delete();
 
         stagingBuffer.delete();
+
+        slabArena.delete();
 
         meshPool.delete();
 

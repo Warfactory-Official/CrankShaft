@@ -51,8 +51,7 @@ public final class VkShaderTransform {
             Map.entry("_flw_layerColor3", 36),
             Map.entry("_flw_layerDepth3", 37),
             Map.entry("_flw_emission", 38),
-            Map.entry("_flw_mlabNearest", 39),
-            Map.entry("_flw_geometryAtlas", 40));
+            Map.entry("_flw_mlabNearest", 39));
     private static final Map<String, Integer> VERTEX_INPUT_LOCATIONS = Map.of(
             "Position", 0, "Color", 1, "UV0", 2, "UV1", 3, "UV2", 4, "Normal", 5);
     private static final Map<String, Integer> VARYING_LOCATIONS = Map.ofEntries(
@@ -82,7 +81,7 @@ public final class VkShaderTransform {
     private static final Pattern VERSION_LINE = Pattern.compile("(?m)^\\s*#version\\s+\\d+(\\s+core)?\\s*$");
     private static final Pattern SSBO_LAYOUT = Pattern.compile("layout\\(\\s*std430\\s*,");
     private static final Pattern UBO_BLOCK = Pattern.compile(
-            "(?:layout\\(\\s*std140\\s*(?:,\\s*binding\\s*=\\s*\\d+\\s*)?\\)\\s+)?uniform\\s+(\\w+)\\s*\\{");
+            "(?:layout\\(\\s*std140\\s*(?:,\\s*binding\\s*=\\s*\\w+\\s*)?\\)\\s+)?uniform\\s+(\\w+)\\s*\\{");
     private static final Pattern SAMPLER_DECL = Pattern.compile(
             "(?:layout\\([^)]*\\)\\s+)?uniform\\s+sampler2D\\s+(\\w+)\\s*;");
     private static final Pattern INTERFACE_VAR = Pattern.compile(

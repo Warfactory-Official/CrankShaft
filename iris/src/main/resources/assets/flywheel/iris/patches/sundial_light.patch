@@ -1,0 +1,15 @@
+diff --git a/programs/composite/Composite6.frag b/programs/composite/Composite6.frag
+--- a/programs/composite/Composite6.frag
++++ b/programs/composite/Composite6.frag
+@@ -3,1 +3,7 @@
+ layout(location = 0) out vec4 texBuffer5;
++uniform sampler2D colortex15;
++/*
++const int colortex15Format = RGBA16F;
++const bool colortex15Clear = true;
++const vec4 colortex15ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
++*/
+@@ -36,1 +42,3 @@
+     float parallaxOffset = mirrorWeight.w * PARALLAX_DEPTH * 0.2;
++    vec3 _flw_guestLight = texelFetch(colortex15, texel, 0).rgb;
++    solidColor += _flw_guestLight;

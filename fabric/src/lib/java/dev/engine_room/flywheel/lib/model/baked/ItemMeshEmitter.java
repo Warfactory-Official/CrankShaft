@@ -1,18 +1,19 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
-import org.joml.Matrix3fc;
-import org.joml.Matrix4fc;
-import org.joml.Vector3f;
-
-import dev.engine_room.flywheel.lib.model.baked.BakedMesh;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadView;
 import net.minecraft.client.model.geom.builders.UVPair;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.resources.Identifier;
+import net.minecraft.util.ARGB;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.level.block.state.BlockState;
+import org.joml.Matrix3fc;
+import org.joml.Matrix4fc;
+import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 // Item variant of FabricMeshEmitter: consumes raw BakedQuads with a full display-space transform + a flat per-quad
@@ -57,8 +58,40 @@ final class ItemMeshEmitter {
         }
     }
 
+    void accept(Matrix4fc pose, Matrix3fc normalMatrix, QuadView quad, int tint) {
+        int light = quad.emissive() ? LightCoordsUtil.FULL_BRIGHT : -1;
+        for (int vertex = 0; vertex < BakedQuad.VERTEX_COUNT; vertex++) {
+            pose.transformPosition(quad.x(vertex), quad.y(vertex), quad.z(vertex), scratchPos);
+            positions.add(scratchPos.x);
+            positions.add(scratchPos.y);
+            positions.add(scratchPos.z);
+
+            uvs.add(quad.u(vertex));
+            uvs.add(quad.v(vertex));
+
+            if (quad.hasNormal(vertex)) {
+                normalMatrix.transform(quad.normalX(vertex), quad.normalY(vertex), quad.normalZ(vertex), scratchNormal);
+            } else {
+                normalMatrix.transform(quad.faceNormal(), scratchNormal);
+            }
+            scratchNormal.normalize();
+            normals.add(scratchNormal.x);
+            normals.add(scratchNormal.y);
+            normals.add(scratchNormal.z);
+
+            colors.add(ARGB.multiply(quad.color(vertex), tint));
+            overlays.add(OverlayTexture.NO_OVERLAY);
+            lights.add(light != -1 ? light : quad.lightmap(vertex));
+        }
+    }
+
     boolean isEmpty() {
         return positions.isEmpty();
+    }
+
+    BakedMesh build(BlockState state) {
+        return new BakedMesh(positions.toFloatArray(), uvs.toFloatArray(), normals.toFloatArray(),
+                colors.toIntArray(), overlays.toIntArray(), lights.toIntArray(), state);
     }
 
     BakedMesh build(Item item, @Nullable Identifier itemModel) {

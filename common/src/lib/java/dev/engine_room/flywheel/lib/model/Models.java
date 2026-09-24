@@ -1,21 +1,31 @@
 package dev.engine_room.flywheel.lib.model;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.model.Model;
+import dev.engine_room.flywheel.api.model.Model.ConfiguredMesh;
+import dev.engine_room.flywheel.lib.material.Materials;
+import dev.engine_room.flywheel.lib.model.baked.BakedModelBufferer;
 import dev.engine_room.flywheel.lib.model.baked.BakedModelBuilder;
 import dev.engine_room.flywheel.lib.model.baked.BlockModelBuilder;
 import dev.engine_room.flywheel.lib.model.baked.PartialModel;
 import dev.engine_room.flywheel.lib.transform.TransformStack;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.Sheets;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
+import net.minecraft.client.renderer.block.model.BlockDisplayContext;
+import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.core.Direction;
+import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.state.BlockState;
+import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 
@@ -24,7 +34,7 @@ import java.util.function.BiConsumer;
  */
 public final class Models {
     private static final Map<BlockState, Model> BLOCK_CACHE = new ConcurrentHashMap<>();
-    private static final Map<BlockState, Model> DECORATION_BLOCK_CACHE = new ConcurrentHashMap<>();
+    private static final Map<DisplayKey, Optional<Model>> DISPLAY_BLOCK_CACHE = new ConcurrentHashMap<>();
     private static final Map<SeededBlockKey, Model> SEEDED_BLOCK_CACHE = new ConcurrentHashMap<>();
     private static final Map<CulledKey, Model> CULLED_CACHE = new ConcurrentHashMap<>();
     private static final Map<PartialModel, Model> PARTIAL_CACHE = new ConcurrentHashMap<>();
@@ -38,12 +48,49 @@ public final class Models {
     }
 
     /**
-     * Bake a block state's model for an ENTITY-attached decoration draw: vanilla renders those through the
-     * block-DISPLAY path, so the bake uses the item/entity material table.
+     * Bake a block as vanilla draws it in an entity context (minecart contents, displays, item frames, golem /
+     * mooshroom / enderman blocks): {@code BlockModelResolver} into a {@code BlockModelRenderState}, the renderer's own
+     * {@code context}. Unshaded quads, lit by the item-sheet material; light with {@link #displayBlockLight}.
+     * {@code null} when a special renderer draws the block: leave it to vanilla.
      */
-    public static Model decorationBlock(BlockState state) {
-        return DECORATION_BLOCK_CACHE.computeIfAbsent(state,
-                s -> BlockModelBuilder.build(s, 0, ModelUtil::getItemMaterial));
+    @Nullable
+    public static Model displayBlock(BlockState state, BlockDisplayContext context) {
+        return displayBlock(state, context, false);
+    }
+
+    /**
+     * {@code zOffset}: {@code submitWithZOffset}, the item frame's frame.
+     */
+    @Nullable
+    public static Model displayBlock(BlockState state, BlockDisplayContext context, boolean zOffset) {
+        return DISPLAY_BLOCK_CACHE.computeIfAbsent(new DisplayKey(state, context, zOffset), Models::bakeDisplayBlock)
+                                  .orElse(null);
+    }
+
+    /**
+     * The block's own light for {@link #displayBlock}; the draw uses {@code LightCoordsUtil.max(entityLight, this)}.
+     */
+    public static int displayBlockLight(BlockState state) {
+        return state.emissiveRendering() ? LightCoordsUtil.FULL_BRIGHT : LightCoordsUtil.pack(state.getLightEmission(), 0);
+    }
+
+    private static Optional<Model> bakeDisplayBlock(DisplayKey key) {
+        List<BakedModelBufferer.DisplayMesh> buffered = BakedModelBufferer.INSTANCE.bufferDisplayBlock(key.state(),
+                key.context(), key.zOffset());
+        if (buffered == null) {
+            return Optional.empty();
+        }
+        List<ConfiguredMesh> meshes = new ArrayList<>(buffered.size());
+        for (BakedModelBufferer.DisplayMesh submit : buffered) {
+            if (submit.mesh().vertexCount() == 0) {
+                continue;
+            }
+            RenderType type = submit.renderType();
+            Material material = type.hasBlending() ? Materials.TRANSLUCENT_BLOCK_ITEM
+                    : type == Sheets.cutoutBlockItemSheet() ? Materials.CUTOUT_BLOCK_ITEM : Materials.SOLID_BLOCK_ITEM;
+            meshes.add(new ConfiguredMesh(material, submit.mesh()));
+        }
+        return Optional.of(meshes.isEmpty() ? EmptyModel.INSTANCE : new SimpleModel(meshes));
     }
 
     /**
@@ -101,7 +148,7 @@ public final class Models {
 
     public static void invalidate() {
         BLOCK_CACHE.clear();
-        DECORATION_BLOCK_CACHE.clear();
+        DISPLAY_BLOCK_CACHE.clear();
         SEEDED_BLOCK_CACHE.clear();
         CULLED_CACHE.clear();
         PARTIAL_CACHE.clear();
@@ -116,6 +163,9 @@ public final class Models {
     }
 
     private record CulledKey(BlockState state, int cullMask) {
+    }
+
+    private record DisplayKey(BlockState state, BlockDisplayContext context, boolean zOffset) {
     }
 
     // The variant parts are baked singletons, so the list's element-identity equality keys the resolved outcome.

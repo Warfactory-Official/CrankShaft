@@ -28,6 +28,9 @@ import java.util.regex.Pattern;
  */
 public final class ContractProperties {
     public static final ContractProperties EMPTY = new ContractProperties();
+    private static final Pattern COMMENT = Pattern.compile("//[^\\n]*|/\\*.*?\\*/", Pattern.DOTALL);
+    private static final Pattern SIDE_EFFECT = Pattern.compile(
+            "\\b(buffer|imageStore|imageAtomic\\w*|atomicCounter\\w*|atomic\\w*|gl_FragDepth)\\b");
 
     private final Map<ContractProgram, BlendModeOverride> blend = new EnumMap<>(ContractProgram.class);
     private final Map<ContractProgram, List<BufferBlendInformation>> bufferBlend = new EnumMap<>(ContractProgram.class);
@@ -38,13 +41,18 @@ public final class ContractProperties {
     private ContractProperties() {
     }
 
-    public static @Nullable ContractProperties nativeForwardOit(ProgramSource source, boolean certifiedAlpha) {
+    /**
+     * {@code authored}: an adapter's declared targets, {@code frontmost} ones taken whatever their blend or format;
+     * needs {@code certifiedAlpha}. Undeclared, every target must be a source-over signal.
+     */
+    public static @Nullable ContractProperties nativeForwardOit(ProgramSource source, boolean certifiedAlpha,
+                                                                Oit authored) {
         if (!source.isValid() || source.getGeometrySource().isPresent() || source.getTessControlSource().isPresent()
                 || source.getTessEvalSource().isPresent() || source.getDirectives().hasUnknownDrawBuffers())
             return null;
-        String stages = source.getVertexSource().orElseThrow() + source.getFragmentSource().orElseThrow();
-        if (Pattern.compile("\\b(buffer|imageStore|imageAtomic\\w*|atomicCounter\\w*|atomic\\w*|gl_FragDepth)\\b")
-                   .matcher(stages).find()) {
+        String stages = COMMENT.matcher(source.getVertexSource().orElseThrow() + '\n'
+                + source.getFragmentSource().orElseThrow()).replaceAll(" ");
+        if (SIDE_EFFECT.matcher(stages).find()) {
             FlwBackend.LOGGER.info(
                     "Shared OIT rejected: {} has depth or storage side effects; retaining native translucency",
                     source.getName());
@@ -52,16 +60,37 @@ public final class ContractProperties {
         }
         int[] buffers = source.getDirectives().getDrawBuffers();
         if (buffers.length == 0 || buffers.length > 8) return null;
+        boolean spec = authored.enabled();
+        if (spec && !certifiedAlpha) {
+            FlwBackend.LOGGER.info("Shared OIT rejected: {} adapter OIT spec without a checked source", source.getName());
+            return null;
+        }
+        int accumulated = 0;
+        for (int buffer : buffers) {
+            Accumulate declared = spec ? authored.declared(buffer) : null;
+            if (spec && declared == null) {
+                FlwBackend.LOGGER.info("Shared OIT rejected: {} colortex{} missing from the adapter's OIT spec",
+                        source.getName(), buffer);
+                return null;
+            }
+            if (declared == null || declared.coefficient() != Accumulate.FRONTMOST) accumulated++;
+        }
         BlendModeOverride override = source.getDirectives().getBlendModeOverride().orElse(null);
         BlendMode global = override == null ? new BlendMode(GL11C.GL_SRC_ALPHA, GL11C.GL_ONE_MINUS_SRC_ALPHA,
                 GL11C.GL_ONE,
                 GL11C.GL_ONE_MINUS_SRC_ALPHA) : ((BlendModeOverrideAccessor) override).flywheel$blendMode();
         ContractProperties result = new ContractProperties();
-        result.gbuffersOit.ranks = new int[buffers.length];
-        Arrays.fill(result.gbuffersOit.ranks, buffers.length <= 2 ? 3 : buffers.length <= 4 ? 2 : 1);
+        result.gbuffersOit.ranks = new int[accumulated];
+        Arrays.fill(result.gbuffersOit.ranks, accumulated <= 2 ? 3 : accumulated <= 4 ? 2 : 1);
+        int coefficient = 0;
         for (int slot = 0; slot < buffers.length; slot++) {
             InternalTextureFormat format = source.getParent().getPackDirectives().getRenderTargetDirectives()
                                                  .getRenderTargetSettings().get(buffers[slot]).getInternalFormat();
+            Accumulate declared = spec ? authored.declared(buffers[slot]) : null;
+            if (declared != null && declared.coefficient() == Accumulate.FRONTMOST) {
+                result.gbuffersOit.accumulate.put(buffers[slot], new Accumulate(Accumulate.FRONTMOST, format));
+                continue;
+            }
             if (format.getShaderDataType() != ShaderDataType.FLOAT || format.name().endsWith("_SNORM")) {
                 FlwBackend.LOGGER.info("Shared OIT rejected: {} colortex{} has unsupported format {}", source.getName(),
                         buffers[slot], format);
@@ -87,8 +116,8 @@ public final class ContractProperties {
                         source.getName(), buffers[slot]);
                 return null;
             }
-            result.gbuffersOit.accumulate.put(buffers[slot], new Accumulate(slot, InternalTextureFormat.RGBA32F,
-                    mode.srcRgb() == GL11C.GL_ONE, normalized));
+            result.gbuffersOit.accumulate.put(buffers[slot], new Accumulate(coefficient++,
+                    InternalTextureFormat.RGBA32F, mode.srcRgb() == GL11C.GL_ONE, normalized));
         }
         result.gbuffersOit.enabled = true;
         result.blend.put(ContractProgram.GBUFFERS_TRANSLUCENT,
@@ -227,6 +256,10 @@ public final class ContractProperties {
 
         public Accumulate accumulate(int drawBuffer) {
             return accumulate.getOrDefault(drawBuffer, DEFAULT);
+        }
+
+        @Nullable Accumulate declared(int drawBuffer) {
+            return accumulate.get(drawBuffer);
         }
 
         // Colorwheel defaults: an entry created by its coefficient line is RGBA8, by its format line frontmost.

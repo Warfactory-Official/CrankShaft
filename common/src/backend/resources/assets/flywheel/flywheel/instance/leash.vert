@@ -6,5 +6,5 @@ void flw_instanceVertex(in FlwInstance i) {
     vec3 rope = vec3(i.delta.x * p, ropeY, i.delta.z * p);
     flw_vertexPos.xyz = i.start + (rope + flw_vertexPos.xyz) * i.scale;
     flw_vertexTexCoord = vec2(0.5);
-    flw_vertexLight = max((vec2(i.light) + 8.0) / 256.0, flw_vertexLight);
+    flw_vertexLight = max(vec2(i.light) / 256.0, flw_vertexLight);
 }

@@ -2,25 +2,11 @@
   "required": true,
   "minVersion": "0.8.7",
   "package": "dev.engine_room.flywheel.backend.mixin",
-  "plugin": "dev.engine_room.flywheel.backend.FlwBackendMixinPlugin",
   "compatibilityLevel": "JAVA_25",
   "client": [
     "GlStateManagerMixin",
     "LightingMixin",
-    "OptionsMixin",
-    "lighting.CompiledTerrainGeometryMixin",
-    "lighting.LightingLevelLifetimeMixin",
-    "lighting.SodiumBufferOccludersMixin",
-    "lighting.SodiumBuildOccludersMixin",
-    "lighting.SodiumMeshingOccludersMixin",
-    "lighting.SodiumPassOccludersMixin",
-    "lighting.SodiumTerrainCaptureMixin",
-    "lighting.SodiumTerrainGeometryMixin",
-    "lighting.SodiumTerrainRemovalMixin",
-    "lighting.TerrainCompilerMixin",
-    "lighting.TerrainGeometryCarrierMixin",
-    "lighting.TerrainGeometryDirtyMixin",
-    "lighting.TerrainGeometryPublicationMixin"
+    "OptionsMixin"
   ],
   "injectors": {
     "defaultRequire": 1

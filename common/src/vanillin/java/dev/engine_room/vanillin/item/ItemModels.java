@@ -11,9 +11,13 @@ import dev.engine_room.flywheel.lib.model.ModelUtil;
 import dev.engine_room.flywheel.lib.model.SimpleModel;
 import dev.engine_room.flywheel.lib.model.baked.BakedModelBufferer;
 import dev.engine_room.flywheel.lib.model.baked.BakedModelBufferer.ItemMeshes;
+import dev.engine_room.flywheel.lib.util.RendererReloadCache;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.item.ItemStackRenderState;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.ItemOwner;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
@@ -31,10 +35,13 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class ItemModels {
     public static final Model EMPTY = new SimpleModel(List.of());
-    private static final Baked EMPTY_BAKED = new Baked(EMPTY, 0.0f, 0.0f);
+    public static final Baked EMPTY_BAKED = new Baked(EMPTY, 0.0f, 0.0f, null);
 
-    private static final Map<ModelKey, Baked> MODEL_CACHE = new ConcurrentHashMap<>();
-    private static final Map<SupportKey, Boolean> SUPPORT_CACHE = new ConcurrentHashMap<>();
+    // Port: bakes capture their stack, so each map rides one RendererReloadCache entry and drops with its reloads.
+    private static final RendererReloadCache<Boolean, Map<ModelKey, Baked>> MODEL_CACHE = new RendererReloadCache<>(
+            $ -> new ConcurrentHashMap<>());
+    private static final RendererReloadCache<Boolean, Map<SupportKey, Boolean>> SUPPORT_CACHE =
+            new RendererReloadCache<>($ -> new ConcurrentHashMap<>());
 
     private ItemModels() {
     }
@@ -44,7 +51,7 @@ public final class ItemModels {
         if (stack.isEmpty()) {
             return false;
         }
-        return SUPPORT_CACHE.computeIfAbsent(
+        return SUPPORT_CACHE.get(true).computeIfAbsent(
                 new SupportKey(stack.getItem(), stack.get(DataComponents.ITEM_MODEL), displayContext), $ -> {
                     ItemMeshes result = BakedModelBufferer.INSTANCE.bufferItem(stack, displayContext, owner, seed);
                     return result != null && result.stackDetermined();
@@ -62,12 +69,12 @@ public final class ItemModels {
         ItemMeshes result = BakedModelBufferer.INSTANCE.bufferItem(stack, displayContext, owner, seed);
         if (result == null || !result.stackDetermined()) {
             // Special-renderer/time-varying resolutions render via vanilla (the visual must draw nothing on top). Also DEMOTE the gate verdict: the support key is coarser than the resolution (e.g. custom_model_data selecting a special-renderer branch), so a sibling stack may have seeded TRUE -- the whole key goes vanilla and the visuals re-check the gate per frame.
-            SUPPORT_CACHE.put(new SupportKey(stack.getItem(), stack.get(DataComponents.ITEM_MODEL), displayContext),
+            SUPPORT_CACHE.get(true).put(new SupportKey(stack.getItem(), stack.get(DataComponents.ITEM_MODEL), displayContext),
                     false);
             return EMPTY_BAKED;
         }
-        return MODEL_CACHE.computeIfAbsent(new ModelKey(displayContext, result.identity(), stack.getItem(),
-                stack.get(DataComponents.ITEM_MODEL)), $ -> buildModel(result));
+        return MODEL_CACHE.get(true).computeIfAbsent(new ModelKey(displayContext, result.identity(), stack.getItem(),
+                stack.get(DataComponents.ITEM_MODEL), result.foil()), $ -> buildModel(result));
     }
 
     // TODO: revisit -- rebake was consolidated onto ItemModels from a per-visual helper; reconsider
@@ -76,10 +83,16 @@ public final class ItemModels {
     public static TransformedInstance rebake(InstancerProvider instancerProvider, @Nullable TransformedInstance current,
                                              ItemStack stack, ItemDisplayContext displayContext,
                                              @Nullable ItemOwner owner, int seed) {
+        return rebake(instancerProvider, current, bake(stack, displayContext, owner, seed));
+    }
+
+    @Nullable
+    public static TransformedInstance rebake(InstancerProvider instancerProvider, @Nullable TransformedInstance current,
+                                             Baked baked) {
         if (current != null) {
             current.delete();
         }
-        Model model = bake(stack, displayContext, owner, seed).model();
+        Model model = baked.model();
         if (model.meshes().isEmpty()) {
             return null;
         }
@@ -102,19 +115,46 @@ public final class ItemModels {
         if (configured.isEmpty()) {
             return EMPTY_BAKED;
         }
-        return new Baked(new SimpleModel(configured), result.modelMinY(), result.modelZSize());
+        return new Baked(new SimpleModel(configured), result.modelMinY(), result.modelZSize(),
+                result.ownerDependent() ? result.identity() : null);
     }
 
-    public static void clear() {
-        MODEL_CACHE.clear();
-        SUPPORT_CACHE.clear();
+    /**
+     * Whether the holder's state moved {@code baked}'s resolution to another model (bow, crossbow pull).
+     *
+     * @param baked a bake with an {@link Baked#ownerIdentity}.
+     * @param stack the holder's own instance, as the bake's: use properties test {@code getUseItem() == stack}.
+     */
+    public static boolean moved(Baked baked, Resolution scratch, ItemStack stack, ItemDisplayContext displayContext,
+                                LivingEntity holder, int seed) {
+        scratch.identity.clear();
+        Minecraft minecraft = Minecraft.getInstance();
+        minecraft.getItemModelResolver()
+                 .updateForTopItem(scratch, stack, displayContext, minecraft.level, holder, seed);
+        return !baked.ownerIdentity().equals(scratch.identity);
     }
 
-    public record Baked(Model model, float modelMinY, float modelZSize) {
+    /**
+     * @param ownerIdentity the resolved identity when it reads the holder's state, else {@code null}.
+     */
+    public record Baked(Model model, float modelMinY, float modelZSize, @Nullable Object ownerIdentity) {
     }
 
+    /**
+     * {@link #moved} scratch; one thread at a time.
+     */
+    public static final class Resolution extends ItemStackRenderState {
+        private final List<Object> identity = new ArrayList<>();
+
+        @Override
+        public void appendModelIdentityElement(Object element) {
+            identity.add(element);
+        }
+    }
+
+    // foil: an identity resolved during Iris's shadow pass lacks vanilla's foil element (ItemFoil).
     private record ModelKey(ItemDisplayContext displayContext, Object identity, Item item,
-                            @Nullable Identifier itemModel) {
+                            @Nullable Identifier itemModel, boolean foil) {
     }
 
     private record SupportKey(Item item, @Nullable Identifier modelId, ItemDisplayContext displayContext) {

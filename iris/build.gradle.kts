@@ -2,7 +2,7 @@ plugins {
     id("multiloader-base")
     id("java-library")
 
-    id("net.fabricmc.fabric-loom") version ("1.17.20")
+    id("net.fabricmc.fabric-loom") version ("1.18.2")
 }
 
 base {
@@ -45,7 +45,7 @@ dependencies {
     compileOnly("io.github.douira:glsl-transformer:3.0.0-pre3")
     compileOnly("org.antlr:antlr4-runtime:4.13.1")
 
-    compileOnly("org.jspecify:jspecify:1.0.1")
+    compileOnly("org.jspecify:jspecify:1.0.0")
 
     compileOnly("io.github.llamalad7:mixinextras-common:0.5.4")
     annotationProcessor("io.github.llamalad7:mixinextras-common:0.5.4")

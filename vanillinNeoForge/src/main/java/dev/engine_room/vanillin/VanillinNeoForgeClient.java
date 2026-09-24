@@ -1,8 +1,6 @@
 package dev.engine_room.vanillin;
 
-import dev.engine_room.vanillin.item.ItemModels;
 import dev.engine_room.vanillin.item.SodiumAnimatedTextureCompat;
-import dev.engine_room.vanillin.visuals.ItemFrameVisual;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.resources.PreparableReloadListener;
 import net.neoforged.api.distmarker.Dist;
@@ -35,18 +33,12 @@ public class VanillinNeoForgeClient {
 
         // Re-mark observed sprites active once per frame (same wiring as upstream's RenderFrameEvent.Pre).
         NeoForge.EVENT_BUS.addListener((RenderFrameEvent.Pre stage) -> SodiumAnimatedTextureCompat.beginFrame());
-        // Drop the observed-sprite set on resource reload so it doesn't hold stale (re-)baked sprites. Upstream
-        // drives this from ReloadLevelRendererEvent, which this port omits (no such vanilla event on 26.2); the
-        // client reload-listener hook fires at the same lifecycle points (F3+T, world load).
+        // Port: drops the observed-sprite set on resource reload (upstream: ReloadLevelRendererEvent), so it holds no
+        // stale (re-)baked sprites.
         modEventBus.addListener((AddClientReloadListenersEvent e) -> e.addListener(
                 Identifier.fromNamespaceAndPath(Vanillin.ID, "sodium_animated_textures"),
                 (PreparableReloadListener) (state, bgExec, barrier, reloadExec) ->
                         barrier.wait(null)
-                               .thenRunAsync(() -> {
-                                   SodiumAnimatedTextureCompat.onReloadRenderer();
-                                   // Item models rebake on resource reload -- drop the stale item + frame bakes.
-                                   ItemModels.clear();
-                                   ItemFrameVisual.clearCache();
-                               }, reloadExec)));
+                               .thenRunAsync(SodiumAnimatedTextureCompat::onReloadRenderer, reloadExec)));
     }
 }

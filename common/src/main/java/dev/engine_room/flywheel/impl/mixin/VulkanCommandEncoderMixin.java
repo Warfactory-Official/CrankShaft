@@ -1,7 +1,10 @@
 package dev.engine_room.flywheel.impl.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.vulkan.VulkanCommandEncoder;
 import dev.engine_room.flywheel.backend.vk.FlwPassBarrier;
+import dev.engine_room.flywheel.impl.compat.CompatMod;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.spongepowered.asm.mixin.Mixin;
@@ -20,11 +23,19 @@ abstract class VulkanCommandEncoderMixin {
         throw new AssertionError();
     }
 
-    @Redirect(method = "submitRenderPass", at = @At(value = "INVOKE",
+    // Compat with Vitrail: it redirects this barrier too (its pack passes need compute-stage visibility, which the
+    // scoped publish lacks) => wrap, and leave passes we do not own to it.
+    @WrapOperation(method = "submitRenderPass", at = @At(value = "INVOKE",
             target = "Lcom/mojang/blaze3d/vulkan/VulkanCommandEncoder;memoryBarrier(Lorg/lwjgl/system/MemoryStack;)V"))
-    private void flywheel$scopedRenderPassBarrier(VulkanCommandEncoder self, MemoryStack stack) {
+    private void flywheel$scopedRenderPassBarrier(VulkanCommandEncoder self, MemoryStack stack,
+                                                  Operation<Void> original) {
         VkCommandBuffer cmd = this.commandBuffer();
-        if (!FlwPassBarrier.emitIfPending(cmd, stack)) {
+        if (FlwPassBarrier.emitIfPending(cmd, stack)) {
+            return;
+        }
+        if (CompatMod.VITRAIL.isLoaded) {
+            original.call(self, stack);
+        } else {
             FlwPassBarrier.emitDefault(cmd, stack);
         }
     }

@@ -96,7 +96,7 @@ final class VkWaveletOitChain extends VkOitChain {
             producerPass(encoder, framebuffer.accumulateDescriptor(depthView), OitMode.EVALUATE, frame, replay,
                     vertexVk, indexVk, width, height, hasInstanceOit);
         }
-        // Before the composite: it writes the nearest OIT depth, which would cull emission behind it.
+        // Before the depth writeback: the nearest OIT depth would cull emission behind it.
         if (hasAdditive) {
             emissionPass(encoder, framebuffer.emissionDescriptor(depthView), frame, vertexVk, indexVk, width, height);
         }
@@ -250,6 +250,12 @@ final class VkWaveletOitChain extends VkOitChain {
                 m.writer.sampler(24 + i, frame.coefficientViews()[i], frame.oitSampler());
             }
             m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            VK12.vkCmdDraw(cmd, 3, 1, 0, 0);
+            VkGraphicsPipeline depth = m.programs.oit().oitDepthPipeline();
+            VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, depth.handle());
+            m.writer.sampler(28, frame.accumulateView(), frame.oitSampler());
+            m.writer.sampler(14, frame.depthRangeView(), frame.oitSampler());
+            m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, depth.layout());
             VK12.vkCmdDraw(cmd, 3, 1, 0, 0);
             VkContext.popLabel(cmd);
         } finally {

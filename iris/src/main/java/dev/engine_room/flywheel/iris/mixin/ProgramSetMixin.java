@@ -1,7 +1,10 @@
 package dev.engine_room.flywheel.iris.mixin;
 
 import dev.engine_room.flywheel.backend.FlwBackend;
-import dev.engine_room.flywheel.iris.compile.*;
+import dev.engine_room.flywheel.iris.compile.ContractProgram;
+import dev.engine_room.flywheel.iris.compile.ContractProgramSet;
+import dev.engine_room.flywheel.iris.compile.ContractProperties;
+import dev.engine_room.flywheel.iris.compile.ContractShaderPack;
 import dev.engine_room.flywheel.iris.compile.patches.ContractPatches;
 import dev.engine_room.flywheel.iris.compile.patches.DeferredOitProfile;
 import net.irisshaders.iris.shaderpack.ShaderPack;
@@ -29,8 +32,13 @@ abstract class ProgramSetMixin implements ContractProgramSet {
     @Unique
     private final Map<ContractProgram, ProgramSource> flywheel$contract = new EnumMap<>(ContractProgram.class);
 
+    // Resolved on first use: the base set is built before the pack parses its adapter's OIT spec.
     @Unique
     private @Nullable ContractProperties flywheel$nativeOit;
+    @Unique
+    private @Nullable ProgramSource flywheel$nativeWater;
+    @Unique
+    private @Nullable ShaderPack flywheel$pack;
 
     @Unique
     private @Nullable DeferredOitProfile flywheel$deferredOit;
@@ -60,8 +68,8 @@ abstract class ProgramSetMixin implements ContractProgramSet {
         ProgramSource translucent = flywheel$contract.get(ContractProgram.GBUFFERS_TRANSLUCENT);
         if (translucent != null && translucent.getFragmentSource().orElseThrow()
                                               .contains(ContractPatches.NATIVE_TRANSLUCENT)) {
-            flywheel$nativeOit = ContractProperties.nativeForwardOit(self.get(ProgramId.Water).orElseThrow(),
-                    ((ContractShaderPack) pack).flywheel$forwardOit());
+            flywheel$nativeWater = self.get(ProgramId.Water).orElseThrow();
+            flywheel$pack = pack;
         }
         DeferredOitProfile deferred = ((ContractShaderPack) pack).flywheel$deferredOit();
         if (deferred != null) {
@@ -84,6 +92,13 @@ abstract class ProgramSetMixin implements ContractProgramSet {
 
     @Override
     public @Nullable ContractProperties flywheel$nativeOit() {
+        if (flywheel$nativeWater != null) {
+            ContractShaderPack pack = (ContractShaderPack) flywheel$pack;
+            flywheel$nativeOit = ContractProperties.nativeForwardOit(flywheel$nativeWater, pack.flywheel$forwardOit(),
+                    pack.flywheel$contractProperties().oit(false));
+            flywheel$nativeWater = null;
+            flywheel$pack = null;
+        }
         return flywheel$nativeOit;
     }
 

@@ -23,7 +23,6 @@ import dev.engine_room.flywheel.lib.material.FogShaders;
 import dev.engine_room.flywheel.lib.material.Materials;
 import dev.engine_room.flywheel.lib.util.ShadersModHelper;
 import org.lwjgl.vulkan.VK10;
-import org.lwjgl.vulkan.VK12;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -117,6 +116,7 @@ public final class ShaderWarmup {
         OitPipelines.composite(false);
         OitPipelines.composite(true);
         OitPipelines.emission();
+        OitPipelines.oitDepth();
         OitPipelines.mlabNearestDepth();
         for (OitMode mode : OitMode.values()) {
             if (mode == OitMode.OFF) {
@@ -138,9 +138,7 @@ public final class ShaderWarmup {
             if (mode == OitInsertMode.MLAB && !interlock) {
                 continue;
             }
-            for (MlabResolveVariant variant : MlabResolveVariant.values()) {
-                OitPipelines.mlabResolve(mode, variant);
-            }
+            OitPipelines.mlabResolve(mode);
             OitPipelines.chunkMlab(mode);
             for (BerFamily family : BerFamily.VALUES) {
                 OitPipelines.berMlab(family, mode);
@@ -159,6 +157,7 @@ public final class ShaderWarmup {
         IndirectPrograms programs = IndirectPrograms.get();
         programs.getCullingProgram();
         programs.getCullingPass2Program();
+        programs.getCullingFrustumProgram();
         List<Material> materials = warmMaterials();
         for (Material material : materials) {
             IndirectPipeline.uberPipelineFor(material, false);
@@ -200,6 +199,7 @@ public final class ShaderWarmup {
         oit.compositePipeline(false);
         oit.compositePipeline(true);
         oit.emissionPipeline();
+        oit.oitDepthPipeline();
         oit.mlabNearestDepthPipeline();
         if (localRead) {
             for (OitMode mode : OitMode.values()) {
@@ -230,9 +230,7 @@ public final class ShaderWarmup {
             if (mode == OitInsertMode.MLAB && !interlock) {
                 continue;
             }
-            for (MlabResolveVariant variant : MlabResolveVariant.values()) {
-                oit.mlabResolvePipeline(mode, variant);
-            }
+            oit.mlabResolvePipeline(mode);
             oit.chunkMlabPipeline(mode);
             for (BerFamily family : BerFamily.VALUES) {
                 oit.berMlabPipeline(family, mode);
@@ -242,9 +240,7 @@ public final class ShaderWarmup {
 
         if (sodiumLoaded()) {
             VkTerrainPrograms terrain = programs.terrain();
-            terrain.regionTestPipeline();
-            terrain.sectionTestPipeline();
-            terrain.commandBuilderPipeline();
+            terrain.cullPipeline();
             terrain.translucentOitCullPipeline();
             terrain.drawPipeline(false, VK10.VK_FORMAT_R8G8B8A8_UNORM, VK10.VK_FORMAT_D32_SFLOAT);
             terrain.drawPipeline(true, VK10.VK_FORMAT_R8G8B8A8_UNORM, VK10.VK_FORMAT_D32_SFLOAT);

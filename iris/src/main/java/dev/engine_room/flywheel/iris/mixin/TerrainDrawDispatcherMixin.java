@@ -16,7 +16,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 abstract class TerrainDrawDispatcherMixin {
     @Unique
     private static void flywheel$restorePackBuffers() {
-        if (GuestTerrainGate.ENABLED
+        if (GuestTerrainGate.enabled()
                 && Iris.getPipelineManager().getPipelineNullable() instanceof IrisRenderingPipeline pipeline) {
             GuestSsbos.restore(pipeline);
         }
@@ -24,12 +24,12 @@ abstract class TerrainDrawDispatcherMixin {
 
     @Inject(method = {"drawOpaqueSolid", "drawShadowTerrain"}, at = @At("HEAD"), require = 1)
     private void flywheel$prepareGuestDraw(CallbackInfoReturnable<Boolean> cir) {
-        GuestTerrainGate.packActive = GuestTerrainGate.ENABLED && Iris.isPackInUseQuick();
+        GuestTerrainGate.packActive = GuestTerrainGate.enabled() && Iris.isPackInUseQuick();
     }
 
     @Inject(method = "prepareResidentTranslucent", at = @At("HEAD"), require = 1)
     private void flywheel$prepareGuestTranslucent(CallbackInfo ci) {
-        GuestTerrainGate.packActive = GuestTerrainGate.ENABLED && Iris.isPackInUseQuick();
+        GuestTerrainGate.packActive = GuestTerrainGate.enabled() && Iris.isPackInUseQuick();
     }
 
     // Registry uploads can bind scatter SSBOs even when no terrain draw follows. Restore at the whole operation's

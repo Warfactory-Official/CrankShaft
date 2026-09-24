@@ -1,20 +1,18 @@
 package dev.engine_room.vanillin.elements;
 
-import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.api.vertex.MutableVertexList;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
-import dev.engine_room.flywheel.lib.material.Materials;
-import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.model.QuadMesh;
 import dev.engine_room.flywheel.lib.model.SingleMeshModel;
 import dev.engine_room.flywheel.lib.util.OverlayTexture;
 import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import dev.engine_room.flywheel.lib.visual.AbstractVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
+import dev.engine_room.flywheel.lib.visual.component.FireComponent;
 import dev.engine_room.flywheel.lib.visual.util.SmartRecycler;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
@@ -31,16 +29,10 @@ import org.joml.Vector4fc;
  * A component that uses instances to render the fire animation on an entity.
  */
 public final class FireElement extends AbstractVisual implements SimpleDynamicVisual {
-    private static final Material FIRE_MATERIAL = SimpleMaterial.builderOf(Materials.CUTOUT_UNSHADED_BLOCK)
-                                                                .backfaceCulling(false) // Disable backface because we want to be able to flip the model.
-                                                                .build();
-
-    private static final RendererReloadCache<SpriteId, Model> FIRE_MODELS = new RendererReloadCache<>(id -> {
-        TextureAtlasSprite sprite = Minecraft.getInstance()
-                                             .getAtlasManager()
-                                             .get(id);
-        return new SingleMeshModel(new FireMesh(sprite), FIRE_MATERIAL);
-    });
+    private static final RendererReloadCache<SpriteId, Model> FIRE_MODELS = new RendererReloadCache<>(id -> model(id,
+            false));
+    private static final RendererReloadCache<SpriteId, Model> FLIPPED_FIRE_MODELS = new RendererReloadCache<>(
+            id -> model(id, true));
 
     private final Entity entity;
     private final Matrix4f scratch = new Matrix4f();
@@ -105,15 +97,12 @@ public final class FireElement extends AbstractVisual implements SimpleDynamicVi
                .translate(0.0F, 0.0F, -0.3F + (float) ((int) maxHeight) * 0.02F);
 
         for (int i = 0; y < maxHeight; ++i) {
-            Model model = FIRE_MODELS.get(i % 2 == 0 ? ModelBakery.FIRE_0 : ModelBakery.FIRE_1);
+            // Port: vanilla's uv flip, not a mirrored model: a mirror reverses the winding shaderpacks read.
+            Model model = (i / 2 % 2 == 0 ? FLIPPED_FIRE_MODELS : FIRE_MODELS).get(
+                    i % 2 == 0 ? ModelBakery.FIRE_0 : ModelBakery.FIRE_1);
             rowScratch.set(scratch)
                       .scale(width, 1, 1)
                       .translate(0, y, z);
-
-            if (i / 2 % 2 == 0) {
-                // Vanilla flips the uv directly, but it's easier for us to flip the whole model.
-                rowScratch.scale(-1, 1, 1);
-            }
 
             recycler.get(model)
                     .setTransform(rowScratch)
@@ -132,7 +121,15 @@ public final class FireElement extends AbstractVisual implements SimpleDynamicVi
         recycler.delete();
     }
 
-    private record FireMesh(TextureAtlasSprite sprite) implements QuadMesh {
+    // Port: FireComponent's material, which shaderpack guests tag as the Iris entity_flame.
+    private static Model model(SpriteId id, boolean flipped) {
+        TextureAtlasSprite sprite = Minecraft.getInstance()
+                                             .getAtlasManager()
+                                             .get(id);
+        return new SingleMeshModel(new FireMesh(sprite, flipped), FireComponent.FIRE_MATERIAL);
+    }
+
+    private record FireMesh(TextureAtlasSprite sprite, boolean flipped) implements QuadMesh {
         private static final Vector4fc BOUNDING_SPHERE = new Vector4f(0, 0.5f, 0, Mth.SQRT_OF_TWO * 0.5f);
 
         // Magic numbers taken from:
@@ -161,9 +158,9 @@ public final class FireElement extends AbstractVisual implements SimpleDynamicVi
 
         @Override
         public void write(MutableVertexList vertexList) {
-            float u0 = sprite.getU0();
+            float u0 = flipped ? sprite.getU1() : sprite.getU0();
             float v0 = sprite.getV0();
-            float u1 = sprite.getU1();
+            float u1 = flipped ? sprite.getU0() : sprite.getU1();
             float v1 = sprite.getV1();
             writeVertex(vertexList, 0, 0.5f, 0, u1, v1);
             writeVertex(vertexList, 1, -0.5f, 0, u0, v1);

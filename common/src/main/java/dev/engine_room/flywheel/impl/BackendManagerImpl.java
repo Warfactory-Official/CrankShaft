@@ -22,6 +22,7 @@ public final class BackendManagerImpl {
                                                            .register(ResourceUtil.rl("off"));
 
     private static Backend backend = OFF_BACKEND;
+    private static boolean suspended;
 
     private BackendManagerImpl() {
     }
@@ -31,7 +32,18 @@ public final class BackendManagerImpl {
     }
 
     public static boolean isBackendOn() {
-        return backend != OFF_BACKEND;
+        return backend != OFF_BACKEND && !suspended;
+    }
+
+    public static boolean isSuspended() {
+        return suspended;
+    }
+
+    /**
+     * Port: see {@link dev.engine_room.flywheel.impl.visualization.WorldRenderOwnership}. The chosen backend is kept.
+     */
+    public static void setSuspended(boolean suspended) {
+        BackendManagerImpl.suspended = suspended;
     }
 
     public static boolean isGpuDriven(Backend candidate) {
@@ -53,7 +65,8 @@ public final class BackendManagerImpl {
     }
 
     public static String getBackendString() {
-        return getBackendString(backend);
+        return suspended ? getBackendString(backend) + " (suspended: another mod renders the world)"
+                : getBackendString(backend);
     }
 
     public static String getBackendString(Backend b) {

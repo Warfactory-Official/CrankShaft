@@ -1,11 +1,9 @@
 package dev.engine_room.flywheel.backend.engine;
 
 /**
- * A page-partitioned, persistently-mapped GPU buffer that backs an instancer's instance data. The GL and Vulkan
- * indirect backends supply their own implementation ({@link GlSlab} / a Vulkan slab): the instancer writes instances
- * through the host-visible mapped pointers from {@link #ptrForPage}, and the backend uploads dirty pages from the slab
- * into its object buffer. Worker pointer arithmetic is identical across backends, so {@link IndirectInstancer} is
- * shared; only the allocation/flush/upload leaves differ.
+ * Persistently mapped instance pages backing one indirect instancer: {@code GlSlabArena} slots on GL, {@link VkSlab}
+ * on Vulkan. The instancer writes through the per-page pointers from {@link #ptrForPage} (pages need not be
+ * contiguous), and the backend uploads dirty pages into its object buffer.
  */
 public interface Slab {
     /**
@@ -16,7 +14,7 @@ public interface Slab {
     int pageCapacity();
 
     /**
-     * Grow to hold at least {@code neededPages}; returns {@code true} if a grow (and thus a remap) occurred.
+     * Grow to hold at least {@code neededPages}; {@code true} if existing pages moved.
      */
     boolean ensureCapacity(int neededPages);
 

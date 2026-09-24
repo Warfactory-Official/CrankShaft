@@ -75,8 +75,8 @@ void main() {
     }
     vec4 lightColor = vec4(1.);
     if (flw_material.useLight) {
-        // Clamp the lightmap coord to the texel centres before the LINEAR sample -- the LUT bleeds at light extremes.
-        lightColor = texture(Sampler2, clamp(flw_fragLight, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
+        // 26.2 sample_lightmap: half-texel offset, clamped to the texel centres (LINEAR sampler).
+        lightColor = texture(Sampler2, clamp(flw_fragLight + 0.5 / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
         flw_fragColor *= lightColor;
     }
 

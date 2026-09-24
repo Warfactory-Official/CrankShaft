@@ -136,6 +136,10 @@ public final class Materials {
                                                        .transparency(Transparency.GLINT)
                                                        .writeMask(WriteMask.COLOR)
                                                        .depthTest(DepthTest.EQUAL)
+                                                       // 26.2: unlit (core/glint.fsh); GLINT blend squares shading.
+                                                       .useLight(false)
+                                                       .useOverlay(false)
+                                                       .cardinalLightingMode(CardinalLightingMode.OFF)
                                                        .backfaceCulling(false)
                                                        .blur(true)
                                                        .mipmap(false)

@@ -68,29 +68,21 @@ public class InstancedLight {
             light.clearSectionChanges();
         }
 
-        var update = light.pollLutUpdates();
-        if (update != null) {
-            var encoder = RenderSystem.getDevice().createCommandEncoder();
-            for (int span = 0; span < update.count(); span++) {
-                long bytes = (long) update.length(span) * Integer.BYTES;
-                long capacity = (long) update.totalWords() * Integer.BYTES;
-                if (lut == null || lutCapacity < capacity) {
-                    assert update.offset(span) == 0;
-                    if (lut != null) lut.close();
-                    lut = createTexelBuffer("flywheel light lut", capacity);
-                    lutCapacity = capacity;
-                }
-                if (staging == null || staging.capacity() < bytes) {
-                    staging = staging == null ? MemoryUtil.memAlloc((int) bytes)
-                            : MemoryUtil.memRealloc(staging, Math.max((int) bytes, staging.capacity() * 2));
-                }
-                staging.clear().limit((int) bytes);
-                int source = update.source(span);
-                for (int i = 0; i < update.length(span); i++) {
-                    staging.putInt(i * Integer.BYTES, update.word(source + i));
-                }
-                encoder.writeToBuffer(lut.slice((long) update.offset(span) * Integer.BYTES, bytes), staging);
+        if (light.checkNeedsLutRebuildAndClear()) {
+            var words = light.createLut();
+            long bytes = (long) words.size() * Integer.BYTES;
+            if (lut == null || lutCapacity < bytes) {
+                if (lut != null) lut.close();
+                lut = createTexelBuffer("flywheel light lut", bytes);
+                lutCapacity = bytes;
             }
+            if (staging == null || staging.capacity() < bytes) {
+                staging = staging == null ? MemoryUtil.memAlloc((int) bytes)
+                        : MemoryUtil.memRealloc(staging, Math.max((int) bytes, staging.capacity() * 2));
+            }
+            staging.clear().limit((int) bytes);
+            for (int i = 0; i < words.size(); i++) staging.putInt(i * Integer.BYTES, words.getInt(i));
+            RenderSystem.getDevice().createCommandEncoder().writeToBuffer(lut.slice(0L, bytes), staging);
         }
     }
 

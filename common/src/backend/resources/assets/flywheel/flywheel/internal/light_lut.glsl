@@ -46,7 +46,7 @@ bool _flw_nextLut(uint base, int coord, out uint next) {
 
 bool _flw_chunkCoordToSectionIndex(ivec3 sectionPos, out uint index) {
     uint first;
-    if (_flw_nextLut(1u, sectionPos.y, first) || first == 0u) {
+    if (_flw_nextLut(0u, sectionPos.y, first) || first == 0u) {
         return true;
     }
 

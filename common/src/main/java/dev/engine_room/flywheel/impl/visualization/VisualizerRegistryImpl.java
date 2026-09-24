@@ -2,10 +2,13 @@ package dev.engine_room.flywheel.impl.visualization;
 
 import dev.engine_room.flywheel.api.visualization.BlockEntityVisualizer;
 import dev.engine_room.flywheel.api.visualization.EntityVisualizer;
+import dev.engine_room.flywheel.api.visualization.ItemStackVisualizer;
 import dev.engine_room.flywheel.impl.extension.BlockEntityTypeExtension;
 import dev.engine_room.flywheel.impl.extension.EntityTypeExtension;
+import dev.engine_room.flywheel.impl.extension.ItemExtension;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import org.jspecify.annotations.Nullable;
@@ -33,5 +36,14 @@ public final class VisualizerRegistryImpl {
     public static <T extends Entity> void setVisualizer(EntityType<T> type,
                                                         @Nullable EntityVisualizer<? super T> visualizer) {
         ((EntityTypeExtension<T>) type).flw$setVisualizer(visualizer);
+    }
+
+    @Nullable
+    public static ItemStackVisualizer getVisualizer(Item item) {
+        return ((ItemExtension) item).flw$getVisualizer();
+    }
+
+    public static void setVisualizer(Item item, @Nullable ItemStackVisualizer visualizer) {
+        ((ItemExtension) item).flw$setVisualizer(visualizer);
     }
 }

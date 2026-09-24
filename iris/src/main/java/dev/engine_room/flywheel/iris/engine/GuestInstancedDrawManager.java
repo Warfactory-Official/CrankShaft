@@ -4,7 +4,6 @@ import com.mojang.blaze3d.pipeline.RenderPipeline;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
-import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.api.model.Mesh;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
@@ -35,10 +34,15 @@ import java.util.List;
 public class GuestInstancedDrawManager extends InstancedDrawManager implements GuestDrawManager {
     private final List<InstancedDraw> plainScratch = new ArrayList<>();
     private final List<InstancedDraw> orderIndependentScratch = new ArrayList<>();
+    private final List<InstancedDraw> depthFillScratch = new ArrayList<>();
     private final List<InstancedDraw> blockScratch = new ArrayList<>();
+    private final List<InstancedDraw> blockEntityScratch = new ArrayList<>();
     private final List<InstancedDraw> entityScratch = new ArrayList<>();
+    private final List<InstancedDraw> eyesScratch = new ArrayList<>();
+    private final List<InstancedDraw> translucentEntityScratch = new ArrayList<>();
+    private final List<InstancedDraw> blendedEntityScratch = new ArrayList<>();
     // submitPass state: the kind the selectors resolve for; the kinds a pass keeps.
-    private boolean entityDraws;
+    private int drawKind;
     private boolean passEntities = true;
     private boolean passBlockEntities = true;
 
@@ -55,6 +59,9 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
     @Override
     public void drawOpaque(IrisRenderingPipeline pipeline) {
         submitOpaque();
+        if (GuestPipelines.deferredEmissive(pipeline)) {
+            submitPass("flywheel:iris/additive_gbuffer", oitAdditiveDraws, renderModelView, this::additivePipeline);
+        }
     }
 
     @Override
@@ -95,15 +102,45 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         GlCompat.pushDebugGroup("flywheel:iris/translucent");
         try {
             submitTranslucent(pipeline, false, renderModelView, this::translucentPipeline);
-            if (!oitAdditiveDraws.isEmpty()) {
+            if (!GuestPipelines.deferredEmissive(pipeline)) {
                 submitPass("flywheel:iris/translucent_additive", oitAdditiveDraws, renderModelView,
-                        this::translucentPipeline);
+                        this::additivePipeline);
             }
+            submitDepthFill(pipeline);
             return false;
         } finally {
             GlCompat.popDebugGroup();
             GuestSsbos.restore(pipeline);
         }
+    }
+
+    // Pack composites resolve sky, clouds, fog and translucency from depth: a colour-only surface reads as whatever
+    // lies behind it. A separate pass, so additive stacks and translucent layers still blend.
+    private void submitDepthFill(IrisRenderingPipeline pipeline) {
+        depthFillScratch.clear();
+        if (!GuestPipelines.deferredTranslucent(pipeline)) {
+            boolean oit = GuestPipelines.oitActive(pipeline, false);
+            for (InstancedDraw draw : oitDraws) {
+                if (!draw.material()
+                         .writeMask()
+                         .depth() && !(oit && GuestDrawManager.orderIndependent(draw.material(), drawTag(draw)))) {
+                    depthFillScratch.add(draw);
+                }
+            }
+        }
+        if (!GuestPipelines.deferredEmissive(pipeline) && !GuestPipelines.emissiveLight(pipeline)) {
+            for (InstancedDraw draw : oitAdditiveDraws) {
+                if (!draw.material()
+                         .writeMask()
+                         .depth()) {
+                    depthFillScratch.add(draw);
+                }
+            }
+        }
+        submitPass("flywheel:iris/depth_fill", depthFillScratch, renderModelView,
+                (material, type, embedded) -> GuestPipelines.instancingDepthFill(
+                        role(GuestDrawManager.emissive(material) ? PackRole.ADDITIVE : PackRole.TRANSLUCENT), material,
+                        type, embedded));
     }
 
     private void submitTranslucent(IrisRenderingPipeline pipeline, boolean shadow, Matrix4fc modelView,
@@ -119,7 +156,8 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         plainScratch.clear();
         orderIndependentScratch.clear();
         for (InstancedDraw draw : oitDraws) {
-            (GuestDrawManager.orderIndependent(draw.material()) ? orderIndependentScratch : plainScratch).add(draw);
+            (GuestDrawManager.orderIndependent(draw.material(), drawTag(draw)) ? orderIndependentScratch
+                    : plainScratch).add(draw);
         }
         if (!plainScratch.isEmpty()) {
             submitPass(prefix + "translucent", plainScratch, modelView, plainPipeline);
@@ -152,27 +190,69 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         GuestSsbos.bindForGuest((IrisRenderingPipeline) Iris.getPipelineManager().getPipelineNullable());
         GuestProgram.setModelView(modelView);
         blockScratch.clear();
+        blockEntityScratch.clear();
         entityScratch.clear();
+        eyesScratch.clear();
+        translucentEntityScratch.clear();
+        blendedEntityScratch.clear();
         boolean dropBlobShadows = GuestEntityShadows.suppressed();
         for (InstancedDraw draw : list) {
             if (dropBlobShadows && GuestEntityShadows.isBlobShadow(draw.material())) {
                 continue;
             }
-            (TaggedEnvironment.isEntity(draw.groupKey.environment()
-                                                     .drawTag()) ? entityScratch : blockScratch).add(draw);
+            int routedKind = TaggedEnvironment.kind(drawTag(draw));
+            if (routedKind == TaggedEnvironment.KIND_ENTITY_EYES) {
+                eyesScratch.add(draw);
+                continue;
+            }
+            if (routedKind == TaggedEnvironment.KIND_ENTITY_TRANSLUCENT) {
+                translucentEntityScratch.add(draw);
+                continue;
+            }
+            if (routedKind == TaggedEnvironment.KIND_ENTITY_BLENDED) {
+                blendedEntityScratch.add(draw);
+                continue;
+            }
+            switch (TaggedEnvironment.kind(draw.groupKey.environment()
+                                                         .drawTag())) {
+                case TaggedEnvironment.KIND_ENTITY -> entityScratch.add(draw);
+                case TaggedEnvironment.KIND_BLOCK_ENTITY -> blockEntityScratch.add(draw);
+                default -> blockScratch.add(draw);
+            }
         }
-        if (passBlockEntities && !blockScratch.isEmpty()) {
-            super.submitPass(label, blockScratch, modelView, pipelineFor);
+        submitKind(label, blockScratch, 0, modelView, pipelineFor);
+        if (passBlockEntities) {
+            submitKind(label + "_block_entities", blockEntityScratch, TaggedEnvironment.KIND_BLOCK_ENTITY, modelView,
+                    pipelineFor);
         }
-        if (passEntities && !entityScratch.isEmpty()) {
-            entityDraws = true;
-            super.submitPass(label + "_entities", entityScratch, modelView, pipelineFor);
-            entityDraws = false;
+        if (passEntities) {
+            submitKind(label + "_entities", entityScratch, TaggedEnvironment.KIND_ENTITY, modelView, pipelineFor);
+            // Vanilla submits a body before its layers.
+            submitKind(label + "_translucent_entities", translucentEntityScratch,
+                    TaggedEnvironment.KIND_ENTITY_TRANSLUCENT, modelView, pipelineFor);
+            submitKind(label + "_eyes", eyesScratch, TaggedEnvironment.KIND_ENTITY_EYES, modelView, pipelineFor);
+            submitKind(label + "_blended_entities", blendedEntityScratch, TaggedEnvironment.KIND_ENTITY_BLENDED,
+                    modelView, pipelineFor);
         }
     }
 
+    private void submitKind(String label, List<InstancedDraw> list, int kind, Matrix4fc modelView,
+                            PipelineSelector pipelineFor) {
+        if (list.isEmpty()) {
+            return;
+        }
+        drawKind = kind;
+        super.submitPass(label, list, modelView, pipelineFor);
+        drawKind = 0;
+    }
+
+    private static int drawTag(InstancedDraw draw) {
+        DrawTags tags = draw.tags();
+        return tags == null ? 0 : tags.drawTag();
+    }
+
     private PackRole role(PackRole role) {
-        return entityDraws ? role.forEntities() : role;
+        return role.forKind(drawKind);
     }
 
     @Override
@@ -193,10 +273,13 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
     }
 
     @Override
-    protected boolean drawnInTranslucentPass(Material material) {
-        return material.transparency() == Transparency.TRANSLUCENT
-                || material.transparency() == Transparency.TRANSLUCENT_ALPHA_REPLACE
-                || OitTransparency.orderIndependent(material);
+    protected boolean drawnInTranslucentPass(InstancedDraw draw) {
+        return GuestDrawManager.drawnInTranslucentPass(draw.material(), drawTag(draw));
+    }
+
+    @Override
+    protected boolean drawnInAdditivePass(InstancedDraw draw) {
+        return GuestDrawManager.drawnInAdditivePass(draw.material(), drawTag(draw));
     }
 
     @Override
@@ -211,7 +294,9 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
 
     @Override
     protected void warmUp(Material material, InstanceType<?> type) {
-        if (OitTransparency.additive(material) || drawnInTranslucentPass(material)) {
+        if (GuestDrawManager.emissive(material)) {
+            additivePipeline(material, type, false);
+        } else if (GuestDrawManager.drawnInTranslucentPass(material, 0)) {
             translucentPipeline(material, type, false);
         } else {
             pipelineFor(material, type, false);
@@ -221,6 +306,10 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
     @Override
     public boolean isShaderPackGuest() {
         return true;
+    }
+
+    private RenderPipeline additivePipeline(Material material, InstanceType<?> type, boolean embedded) {
+        return GuestPipelines.instancing(role(PackRole.ADDITIVE), material, type, embedded);
     }
 
     private RenderPipeline translucentPipeline(Material material, InstanceType<?> type, boolean embedded) {

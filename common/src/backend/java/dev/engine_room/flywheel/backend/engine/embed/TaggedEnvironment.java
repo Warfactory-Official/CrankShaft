@@ -14,13 +14,30 @@ public record TaggedEnvironment(int drawTag) implements Environment {
     public static final int KIND_ITEM = 3;
     // Iris also reports blockEntityId 1 for these.
     public static final int KIND_BLOCK_ITEM = 4;
+    public static final int KIND_BORROWED_BLOCK = 5;
+    // An entity's ids, drawn through the pack's spidereyes program.
+    public static final int KIND_ENTITY_EYES = 6;
+    // An entity's ids, drawn after the pack's deferred passes through its entities_translucent program.
+    public static final int KIND_ENTITY_TRANSLUCENT = 7;
+    // An entity's ids, blended after the pack's deferred passes through its entities program.
+    public static final int KIND_ENTITY_BLENDED = 8;
 
     public static int tag(int kind, int id) {
         return kind << 24 | ((id + 1) & 0xFFFFFF);
     }
 
+    public static int kind(int drawTag) {
+        return drawTag >>> 24;
+    }
+
+    public static int id(int drawTag) {
+        return (drawTag & 0xFFFFFF) - 1;
+    }
+
     public static boolean isEntity(int drawTag) {
-        return drawTag >>> 24 == KIND_ENTITY;
+        int kind = kind(drawTag);
+        return kind == KIND_ENTITY || kind == KIND_ENTITY_EYES || kind == KIND_ENTITY_TRANSLUCENT
+                || kind == KIND_ENTITY_BLENDED;
     }
 
     @Override

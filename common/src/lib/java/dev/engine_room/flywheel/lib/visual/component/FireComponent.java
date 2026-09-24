@@ -34,17 +34,14 @@ import org.joml.Vector4fc;
 public final class FireComponent implements EntityComponent {
     // Port: public for shaderpack guests (Iris entity_flame id).
     public static final Material FIRE_MATERIAL = SimpleMaterial.builderOf(Materials.CUTOUT_UNSHADED_BLOCK)
-                                                                .backfaceCulling(false) // Disable backface because we want to be able to flip the model.
                                                                 .build();
 
     // Parameterize by the sprite id rather than the sprite itself: sprites are re-stitched (and the old
     // references invalidated) on every resource reload, so the cache is cleared then.
-    private static final RendererReloadCache<SpriteId, Model> FIRE_MODELS = new RendererReloadCache<>(id -> {
-        TextureAtlasSprite sprite = Minecraft.getInstance()
-                                             .getAtlasManager()
-                                             .get(id);
-        return new SingleMeshModel(new FireMesh(sprite), FIRE_MATERIAL);
-    });
+    private static final RendererReloadCache<SpriteId, Model> FIRE_MODELS = new RendererReloadCache<>(id -> model(id,
+            false));
+    private static final RendererReloadCache<SpriteId, Model> FLIPPED_FIRE_MODELS = new RendererReloadCache<>(
+            id -> model(id, true));
 
     private final VisualizationContext context;
     private final Entity entity;
@@ -110,15 +107,12 @@ public final class FireComponent implements EntityComponent {
                .translate(0.0F, 0.0F, -0.3F + (float) ((int) maxHeight) * 0.02F);
 
         for (int i = 0; y < maxHeight; ++i) {
-            Model model = FIRE_MODELS.get(i % 2 == 0 ? ModelBakery.FIRE_0 : ModelBakery.FIRE_1);
+            // Port: vanilla's uv flip, not a mirrored model: a mirror reverses the winding shaderpacks read.
+            Model model = (i / 2 % 2 == 0 ? FLIPPED_FIRE_MODELS : FIRE_MODELS).get(
+                    i % 2 == 0 ? ModelBakery.FIRE_0 : ModelBakery.FIRE_1);
             rowScratch.set(scratch)
                       .scale(width, 1, 1)
                       .translate(0, y, z);
-
-            if (i / 2 % 2 == 0) {
-                // Vanilla flips the uv directly, but it's easier for us to flip the whole model.
-                rowScratch.scale(-1, 1, 1);
-            }
 
             TransformedInstance instance = recycler.get(model);
             instance.setTransform(rowScratch);
@@ -146,7 +140,14 @@ public final class FireComponent implements EntityComponent {
         recycler.delete();
     }
 
-    private record FireMesh(TextureAtlasSprite sprite) implements QuadMesh {
+    private static Model model(SpriteId id, boolean flipped) {
+        TextureAtlasSprite sprite = Minecraft.getInstance()
+                                             .getAtlasManager()
+                                             .get(id);
+        return new SingleMeshModel(new FireMesh(sprite, flipped), FIRE_MATERIAL);
+    }
+
+    private record FireMesh(TextureAtlasSprite sprite, boolean flipped) implements QuadMesh {
         private static final Vector4fc BOUNDING_SPHERE = new Vector4f(0, 0.5f, 0, Mth.SQRT_OF_TWO * 0.5f);
 
         // Magic numbers taken from:
@@ -175,9 +176,9 @@ public final class FireComponent implements EntityComponent {
 
         @Override
         public void write(MutableVertexList vertexList) {
-            float u0 = sprite.getU0();
+            float u0 = flipped ? sprite.getU1() : sprite.getU0();
             float v0 = sprite.getV0();
-            float u1 = sprite.getU1();
+            float u1 = flipped ? sprite.getU0() : sprite.getU1();
             float v1 = sprite.getV1();
             writeVertex(vertexList, 0, 0.5f, 0, u1, v1);
             writeVertex(vertexList, 1, -0.5f, 0, u0, v1);

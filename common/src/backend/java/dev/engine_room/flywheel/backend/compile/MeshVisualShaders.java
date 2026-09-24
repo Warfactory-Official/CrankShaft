@@ -69,10 +69,6 @@ public final class MeshVisualShaders {
                 vec3 Light0_Direction;
                 vec3 Light1_Direction;
             };
-            layout(std140, binding = 4) uniform _FlwRenderOrigin {
-                ivec4 _flw_renderOrigin;
-                uint _flw_constantAmbientLight;
-            };
             layout(std140, binding = 9) uniform _FlwMeshVisualFrame {
                 mat4 _flw_mvModelView;
                 float _flw_mvSystemSeconds;
@@ -136,12 +132,14 @@ public final class MeshVisualShaders {
         roots.add(FlwPrograms.SOURCES.get(DRAW_COMMAND));
         roots.add(FlwPrograms.SOURCES.get(MATRICES));
         roots.add(FlwPrograms.SOURCES.get(MV_HEADER));
+        roots.add(FlwPrograms.SOURCES.get(RenderPassShaders.RENDER_ORIGIN));
         roots.add(new InstanceStructComponent(type));
         roots.add(new SsboInstanceComponent(type));
         roots.add(FlwPrograms.SOURCES.get(type.vertexShader()));
         roots.add(FlwPrograms.SOURCES.get(materialVertex));
         roots.add(FlwPrograms.SOURCES.get(MV_MESH_MAIN));
         return assembleRaw(NV_MESH_PREAMBLE.andThen(MeshVisualShaders::materialVertexDefines)
+                                           .andThen(ctx -> ctx.define("_FLW_RENDER_ORIGIN_BINDING", "4"))
                                            .andThen(GL_MESH_F16).andThen(extra), roots);
     }
 
@@ -204,6 +202,7 @@ public final class MeshVisualShaders {
         roots.add(FlwPrograms.SOURCES.get(MATRICES));
         roots.add(FlwPrograms.SOURCES.get(MV_VK_HEADER));
         roots.add(FlwPrograms.SOURCES.get(MV_VK_PAYLOAD));
+        roots.add(FlwPrograms.SOURCES.get(RenderPassShaders.RENDER_ORIGIN));
         roots.add(new InstanceStructComponent(type));
         roots.add(new SsboInstanceComponent(type));
         roots.add(FlwPrograms.SOURCES.get(type.vertexShader()));
@@ -212,6 +211,7 @@ public final class MeshVisualShaders {
         return assembleRaw(ctx -> {
             vkMeshPreamble(ctx);
             materialVertexDefines(ctx);
+            ctx.define("_FLW_RENDER_ORIGIN_BINDING", "22");
             VK_MESH_F16.accept(ctx);
             extra.accept(ctx);
         }, roots);
@@ -268,6 +268,7 @@ public final class MeshVisualShaders {
         ctx.define("flw_light0Direction", "Light0_Direction");
         ctx.define("flw_light1Direction", "Light1_Direction");
         ctx.define("flw_renderOrigin", "(_flw_renderOrigin.xyz)");
+        ctx.define("_FLW_RENDER_ORIGIN_BINDING", "4");
         ctx.define("flw_constantAmbientLight", "_flw_constantAmbientLight");
         ctx.define("_FLW_LIGHT_LUT_BUFFER_BINDING", "5");
         ctx.define("_FLW_LIGHT_SECTIONS_BUFFER_BINDING", "6");
@@ -289,6 +290,7 @@ public final class MeshVisualShaders {
         List<SourceComponent> roots = new ArrayList<>();
         roots.add(FlwPrograms.SOURCES.get(MATERIAL));
         roots.add(new RawSource("meshvisual/frag_prelude", FRAG_PRELUDE));
+        roots.add(FlwPrograms.SOURCES.get(RenderPassShaders.RENDER_ORIGIN));
         roots.add(FlwPrograms.SOURCES.get(PACKED_MATERIAL));
         roots.add(FlwPrograms.SOURCES.get(DIFFUSE));
         roots.add(FlwPrograms.SOURCES.get(RenderPassShaders.COLORIZER));
@@ -320,6 +322,7 @@ public final class MeshVisualShaders {
         List<SourceComponent> roots = List.of(
                 FlwPrograms.SOURCES.get(MATERIAL),
                 new RawSource("meshvisual/frag_prelude", FRAG_PRELUDE),
+                FlwPrograms.SOURCES.get(RenderPassShaders.RENDER_ORIGIN),
                 FlwPrograms.SOURCES.get(PACKED_MATERIAL),
                 FlwPrograms.SOURCES.get(DIFFUSE),
                 FlwPrograms.SOURCES.get(RenderPassShaders.COLORIZER),
@@ -347,6 +350,7 @@ public final class MeshVisualShaders {
                 FlwPrograms.SOURCES.get(RenderPassShaders.MLAB),
                 FlwPrograms.SOURCES.get(MATERIAL),
                 new RawSource("meshvisual/frag_prelude", FRAG_PRELUDE),
+                FlwPrograms.SOURCES.get(RenderPassShaders.RENDER_ORIGIN),
                 FlwPrograms.SOURCES.get(PACKED_MATERIAL),
                 FlwPrograms.SOURCES.get(DIFFUSE),
                 FlwPrograms.SOURCES.get(RenderPassShaders.COLORIZER),

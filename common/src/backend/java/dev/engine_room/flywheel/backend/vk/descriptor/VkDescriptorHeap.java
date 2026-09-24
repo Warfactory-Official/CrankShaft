@@ -159,6 +159,27 @@ public final class VkDescriptorHeap {
         EXTDescriptorBuffer.nvkGetDescriptorEXT(VkContext.vkDevice(), getInfo.address(), size, dstPtr);
     }
 
+    /**
+     * Render thread, device idle. The next frame re-creates the ring.
+     */
+    public static void destroy() {
+        if (ring[0] == null) {
+            return;
+        }
+        ring[0].delete();
+        ring[1].delete();
+        ring[0] = null;
+        ring[1] = null;
+        bindingInfo.free();
+        MemoryUtil.memFree(bufferIndex);
+        MemoryUtil.memFree(setOffset);
+        bdaInfo.free();
+        addressInfo.free();
+        imageInfo.free();
+        getInfo.free();
+        epoch = Long.MIN_VALUE;
+    }
+
     private static void init() {
         ring[0] = new VkBuffer(RING_USAGE, INITIAL_SIZE);
         ring[1] = new VkBuffer(RING_USAGE, INITIAL_SIZE);

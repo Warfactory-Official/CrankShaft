@@ -5,6 +5,7 @@ import dev.engine_room.flywheel.api.visual.EntityVisual;
 import dev.engine_room.flywheel.api.visual.TickableVisual;
 import dev.engine_room.flywheel.api.visual.Visual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.visual.AbstractVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleTickableVisual;
@@ -53,7 +54,8 @@ public class ComposableEntityVisual<T extends Entity> extends AbstractVisual imp
     }
 
     private void updateElements(float partialTick) {
-        if (!controller.predicate.shouldVisualize(visualizationContext, entity)) {
+        if (!controller.predicate.shouldVisualize(visualizationContext, entity)
+                || EntityFeatureCompat.vanillaOwns(entity.getType())) {
             for (var i = 0; i < visuals.length; i++) {
                 if (visuals[i] != null) {
                     visuals[i].delete();

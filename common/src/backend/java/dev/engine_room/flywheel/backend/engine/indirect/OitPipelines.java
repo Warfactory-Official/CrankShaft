@@ -60,6 +60,10 @@ public final class OitPipelines {
     private static final Identifier MLAB_NEAREST_DEPTH_FRAGMENT =
             ResourceUtil.rl("codegen/oit/mlab/nearest_depth_frag");
     private static final Identifier EMISSION_FRAGMENT = ResourceUtil.rl("codegen/oit/emission_frag");
+    private static final Identifier DEPTH_FRAGMENT = ResourceUtil.rl("codegen/oit/depth_frag");
+    // Composite/resolve depth writeback: never farther than the scene, which a depth-test-off fragment can be.
+    private static final DepthStencilState WRITEBACK_DEPTH_STATE = new DepthStencilState(
+            CompareOp.GREATER_THAN_OR_EQUAL, true, 0.0f, 0.0f);
 
     private static final String LIGHT_LUT_NAME = "_flw_lightLut";
     private static final String LIGHT_SECTIONS_NAME = "_flw_lightSections";
@@ -83,7 +87,7 @@ public final class OitPipelines {
     private static final Map<Identifier, OitMode> WEATHER_FRAGMENT_MODE = new HashMap<>();
     private static final Map<Identifier, MlabUberKey> MLAB_UBER_KEY = new HashMap<>();
     private static final Map<Identifier, ChunkMlabKey> CHUNK_MLAB_KEY = new HashMap<>();
-    private static final Map<Identifier, MlabResolveKey> MLAB_RESOLVE_KEY = new HashMap<>();
+    private static final Map<Identifier, OitInsertMode> MLAB_RESOLVE_MODE = new HashMap<>();
     private static final Map<Identifier, BerMlabKey> BER_MLAB_KEY = new HashMap<>();
     private static final Map<Identifier, OitInsertMode> WEATHER_MLAB_MODE = new HashMap<>();
     private static final ShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
@@ -137,6 +141,9 @@ public final class OitPipelines {
             if (id.equals(EMISSION_FRAGMENT)) {
                 yield RenderPassShaders.assembleOitEmission();
             }
+            if (id.equals(DEPTH_FRAGMENT)) {
+                yield RenderPassShaders.assembleOitDepth();
+            }
             ChunkFragmentKey chunkKey = CHUNK_FRAGMENT_KEY.get(id);
             if (chunkKey != null) {
                 yield RenderPassShaders.assembleChunkOitFragment(chunkKey.mode(), chunkKey.linear());
@@ -166,9 +173,9 @@ public final class OitPipelines {
             if (mlabChunk != null) {
                 yield RenderPassShaders.assembleChunkMlabFragment(mlabChunk.mode(), mlabChunk.linear());
             }
-            MlabResolveKey mlabResolve = MLAB_RESOLVE_KEY.get(id);
+            OitInsertMode mlabResolve = MLAB_RESOLVE_MODE.get(id);
             if (mlabResolve != null) {
-                yield RenderPassShaders.assembleMlabResolve(mlabResolve.mode(), mlabResolve.variant());
+                yield RenderPassShaders.assembleMlabResolve(mlabResolve);
             }
             BerMlabKey berMlab = BER_MLAB_KEY.get(id);
             if (berMlab != null) {
@@ -204,7 +211,7 @@ public final class OitPipelines {
             ColorTargetState.WRITE_NONE);
     private static final Map<MlabUberKey, RenderPipeline> UBER_MLAB_CACHE = new HashMap<>();
     private static final Map<ChunkMlabKey, RenderPipeline> CHUNK_MLAB_CACHE = new HashMap<>();
-    private static final Map<MlabResolveKey, RenderPipeline> MLAB_RESOLVE_CACHE = new HashMap<>();
+    private static final Map<OitInsertMode, RenderPipeline> MLAB_RESOLVE_CACHE = new EnumMap<>(OitInsertMode.class);
     private static final Map<BerMlabKey, RenderPipeline> BER_MLAB_CACHE = new HashMap<>();
     private static final Map<OitInsertMode, RenderPipeline> WEATHER_MLAB_CACHE = new EnumMap<>(OitInsertMode.class);
     private static final Map<ChunkSodiumMlabKey, RenderPipeline> CHUNK_SODIUM_MLAB_CACHE = new HashMap<>();
@@ -212,6 +219,7 @@ public final class OitPipelines {
     private static RenderPipeline compositeEmissionPipeline;
     private static RenderPipeline mlabNearestDepthPipeline;
     private static RenderPipeline emissionPipeline;
+    private static RenderPipeline depthPipeline;
 
     static {
         for (BerFamily family : BerFamily.VALUES) {
@@ -689,8 +697,8 @@ public final class OitPipelines {
                 b.withUniform(INSTANCE_BUFFER_NAME, UniformType.TEXEL_BUFFER, GpuFormat.RGBA32_UINT);
                 b.withUniform("_FlwInstanceDraw", UniformType.UNIFORM_BUFFER);
             }
+            b.withUniform("_FlwRenderOrigin", UniformType.UNIFORM_BUFFER);
         } else {
-            if (RenderPassShaders.readsGeometry(light)) b.withSampler("_flw_geometryAtlas");
             if (!(indirect && GlCompat.SUPPORTS_BINDLESS_TEXTURES)) {
                 b.withSampler("Sampler0");
             }
@@ -726,7 +734,7 @@ public final class OitPipelines {
                              .withVertexShader(FULLSCREEN_VERTEX)
                              .withFragmentShader(emission ? COMPOSITE_EMISSION_FRAGMENT : COMPOSITE_FRAGMENT)
                              .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-                             .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS, true, 0.0f, 0.0f))
+                             .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS, false, 0.0f, 0.0f))
                              .withCull(false)
                              .withBindGroupLayout(withCoefficientSamplers(samplers).build())
                              .withColorTargetState(0,
@@ -775,10 +783,9 @@ public final class OitPipelines {
         return id;
     }
 
-    private static Identifier mlabResolveFragmentId(MlabResolveKey key) {
-        Identifier id = ResourceUtil.rl("codegen/oit/mlab/resolve_frag_" + key.mode().name().toLowerCase(Locale.ROOT)
-                + key.variant().suffix);
-        MLAB_RESOLVE_KEY.putIfAbsent(id, key);
+    private static Identifier mlabResolveFragmentId(OitInsertMode mode) {
+        Identifier id = ResourceUtil.rl("codegen/oit/mlab/resolve_frag_" + mode.name().toLowerCase(Locale.ROOT));
+        MLAB_RESOLVE_MODE.putIfAbsent(id, mode);
         return id;
     }
 
@@ -835,7 +842,6 @@ public final class OitPipelines {
 
     private static BindGroupLayout uberMlabBindGroup(LightShader light) {
         BindGroupLayout.Builder b = BindGroupLayout.builder();
-        if (RenderPassShaders.readsGeometry(light)) b.withSampler("_flw_geometryAtlas");
         if (!GlCompat.SUPPORTS_BINDLESS_TEXTURES) {
             b.withSampler("Sampler0");
         }
@@ -871,11 +877,31 @@ public final class OitPipelines {
                              .build();
     }
 
-    public static RenderPipeline mlabResolve(OitInsertMode mode, MlabResolveVariant variant) {
-        RenderPipeline pipeline = MLAB_RESOLVE_CACHE.computeIfAbsent(new MlabResolveKey(mode, variant),
-                OitPipelines::buildMlabResolve);
+    public static RenderPipeline mlabResolve(OitInsertMode mode) {
+        RenderPipeline pipeline = MLAB_RESOLVE_CACHE.computeIfAbsent(mode, OitPipelines::buildMlabResolve);
         RenderSystem.getDevice().precompilePipeline(pipeline, SHADER_SOURCE);
         return pipeline;
+    }
+
+    public static RenderPipeline oitDepth() {
+        if (depthPipeline == null) {
+            depthPipeline = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
+                                          .withLocation(ResourceUtil.rl("pipeline/oit/depth"))
+                                          .withVertexShader(FULLSCREEN_VERTEX)
+                                          .withFragmentShader(DEPTH_FRAGMENT)
+                                          .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                                          .withDepthStencilState(WRITEBACK_DEPTH_STATE)
+                                          .withCull(false)
+                                          .withBindGroupLayout(BindGroupLayout.builder()
+                                                                              .withSampler("_flw_accumulate")
+                                                                              .withSampler("_flw_depthRange")
+                                                                              .build())
+                                          .withColorTargetState(0, new ColorTargetState(Optional.empty(),
+                                                  GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_NONE))
+                                          .build();
+        }
+        RenderSystem.getDevice().precompilePipeline(depthPipeline, SHADER_SOURCE);
+        return depthPipeline;
     }
 
     public static RenderPipeline mlabNearestDepth() {
@@ -885,8 +911,7 @@ public final class OitPipelines {
                                                      .withVertexShader(FULLSCREEN_VERTEX)
                                                      .withFragmentShader(MLAB_NEAREST_DEPTH_FRAGMENT)
                                                      .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-                                                     .withDepthStencilState(new DepthStencilState(
-                                                             CompareOp.ALWAYS_PASS, true, 0.0f, 0.0f))
+                                                     .withDepthStencilState(WRITEBACK_DEPTH_STATE)
                                                      .withCull(false)
                                                      .withBindGroupLayout(
                                                              BindGroupLayout.builder().withSampler("_flw_mlabNearest")
@@ -899,19 +924,16 @@ public final class OitPipelines {
         return mlabNearestDepthPipeline;
     }
 
-    private static RenderPipeline buildMlabResolve(MlabResolveKey key) {
+    private static RenderPipeline buildMlabResolve(OitInsertMode mode) {
         RenderPipeline.Builder builder = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                                                       .withLocation(ResourceUtil.rl(
-                                                               "pipeline/oit/mlab/resolve_" + key.mode().name()
-                                                                                                 .toLowerCase(
-                                                                                                         Locale.ROOT)
-                                                                       + key.variant().suffix))
+                                                       .withLocation(ResourceUtil.rl("pipeline/oit/mlab/resolve_"
+                                                               + mode.name().toLowerCase(Locale.ROOT)))
                                                        .withVertexShader(FULLSCREEN_VERTEX)
-                                                       .withFragmentShader(mlabResolveFragmentId(key))
+                                                       .withFragmentShader(mlabResolveFragmentId(mode))
                                                        .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                                                        .withDepthStencilState(
-                                                               new DepthStencilState(CompareOp.ALWAYS_PASS,
-                                                                       key.variant().writesDepth(), 0.0f, 0.0f))
+                                                               new DepthStencilState(CompareOp.ALWAYS_PASS, false,
+                                                                       0.0f, 0.0f))
                                                        .withCull(false)
                                                        .withBindGroupLayout(BindGroupLayout.builder()
                                                                                            .withSampler(
@@ -934,11 +956,10 @@ public final class OitPipelines {
                                                        .withColorTargetState(0,
                                                                new ColorTargetState(Optional.of(PREMULT_BLEND),
                                                                        GpuFormat.RGBA8_UNORM,
-                                                                       ColorTargetState.WRITE_ALL));
-        if (key.variant() == MlabResolveVariant.ADDITIVE) {
-            builder.withColorTargetState(1, new ColorTargetState(Optional.empty(),
-                    OitFramebuffer.NEAREST_DEPTH_FORMAT, ColorTargetState.WRITE_ALL));
-        }
+                                                                       ColorTargetState.WRITE_ALL))
+                                                       .withColorTargetState(1, new ColorTargetState(Optional.empty(),
+                                                               OitFramebuffer.NEAREST_DEPTH_FORMAT,
+                                                               ColorTargetState.WRITE_ALL));
         return builder.build();
     }
 
@@ -1076,9 +1097,6 @@ public final class OitPipelines {
                                LightSmoothness smoothness,
                                DebugMode debug, DepthTest depthTest, boolean cull, boolean polygonOffset, int typeGen,
                                int cutoutGen, int fogGen, boolean emission, boolean embedded) {
-    }
-
-    private record MlabResolveKey(OitInsertMode mode, MlabResolveVariant variant) {
     }
 
     private record ChunkMlabKey(OitInsertMode mode, boolean linear) {

@@ -1,13 +1,20 @@
 package dev.engine_room.vanillin.visuals;
 
+import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.vertex.PoseStack;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
+import dev.engine_room.flywheel.api.visualization.ConcurrentRenderStateExtraction;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
+import dev.engine_room.flywheel.lib.model.PackIdentity;
+import dev.engine_room.flywheel.lib.model.PackTaggedModel;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
+import dev.engine_room.flywheel.lib.model.part.ModelTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTrees;
+import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import dev.engine_room.flywheel.lib.visual.AbstractEntityVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import dev.engine_room.flywheel.lib.visual.component.ShadowComponent;
@@ -15,8 +22,10 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.EntityModel;
 import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.client.model.geom.ModelPart;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
+import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.Vec3i;
 import net.minecraft.resources.Identifier;
@@ -26,28 +35,37 @@ import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 /**
  * Instanced visual for an entity whose vanilla renderer poses an {@link EntityModel}: the baked tree becomes one
- * {@link InstanceTree}, reposed off the vanilla render state (capture on the render thread, applied a frame later).
+ * {@link InstanceTree}, reposed off the vanilla render state. Capture runs in-frame on the worker when the renderer
+ * {@linkplain ConcurrentRenderStateExtraction#supports extracts concurrently}, else on the render thread, applied a
+ * frame later.
  */
 public abstract class EntityModelVisual<T extends Entity, S extends EntityRenderState>
         extends AbstractEntityVisual<T> implements SimpleDynamicVisual {
-    private static final Map<ModelLayerLocation, EntityModel<?>> SHARED_MODELS = new ConcurrentHashMap<>();
+    // Layer bakes follow resource reloads: each map rides one RendererReloadCache entry.
+    private static final RendererReloadCache<Boolean, Map<ModelLayerLocation, EntityModel<?>>> SHARED_MODELS =
+            new RendererReloadCache<>($ -> new ConcurrentHashMap<>());
     // Materials MUST be shared per texture -- SimpleMaterial has no equals/hashCode, so a per-visual instance would cache-miss ModelTrees.of every entity (re-baking geometry + a fresh instancer per entity).
     private static final Map<Identifier, Material> MATERIALS = new ConcurrentHashMap<>();
-    private static final Map<ModelLayerLocation, float[]> LAYER_REST_POSES = new ConcurrentHashMap<>();
+    private static final RendererReloadCache<Boolean, Map<ModelLayerLocation, float[]>> LAYER_REST_POSES =
+            new RendererReloadCache<>($ -> new ConcurrentHashMap<>());
+    private static final RendererReloadCache<Boolean, Map<ModelLayerLocation, Rigs>> RIGS =
+            new RendererReloadCache<>($ -> new ConcurrentHashMap<>());
     protected final EntityRenderer<T, S> renderer;
     protected final S state;
     private final EntityModel<S>[] models;
     private final ModelLayerLocation[] layers;
+    private final Rigs[] rigs;
+    private final boolean concurrentCapture;
     private final PoseStack capturePose = new PoseStack();
     private final ModelPart[][] partsByVariant;
     private final String[][] namesByVariant;
@@ -73,6 +91,7 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
     private volatile @Nullable Snapshot published;
     private volatile boolean deleted;
     private boolean hiddenBody;
+    protected float partialTick;
 
     @SuppressWarnings("unchecked")
     protected EntityModelVisual(VisualizationContext ctx, T entity, float partialTick,
@@ -94,7 +113,11 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
                                                         .getEntityRenderDispatcher()
                                                         .getRenderer(entity);
         this.state = renderer.createRenderState();
+        EntityFeatureCompat.setStateId(state, entity);
+        EntityFeatureCompat.observe(entity.getType());
         this.models = new EntityModel[layers.length];
+        this.rigs = new Rigs[layers.length];
+        this.concurrentCapture = ConcurrentRenderStateExtraction.supports(renderer);
         this.partsByVariant = new ModelPart[layers.length][];
         this.namesByVariant = new String[layers.length][];
         this.parentIndexByVariant = new int[layers.length][];
@@ -102,8 +125,11 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
             Function<ModelPart, ? extends EntityModel<S>> factory = modelFactories[variant];
             models[variant] = factory == null
                     ? rendererModel.apply(renderer)
-                    : (EntityModel<S>) SHARED_MODELS.computeIfAbsent(layers[variant],
+                    : (EntityModel<S>) SHARED_MODELS.get(true).computeIfAbsent(layers[variant],
                     l -> factory.apply(Minecraft.getInstance().getEntityModels().bakeLayer(l)));
+            EntityModel<S> prototype = models[variant];
+            rigs[variant] = RIGS.get(true).computeIfAbsent(layers[variant],
+                    l -> new Rigs(l, prototype, factory != null ? factory : partConstructor(prototype)));
 
             List<ModelPart> parts = new ArrayList<>();
             List<String> names = new ArrayList<>();
@@ -140,9 +166,84 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
     }
 
     static EntityModel<?> sharedModel(ModelLayerLocation layer, Function<ModelPart, ? extends EntityModel<?>> factory) {
-        return SHARED_MODELS.computeIfAbsent(layer, l -> factory.apply(Minecraft.getInstance()
+        return SHARED_MODELS.get(true).computeIfAbsent(layer, l -> factory.apply(Minecraft.getInstance()
                                                                                 .getEntityModels()
                                                                                 .bakeLayer(l)));
+    }
+
+    static Rigs rigs(ModelLayerLocation layer, Function<ModelPart, ? extends EntityModel<?>> factory) {
+        return RIGS.get(true).computeIfAbsent(layer, l -> new Rigs(l, sharedModel(l, factory), factory));
+    }
+
+    // A renderer-owned model: rebuilt through its class's (ModelPart) constructor.
+    private static Function<ModelPart, ? extends EntityModel<?>> partConstructor(EntityModel<?> prototype) {
+        MethodHandle constructor;
+        try {
+            constructor = MethodHandles.publicLookup()
+                                       .findConstructor(prototype.getClass(),
+                                               MethodType.methodType(void.class, ModelPart.class));
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("No public (ModelPart) constructor on " + prototype.getClass(), e);
+        }
+        return root -> {
+            try {
+                return (EntityModel<?>) constructor.invoke(root);
+            } catch (Throwable t) {
+                throw new IllegalStateException("Could not rebuild " + prototype.getClass(), t);
+            }
+        };
+    }
+
+    /**
+     * Capture-side copies of one layer's vanilla model, one per thread: {@code setupAnim} writes into the model, and
+     * vanilla poses its own instances on the render thread. Cube-less: capture reads transforms only.
+     */
+    static final class Rigs {
+        // The layer's bake (models may root below it).
+        private final ModelPart template;
+        // The prototype's visibility: model constructors set some, renderer constructors override them.
+        private final ModelPart visibility;
+        private final ThreadLocal<Rig> perThread;
+
+        Rigs(ModelLayerLocation layer, EntityModel<?> prototype, Function<ModelPart, ? extends EntityModel<?>> factory) {
+            template = skeleton(Minecraft.getInstance()
+                                         .getEntityModels()
+                                         .bakeLayer(layer));
+            visibility = factory.apply(skeleton(template))
+                                .root();
+            copyVisibility(prototype.root(), visibility);
+            perThread = ThreadLocal.withInitial(() -> {
+                EntityModel<?> model = factory.apply(skeleton(template));
+                copyVisibility(visibility, model.root());
+                List<ModelPart> parts = new ArrayList<>();
+                flattenModel(model.root(), "", -1, parts, new ArrayList<>(), new ArrayList<>());
+                return new Rig(model, parts.toArray(new ModelPart[0]));
+            });
+        }
+
+        Rig get() {
+            return perThread.get();
+        }
+
+        private static void copyVisibility(ModelPart from, ModelPart to) {
+            to.visible = from.visible;
+            to.skipDraw = from.skipDraw;
+            from.children.forEach((name, child) -> copyVisibility(child, to.getChild(name)));
+        }
+
+        private static ModelPart skeleton(ModelPart source) {
+            Map<String, ModelPart> children = new LinkedHashMap<>();
+            source.children.forEach((name, child) -> children.put(name, skeleton(child)));
+            ModelPart copy = new ModelPart(List.of(), children);
+            copy.setInitialPose(source.getInitialPose());
+            copy.loadPose(source.getInitialPose());
+            copy.visible = source.visible;
+            copy.skipDraw = source.skipDraw;
+            return copy;
+        }
+    }
+
+    record Rig(EntityModel<?> model, ModelPart[] parts) {
     }
 
     // Sorted-child DFS over the vanilla model, matching InstanceTree (which sorts child names), so transforms captured by index apply to the matching instanced bone.
@@ -202,7 +303,7 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
     }
 
     static float[] layerRestPoses(ModelLayerLocation layer) {
-        return LAYER_REST_POSES.computeIfAbsent(layer, l -> {
+        return LAYER_REST_POSES.get(true).computeIfAbsent(layer, l -> {
             ModelPart root = Minecraft.getInstance()
                                       .getEntityModels()
                                       .bakeLayer(l);
@@ -266,6 +367,19 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
         return null;
     }
 
+    // Compat with Iris: it draws a blended vanilla entity render type after its deferred passes, through the program
+    // the pipeline maps to.
+    static ModelTree irisRouted(ModelTree tree, RenderType renderType) {
+        RenderPipeline pipeline = renderType.pipeline();
+        if (pipeline == RenderPipelines.ENTITY_TRANSLUCENT || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_CULL) {
+            return PackTaggedModel.tag(tree, List.of(PackIdentity.ENTITIES_TRANSLUCENT));
+        }
+        if (pipeline == RenderPipelines.EYES || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE) {
+            return PackTaggedModel.tag(tree, List.of(PackIdentity.SPIDER_EYES));
+        }
+        return tree;
+    }
+
     protected final EntityModel<S> model(int variant) {
         return models[variant];
     }
@@ -284,9 +398,16 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
 
     @Override
     public void beginFrame(DynamicVisual.Context ctx) {
+        partialTick = ctx.partialTick();
+        boolean vanilla = EntityFeatureCompat.vanillaOwns(entity.getType());
         if (shadow != null) {
-            shadow.strength((float) (1.0 - entity.distanceToSqr(ctx.camera().position()) / 256.0));
+            shadow.strength(vanilla ? 0.0F : EntityFeatureCompat.shadowStrength(
+                    (float) (1.0 - entity.distanceToSqr(ctx.camera().position()) / 256.0)));
             shadow.beginFrame(ctx);
+        }
+        if (vanilla) {
+            hideBody();
+            return;
         }
 
         if (!isVisible(ctx.frustum())) {
@@ -295,7 +416,7 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
         }
 
         float partialTick = ctx.partialTick();
-        if (Minecraft.getInstance().isSameThread()) {
+        if (concurrentCapture || Minecraft.getInstance().isSameThread()) {
             capture(partialTick);
         } else if (capturePending.compareAndSet(false, true)) {
             Minecraft.getInstance().execute(() -> capture(partialTick));
@@ -326,8 +447,10 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
         Matrix4f local = new Matrix4f(pose.last().pose());
 
         int variant = Math.clamp(modelVariant(state), 0, models.length - 1);
-        EntityModel<S> model = models[variant];
-        ModelPart[] partsInOrder = partsByVariant[variant];
+        Rig rig = rigs[variant].get();
+        @SuppressWarnings("unchecked")
+        EntityModel<S> model = (EntityModel<S>) rig.model();
+        ModelPart[] partsInOrder = rig.parts();
         int[] parentIndex = parentIndexByVariant[variant];
         model.setupAnim(state);
         int n = partsInOrder.length;
@@ -353,8 +476,10 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
         }
 
         Object extra = captureExtra(state, model, local);
+        Identifier texture = texture(state);
+        EntityFeatureCompat.observeTexture(entity.getType(), texture);
         published = new Snapshot(local, state.x + offset.x, state.y + offset.y, state.z + offset.z,
-                transforms, draw, state.lightCoords, overlay(state), texture(state), variant, bodyColor(state),
+                transforms, draw, state.lightCoords, overlay(state), texture, variant, bodyColor(state),
                 foilMaterial(state), extra);
     }
 
@@ -466,7 +591,8 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
         }
         currentVariant = variant;
         currentTexture = texture;
-        instances = InstanceTree.create(instancerProvider(), ModelTrees.of(layers[variant], material(texture)));
+        instances = InstanceTree.create(instancerProvider(),
+                irisRouted(ModelTrees.of(layers[variant], material(texture)), models[variant].renderType(texture)));
         // Some models nest their animated root under wrapper parts of the baked layer (super(root.getChild("root"))), so model.root() is a descendant of the bake root; descend single-child wrappers until the instance node's children match the live root, and the wrappers above stay at rest.
         InstanceTree base = instances;
         ModelPart modelRoot = models[variant].root();

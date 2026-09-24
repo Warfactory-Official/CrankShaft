@@ -3,6 +3,7 @@ package dev.engine_room.vanillin.visuals;
 import com.mojang.math.Transformation;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
 import dev.engine_room.flywheel.lib.model.Models;
@@ -10,8 +11,10 @@ import dev.engine_room.flywheel.lib.visual.AbstractEntityVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import dev.engine_room.flywheel.lib.visual.component.NameTagComponent;
 import dev.engine_room.flywheel.lib.visual.component.ShadowComponent;
+import dev.engine_room.flywheel.lib.visual.util.ItemStackSlot;
 import dev.engine_room.vanillin.item.ItemModels;
 import net.minecraft.client.Camera;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
@@ -25,6 +28,7 @@ public class ItemDisplayVisual extends AbstractEntityVisual<Display.ItemDisplay>
     private final ShadowComponent shadowComponent;
     private final NameTagComponent nameTagComponent;
     private final Matrix4f pose = new Matrix4f();
+    private final ItemStackSlot slot = new ItemStackSlot();
     private ItemStack currentStack;
 
     public ItemDisplayVisual(VisualizationContext ctx, Display.ItemDisplay entity, float partialTick) {
@@ -51,8 +55,8 @@ public class ItemDisplayVisual extends AbstractEntityVisual<Display.ItemDisplay>
 
     public static boolean shouldVisualize(Display.ItemDisplay entity) {
         var state = entity.itemRenderState();
-        return state != null && ItemModels.isSupported(state.itemStack(), state.itemTransform(), entity,
-                entity.getId());
+        return state != null && (ItemStackSlot.isVisualized(state.itemStack())
+                || ItemModels.isSupported(state.itemStack(), state.itemTransform(), entity, entity.getId()));
     }
 
     private static float cameraYrot(Camera camera) {
@@ -75,19 +79,20 @@ public class ItemDisplayVisual extends AbstractEntityVisual<Display.ItemDisplay>
     public void beginFrame(DynamicVisual.Context ctx) {
         Display.RenderState renderState = entity.renderState();
         var object = entity.itemRenderState();
-        if (isFirstPersonCameraEntity() || renderState == null || object == null
-                || !ItemModels.isSupported(object.itemStack(), object.itemTransform(), entity, entity.getId())) {
+        if (isFirstPersonCameraEntity() || renderState == null || !shouldVisualize(entity)) {
             instance.setVisible(false);
+            slot.delete();
             shadowComponent.radius(0.0f);
             nameTagComponent.delete();
             return;
         }
 
-        instance.setVisible(true);
+        var itemStack = object.itemStack();
+        boolean visualized = ItemStackSlot.isVisualized(itemStack);
+        instance.setVisible(!visualized);
         nameTagComponent.beginFrame(ctx);
 
-        var itemStack = object.itemStack();
-        if (!ItemStack.matches(itemStack, currentStack)) {
+        if (!visualized && !ItemStack.matches(itemStack, currentStack)) {
             currentStack = itemStack.copy();
             visualizationContext.instancerProvider()
                                 .instancer(InstanceTypes.TRANSFORMED,
@@ -99,9 +104,9 @@ public class ItemDisplayVisual extends AbstractEntityVisual<Display.ItemDisplay>
 
         shadowComponent.radius(renderState.shadowRadius()
                                           .get(f));
-        shadowComponent.strength((float) (1.0 - entity.distanceToSqr(ctx.camera()
+        shadowComponent.strength(EntityFeatureCompat.shadowStrength((float) (1.0 - entity.distanceToSqr(ctx.camera()
                                                                         .position()) / 256.0) * renderState.shadowStrength()
-                                                                                                           .get(f));
+                                                                                                           .get(f)));
         shadowComponent.beginFrame(ctx);
 
         int i = renderState.brightnessOverride();
@@ -138,6 +143,12 @@ public class ItemDisplayVisual extends AbstractEntityVisual<Display.ItemDisplay>
         pose.mul(transformation.getMatrix())
             .rotateY(Mth.PI);
 
+        if (visualized) {
+            slot.draw(visualizationContext, itemStack, object.itemTransform(), entity, entity.getId(), pose, j,
+                    OverlayTexture.NO_OVERLAY, partialTick);
+            return;
+        }
+        slot.delete();
         instance.setTransform(pose)
                 .light(j)
                 .setChanged();
@@ -146,6 +157,7 @@ public class ItemDisplayVisual extends AbstractEntityVisual<Display.ItemDisplay>
     @Override
     protected void _delete() {
         instance.delete();
+        slot.delete();
         shadowComponent.delete();
         nameTagComponent.delete();
     }

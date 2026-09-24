@@ -7,6 +7,7 @@ import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.api.vertex.MutableVertexList;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.ShadowInstance;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
@@ -117,7 +118,7 @@ public final class ShadowElement extends AbstractVisual implements SimpleDynamic
 
         boolean shadowsEnabled = Minecraft.getInstance().options.entityShadows()
                                                                 .get();
-        if (shadowsEnabled && radius > 0 && !entity.isInvisible()) {
+        if (shadowsEnabled && !EntityFeatureCompat.entityShadowsOff() && radius > 0 && !entity.isInvisible()) {
             setupInstances(context);
         }
 

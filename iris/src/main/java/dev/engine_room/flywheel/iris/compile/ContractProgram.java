@@ -13,6 +13,7 @@ public enum ContractProgram {
     GBUFFERS("clrwl_gbuffers", null, false),
     // CrankShaft extension (Colorwheel has none): opaque entity-tagged draws; ContractPatches builds it for known packs.
     GBUFFERS_ENTITIES("clrwl_gbuffers_entities", GBUFFERS, false),
+    GBUFFERS_BLOCK("clrwl_gbuffers_block", GBUFFERS, false),
     GBUFFERS_ADDITIVE("clrwl_gbuffers_additive", GBUFFERS, false),
     GBUFFERS_GLINT("clrwl_gbuffers_glint", GBUFFERS, false),
     GBUFFERS_LIGHTNING("clrwl_gbuffers_lightning", GBUFFERS, false),
@@ -44,6 +45,11 @@ public enum ContractProgram {
         if (role == PackRole.ENTITY_SOLID && transparency == Transparency.OPAQUE) {
             return GBUFFERS_ENTITIES;
         }
+        // Port: recipe-staged. Vanilla draws block entities through gbuffers_block, not the terrain program a pack's
+        // clrwl_gbuffers may be; other block-role draws keep its per-vertex mc_Entity materials.
+        if (role == PackRole.BLOCK_ENTITY && transparency == Transparency.OPAQUE && ships.test(GBUFFERS_BLOCK)) {
+            return GBUFFERS_BLOCK;
+        }
         // Iris resolves EntitiesTrans through Entities. Absent an entity program the entity chain would land on the
         // opaque GBUFFERS, so fall through to the pack's translucent program instead. ORDER_INDEPENDENT always stays
         // there: Colorwheel defines OIT on that program and the accumulate targets are sized from its draw buffers.
@@ -52,6 +58,12 @@ public enum ContractProgram {
                 || transparency == Transparency.TRANSLUCENT_ALPHA_REPLACE)
                 && ships.test(GBUFFERS_ENTITIES)) {
             return GBUFFERS_ENTITIES;
+        }
+        // Emissive contracts stand in for each other before any base: both bases are opaque.
+        if (role == PackRole.ADDITIVE) {
+            ContractProgram own = transparency == Transparency.ADDITIVE ? GBUFFERS_ADDITIVE : GBUFFERS_LIGHTNING;
+            ContractProgram other = own == GBUFFERS_ADDITIVE ? GBUFFERS_LIGHTNING : GBUFFERS_ADDITIVE;
+            return ships.test(own) || !ships.test(other) ? own : other;
         }
         boolean shadow = role.shadow;
         return switch (transparency) {

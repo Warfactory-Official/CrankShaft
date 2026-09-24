@@ -8,12 +8,13 @@ import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vulkan.*;
 import com.mojang.blaze3d.vulkan.checkpoints.CheckpointExtension;
+import dev.engine_room.flywheel.backend.NoiseTextures;
+import dev.engine_room.flywheel.backend.compile.VkPrograms;
+import dev.engine_room.flywheel.backend.vk.descriptor.VkBindlessTable;
+import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorHeap;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.vulkan.EXTDebugUtils;
-import org.lwjgl.vulkan.VkCommandBuffer;
-import org.lwjgl.vulkan.VkDebugUtilsLabelEXT;
-import org.lwjgl.vulkan.VkDevice;
+import org.lwjgl.vulkan.*;
 
 public final class VkContext {
     private static boolean labelsUnavailable;
@@ -65,6 +66,22 @@ public final class VkContext {
      * at its next seam). A standalone transient buffer spliced via {@code execute()} is deliberately NOT used -- the
      * splice reorders around vanilla's pre-registered open buffer.
      */
+    /**
+     * Render thread, from {@code VulkanDevice.close} ahead of its encoder (which flushes deferred destroys), allocator
+     * and device: the engine's process-lifetime objects. Per-world engines are gone with their level.
+     */
+    public static void shutdown() {
+        VK12.vkDeviceWaitIdle(vkDevice());
+        VkPrograms.kill();
+        VkBindlessTable.destroy();
+        VkDescriptorHeap.destroy();
+        VkGpuTimer.setEnabled(false);
+        if (NoiseTextures.BLUE_NOISE != null) {
+            NoiseTextures.BLUE_NOISE.close();
+            NoiseTextures.BLUE_NOISE = null;
+        }
+    }
+
     public static VkCommandBuffer beginCommands() {
         VulkanCommandEncoder encoder = encoder();
         if (encoder.currentRenderPass != null) {

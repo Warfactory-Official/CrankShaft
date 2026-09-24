@@ -1,15 +1,20 @@
 package dev.engine_room.vanillin.visuals;
 
 import com.mojang.math.Transformation;
+import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
+import dev.engine_room.flywheel.lib.model.EmptyModel;
 import dev.engine_room.flywheel.lib.model.Models;
 import dev.engine_room.flywheel.lib.visual.AbstractEntityVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import dev.engine_room.flywheel.lib.visual.component.NameTagComponent;
 import dev.engine_room.flywheel.lib.visual.component.ShadowComponent;
 import net.minecraft.client.Camera;
+import net.minecraft.client.renderer.entity.DisplayRenderer;
+import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
@@ -35,11 +40,23 @@ public class BlockDisplayVisual extends AbstractEntityVisual<Display.BlockDispla
         currentBlockState = state;
 
         instance = ctx.instancerProvider()
-                      .instancer(InstanceTypes.TRANSFORMED, Models.block(state))
+                      .instancer(InstanceTypes.TRANSFORMED, model(state))
                       .createInstance();
 
         shadowComponent = new ShadowComponent(ctx, entity);
         nameTagComponent = new NameTagComponent(ctx, entity);
+    }
+
+    // 26.2: vanilla's entity-context block path; a special-rendered block is left to vanilla (isSupported).
+    private static Model model(BlockState state) {
+        Model model = Models.displayBlock(state, DisplayRenderer.BLOCK_DISPLAY_CONTEXT);
+        return model != null ? model : EmptyModel.INSTANCE;
+    }
+
+    public static boolean isSupported(Display.BlockDisplay display) {
+        var blockRenderState = display.blockRenderState();
+        return blockRenderState == null
+                || Models.displayBlock(blockRenderState.blockState(), DisplayRenderer.BLOCK_DISPLAY_CONTEXT) != null;
     }
 
     private static float cameraYrot(Camera camera) {
@@ -82,7 +99,7 @@ public class BlockDisplayVisual extends AbstractEntityVisual<Display.BlockDispla
         if (currentBlockState != object.blockState()) {
             currentBlockState = object.blockState();
             visualizationContext.instancerProvider()
-                                .instancer(InstanceTypes.TRANSFORMED, Models.block(currentBlockState))
+                                .instancer(InstanceTypes.TRANSFORMED, model(currentBlockState))
                                 .stealInstance(instance);
         }
 
@@ -90,9 +107,9 @@ public class BlockDisplayVisual extends AbstractEntityVisual<Display.BlockDispla
 
         shadowComponent.radius(renderState.shadowRadius()
                                           .get(f));
-        shadowComponent.strength((float) (1.0 - entity.distanceToSqr(ctx.camera()
+        shadowComponent.strength(EntityFeatureCompat.shadowStrength((float) (1.0 - entity.distanceToSqr(ctx.camera()
                                                                         .position()) / 256.0) * renderState.shadowStrength()
-                                                                                                           .get(f));
+                                                                                                           .get(f)));
         shadowComponent.beginFrame(ctx);
 
         int i = renderState.brightnessOverride();
@@ -130,7 +147,7 @@ public class BlockDisplayVisual extends AbstractEntityVisual<Display.BlockDispla
         this.pose.mul(transformation.getMatrix());
 
         instance.setTransform(this.pose)
-                .light(j)
+                .light(LightCoordsUtil.max(j, Models.displayBlockLight(currentBlockState)))
                 .setChanged();
     }
 

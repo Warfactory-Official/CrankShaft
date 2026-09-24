@@ -25,7 +25,6 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.EXTMeshShader;
 import org.lwjgl.vulkan.VK10;
-import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
 import java.util.List;
@@ -182,7 +181,6 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
                 writeAtlasTrio(textureManager, material.texture(), VkContext.sampler(MaterialSamplers.get(material)),
                         overlayView, overlaySampler, lightmapView);
             }
-            writeGeometryAtlas(material);
             writeMeshVisualCommon(fs, in, pyramidSampler);
             writeLight(fs);
             writer.uniform(16, projection)
@@ -225,7 +223,6 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
             writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms());
             if (needsColor) {
                 Material material = multiDraw.material();
-                writeGeometryAtlas(material);
                 if (!bindless) {
                     writeAtlasTrio(f.textureManager(), material.texture(),
                             VkContext.sampler(MaterialSamplers.get(material)),
@@ -274,7 +271,6 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
             writeMeshVisualCommon(fs, in, pyramidSampler);
             writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms());
             Material material = multiDraw.material();
-            writeGeometryAtlas(material);
             if (!bindless) {
                 writeAtlasTrio(f.textureManager(), material.texture(),
                         VkContext.sampler(MaterialSamplers.get(material)),

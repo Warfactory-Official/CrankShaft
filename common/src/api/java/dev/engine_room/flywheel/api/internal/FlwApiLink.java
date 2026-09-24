@@ -5,9 +5,11 @@ import dev.engine_room.flywheel.api.layout.LayoutBuilder;
 import dev.engine_room.flywheel.api.registry.IdRegistry;
 import dev.engine_room.flywheel.api.visualization.BlockEntityVisualizer;
 import dev.engine_room.flywheel.api.visualization.EntityVisualizer;
+import dev.engine_room.flywheel.api.visualization.ItemStackVisualizer;
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
@@ -49,4 +51,12 @@ public interface FlwApiLink {
                                                @Nullable BlockEntityVisualizer<? super T> visualizer);
 
     <T extends Entity> void setVisualizer(EntityType<T> type, @Nullable EntityVisualizer<? super T> visualizer);
+
+    @Nullable
+    ItemStackVisualizer getVisualizer(Item item);
+
+    void setVisualizer(Item item, @Nullable ItemStackVisualizer visualizer);
+
+    // An EntityRenderer or BlockEntityRenderer.
+    boolean supportsConcurrentExtraction(Object renderer);
 }

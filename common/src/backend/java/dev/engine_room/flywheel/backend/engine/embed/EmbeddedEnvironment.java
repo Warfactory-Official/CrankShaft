@@ -4,7 +4,6 @@ import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.instance.Instancer;
 import dev.engine_room.flywheel.api.instance.InstancerProvider;
-import dev.engine_room.flywheel.api.lighting.GeometryOcclusion;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.api.visualization.VisualEmbedding;
 import dev.engine_room.flywheel.backend.compile.ContextShader;
@@ -64,11 +63,6 @@ public class EmbeddedEnvironment implements VisualEmbedding, Environment {
     @Override
     public InstancerProvider instancerProvider() {
         return instancerProvider;
-    }
-
-    @Override
-    public GeometryOcclusion geometryOcclusion() {
-        return engine.lightStorage().geometryOcclusion();
     }
 
     @Override

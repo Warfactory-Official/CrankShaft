@@ -11,6 +11,8 @@ import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.lib.material.Materials;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.model.ItemTaggedModel;
+import dev.engine_room.flywheel.lib.model.PackIdentity;
+import dev.engine_room.flywheel.lib.model.PackTaggedModel;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTrees;
@@ -242,7 +244,9 @@ final class InstancedSpecialItem {
     private void addPatternLayer(ModelLayerLocation layerLoc, Identifier atlas, Material material, SpriteId spriteId,
                                  int color, int steps, boolean banner, Matrix4fc transform,
                                  float @Nullable [] fixedPose) {
-        Draw draw = add(ModelTrees.of(layerLoc, sprite(atlas, spriteId), material), transform, color, false, steps);
+        // Iris draws BANNER_PATTERN through entities_translucent.
+        Draw draw = add(PackTaggedModel.tag(ModelTrees.of(layerLoc, sprite(atlas, spriteId), material),
+                List.of(PackIdentity.ENTITIES_TRANSLUCENT)), transform, color, false, steps);
         if (fixedPose != null && fixedPose.length != draw.nodes.length * 9) {
             throw new IllegalStateException("special-item model/bake tree mismatch");
         }

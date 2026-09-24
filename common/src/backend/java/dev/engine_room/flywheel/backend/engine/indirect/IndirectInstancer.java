@@ -10,36 +10,20 @@ import org.joml.Vector4fc;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
-import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static dev.engine_room.flywheel.backend.engine.EngineConstants.*;
 
 public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> {
-    private static final int DIRTY_SHARD_COUNT;
-    private static final int DIRTY_SHARD_MASK;
-    private static final int DIRTY_SHARD_STRIDE = 8;
-    private static final int DIRTY_MIN_OFF = 2;
-    private static final int DIRTY_MAX_OFF = 4;
-    private static final VarHandle DIRTY_LA = MethodHandles.arrayElementVarHandle(long[].class);
-
-    static {
-        int parallelism = ForkJoinPool.commonPool().getParallelism();
-        int n = parallelism > 1 ? Integer.highestOneBit(parallelism - 1) << 1 : 4;
-        DIRTY_SHARD_COUNT = Math.max(4, n);
-        DIRTY_SHARD_MASK = DIRTY_SHARD_COUNT - 1;
-    }
-
     private final long instanceStride;
     private final List<IndirectDraw> associatedDraws = new ArrayList<>();
     private final Vector4fc boundingSphere;
     private final boolean noOcclusionCull;
+    private final int modelVertexCount;
     private final AtomicReference<InstancePage<I>[]> pages = new AtomicReference<>(pageArray(0));
     private final AtomicInteger instanceCount = new AtomicInteger(0);
     /**
@@ -62,8 +46,6 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
      * but we also don't want to waste work merging into pages that are already empty.
      */
     private final AtomicBitSet mergeablePages = new AtomicBitSet();
-    private final long[] validityDirtyShards = freshDirtyShards();
-    private final long[] contentsDirtyShards = freshDirtyShards();
     private final BitSet carriedPages = new BitSet();
     private final BitSet carryScratch = new BitSet();
     private final SlabFactory slabFactory;
@@ -82,57 +64,13 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
                              .stream()
                              .anyMatch(mesh -> mesh.material()
                                                    .depthTest() == DepthTest.OFF);
+        modelVertexCount = key.model()
+                              .meshes()
+                              .stream()
+                              .mapToInt(mesh -> mesh.mesh()
+                                                    .vertexCount())
+                              .sum();
         this.slabFactory = slabFactory;
-    }
-
-    private static long[] freshDirtyShards() {
-        long[] s = new long[DIRTY_SHARD_COUNT * DIRTY_SHARD_STRIDE];
-        for (int i = 0; i < DIRTY_SHARD_COUNT; i++) {
-            s[i * DIRTY_SHARD_STRIDE + DIRTY_MIN_OFF] = Integer.MAX_VALUE;
-            s[i * DIRTY_SHARD_STRIDE + DIRTY_MAX_OFF] = -1L;
-        }
-        return s;
-    }
-
-    private static void markDirtyShard(long[] shards, int pageNo) {
-        int base = (Thread.currentThread().hashCode() & DIRTY_SHARD_MASK) * DIRTY_SHARD_STRIDE;
-        int minIdx = base + DIRTY_MIN_OFF;
-        int maxIdx = base + DIRTY_MAX_OFF;
-        long v = pageNo;
-        long cur;
-        do {
-            cur = (long) DIRTY_LA.getOpaque(shards, minIdx);
-            if (v >= cur) break;
-        } while (!DIRTY_LA.compareAndSet(shards, minIdx, cur, v));
-        do {
-            cur = (long) DIRTY_LA.getOpaque(shards, maxIdx);
-            if (v <= cur) break;
-        } while (!DIRTY_LA.compareAndSet(shards, maxIdx, cur, v));
-    }
-
-    private static int reduceDirtyMin(long[] shards) {
-        long min = Integer.MAX_VALUE;
-        for (int s = 0; s < DIRTY_SHARD_COUNT; s++) {
-            long v = (long) DIRTY_LA.getAcquire(shards, s * DIRTY_SHARD_STRIDE + DIRTY_MIN_OFF);
-            if (v < min) min = v;
-        }
-        return (int) min;
-    }
-
-    private static int reduceDirtyMax(long[] shards) {
-        long max = -1L;
-        for (int s = 0; s < DIRTY_SHARD_COUNT; s++) {
-            long v = (long) DIRTY_LA.getAcquire(shards, s * DIRTY_SHARD_STRIDE + DIRTY_MAX_OFF);
-            if (v > max) max = v;
-        }
-        return (int) max;
-    }
-
-    private static void clearDirtyShards(long[] shards) {
-        for (int s = 0; s < DIRTY_SHARD_COUNT; s++) {
-            DIRTY_LA.setRelease(shards, s * DIRTY_SHARD_STRIDE + DIRTY_MIN_OFF, (long) Integer.MAX_VALUE);
-            DIRTY_LA.setRelease(shards, s * DIRTY_SHARD_STRIDE + DIRTY_MAX_OFF, -1L);
-        }
     }
 
     @SuppressWarnings("unchecked")
@@ -182,8 +120,7 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
         this.baseInstance = baseInstance;
 
         var sameModelIndex = this.modelIndex == modelIndex;
-        int dirtyMin = sameModelIndex ? reduceDirtyMin(validityDirtyShards) : 0;
-        if (sameModelIndex && dirtyMin == Integer.MAX_VALUE) {
+        if (sameModelIndex && validityChanged.isEmpty()) {
             return;
         }
 
@@ -193,9 +130,8 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
         mapping.updateCount(pages.length);
 
         if (sameModelIndex) {
-            int dirtyMax = Math.min(reduceDirtyMax(validityDirtyShards), pages.length - 1);
-            for (int page = validityChanged.nextSetBit(
-                    dirtyMin); page >= 0 && page <= dirtyMax; page = validityChanged.nextSetBit(page + 1)) {
+            for (int page = validityChanged.nextSetBit(0); page >= 0 && page < pages.length;
+                 page = validityChanged.nextSetBit(page + 1)) {
                 mapping.updatePage(page, modelIndex, pages[page].valid.get());
             }
         } else {
@@ -206,7 +142,6 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
         }
 
         validityChanged.clear();
-        clearDirtyShards(validityDirtyShards);
     }
 
     public void writeModel(long ptr) {
@@ -231,18 +166,16 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
             }
             for (int page = carriedPages.nextSetBit(0); page >= 0; page = carriedPages.nextSetBit(page + 1)) {
                 contentsChanged.set(page);
-                markDirtyShard(contentsDirtyShards, page);
             }
             carriedPages.clear();
             carriedPages.or(carryScratch);
         }
-        int dirtyMin = reduceDirtyMin(contentsDirtyShards);
-        if (dirtyMin == Integer.MAX_VALUE) {
+        if (contentsChanged.isEmpty()) {
             return;
         }
 
         var pages = this.pages.get();
-        int dirtyMax = Math.min(reduceDirtyMax(contentsDirtyShards), pages.length - 1);
+        int lastPage = pages.length - 1;
 
         prepareUpload(pages);
 
@@ -251,12 +184,9 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
         int mappedCount = mapping.pageCount();
         boolean deferredAny = false;
 
-        int spanStart = contentsChanged.nextSetBit(dirtyMin);
-        while (spanStart >= 0 && spanStart <= dirtyMax) {
-            int spanEnd = contentsChanged.nextClearBit(spanStart) - 1;
-            if (spanEnd > dirtyMax) {
-                spanEnd = dirtyMax;
-            }
+        int spanStart = contentsChanged.nextSetBit(0);
+        while (spanStart >= 0 && spanStart <= lastPage) {
+            int spanEnd = Math.min(contentsChanged.nextClearBit(spanStart) - 1, lastPage);
             long srcOff = (long) spanStart * pageBytes;
             slabBuffer.flushRange(srcOff, (long) (spanEnd - spanStart + 1) * pageBytes);
 
@@ -275,13 +205,9 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
         }
 
         contentsChanged.clear();
-        clearDirtyShards(contentsDirtyShards);
 
         if (deferredAny) {
-            for (int page = Math.max(mappedCount, 0); page < pages.length; page++) {
-                contentsChanged.set(page);
-                markDirtyShard(contentsDirtyShards, page);
-            }
+            contentsChanged.set(Math.max(mappedCount, 0), pages.length);
         }
     }
 
@@ -478,6 +404,10 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
         }
     }
 
+    public int modelVertexCount() {
+        return modelVertexCount;
+    }
+
     @Override
     public int instanceCount() {
         return instanceCount.get();
@@ -493,8 +423,6 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
         validityChanged.clear();
         fullPages.clear();
         mergeablePages.clear();
-        clearDirtyShards(contentsDirtyShards);
-        clearDirtyShards(validityDirtyShards);
         carriedPages.clear();
     }
 
@@ -570,9 +498,7 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
                     parent.type.seed().accept(slabPtr + (long) index * parent.instanceStride);
 
                     parent.contentsChanged.set(pageNo);
-                    markDirtyShard(parent.contentsDirtyShards, pageNo);
                     parent.validityChanged.set(pageNo);
-                    markDirtyShard(parent.validityDirtyShards, pageNo);
                     // The page is now full, mark it so in the bitset.
                     // This is safe because only one bit position changes at a time.
                     if (isFull(newValue)) {
@@ -595,7 +521,6 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
         @Override
         public InstanceHandleImpl.State<I> setChanged(int index) {
             parent.contentsChanged.set(pageNo);
-            markDirtyShard(parent.contentsDirtyShards, pageNo);
             return this;
         }
 
@@ -638,7 +563,6 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
 
                 if (valid.compareAndSet(currentValue, newValue)) {
                     parent.validityChanged.set(pageNo);
-                    markDirtyShard(parent.validityDirtyShards, pageNo);
                     if (isMergeable(newValue)) {
                         parent.mergeablePages.set(pageNo);
                     }
@@ -710,15 +634,12 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
 
             // We definitely changed the contents and validity of this page.
             parent.contentsChanged.set(pageNo);
-            markDirtyShard(parent.contentsDirtyShards, pageNo);
             parent.validityChanged.set(pageNo);
-            markDirtyShard(parent.validityDirtyShards, pageNo);
 
             // The other page will end up empty, so the validity changes and it's no longer mergeable.
             // Also clear the changed bit so we don't re-upload the instances.
             parent.contentsChanged.clear(other.pageNo);
             parent.validityChanged.set(other.pageNo);
-            markDirtyShard(parent.validityDirtyShards, other.pageNo);
             parent.mergeablePages.clear(other.pageNo);
 
             if (isFull(valid)) {

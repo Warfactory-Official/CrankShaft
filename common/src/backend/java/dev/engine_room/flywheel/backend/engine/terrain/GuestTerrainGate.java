@@ -2,6 +2,9 @@ package dev.engine_room.flywheel.backend.engine.terrain;
 
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import dev.engine_room.flywheel.backend.BackendConfig;
+import dev.engine_room.flywheel.backend.FlwBackend;
+import dev.engine_room.flywheel.backend.TerrainMode;
 import org.jspecify.annotations.Nullable;
 
 import java.util.function.BooleanSupplier;
@@ -12,17 +15,29 @@ import java.util.function.IntSupplier;
  * baseline, since terrain stops being Iris's own draw.
  */
 public final class GuestTerrainGate {
-    public static final boolean ENABLED = Boolean.getBoolean("crankshaft.iris.terrain");
-    public static final boolean MESH_ENABLED = ENABLED && Boolean.getBoolean("crankshaft.iris.mesh");
+    private static final boolean MESH_PROPERTY = Boolean.getBoolean("crankshaft.iris.mesh");
+    private static final boolean SHADOW_OFF = Boolean.getBoolean("crankshaft.iris.terrainShadow.off");
     /**
      * Startup-only: trade additional per-quad storage for cached current-depth recovery on the mesh guest.
      */
-    public static final boolean CACHE_RECOVERY = MESH_ENABLED && Boolean.getBoolean(
+    public static final boolean CACHE_RECOVERY = MESH_PROPERTY && Boolean.getBoolean(
             "crankshaft.iris.mesh.cacheRecovery");
+
+    public static boolean enabled() {
+        BackendConfig config = FlwBackend.config();
+        return config != null && config.terrainMode() != TerrainMode.OFF;
+    }
+
+    public static boolean meshEnabled() {
+        return enabled() && MESH_PROPERTY;
+    }
+
     /**
      * Independently disable shadow takeover while keeping the main terrain guest.
      */
-    public static final boolean SHADOW = ENABLED && !Boolean.getBoolean("crankshaft.iris.terrainShadow.off");
+    public static boolean shadowEnabled() {
+        return enabled() && !SHADOW_OFF;
+    }
     /**
      * Set with the mesh draw strategy by the guest engine on the render thread, cleared on deletion. The terrain
      * dispatcher still builds its canonical commands; the mesh guest consumes them without CPU geometry repacking.
@@ -80,11 +95,11 @@ public final class GuestTerrainGate {
     }
 
     public static boolean ownsTerrain() {
-        return ENABLED && !shadowPass.getAsBoolean();
+        return enabled() && !shadowPass.getAsBoolean();
     }
 
     public static boolean ownsShadowTerrain() {
-        return SHADOW && shadowPass.getAsBoolean();
+        return shadowEnabled() && shadowPass.getAsBoolean();
     }
 
     public static void setSodiumUniforms(GpuBufferSlice globals, GpuBuffer sectionTimeInfo) {

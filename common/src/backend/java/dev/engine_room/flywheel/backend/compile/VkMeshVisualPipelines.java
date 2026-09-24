@@ -5,7 +5,6 @@ import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
-import dev.engine_room.flywheel.backend.engine.GeometryAtlas;
 import dev.engine_room.flywheel.backend.engine.OitTransparency;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
@@ -60,14 +59,12 @@ public final class VkMeshVisualPipelines {
                 new VkDescriptorLayout.Binding(9, UBO, MESH | FRAG),
                 new VkDescriptorLayout.Binding(16, UBO, MESH), new VkDescriptorLayout.Binding(17, UBO, FRAG),
                 new VkDescriptorLayout.Binding(18, UBO, FRAG), new VkDescriptorLayout.Binding(19, UBO, FRAG),
-                new VkDescriptorLayout.Binding(22, UBO, FRAG), new VkDescriptorLayout.Binding(23, SAMPLER, TASK)));
+                new VkDescriptorLayout.Binding(22, UBO, MESH | FRAG), new VkDescriptorLayout.Binding(23, SAMPLER, TASK)));
         if (!bindless) {
             b.add(new VkDescriptorLayout.Binding(10, SAMPLER, FRAG));
             b.add(new VkDescriptorLayout.Binding(11, SAMPLER, FRAG));
             b.add(new VkDescriptorLayout.Binding(12, SAMPLER, FRAG));
         }
-        if (RenderPassShaders.readsGeometry(light))
-            b.add(new VkDescriptorLayout.Binding(GeometryAtlas.VK_BINDING, SAMPLER, FRAG));
         if (oit) {
             int oitRead = localRead ? VkDescriptorLayout.TYPE_INPUT_ATTACHMENT : SAMPLER;
             if (localRead || !bindless) {

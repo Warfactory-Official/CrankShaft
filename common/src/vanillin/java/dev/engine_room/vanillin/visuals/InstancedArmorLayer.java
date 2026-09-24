@@ -2,13 +2,17 @@ package dev.engine_room.vanillin.visuals;
 
 import dev.engine_room.flywheel.api.instance.InstancerProvider;
 import dev.engine_room.flywheel.api.material.Material;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.Materials;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
+import dev.engine_room.flywheel.lib.model.PackIdentity;
+import dev.engine_room.flywheel.lib.model.PackTaggedModel;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTrees;
+import dev.engine_room.flywheel.lib.util.ItemFoil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.client.renderer.Sheets;
@@ -19,9 +23,11 @@ import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.resources.model.EquipmentAssetManager;
 import net.minecraft.client.resources.model.EquipmentClientInfo;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.data.AtlasIds;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.DyedItemColor;
@@ -46,6 +52,7 @@ final class InstancedArmorLayer {
                                                         .polygonOffset(true)
                                                         .build();
 
+    private final EntityType<?> wearer;
     private final InstancerProvider provider;
     private final EquipmentAssetManager assets;
     private final Map<String, Integer> boneIndex;
@@ -57,7 +64,8 @@ final class InstancedArmorLayer {
 
     InstancedArmorLayer(InstancerProvider provider, EquipmentAssetManager assets,
                         ArmorModelSet<ModelLayerLocation> layers, boolean baby, Map<String, Integer> boneIndex,
-                        float[] bodyRest) {
+                        float[] bodyRest, EntityType<?> wearer) {
+        this.wearer = wearer;
         this.provider = provider;
         this.assets = assets;
         this.boneIndex = boneIndex;
@@ -85,6 +93,24 @@ final class InstancedArmorLayer {
             return dyeColor != 0 ? dyeColor : colorWhenUndyed;
         }
         return -1;
+    }
+
+    // Compat with Iris: equipment layers and their glint report the item, trims trim_<material>.
+    static ModelTree forItem(ModelTree tree, Identifier item) {
+        return PackTaggedModel.tag(tree, List.of(PackIdentity.ofIrisItem(item)));
+    }
+
+    static Identifier itemId(ItemStack stack) {
+        Identifier model = stack.get(DataComponents.ITEM_MODEL);
+        return model != null ? model : BuiltInRegistries.ITEM.getKey(stack.getItem());
+    }
+
+    static Identifier trimId(ArmorTrim trim) {
+        return Identifier.withDefaultNamespace("trim_" + trim.material()
+                                                             .value()
+                                                             .assets()
+                                                             .base()
+                                                             .suffix());
     }
 
     private static void flattenNamed(InstanceTree node, String name, List<InstanceTree> nodes, List<String> names) {
@@ -160,6 +186,7 @@ final class InstancedArmorLayer {
             return;
         }
         int dyeColor = DyedItemColor.getOrDefault(stack, 0);
+        Identifier item = itemId(stack);
         List<Draw> draws = new ArrayList<>(infoLayers.size());
         for (EquipmentClientInfo.Layer layer : infoLayers) {
             int color = colorForLayer(layer, dyeColor);
@@ -167,10 +194,11 @@ final class InstancedArmorLayer {
                 continue;
             }
             Identifier texture = layer.getTextureLocation(slot.layerType);
-            addDraw(draws, ModelTrees.of(slot.layer, LivingEntityVisual.materialFor(texture)), color);
+            EntityFeatureCompat.observeTexture(wearer, texture);
+            addDraw(draws, forItem(ModelTrees.of(slot.layer, LivingEntityVisual.materialFor(texture)), item), color);
         }
-        if (stack.hasFoil() && !draws.isEmpty()) {
-            addDraw(draws, ModelTrees.of(slot.layer, GLINT_ARMOR), -1);
+        if (ItemFoil.of(stack) && !draws.isEmpty()) {
+            addDraw(draws, forItem(ModelTrees.of(slot.layer, GLINT_ARMOR), item), -1);
         }
         ArmorTrim trim = stack.get(DataComponents.TRIM);
         if (trim != null && slot.layerType != EquipmentClientInfo.LayerType.HUMANOID_BABY) {
@@ -179,7 +207,7 @@ final class InstancedArmorLayer {
                                                  .getAtlasManager()
                                                  .getAtlasOrThrow(AtlasIds.ARMOR_TRIMS)
                                                  .getSprite(spriteId);
-            addDraw(draws, ModelTrees.of(slot.layer, sprite, TRIM_MATERIAL), -1);
+            addDraw(draws, forItem(ModelTrees.of(slot.layer, sprite, TRIM_MATERIAL), trimId(trim)), -1);
         }
         slot.draws = draws;
     }

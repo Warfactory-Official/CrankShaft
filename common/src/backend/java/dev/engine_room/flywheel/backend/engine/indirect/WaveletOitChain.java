@@ -87,12 +87,12 @@ public final class WaveletOitChain {
         submitProducerPass(frame, framebuffer.coefficientsDescriptor(depthView), OitMode.GENERATE_COEFFICIENTS, false,
                 chunks, ber, terrain, fabulous, producer);
 
-        // Port: no depth-from-transmittance pass (composite writes depth). Its write lands up to a bin in front of the
-        // layer reaching T <= 1e-4 => EVALUATE culls that layer.
+        // Port: no depth-from-transmittance pass (the depth writeback after the composite). Its write lands up to a bin
+        // in front of the layer reaching T <= 1e-4 => EVALUATE culls that layer.
         submitProducerPass(frame, framebuffer.accumulateDescriptor(depthView), OitMode.EVALUATE, false, chunks, ber,
                 terrain, fabulous, producer);
 
-        // Before the composite: it writes the nearest OIT depth, which would cull emission behind it.
+        // Before the depth writeback: the nearest OIT depth would cull emission behind it.
         if (hasAdditive) {
             framebuffer.prepareEmission();
             submitProducerPass(frame, framebuffer.emissionDescriptor(depthView), OitMode.EVALUATE, true, null, null,
@@ -120,6 +120,10 @@ public final class WaveletOitChain {
             }
             pass.bindTexture("_flw_depthRange", framebuffer.depthBoundsView(), frame.oitSampler());
             framebuffer.bindCoefficients(pass, frame.oitSampler());
+            pass.draw(3, 1, 0, 0);
+            pass.setPipeline(OitPipelines.oitDepth());
+            pass.bindTexture("_flw_accumulate", framebuffer.accumulateView(), frame.oitSampler());
+            pass.bindTexture("_flw_depthRange", framebuffer.depthBoundsView(), frame.oitSampler());
             pass.draw(3, 1, 0, 0);
         }
         GlCompat.popDebugGroup();

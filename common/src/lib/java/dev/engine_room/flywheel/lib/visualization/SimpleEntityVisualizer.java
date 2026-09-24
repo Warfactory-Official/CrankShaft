@@ -19,10 +19,17 @@ import java.util.function.Predicate;
 public final class SimpleEntityVisualizer<T extends Entity> implements EntityVisualizer<T> {
     private final Factory<T> visualFactory;
     private final Predicate<T> skipVanillaRender;
+    private final Predicate<T> skipVanillaPrimary;
 
     public SimpleEntityVisualizer(Factory<T> visualFactory, Predicate<T> skipVanillaRender) {
+        this(visualFactory, skipVanillaRender, entity -> false);
+    }
+
+    public SimpleEntityVisualizer(Factory<T> visualFactory, Predicate<T> skipVanillaRender,
+                                  Predicate<T> skipVanillaPrimary) {
         this.visualFactory = visualFactory;
         this.skipVanillaRender = skipVanillaRender;
+        this.skipVanillaPrimary = skipVanillaPrimary;
     }
 
     /**
@@ -44,6 +51,15 @@ public final class SimpleEntityVisualizer<T extends Entity> implements EntityVis
     @Override
     public boolean skipVanillaRender(T entity) {
         return skipVanillaRender.test(entity);
+    }
+
+    /**
+     * Port: whether the visual draws the vanilla renderer's primary geometry (boat hull, fishing bobber) while vanilla
+     * still extracts and submits the rest. Only meaningful where {@link #skipVanillaRender} is {@code false}; read
+     * once per extracted render state, render thread.
+     */
+    public boolean skipVanillaPrimary(T entity) {
+        return skipVanillaPrimary.test(entity);
     }
 
     @FunctionalInterface

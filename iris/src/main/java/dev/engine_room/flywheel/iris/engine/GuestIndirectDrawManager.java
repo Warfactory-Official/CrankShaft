@@ -8,7 +8,6 @@ import com.mojang.blaze3d.textures.GpuTextureView;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
-import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.api.model.Mesh;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
@@ -46,10 +45,15 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
     private final GuestShadowCull shadowCull = new GuestShadowCull();
     private final List<UberDraw> plainScratch = new ArrayList<>();
     private final List<UberDraw> orderIndependentScratch = new ArrayList<>();
+    private final List<UberDraw> depthFillScratch = new ArrayList<>();
     private final List<UberDraw> blockScratch = new ArrayList<>();
+    private final List<UberDraw> blockEntityScratch = new ArrayList<>();
     private final List<UberDraw> entityScratch = new ArrayList<>();
+    private final List<UberDraw> eyesScratch = new ArrayList<>();
+    private final List<UberDraw> translucentEntityScratch = new ArrayList<>();
+    private final List<UberDraw> blendedEntityScratch = new ArrayList<>();
     // submitUberPass state: the kind the selectors resolve for; the kinds a pass keeps.
-    private boolean entityDraws;
+    private int drawKind;
     private boolean passEntities = true;
     private boolean passBlockEntities = true;
     private boolean hasDraws;
@@ -74,6 +78,9 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         }
         submitMain(renderModelView);
         submitPass2IfPending();
+        if (GuestPipelines.deferredEmissive(pipeline)) {
+            submitAdditive("flywheel:iris/additive_gbuffer");
+        }
     }
 
     @Override
@@ -140,9 +147,10 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
                         batch -> GuestPipelines.indirect(role(PackRole.TRANSLUCENT), batch.material(),
                                 batch.embedded()));
                 guestTerrain = null;
-                submitUberPass("flywheel:iris/translucent_additive", uberOitAdditiveMultiDraws, renderModelView, false,
-                        batch -> GuestPipelines.indirect(role(PackRole.TRANSLUCENT), batch.material(),
-                                batch.embedded()));
+                if (!GuestPipelines.deferredEmissive(pipeline)) {
+                    submitAdditive("flywheel:iris/translucent_additive");
+                }
+                submitDepthFill(pipeline);
                 // Deferred adapters resolve later in the pack's composite phase; their capture must finish here.
                 return terrain != null;
             } finally {
@@ -166,6 +174,35 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         }
     }
 
+    // Pack composites resolve sky, clouds, fog and translucency from depth: a colour-only surface reads as whatever
+    // lies behind it. A separate pass, so additive stacks and translucent layers still blend.
+    private void submitDepthFill(IrisRenderingPipeline pipeline) {
+        depthFillScratch.clear();
+        if (!GuestPipelines.deferredTranslucent(pipeline) && !GuestPipelines.deferredOitActive(pipeline)) {
+            boolean oit = GuestPipelines.oitActive(pipeline, false);
+            for (UberDraw batch : uberOitMultiDraws) {
+                if (!batch.material()
+                          .writeMask()
+                          .depth() && !(oit && GuestDrawManager.orderIndependent(batch.material(),
+                        batch.drawTag()))) {
+                    depthFillScratch.add(batch);
+                }
+            }
+        }
+        if (!GuestPipelines.deferredEmissive(pipeline) && !GuestPipelines.emissiveLight(pipeline)) {
+            for (UberDraw batch : uberOitAdditiveMultiDraws) {
+                if (!batch.material()
+                          .writeMask()
+                          .depth()) {
+                    depthFillScratch.add(batch);
+                }
+            }
+        }
+        submitUberPass("flywheel:iris/depth_fill", depthFillScratch, renderModelView, false,
+                batch -> GuestPipelines.indirectDepthFill(role(GuestDrawManager.emissive(batch.material())
+                        ? PackRole.ADDITIVE : PackRole.TRANSLUCENT), batch.material(), batch.embedded()));
+    }
+
     private void submitTranslucent(IrisRenderingPipeline pipeline, boolean shadow, Matrix4fc modelView, boolean pass2,
                                    Function<UberDraw, RenderPipeline> plainPipeline) {
         String prefix = shadow ? "flywheel:iris/shadow_" : "flywheel:iris/";
@@ -185,7 +222,8 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         plainScratch.clear();
         orderIndependentScratch.clear();
         for (UberDraw batch : uberOitMultiDraws) {
-            (GuestDrawManager.orderIndependent(batch.material()) ? orderIndependentScratch : plainScratch).add(batch);
+            (GuestDrawManager.orderIndependent(batch.material(), batch.drawTag()) ? orderIndependentScratch
+                    : plainScratch).add(batch);
         }
         submitUberPass(prefix + "translucent", plainScratch, modelView, pass2, plainPipeline);
         SodiumTerrainOitReplay terrain = shadow ? null : guestTerrain;
@@ -230,26 +268,60 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         GuestSsbos.bindForGuest((IrisRenderingPipeline) Iris.getPipelineManager().getPipelineNullable());
         GuestProgram.setModelView(modelViewMatrix);
         blockScratch.clear();
+        blockEntityScratch.clear();
         entityScratch.clear();
+        eyesScratch.clear();
+        translucentEntityScratch.clear();
+        blendedEntityScratch.clear();
         boolean dropBlobShadows = GuestEntityShadows.suppressed();
         for (UberDraw batch : batches) {
             if (dropBlobShadows && GuestEntityShadows.isBlobShadow(batch.material())) {
                 continue;
             }
-            (TaggedEnvironment.isEntity(batch.drawTag()) ? entityScratch : blockScratch).add(batch);
+            switch (TaggedEnvironment.kind(batch.drawTag())) {
+                case TaggedEnvironment.KIND_ENTITY -> entityScratch.add(batch);
+                case TaggedEnvironment.KIND_ENTITY_EYES -> eyesScratch.add(batch);
+                case TaggedEnvironment.KIND_ENTITY_TRANSLUCENT -> translucentEntityScratch.add(batch);
+                case TaggedEnvironment.KIND_ENTITY_BLENDED -> blendedEntityScratch.add(batch);
+                case TaggedEnvironment.KIND_BLOCK_ENTITY -> blockEntityScratch.add(batch);
+                default -> blockScratch.add(batch);
+            }
         }
-        if (passBlockEntities && !blockScratch.isEmpty()) {
-            super.submitUberPass(label, blockScratch, modelViewMatrix, pass2, pipelineFor);
+        submitKind(label, blockScratch, 0, modelViewMatrix, pass2, pipelineFor);
+        if (passBlockEntities) {
+            submitKind(label + "_block_entities", blockEntityScratch, TaggedEnvironment.KIND_BLOCK_ENTITY,
+                    modelViewMatrix, pass2, pipelineFor);
         }
-        if (passEntities && !entityScratch.isEmpty()) {
-            entityDraws = true;
-            super.submitUberPass(label + "_entities", entityScratch, modelViewMatrix, pass2, pipelineFor);
-            entityDraws = false;
+        if (passEntities) {
+            submitKind(label + "_entities", entityScratch, TaggedEnvironment.KIND_ENTITY, modelViewMatrix, pass2,
+                    pipelineFor);
+            // Vanilla submits a body before its layers.
+            submitKind(label + "_translucent_entities", translucentEntityScratch,
+                    TaggedEnvironment.KIND_ENTITY_TRANSLUCENT, modelViewMatrix, pass2, pipelineFor);
+            submitKind(label + "_eyes", eyesScratch, TaggedEnvironment.KIND_ENTITY_EYES, modelViewMatrix, pass2,
+                    pipelineFor);
+            submitKind(label + "_blended_entities", blendedEntityScratch, TaggedEnvironment.KIND_ENTITY_BLENDED,
+                    modelViewMatrix, pass2, pipelineFor);
         }
     }
 
+    private void submitKind(String label, List<UberDraw> batches, int kind, Matrix4fc modelViewMatrix, boolean pass2,
+                            Function<UberDraw, RenderPipeline> pipelineFor) {
+        if (batches.isEmpty()) {
+            return;
+        }
+        drawKind = kind;
+        super.submitUberPass(label, batches, modelViewMatrix, pass2, pipelineFor);
+        drawKind = 0;
+    }
+
     private PackRole role(PackRole role) {
-        return entityDraws ? role.forEntities() : role;
+        return role.forKind(drawKind);
+    }
+
+    private void submitAdditive(String label) {
+        submitUberPass(label, uberOitAdditiveMultiDraws, renderModelView, false,
+                batch -> GuestPipelines.indirect(role(PackRole.ADDITIVE), batch.material(), batch.embedded()));
     }
 
     @Override
@@ -258,10 +330,13 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
     }
 
     @Override
-    protected boolean drawnInTranslucentPass(Material material) {
-        return material.transparency() == Transparency.TRANSLUCENT
-                || material.transparency() == Transparency.TRANSLUCENT_ALPHA_REPLACE
-                || OitTransparency.orderIndependent(material);
+    protected boolean drawnInTranslucentPass(IndirectDraw draw) {
+        return GuestDrawManager.drawnInTranslucentPass(draw.material(), draw.drawTag());
+    }
+
+    @Override
+    protected boolean drawnInAdditivePass(IndirectDraw draw) {
+        return GuestDrawManager.drawnInAdditivePass(draw.material(), draw.drawTag());
     }
 
     // Guest programs compile the cutout in (Iris alpha test / contract discard) and the program per draw kind; uber
@@ -271,7 +346,7 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         return super.incompatibleUber(a, b) || a.material()
                                                 .cutout() != b.material()
                                                               .cutout()
-                || TaggedEnvironment.isEntity(a.drawTag()) != TaggedEnvironment.isEntity(b.drawTag());
+                || TaggedEnvironment.kind(a.drawTag()) != TaggedEnvironment.kind(b.drawTag());
     }
 
     @Override

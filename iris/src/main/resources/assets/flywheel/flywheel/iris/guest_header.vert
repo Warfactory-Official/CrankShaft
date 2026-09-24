@@ -8,8 +8,15 @@ in ivec2 _flw_aIrisEntity;
 in vec2 _flw_aMidTexCoord;
 in vec4 _flw_aTangent;
 in vec4 _flw_aMidBlock;
+in vec4 _flw_aFaceNormal;
 
 #define flw_view (iris_transforms.ModelViewMat)
+
+#include "flywheel:internal/material.glsl"
+#include "flywheel:internal/packed_material.glsl"
+
+// Iris hands unlit vanilla geometry a full-bright lightmap (crumbling keeps the block's).
+#define _FLW_GUEST_UNLIT_LIGHT vec2(240.0 / 256.0)
 
 #ifdef _FLW_GUEST_CONTRACT
 // Colorwheel ClrwlVertexData + engine packed material/clip; guest_contract_header.frag and guest_contract_geom.glsl
@@ -94,23 +101,32 @@ vec2 _flw_getCrumblingTexCoord() {
 }
 #endif
 
-// TaggedEnvironment tags: kind << 24 | (id + 1). Iris writes 0 into the other ids while one kind renders.
+// TaggedEnvironment tags: kind << 24 | (id + 1). Iris writes 0 into the other ids while one kind renders, and writes
+// ids as unsigned shorts: unmapped (-1) reads 65535.
 uint _flw_drawTag;
 uint _flw_itemTag;
 
 ivec4 _flw_guestIrisEntity() {
     ivec4 ids = ivec4(-1, -1, -1, 0);
-    if (_flw_drawTag != 0u) {
-        int id = int(_flw_drawTag & 0xFFFFFFu) - 1;
-        ids = (_flw_drawTag >> 24u) == 2u ? ivec4(id, 0, 0, 0) : ivec4(0, id, 0, 0);
+    if (_flw_drawTag != 0u && (_flw_drawTag >> 24u) != 5u) {
+        int id = (int(_flw_drawTag & 0xFFFFFFu) - 1) & 0xFFFF;
+        uint kind = _flw_drawTag >> 24u;
+        ids = kind == 2u || kind >= 6u ? ivec4(id, 0, 0, 0) : ivec4(0, id, 0, 0);
     }
     if (_flw_itemTag != 0u) {
-        ids.z = int(_flw_itemTag & 0xFFFFFFu) - 1;
+        ids.z = (int(_flw_itemTag & 0xFFFFFFu) - 1) & 0xFFFF;
         if ((_flw_itemTag >> 24u) == 4u) {
             ids.y = 1;
         }
     }
     return ids;
+}
+
+ivec2 _flw_guestMcEntity() {
+    if ((_flw_drawTag >> 24u) == 5u) {
+        return ivec2(int(_flw_drawTag & 0xFFFFFFu) - 1, _flw_aIrisEntity.y);
+    }
+    return _flw_aIrisEntity;
 }
 
 // Extras after the instance/material/embed transform: proxy vertex at the block centre, tangent as normal, mid-UV as
@@ -128,6 +144,32 @@ vec4 _flw_guestTangent() {
     return vec4(normalize(cross(axis, flw_vertexNormal)), 1.0);
 }
 
+// Iris terrain AO: vertex alpha under separateAo, else scaled into the colour.
+float _flw_guestAo = 1.0;
+
+// Iris feeds a pack's glint program POSITION_TEX vertices: gl_Color (1, 1, 1, GlintAlpha), gl_Normal (0, 0, 1).
+vec4 _flw_guestColor() {
+    #ifdef _FLW_GUEST_GLINT
+    return vec4(1.0, 1.0, 1.0, flw_glintStrengthOption);
+    #elif defined(_FLW_GUEST_SEPARATE_AO)
+    return vec4(flw_vertexColor.rgb, flw_vertexColor.a * _flw_guestAo);
+    #else
+    return vec4(flw_vertexColor.rgb * _flw_guestAo, flw_vertexColor.a);
+    #endif
+}
+
+vec3 _flw_guestIrisNormal() {
+    #ifdef _FLW_GUEST_GLINT
+    return vec3(0.0, 0.0, 1.0);
+    #else
+    return flw_vertexNormal;
+    #endif
+}
+
+vec3 _flw_guestNormal() {
+    return dot(_flw_aFaceNormal.xyz, _flw_aFaceNormal.xyz) > 0.0 ? _flw_aFaceNormal.xyz : _flw_aNormal;
+}
+
 vec4 _flw_proxyCentre;
 
 void _flw_proxyLayout() {
@@ -135,7 +177,7 @@ void _flw_proxyLayout() {
     flw_vertexColor = _flw_aColor;
     flw_vertexTexCoord = _flw_aMidTexCoord;
     flw_vertexOverlay = ivec2(0, 10);
-    flw_vertexLight = (vec2(_flw_aLight) + 8.0) / 256.0;
+    flw_vertexLight = vec2(_flw_aLight) / 256.0;
     flw_vertexNormal = _flw_aTangent.xyz;
 }
 

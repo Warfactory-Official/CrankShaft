@@ -1,5 +1,14 @@
 package dev.engine_room.vanillin;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.annotations.SerializedName;
+import dev.engine_room.vanillin.config.*;
+import net.fabricmc.loader.api.FabricLoader;
+import net.fabricmc.loader.api.ModContainer;
+import net.fabricmc.loader.api.metadata.CustomValue;
+import net.fabricmc.loader.api.metadata.ModMetadata;
+
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
@@ -8,20 +17,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.annotations.SerializedName;
-
-import dev.engine_room.vanillin.config.Configurator;
-import dev.engine_room.vanillin.config.ModOverrides;
-import dev.engine_room.vanillin.config.VisualConfigValue;
-import dev.engine_room.vanillin.config.VisualOverride;
-import dev.engine_room.vanillin.config.VisualOverrideValue;
-import net.fabricmc.loader.api.FabricLoader;
-import net.fabricmc.loader.api.ModContainer;
-import net.fabricmc.loader.api.metadata.CustomValue;
-import net.fabricmc.loader.api.metadata.ModMetadata;
 
 public class FabricVanillinConfig {
     public static final Path PATH = FabricLoader.getInstance()
@@ -58,7 +53,7 @@ public class FabricVanillinConfig {
         var masterEnabled = config.enabled;
 
         if (!masterEnabled) {
-            Vanillin.CONFIG_LOGGER.info("Vanillate is disabled. Set \"enabled\": true in '{}' to opt in.", file.getName());
+            Vanillin.CONFIG_LOGGER.info("Vanillate is disabled. Set \"enabled\": true in '{}' to enable it.", file.getName());
         }
 
         var blockEntities = config.blockEntities;
@@ -161,7 +156,7 @@ public class FabricVanillinConfig {
         public Map<String, VisualConfigValue> entities;
 
         public Config() {
-            this(false, new HashMap<>(), new HashMap<>());
+            this(true, new HashMap<>(), new HashMap<>());
         }
 
         public Config(boolean enabled, Map<String, VisualConfigValue> blockEntities, Map<String, VisualConfigValue> entities) {

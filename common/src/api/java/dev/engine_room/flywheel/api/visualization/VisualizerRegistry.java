@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.api.visualization;
 import dev.engine_room.flywheel.api.internal.FlwApiLink;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import org.jspecify.annotations.Nullable;
@@ -39,6 +40,14 @@ public final class VisualizerRegistry {
     }
 
     /**
+     * Gets the visualizer for the given item, if one exists.
+     */
+    @Nullable
+    public static ItemStackVisualizer getVisualizer(Item item) {
+        return FlwApiLink.INSTANCE.getVisualizer(item);
+    }
+
+    /**
      * Sets the visualizer for the given block entity type.
      *
      * @param type       The block entity type to set the visualizer for.
@@ -60,5 +69,12 @@ public final class VisualizerRegistry {
     public static <T extends Entity> void setVisualizer(EntityType<T> type,
                                                         @Nullable EntityVisualizer<? super T> visualizer) {
         FlwApiLink.INSTANCE.setVisualizer(type, visualizer);
+    }
+
+    /**
+     * Sets the visualizer for the given item.
+     */
+    public static void setVisualizer(Item item, @Nullable ItemStackVisualizer visualizer) {
+        FlwApiLink.INSTANCE.setVisualizer(item, visualizer);
     }
 }

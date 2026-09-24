@@ -53,16 +53,8 @@ vec2 decodeLightUV(Vertex v) {
     return vec2(uvec2(v.light, v.light >> 8u) & 0xFFu) / 256.0;
 }
 
-uint decodeMaterial(Vertex v) {
-    return (v.light >> 16u) & 0xFFu;
-}
-
 uint decodeSectionId(Vertex v) {
     return (v.light >> 24u) & 0xFFu;
-}
-
-uint decodeAlphaCutoffId(Vertex v) {
-    return (decodeMaterial(v) >> 1u) & 3u;
 }
 
 #endif

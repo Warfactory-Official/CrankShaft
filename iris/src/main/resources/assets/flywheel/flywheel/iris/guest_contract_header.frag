@@ -28,10 +28,7 @@ layout(std140) uniform Lighting {
     vec3 Light1_Direction;
 };
 
-layout(std140) uniform _FlwRenderOrigin {
-    ivec4 _flw_renderOrigin;
-    uint _flw_constantAmbientLight;
-};
+#include "flywheel:internal/render_origin.glsl"
 
 vec4 flw_sampleColor;
 vec4 flw_fragColor;

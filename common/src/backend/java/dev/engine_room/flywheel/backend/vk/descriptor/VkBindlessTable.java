@@ -101,6 +101,23 @@ public final class VkBindlessTable {
         return setLayout;
     }
 
+    /**
+     * Render thread, device idle. The next use re-creates the table.
+     */
+    public static void destroy() {
+        if (setLayout == 0L) {
+            return;
+        }
+        VK12.vkDestroyDescriptorPool(VkContext.vkDevice(), pool, null);
+        VK12.vkDestroyDescriptorSetLayout(VkContext.vkDevice(), setLayout, null);
+        pool = 0L;
+        setLayout = 0L;
+        set[0] = 0L;
+        set[1] = 0L;
+        writtenView = null;
+        writtenSampler = null;
+    }
+
     private static void ensureInit() {
         if (setLayout != 0L) {
             return;

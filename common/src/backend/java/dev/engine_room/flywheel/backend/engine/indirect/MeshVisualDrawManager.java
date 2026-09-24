@@ -259,7 +259,6 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         setSampler(program, "Sampler0", UNIT_ATLAS);
         setSampler(program, "Sampler1", UNIT_OVERLAY);
         setSampler(program, "Sampler2", UNIT_LIGHTMAP);
-        setSampler(program, GeometryAtlas.SAMPLER, GeometryAtlas.GL_MESH_UNIT);
     }
 
     private static int buildCommandBuilder() {
@@ -366,6 +365,12 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         return true;
     }
 
+    // The mesh task cull reads the carried pyramid.
+    @Override
+    boolean occlusionOptional() {
+        return false;
+    }
+
     @Override
     void submitSolid(Matrix4fc modelView) {
         builtDraws = 0;
@@ -441,7 +446,6 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                 GlBindlessTable.bind();
             }
 
-            boolean geometryBound = false;
             int lastProgram = 0;
             int baseDrawLoc = -1;
             Identifier lastTexture = null;
@@ -457,10 +461,6 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                 if (program != lastProgram) {
                     lastProgram = program;
                     GlStateTracker.useProgram(program);
-                    if (RenderPassShaders.readsGeometry(material.light())) {
-                        GeometryAtlas.bindRaw();
-                        geometryBound = true;
-                    }
                     baseDrawLoc = GL20C.glGetUniformLocation(program, "_flw_baseDraw");
                 }
                 if (!GlCompat.SUPPORTS_BINDLESS_TEXTURES) {
@@ -484,7 +484,6 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                 NVMeshShader.glMultiDrawMeshTasksIndirectNV(indirect, count, MESH_TASK_COMMAND_STRIDE);
             }
             setupOpaqueState();
-            if (geometryBound) GeometryAtlas.clearRawSampler();
             GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
             GlStateTracker.useProgram(0);
         }
@@ -563,7 +562,6 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
             GlBindlessTable.bind();
         }
 
-        boolean geometryBound = false;
         int lastProgram = 0;
         int baseDrawLoc = -1;
         for (var run : additive ? meshOitAdditiveMultiDraws : meshOitMultiDraws) {
@@ -576,10 +574,6 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
             if (program != lastProgram) {
                 lastProgram = program;
                 GlStateTracker.useProgram(program);
-                if (!depthRange && RenderPassShaders.readsGeometry(run.material().light())) {
-                    GeometryAtlas.bindRaw();
-                    geometryBound = true;
-                }
                 baseDrawLoc = GL20C.glGetUniformLocation(program, "_flw_baseDraw");
             }
             if (!depthRange && !GlCompat.SUPPORTS_BINDLESS_TEXTURES) {
@@ -595,7 +589,6 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
             NVMeshShader.glMultiDrawMeshTasksIndirectNV(indirect, count, MESH_TASK_COMMAND_STRIDE);
         }
 
-        if (geometryBound) GeometryAtlas.clearRawSampler();
         GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
         GlStateTracker.useProgram(0);
         GL14C.glBlendEquation(GL14C.GL_FUNC_ADD);

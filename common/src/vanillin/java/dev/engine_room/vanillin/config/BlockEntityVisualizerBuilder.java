@@ -1,5 +1,8 @@
 package dev.engine_room.vanillin.config;
 
+import dev.engine_room.flywheel.api.instance.Instance;
+import dev.engine_room.flywheel.api.visual.BlockEntityVisual;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.visualization.SimpleBlockEntityVisualizer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -7,6 +10,7 @@ import net.minecraft.world.level.block.entity.BlockEntityType;
 import org.jspecify.annotations.Nullable;
 
 import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 public class BlockEntityVisualizerBuilder<T extends BlockEntity> {
@@ -59,9 +63,32 @@ public class BlockEntityVisualizerBuilder<T extends BlockEntity> {
             skipVanillaRender = blockEntity -> true;
         }
 
-        SimpleBlockEntityVisualizer<T> visualizer = new SimpleBlockEntityVisualizer<>(visualFactory, skipVanillaRender);
+        SimpleBlockEntityVisualizer.Factory<T> factory = visualFactory;
+        Predicate<T> skipRender = skipVanillaRender;
+        if (EntityFeatureCompat.ACTIVE) {
+            // Compat with Entity Model Features: a restyled type stays vanilla.
+            SimpleBlockEntityVisualizer.Factory<T> visual = factory;
+            factory = (ctx, blockEntity, partialTick) -> EntityFeatureCompat.vanillaOwns(type)
+                    ? new VanillaOwned() : visual.create(ctx, blockEntity, partialTick);
+            skipRender = skipRender.and(blockEntity -> !EntityFeatureCompat.vanillaOwns(type));
+        }
+        SimpleBlockEntityVisualizer<T> visualizer = new SimpleBlockEntityVisualizer<>(factory, skipRender);
         configurator.register(type, visualizer, enabledByDefault);
 
         return visualizer;
+    }
+
+    private static final class VanillaOwned implements BlockEntityVisual<BlockEntity> {
+        @Override
+        public void collectCrumblingInstances(Consumer<@Nullable Instance> consumer) {
+        }
+
+        @Override
+        public void update(float partialTick) {
+        }
+
+        @Override
+        public void delete() {
+        }
     }
 }

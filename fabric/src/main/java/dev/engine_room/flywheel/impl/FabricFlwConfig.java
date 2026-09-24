@@ -1,17 +1,6 @@
 package dev.engine_room.flywheel.impl;
 
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.nio.file.Path;
-
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import com.google.gson.JsonPrimitive;
-
+import com.google.gson.*;
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.backend.BackendConfig;
@@ -24,6 +13,11 @@ import net.minecraft.IdentifierException;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.nio.file.Path;
+
 public final class FabricFlwConfig implements FlwConfig {
 	public static final Path PATH = FabricLoader.getInstance()
 			.getConfigDir()
@@ -35,6 +29,7 @@ public final class FabricFlwConfig implements FlwConfig {
 	public static final boolean LIMIT_UPDATES_DEFAULT = true;
 	public static final int WORKER_THREADS_DEFAULT = -1;
 	public static final boolean USE_COMMON_POOL_DEFAULT = false;
+	public static final boolean CONCURRENT_EXTRACTION_DEFAULT = true;
 	public static final int WORKER_THREADS_MIN = -Runtime.getRuntime()
 			.availableProcessors();
 	public static final int WORKER_THREADS_MAX = Runtime.getRuntime()
@@ -49,6 +44,7 @@ public final class FabricFlwConfig implements FlwConfig {
 	public boolean limitUpdates = LIMIT_UPDATES_DEFAULT;
 	public int workerThreads = WORKER_THREADS_DEFAULT;
 	public boolean useCommonPool = USE_COMMON_POOL_DEFAULT;
+	public boolean concurrentExtraction = CONCURRENT_EXTRACTION_DEFAULT;
 
 	public final FabricBackendConfig backendConfig = new FabricBackendConfig();
 
@@ -82,6 +78,11 @@ public final class FabricFlwConfig implements FlwConfig {
 	@Override
 	public boolean useCommonPool() {
 		return useCommonPool;
+	}
+
+	@Override
+	public boolean concurrentExtraction() {
+		return concurrentExtraction;
 	}
 
 	@Override
@@ -144,6 +145,7 @@ public final class FabricFlwConfig implements FlwConfig {
 			limitUpdates = LIMIT_UPDATES_DEFAULT;
 			workerThreads = WORKER_THREADS_DEFAULT;
 			useCommonPool = USE_COMMON_POOL_DEFAULT;
+			concurrentExtraction = CONCURRENT_EXTRACTION_DEFAULT;
 			return;
 		}
 
@@ -151,6 +153,7 @@ public final class FabricFlwConfig implements FlwConfig {
 		readLimitUpdates(object);
 		readWorkerThreads(object);
 		readUseCommonPool(object);
+		readConcurrentExtraction(object);
 		readFlwBackends(object);
 	}
 
@@ -223,6 +226,19 @@ public final class FabricFlwConfig implements FlwConfig {
 		workerThreads = WORKER_THREADS_DEFAULT;
 	}
 
+	private void readConcurrentExtraction(JsonObject object) {
+		var json = object.get("concurrentExtraction");
+
+		if (json instanceof JsonPrimitive primitive && primitive.isBoolean()) {
+			concurrentExtraction = primitive.getAsBoolean();
+			return;
+		} else if (json != null) {
+			FlwImpl.CONFIG_LOGGER.warn("'concurrentExtraction' value must be a boolean");
+		}
+
+		concurrentExtraction = CONCURRENT_EXTRACTION_DEFAULT;
+	}
+
 	private void readUseCommonPool(JsonObject object) {
 		var useCommonPoolJson = object.get("useCommonPool");
 
@@ -253,6 +269,7 @@ public final class FabricFlwConfig implements FlwConfig {
 		object.addProperty("limitUpdates", limitUpdates);
 		object.addProperty("workerThreads", workerThreads);
 		object.addProperty("useCommonPool", useCommonPool);
+		object.addProperty("concurrentExtraction", concurrentExtraction);
 		object.add("flw_backends", backendConfig.toJson());
 		return object;
 	}

@@ -1,0 +1,30 @@
+{
+  "schema": 2,
+  "name": "Complementary Euphoria",
+  "testedVersions": [
+    "ComplementaryEuphoria_r5.8.1"
+  ],
+  "matches": [
+    {
+      "path": "program/gbuffers_entities.glsl",
+      "contains": [
+        "Complementary Shaders",
+        "Euphoria Patches",
+        "FRAGMENT_SHADER"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "target": "clrwl_gbuffers_entities",
+      "patch": "euphoria.patch"
+    },
+    {
+      "target": "clrwl_gbuffers_block",
+      "patch": "euphoria_block.patch"
+    }
+  ],
+  "wrappers": [],
+  "blends": [],
+  "properties": ""
+}

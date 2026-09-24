@@ -7,6 +7,7 @@ import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.api.vertex.MutableVertexList;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.instance.BillboardInstance;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
@@ -42,9 +43,11 @@ public class ExperienceOrbVisual extends AbstractEntityVisual<ExperienceOrb> imp
 
     private final BillboardInstance instance;
     private int currentIcon = -1;
+    private boolean vanilla;
 
     public ExperienceOrbVisual(VisualizationContext ctx, ExperienceOrb entity, float partialTick) {
         super(ctx, entity, partialTick);
+        EntityFeatureCompat.observe(entity.getType());
         instance = instancerProvider().instancer(InstanceTypes.BILLBOARD, MODELS.get(TEXTURE))
                                       .createInstance();
         instance.size(SIZE);
@@ -68,6 +71,14 @@ public class ExperienceOrbVisual extends AbstractEntityVisual<ExperienceOrb> imp
 
     @Override
     public void beginFrame(DynamicVisual.Context context) {
+        if (vanilla) {
+            return;
+        }
+        if (EntityFeatureCompat.vanillaOwns(entity.getType())) {
+            vanilla = true;
+            instance.delete();
+            return;
+        }
         if (!isVisible(context.frustum())) {
             return;
         }
@@ -112,7 +123,9 @@ public class ExperienceOrbVisual extends AbstractEntityVisual<ExperienceOrb> imp
 
     @Override
     protected void _delete() {
-        instance.delete();
+        if (!vanilla) {
+            instance.delete();
+        }
     }
 
     private static final class OrbMesh implements QuadMesh {

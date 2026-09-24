@@ -50,6 +50,9 @@ public class CopperGolemStatueVisual extends AbstractBlockEntityVisual<CopperGol
 
         instances = InstanceTree.create(instancerProvider(),
                 ModelTrees.of(POSE_LAYERS.get(pose), materialFor(oxidation)));
+        // CopperGolemStatueModel.setupAnim.
+        instances.yPos(0.0F);
+        instances.zRot(Mth.PI);
         instances.updateInstancesStatic(createInitialPose());
     }
 

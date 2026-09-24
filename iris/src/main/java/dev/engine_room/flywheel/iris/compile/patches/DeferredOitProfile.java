@@ -19,7 +19,7 @@ public enum DeferredOitProfile {
 
     public static boolean enabled() {
         var caps = GlCompat.CAPABILITIES;
-        return Boolean.getBoolean("crankshaft.iris.oit.deferred") && caps != null
+        return Boolean.parseBoolean(System.getProperty("crankshaft.iris.oit.deferred", "true")) && caps != null
                 && caps.glDispatchCompute != 0 && caps.glDrawElementsIndirect != 0
                 && caps.glCreateBuffers != 0 && caps.glNamedBufferStorage != 0
                 && caps.glCreateTextures != 0 && caps.glCopyImageSubData != 0;
@@ -31,6 +31,18 @@ public enum DeferredOitProfile {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /**
+     * Pass-0 sort for a dimension without composite0 (Sundial's Nether, End): no cloud visibility pass, so every layer
+     * keeps the pixel's colortex5 alpha.
+     */
+    public static String sortCompute() {
+        return resource("layer_sort.comp").replace("_FLW_LAYER_STORAGE", resource("layer_storage.glsl"))
+                                          .replace("_FLW_LAYER_SORT", resource("layer_sort.glsl")
+                                                  .replace("_FLW_VISIBILITY_BODY",
+                                                          "float transparentDensity = texelFetch(colortex5, ivec2(flw_coord), 0).a;")
+                                                  .replace("_FLW_SORT_PIXEL", "gl_GlobalInvocationID.xy"));
     }
 
     public Map<String, String> fragments(ProgramSet programs, Map<ContractProgram, ProgramSource> contracts) {
@@ -59,10 +71,15 @@ public enum DeferredOitProfile {
                 throw new UnsupportedOperationException("Unsupported deferred layer stage " + source.getName());
             }
         }
-        for (int index : new int[]{0, 1, 3, 6}) {
+        for (int index : new int[]{1, 3, 6}) {
             if (composite[index] == null || !composite[index].isValid()) {
                 throw new UnsupportedOperationException("Missing deferred layer program composite" + index);
             }
+        }
+        var computes = programs.getCompute(ProgramArrayId.Composite);
+        if ((composite[0] == null || !composite[0].isValid())
+                && (computes.length == 0 || computes[0][0] == null)) {
+            throw new UnsupportedOperationException("Missing deferred layer sort");
         }
         for (int index : new int[]{0, 1, 2, 6}) {
             ProgramSource source = composite[index];

@@ -1,5 +1,6 @@
 package dev.engine_room.vanillin.config;
 
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.visualization.SimpleEntityVisualizer;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.world.entity.Entity;
@@ -20,6 +21,7 @@ public final class EntityVisualizerBuilder<T extends Entity> {
     private SimpleEntityVisualizer.@Nullable Factory<T> visualFactory;
     @Nullable
     private Predicate<T> skipVanillaRender;
+    private Predicate<T> skipVanillaPrimary = entity -> false;
 
     public EntityVisualizerBuilder(Configurator configurator, EntityType<T> type) {
         this.configurator = configurator;
@@ -49,6 +51,18 @@ public final class EntityVisualizerBuilder<T extends Entity> {
     }
 
     /**
+     * Vanilla keeps rendering the entity; the predicate says when the visual owns only its primary geometry.
+     *
+     * @param skipVanillaPrimary The predicate.
+     * @return {@code this}
+     */
+    public EntityVisualizerBuilder<T> skipVanillaPrimary(Predicate<T> skipVanillaPrimary) {
+        this.skipVanillaRender = entity -> false;
+        this.skipVanillaPrimary = skipVanillaPrimary;
+        return this;
+    }
+
+    /**
      * Sets a predicate to always skip rendering with the vanilla {@link EntityRenderer}.
      *
      * @return {@code this}
@@ -69,7 +83,14 @@ public final class EntityVisualizerBuilder<T extends Entity> {
             skipVanillaRender = entity -> true;
         }
 
-        SimpleEntityVisualizer<T> visualizer = new SimpleEntityVisualizer<>(visualFactory, skipVanillaRender);
+        Predicate<T> skipRender = skipVanillaRender;
+        Predicate<T> skipPrimary = skipVanillaPrimary;
+        if (EntityFeatureCompat.ACTIVE) {
+            // Compat with Entity Texture/Model Features, Polytone: a restyled type stays vanilla.
+            skipRender = skipRender.and(entity -> !EntityFeatureCompat.vanillaOwns(entity.getType()));
+            skipPrimary = skipPrimary.and(entity -> !EntityFeatureCompat.vanillaOwns(entity.getType()));
+        }
+        SimpleEntityVisualizer<T> visualizer = new SimpleEntityVisualizer<>(visualFactory, skipRender, skipPrimary);
         configurator.register(type, visualizer, enabledByDefault);
 
         return visualizer;

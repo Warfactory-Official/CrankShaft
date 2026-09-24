@@ -1,9 +1,11 @@
 package dev.engine_room.vanillin.visuals;
 
 import dev.engine_room.flywheel.api.instance.InstancerProvider;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTrees;
+import dev.engine_room.flywheel.lib.util.ItemFoil;
 import dev.engine_room.vanillin.visuals.LivingEntityVisual.OverlayKind;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.geom.ModelLayerLocation;
@@ -15,6 +17,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.data.AtlasIds;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.DyedItemColor;
 import net.minecraft.world.item.equipment.EquipmentAsset;
@@ -34,6 +37,7 @@ final class InstancedEquipmentLayer {
     private static final String RIGHT_REIN = "right_saddle_line";
     // The camel saddle's reins bone (CamelSaddleModel) is one part with a different name than the equine lines.
     private static final String CAMEL_REIN = "reins";
+    private final EntityType<?> wearer;
     private final InstancerProvider provider;
     private final EquipmentAssetManager assets;
     private final Map<String, Integer> boneIndex;
@@ -57,7 +61,8 @@ final class InstancedEquipmentLayer {
 
     InstancedEquipmentLayer(InstancerProvider provider, EquipmentAssetManager assets,
                             LivingEntityVisual.BodyEquipment equipment, Map<String, Integer> boneIndex,
-                            float[] bodyRest) {
+                            float[] bodyRest, EntityType<?> wearer) {
+        this.wearer = wearer;
         this.provider = provider;
         this.assets = assets;
         this.layer = equipment.modelLayer();
@@ -154,6 +159,7 @@ final class InstancedEquipmentLayer {
             return;
         }
         int dyeColor = DyedItemColor.getOrDefault(source, 0);
+        Identifier itemId = InstancedArmorLayer.itemId(source);
         List<Draw> list = new ArrayList<>(infoLayers.size());
         for (EquipmentClientInfo.Layer infoLayer : infoLayers) {
             int color = colorForLayer(infoLayer, dyeColor);
@@ -161,10 +167,13 @@ final class InstancedEquipmentLayer {
                 continue;
             }
             Identifier texture = infoLayer.getTextureLocation(layerType);
-            addDraw(list, ModelTrees.of(layer, LivingEntityVisual.equipmentMaterial(texture)), color);
+            EntityFeatureCompat.observeTexture(wearer, texture);
+            addDraw(list, InstancedArmorLayer.forItem(
+                    ModelTrees.of(layer, LivingEntityVisual.equipmentMaterial(texture)), itemId), color);
         }
-        if (source.hasFoil() && !list.isEmpty()) {
-            addDraw(list, ModelTrees.of(layer, InstancedArmorLayer.GLINT_ARMOR), -1);
+        if (ItemFoil.of(source) && !list.isEmpty()) {
+            addDraw(list, InstancedArmorLayer.forItem(ModelTrees.of(layer, InstancedArmorLayer.GLINT_ARMOR), itemId),
+                    -1);
         }
         ArmorTrim trim = source.get(DataComponents.TRIM);
         if (trim != null) {
@@ -173,14 +182,14 @@ final class InstancedEquipmentLayer {
                                                  .getAtlasManager()
                                                  .getAtlasOrThrow(AtlasIds.ARMOR_TRIMS)
                                                  .getSprite(spriteId);
-            addDraw(list, ModelTrees.of(layer, sprite, InstancedArmorLayer.TRIM_MATERIAL), -1);
+            addDraw(list, InstancedArmorLayer.forItem(ModelTrees.of(layer, sprite, InstancedArmorLayer.TRIM_MATERIAL),
+                    InstancedArmorLayer.trimId(trim)), -1);
         }
         if (crackTexture != null) {
             Identifier crack = crackTexture.apply(item);
             if (crack != null) {
-                addDraw(list,
-                        ModelTrees.of(layer, LivingEntityVisual.dynamicOverlayMaterial(crack, OverlayKind.TRANSLUCENT)),
-                        -1);
+                addDraw(list, LivingEntityVisual.overlayTree(layer,
+                        LivingEntityVisual.dynamicOverlayMaterial(crack, OverlayKind.TRANSLUCENT)), -1);
             }
         }
         draws = list;

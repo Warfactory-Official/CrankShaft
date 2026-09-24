@@ -7,19 +7,17 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
-
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.backend.BackendDebugFlags;
+import dev.engine_room.flywheel.backend.GpuTimer;
 import dev.engine_room.flywheel.backend.OitConfig;
+import dev.engine_room.flywheel.backend.TerrainMode;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDebug;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
-import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.vk.VkContext;
-import dev.engine_room.flywheel.backend.GpuTimer;
-import dev.engine_room.flywheel.backend.TerrainMode;
 import dev.engine_room.flywheel.impl.compat.SodiumCompat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.commands.CommandSourceStack;
@@ -124,12 +122,14 @@ public final class FlwCommands {
                 .then(Commands.literal("off")
                         .executes(context -> {
                             NeoForgeFlwConfig.INSTANCE.setTerrainMode(TerrainMode.OFF);
+                            reloadRenderers();
                             sendMessage(context.getSource(), Component.literal("terrain: off"));
                             return Command.SINGLE_SUCCESS;
                         }))
                 .then(Commands.literal("translucent")
                         .executes(context -> {
                             NeoForgeFlwConfig.INSTANCE.setTerrainMode(TerrainMode.TRANSLUCENT_OIT);
+                            reloadRenderers();
                             sendMessage(context.getSource(), Component.literal("terrain: translucent"));
                             return Command.SINGLE_SUCCESS;
                         }))
@@ -141,6 +141,7 @@ public final class FlwCommands {
                                 return 0;
                             }
                             NeoForgeFlwConfig.INSTANCE.setTerrainMode(TerrainMode.OPAQUE);
+                            reloadRenderers();
                             sendMessage(context.getSource(), Component.literal("terrain: opaque -- flywheel culls + "
                                     + "draws opaque terrain, Sodium keeps translucent (no terrain OIT; culling A/B mode)"));
                             return Command.SINGLE_SUCCESS;
@@ -153,6 +154,7 @@ public final class FlwCommands {
                                 return 0;
                             }
                             NeoForgeFlwConfig.INSTANCE.setTerrainMode(TerrainMode.FULL);
+                            reloadRenderers();
                             sendMessage(context.getSource(), Component.literal("terrain: full"));
                             return Command.SINGLE_SUCCESS;
                         })));

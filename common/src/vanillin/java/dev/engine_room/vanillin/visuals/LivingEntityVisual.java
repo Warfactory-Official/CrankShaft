@@ -8,25 +8,33 @@ import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.api.material.WriteMask;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
+import dev.engine_room.flywheel.lib.model.Models;
+import dev.engine_room.flywheel.lib.model.PackIdentity;
+import dev.engine_room.flywheel.lib.model.PackTaggedModel;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
+import dev.engine_room.flywheel.lib.model.part.ModelTree;
+import dev.engine_room.flywheel.lib.model.part.ModelTrees;
 import dev.engine_room.flywheel.lib.visual.component.FireComponent;
 import dev.engine_room.flywheel.lib.visual.component.NameTagComponent;
 import dev.engine_room.flywheel.lib.visual.component.ShadowComponent;
+import dev.engine_room.flywheel.lib.visual.util.HeldItemPoses;
+import dev.engine_room.flywheel.lib.visual.util.ItemStackSlot;
 import dev.engine_room.vanillin.item.ItemModels;
 import dev.engine_room.vanillin.item.SpecialItemModels;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.ArmedModel;
 import net.minecraft.client.model.EntityModel;
 import net.minecraft.client.model.HeadedModel;
-import net.minecraft.client.model.effects.SpearAnimations;
 import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.client.model.geom.ModelLayers;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.model.geom.PartPose;
 import net.minecraft.client.model.object.equipment.ElytraModel;
+import net.minecraft.client.renderer.block.model.BlockDisplayContext;
 import net.minecraft.client.renderer.entity.ArmorModelSet;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
 import net.minecraft.client.renderer.entity.layers.CustomHeadLayer;
@@ -46,7 +54,6 @@ import net.minecraft.world.entity.*;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.SwingAnimationType;
 import net.minecraft.world.item.equipment.EquipmentAsset;
 import net.minecraft.world.level.block.AbstractSkullBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -76,6 +83,7 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
     private static final Matrix4fc WINGS_OFFSET = new Matrix4f().translate(0.0F, 0.0F, 0.125F);
     private static final Map<Identifier, Material> TRANSLUCENT_BODY_MATERIALS = new ConcurrentHashMap<>();
     private static final Map<DynamicKey, Material> DYNAMIC_OVERLAY_MATERIALS = new ConcurrentHashMap<>();
+    private static final Map<Material, PackIdentity> IRIS_ROUTES = new ConcurrentHashMap<>();
     private final Config config;
     private final PoseStack handPose = new PoseStack();
     private final boolean heldItemsActive;
@@ -95,8 +103,7 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
     private final boolean bodyEquipmentActive;
     @Nullable
     private final InstancedEquipmentLayer[] bodyEquip;
-    private final EntityModel<LivingEntityRenderState> @Nullable [] equipSelfModels;
-    private final ModelPart @Nullable [] @Nullable [] equipSelfParts;
+    private final EntityModelVisual.Rigs @Nullable [] equipSelfRigs;
     private final boolean overlaysActive;
     @Nullable
     private final Map<String, Integer> boneIndex;
@@ -146,6 +153,13 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
         this.blockDecorationsActive = !config.blockDecorations.isEmpty();
         this.dynamicBlocksActive = !config.dynamicBlocks.isEmpty();
         this.bodyEquipmentActive = !config.bodyEquipment.isEmpty();
+        if (EntityFeatureCompat.ACTIVE) {
+            for (Overlay overlay : config.overlays) {
+                if (overlay.material() != null) {
+                    EntityFeatureCompat.observeTexture(entity.getType(), overlay.material().texture());
+                }
+            }
+        }
         if (config.modelVariants != null && (heldItemsActive || customHeldActive || armorActive || overlaysActive
                 || blockDecorationsActive || dynamicBlocksActive || bodyEquipmentActive)) {
             // The decoration layers pose off a single bone-name map; per-variant bone maps are not wired.
@@ -168,32 +182,25 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
         EquipmentAssetManager assets = (armorActive || bodyEquipmentActive)
                 ? Minecraft.getInstance().getEntityRenderDispatcher().equipmentAssets : null;
         this.armor = armorActive ? new InstancedArmorLayer(instancerProvider(), assets, config.armorSet,
-                config.armorBaby, boneIndex, bodyRest) : null;
+                config.armorBaby, boneIndex, bodyRest, entity.getType()) : null;
         if (bodyEquipmentActive) {
             this.bodyEquip = new InstancedEquipmentLayer[config.bodyEquipment.size()];
-            EntityModel[] selfModels = null;
-            ModelPart[][] selfParts = null;
+            EntityModelVisual.Rigs[] selfRigs = null;
             for (int i = 0; i < bodyEquip.length; i++) {
                 BodyEquipment be = config.bodyEquipment.get(i);
-                bodyEquip[i] = new InstancedEquipmentLayer(instancerProvider(), assets, be, boneIndex, bodyRest);
+                bodyEquip[i] = new InstancedEquipmentLayer(instancerProvider(), assets, be, boneIndex, bodyRest,
+                        entity.getType());
                 if (be.selfAnimated() != null) {
-                    if (selfModels == null) {
-                        selfModels = new EntityModel[bodyEquip.length];
-                        selfParts = new ModelPart[bodyEquip.length][];
+                    if (selfRigs == null) {
+                        selfRigs = new EntityModelVisual.Rigs[bodyEquip.length];
                     }
-                    selfModels[i] = EntityModelVisual.sharedModel(be.modelLayer(), be.selfAnimated());
-                    List<ModelPart> parts = new ArrayList<>();
-                    EntityModelVisual.flattenModel(selfModels[i].root(), "", -1, parts, new ArrayList<>(),
-                            new ArrayList<>());
-                    selfParts[i] = parts.toArray(new ModelPart[0]);
+                    selfRigs[i] = EntityModelVisual.rigs(be.modelLayer(), be.selfAnimated());
                 }
             }
-            this.equipSelfModels = selfModels;
-            this.equipSelfParts = selfParts;
+            this.equipSelfRigs = selfRigs;
         } else {
             this.bodyEquip = null;
-            this.equipSelfModels = null;
-            this.equipSelfParts = null;
+            this.equipSelfRigs = null;
         }
 
         createComponents();
@@ -230,14 +237,37 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
                                     .polygonOffset(true);
             case TRANSLUCENT -> builder.transparency(Transparency.ORDER_INDEPENDENT);
             // EYES pipeline: no cardinal lighting. entityTranslucentEmissive keeps it (per-face).
-            case EMISSIVE -> builder.transparency(Transparency.ADDITIVE)
+            // 26.2: EYES blends TRANSLUCENT (1.21.1 additive).
+            case EMISSIVE -> builder.transparency(Transparency.TRANSLUCENT)
                                     .writeMask(WriteMask.COLOR)
                                     .cardinalLightingMode(CardinalLightingMode.OFF);
             case EMISSIVE_TRANSLUCENT -> builder.transparency(Transparency.ORDER_INDEPENDENT)
                                                 .writeMask(WriteMask.COLOR)
                                                 .cutout(CutoutShaders.ONE_TENTH);
         }
-        return builder.build();
+        Material material = builder.build();
+        switch (kind) {
+            case EMISSIVE, EMISSIVE_TRANSLUCENT -> irisRouted(material, PackIdentity.SPIDER_EYES);
+            case TRANSLUCENT -> irisRouted(material, PackIdentity.ENTITIES_TRANSLUCENT);
+            default -> {
+            }
+        }
+        return material;
+    }
+
+    /**
+     * Under a shaderpack, overlays drawn with {@code material} take {@code route}: the program Iris draws the vanilla
+     * layer through. Register while configuring visualizers.
+     */
+    public static Material irisRouted(Material material, PackIdentity route) {
+        IRIS_ROUTES.put(material, route);
+        return material;
+    }
+
+    static ModelTree overlayTree(ModelLayerLocation layer, Material material) {
+        ModelTree tree = ModelTrees.of(layer, material);
+        PackIdentity route = IRIS_ROUTES.get(material);
+        return route == null ? tree : PackTaggedModel.tag(tree, List.of(route));
     }
 
     static Material dynamicOverlayMaterial(Identifier texture, OverlayKind kind) {
@@ -316,6 +346,7 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
             slot.visible = false;
         }
         hideSpecial(slot);
+        slot.visual.hide();
     }
 
     private static void hideSpecial(HandSlot slot) {
@@ -336,6 +367,7 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
             slot.special.delete();
             slot.special = null;
         }
+        slot.visual.delete();
     }
 
     // Port: inline of protected setupRotations (can't AT-widen without breaking subclass overrides); public so per-mob rotation overrides can reuse it as their base.
@@ -398,7 +430,7 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
         double shadowDistSq = entity.distanceToSqr(ctx.camera().position());
         shadow.radius(config.shadowRadius != null ? config.shadowRadius.radius(entity)
                 : renderer.shadowRadius * entity.getScale() * entity.getAgeScale());
-        shadow.strength((float) (1.0 - shadowDistSq / 256.0));
+        shadow.strength(EntityFeatureCompat.shadowStrength((float) (1.0 - shadowDistSq / 256.0)));
 
         fire.beginFrame(ctx);
         shadow.beginFrame(ctx);
@@ -463,12 +495,12 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
     @Nullable
     protected Object captureExtra(LivingEntityRenderState state, EntityModel<LivingEntityRenderState> model,
                                   Matrix4fc local) {
-        // Held items ride the same render-thread capture: the worker only needs root x handLocal.
+        // Held items ride the same capture: the apply only needs root x handLocal.
         HandItems hands = null;
         if (heldItemsActive) {
             ArmedEntityRenderState as = (ArmedEntityRenderState) state;
-            hands = new HandItems(handMatrix(HumanoidArm.RIGHT, as), as.rightHandItemStack,
-                    handMatrix(HumanoidArm.LEFT, as), as.leftHandItemStack);
+            hands = new HandItems(handMatrix(HumanoidArm.RIGHT, as, model), as.rightHandItemStack,
+                    handMatrix(HumanoidArm.LEFT, as, model), as.leftHandItemStack);
         }
 
         Equipment equipment = null;
@@ -495,6 +527,7 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
                 Overlay o = config.overlays.get(i);
                 overlayColors[i] = o.color() == null ? -1 : o.color().applyAsInt(state);
                 overlayTextures[i] = o.textureResolver() == null ? null : o.textureResolver().apply(state);
+                EntityFeatureCompat.observeTexture(entity.getType(), overlayTextures[i]);
             }
         }
 
@@ -524,12 +557,13 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
                 bodyEquipRidden[i] = be.ridden() == null || be.ridden().test(state);
                 bodyEquipFallback[i] = be.fallbackAsset() != null && (be.fallbackWhen() == null || be.fallbackWhen()
                                                                                                      .test(state));
-                if (equipSelfModels != null && equipSelfModels[i] != null) {
+                if (equipSelfRigs != null && equipSelfRigs[i] != null) {
                     if (bodyEquipSelfPose == null) {
                         bodyEquipSelfPose = new float[bodyEquipItems.length][];
                     }
-                    equipSelfModels[i].setupAnim(state);
-                    bodyEquipSelfPose[i] = posedFloats(equipSelfParts[i]);
+                    EntityModelVisual.Rig rig = equipSelfRigs[i].get();
+                    ((EntityModel<LivingEntityRenderState>) rig.model()).setupAnim(state);
+                    bodyEquipSelfPose[i] = posedFloats(rig.parts());
                 }
             }
         }
@@ -594,29 +628,16 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
         return mask;
     }
 
-    // Render thread: the model-space item transform for one hand, reproducing submitArmWithItem's prologue; null for an empty hand.
+    // The model-space item transform for one hand, reproducing submitArmWithItem's prologue; null for an empty hand.
     @Nullable
-    private Matrix4f handMatrix(HumanoidArm arm, ArmedEntityRenderState as) {
+    private Matrix4f handMatrix(HumanoidArm arm, ArmedEntityRenderState as, EntityModel<?> posed) {
         ItemStack stack = arm == HumanoidArm.RIGHT ? as.rightHandItemStack : as.leftHandItemStack;
         if (stack.isEmpty()) {
             return null;
         }
         PoseStack ps = handPose;
         ps.setIdentity();
-        ((ArmedModel) model(0)).translateToHand(as, arm, ps);
-        ps.mulPose(Axis.XP.rotationDegrees(-90.0F));
-        ps.mulPose(Axis.YP.rotationDegrees(180.0F));
-        boolean babyOffset = as.isBaby && as.entityType != EntityTypes.ARMOR_STAND;
-        float offsetX = (arm == HumanoidArm.LEFT ? -1.0F : 1.0F) * (babyOffset ? 0.0F : 1.0F);
-        ps.translate(offsetX / 16.0F, (babyOffset ? 1.0F : 2.0F) / 16.0F, (babyOffset ? -4.5F : -10.0F) / 16.0F);
-        if (as.attackTime > 0.0F && as.attackArm == arm && as.swingAnimationType == SwingAnimationType.STAB) {
-            SpearAnimations.thirdPersonAttackItem(as, ps);
-        }
-        float ticksUsingItem = as.ticksUsingItem(arm);
-        if (ticksUsingItem != 0.0F) {
-            (arm == HumanoidArm.RIGHT ? as.rightArmPose : as.leftArmPose).animateUseItem(as, ps, ticksUsingItem, arm,
-                    stack);
-        }
+        HeldItemPoses.thirdPersonHand(as, arm, (ArmedModel) posed, stack, ps);
         return new Matrix4f(ps.last().pose());
     }
 
@@ -628,9 +649,9 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
             if (snapshot.heldItemsShown() && snapshot.hands() != null) {
                 HandItems hands = snapshot.hands();
                 applyHand(rightSlot, ItemDisplayContext.THIRD_PERSON_RIGHT_HAND, hands.rightLocal(), hands.rightStack(),
-                        root, light);
+                        entity.getItemHeldByArm(HumanoidArm.RIGHT), root, light);
                 applyHand(leftSlot, ItemDisplayContext.THIRD_PERSON_LEFT_HAND, hands.leftLocal(), hands.leftStack(),
-                        root, light);
+                        entity.getItemHeldByArm(HumanoidArm.LEFT), root, light);
             } else {
                 hideSlot(rightSlot);
                 hideSlot(leftSlot);
@@ -641,7 +662,7 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
             CustomHeldCapture[] caps = snapshot.customHeld();
             for (int i = 0; i < customSlots.length; i++) {
                 CustomHeldItem chi = config.customHeldItems.get(i);
-                applyHand(customSlots[i], chi.context(), caps[i].local(), caps[i].stack(), root, light);
+                applyHand(customSlots[i], chi.context(), caps[i].local(), caps[i].stack(), caps[i].stack(), root, light);
             }
         }
 
@@ -660,7 +681,7 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
                         OverlayTexture.NO_OVERLAY);
             } else {
                 hideWornHead();
-                applyHand(headSlot, ItemDisplayContext.HEAD, head.itemLocal(), head.stack(), root, light);
+                applyHand(headSlot, ItemDisplayContext.HEAD, head.itemLocal(), head.stack(), head.stack(), root, light);
             }
         }
 
@@ -705,12 +726,14 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
         if (dynamicBlocksActive && blockDynamics == null) {
             int[][] bones = new int[config.dynamicBlocks.size()][];
             Matrix4fc[] offsets = new Matrix4fc[config.dynamicBlocks.size()];
+            BlockDisplayContext[] contexts = new BlockDisplayContext[config.dynamicBlocks.size()];
             for (int i = 0; i < bones.length; i++) {
                 DynamicBlock db = config.dynamicBlocks.get(i);
                 bones[i] = resolveBonePath(db.bone(), boneIndex);
                 offsets[i] = db.offset();
+                contexts[i] = db.context();
             }
-            blockDynamics = new InstancedDynamicBlocks(instancerProvider(), bones, offsets);
+            blockDynamics = new InstancedDynamicBlocks(instancerProvider(), bones, offsets, contexts);
         }
 
         int missing = 0;
@@ -726,21 +749,33 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
         }
     }
 
+    // live: the holder's own instance (use properties test identity); stack: the captured copy.
     private void applyHand(HandSlot slot, ItemDisplayContext ctx, @Nullable Matrix4f local, ItemStack stack,
-                           Matrix4f root, int light) {
+                           ItemStack live, Matrix4f root, int light) {
         if (local == null || stack.isEmpty()) {
             hideSlot(slot);
             return;
         }
-        if (!ItemStack.matches(slot.stack, stack)) {
-            slot.instance = ItemModels.rebake(instancerProvider(), slot.instance, stack, ctx, entity, entity.getId());
+        if (slot.visual.draw(visualizationContext, stack, ctx, entity, entity.getId(), new Matrix4f(root).mul(local),
+                light, OverlayTexture.NO_OVERLAY, partialTick)) {
+            if (slot.instance != null && slot.visible) {
+                slot.instance.setVisible(false);
+                slot.visible = false;
+            }
+            hideSpecial(slot);
+            return;
+        }
+        if (!ItemStack.matches(slot.stack, stack) || slot.baked.ownerIdentity() != null
+                && ItemModels.moved(slot.baked, slot.resolution(), live, ctx, entity, entity.getId())) {
+            slot.baked = ItemModels.bake(live, ctx, entity, entity.getId());
+            slot.instance = ItemModels.rebake(instancerProvider(), slot.instance, slot.baked);
             slot.stack = stack;
             slot.visible = slot.instance != null;
         }
         TransformedInstance inst = slot.instance;
         if (inst == null) {
             // Re-resolved per frame like vanilla (also picks up async player-skin loads).
-            slot.specials = SpecialItemModels.resolve(stack, ctx, entity, entity.getId());
+            slot.specials = SpecialItemModels.resolve(live, ctx, entity, entity.getId());
             if (slot.specials.isEmpty()) {
                 hideSpecial(slot);
                 return;
@@ -938,14 +973,16 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
     private record CustomHeldCapture(@Nullable Matrix4f local, ItemStack stack) {
     }
 
-    public record BlockDecoration(Function<LivingEntity, BlockState> state, List<BlockPlacement> placements,
-                                  @Nullable Predicate<LivingEntityRenderState> visible) {
+    // context: the vanilla renderer's BLOCK_DISPLAY_CONTEXT (Models.displayBlock).
+    public record BlockDecoration(BlockDisplayContext context, Function<LivingEntity, BlockState> state,
+                                  List<BlockPlacement> placements, @Nullable Predicate<LivingEntityRenderState> visible) {
     }
 
     public record BlockPlacement(@Nullable String bone, Matrix4fc offset) {
     }
 
-    public record DynamicBlock(Function<LivingEntity, BlockState> state, @Nullable String bone, Matrix4fc offset) {
+    public record DynamicBlock(BlockDisplayContext context, Function<LivingEntity, BlockState> state,
+                               @Nullable String bone, Matrix4fc offset) {
     }
 
     public record BodyEquipment(Function<LivingEntity, ItemStack> item, EquipmentClientInfo.LayerType layerType,
@@ -962,13 +999,23 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
     }
 
     private static final class HandSlot {
+        final ItemStackSlot visual = new ItemStackSlot();
         @Nullable
         TransformedInstance instance;
         ItemStack stack = ItemStack.EMPTY;
+        ItemModels.Baked baked = ItemModels.EMPTY_BAKED;
+        ItemModels.@Nullable Resolution resolution;
         boolean visible;
         List<SpecialItemModels.Resolved> specials = List.of();
         @Nullable
         InstancedSpecialItem special;
+
+        ItemModels.Resolution resolution() {
+            if (resolution == null) {
+                resolution = new ItemModels.Resolution();
+            }
+            return resolution;
+        }
     }
 
     private record HandItems(@Nullable Matrix4f rightLocal, ItemStack rightStack,
@@ -1068,13 +1115,55 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
 
         /**
          * True on frames vanilla must draw this entity whole: babies unless {@link Builder#handlesBaby}, invisible
-         * entities, leashed entities (the rope is part of the leashed entity's render), and the per-mob fallback.
+         * entities, leashed entities (the rope is part of the leashed entity's render), the per-mob fallback, and a
+         * dynamic block drawn by a special renderer.
          * {@code skipVanillaRender} must be its exact complement.
          */
         public boolean vanillaHandles(LivingEntity entity) {
             return (!handlesBaby && entity.isBaby()) || entity.isInvisible()
                     || (entity instanceof Leashable leashable && leashable.getLeashHolder() != null)
-                    || (vanillaFallback != null && vanillaFallback.test(entity));
+                    || (vanillaFallback != null && vanillaFallback.test(entity)) || specialDynamicBlock(entity)
+                    || EntityFeatureCompat.vanillaOwns(entity.getType()) || unrenderableItem(entity);
+        }
+
+        // Vanilla is skipped whole: an item no slot path draws would vanish.
+        private boolean unrenderableItem(LivingEntity entity) {
+            if (heldItems && (!drawable(entity.getItemHeldByArm(HumanoidArm.RIGHT),
+                    ItemDisplayContext.THIRD_PERSON_RIGHT_HAND, entity)
+                    || !drawable(entity.getItemHeldByArm(HumanoidArm.LEFT), ItemDisplayContext.THIRD_PERSON_LEFT_HAND,
+                    entity))) {
+                return true;
+            }
+            for (CustomHeldItem held : customHeldItems) {
+                if (!drawable(held.stack().apply(entity), held.context(), entity)) {
+                    return true;
+                }
+            }
+            if (headTransforms == null) {
+                return false;
+            }
+            ItemStack head = entity.getItemBySlot(EquipmentSlot.HEAD);
+            if (head.getItem() instanceof BlockItem block && block.getBlock() instanceof AbstractSkullBlock skull) {
+                return SpecialItemModels.skullKey(skull.getType(), head.get(DataComponents.PROFILE)) == null;
+            }
+            return !HumanoidArmorLayer.shouldRender(head, EquipmentSlot.HEAD)
+                    && !drawable(head, ItemDisplayContext.HEAD, entity);
+        }
+
+        private static boolean drawable(ItemStack stack, ItemDisplayContext context, LivingEntity owner) {
+            return stack.isEmpty() || ItemStackSlot.isVisualized(stack)
+                    || ItemModels.isSupported(stack, context, owner, owner.getId())
+                    || SpecialItemModels.isSupported(stack, context, owner, owner.getId());
+        }
+
+        private boolean specialDynamicBlock(LivingEntity entity) {
+            for (DynamicBlock block : dynamicBlocks) {
+                BlockState state = block.state().apply(entity);
+                if (state != null && Models.displayBlock(state, block.context()) == null) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         public static final class Builder {
@@ -1223,9 +1312,9 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
                 return this;
             }
 
-            public Builder dynamicBlock(Function<LivingEntity, BlockState> state, @Nullable String bone,
-                                        Matrix4fc offset) {
-                dynamicBlocks.add(new DynamicBlock(state, bone, offset));
+            public Builder dynamicBlock(BlockDisplayContext context, Function<LivingEntity, BlockState> state,
+                                        @Nullable String bone, Matrix4fc offset) {
+                dynamicBlocks.add(new DynamicBlock(context, state, bone, offset));
                 return this;
             }
 
@@ -1409,14 +1498,15 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
                         elytraLayer, ElytraModel::new, WINGS_OFFSET);
             }
 
-            public Builder blockDecoration(Function<LivingEntity, BlockState> state, BlockPlacement... placements) {
-                blockDecorations.add(new BlockDecoration(state, List.of(placements), null));
+            public Builder blockDecoration(BlockDisplayContext context, Function<LivingEntity, BlockState> state,
+                                           BlockPlacement... placements) {
+                blockDecorations.add(new BlockDecoration(context, state, List.of(placements), null));
                 return this;
             }
 
-            public Builder blockDecoration(Predicate<LivingEntityRenderState> visibleWhen,
+            public Builder blockDecoration(Predicate<LivingEntityRenderState> visibleWhen, BlockDisplayContext context,
                                            Function<LivingEntity, BlockState> state, BlockPlacement... placements) {
-                blockDecorations.add(new BlockDecoration(state, List.of(placements), visibleWhen));
+                blockDecorations.add(new BlockDecoration(context, state, List.of(placements), visibleWhen));
                 return this;
             }
 

@@ -42,7 +42,4 @@ void main() {
     #else
     frag = vec4(texel.rgb / texel.a, 1. - total);
     #endif
-
-    // 26.2: ProjMat is vertex-stage-only; fullscreen frag reads reversed-Z device depth from depthRange.b.
-    gl_FragDepth = texelFetch(_flw_depthRange, ivec2(gl_FragCoord.xy), 0).b;
 }

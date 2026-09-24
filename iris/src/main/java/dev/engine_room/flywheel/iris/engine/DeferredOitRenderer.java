@@ -10,14 +10,17 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.impl.BackendManagerImpl;
 import dev.engine_room.flywheel.iris.compile.patches.DeferredOitProfile;
+import dev.engine_room.flywheel.iris.mixin.ShaderStorageBufferAccessor;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.blending.BlendModeOverride;
+import net.irisshaders.iris.gl.buffer.ShaderStorageBuffer;
 import net.irisshaders.iris.gl.program.Program;
 import net.irisshaders.iris.targets.RenderTargets;
 import net.irisshaders.iris.uniforms.custom.CustomUniforms;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.*;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -25,9 +28,22 @@ import java.util.Set;
 
 /**
  * Sundial's depth-layered deferred replay. Render-thread resources are released with the owning CompositeRenderer.
+ * Far layers shade only stencil-masked tiles holding that many layers (dilated past the passes' neighbour reads).
+ * Loop bound, node pool and snapshot targets follow a fenced readback of earlier frames' counters; a frame beyond
+ * them renders natively, as on pool overflow.
  */
 public final class DeferredOitRenderer implements AutoCloseable {
     private static final int FIRST_TEXTURE = 10;
+    private static final int MAX_LAYERS = 64;
+    private static final int READBACK_SLOTS = 3;
+    // Readbacks below the bound's bin before it halves / with the pool over twice its target before it shrinks.
+    private static final int SHRINK_READBACKS = 60;
+    // Readbacks at bound 1 before the snapshot targets are released.
+    private static final int RELEASE_READBACKS = 600;
+    private static final int NODE_BYTES = 32;
+    private static final long MIN_POOL_NODES = 1 << 16;
+    // 8 MiB.
+    private static final long POOL_GRANULE = 1 << 18;
     private static final String VERTEX = DeferredOitProfile.resource("layer_fullscreen.vert");
     private static final String FRAGMENT = DeferredOitProfile.resource("layer_materialize.frag");
 
@@ -39,14 +55,32 @@ public final class DeferredOitRenderer implements AutoCloseable {
     private final int[] farLocations;
     private final int widthLocation;
     private final int layerLocation;
+    private final int maskLayerLocation;
+    private final int boundLocation;
     private final @Nullable Program postProgram;
     private final CustomUniforms customUniforms;
+    private final ShaderStorageBuffer nodes;
     private final int[] saved = new int[7];
+    private final int[] readback = new int[READBACK_SLOTS];
+    private final ByteBuffer[] readbackData = new ByteBuffer[READBACK_SLOTS];
+    private final long[] readbackFence = new long[READBACK_SLOTS];
+    private int readbackSlot;
+    private int layerBound = 1;
+    private int shrinkReadbacks;
+    private int idleReadbacks;
+    private long poolNodes;
+    private int poolShrinks;
     private int program;
     private int copyProgram;
     private int depthProgram;
     private int commandsProgram;
+    private int tilesProgram;
+    private int maskProgram;
     private int commands;
+    private int stencil;
+    private int maskFbo;
+    private int tilesX;
+    private int tilesY;
     private int width;
     private int height;
     private int fbo;
@@ -59,8 +93,10 @@ public final class DeferredOitRenderer implements AutoCloseable {
     private long textureBytes;
 
     private DeferredOitRenderer(RenderTargets targets, DeferredCompositePass first, List<?> passes,
-                                CustomUniforms uniforms) {
+                                CustomUniforms uniforms, ShaderStorageBuffer nodes) {
         this.targets = targets;
+        this.nodes = nodes;
+        poolNodes = GL45C.glGetNamedBufferParameteri64(nodes.getId(), GL15C.GL_BUFFER_SIZE) / NODE_BYTES;
         this.first = first;
         firstProgram = first.flywheel$program();
         readAlt = first.flywheel$readAlt();
@@ -93,26 +129,45 @@ public final class DeferredOitRenderer implements AutoCloseable {
             GL45C.glProgramUniform1i(depthProgram, GL20C.glGetUniformLocation(depthProgram, "color"),
                     FIRST_TEXTURE + 1);
             commandsProgram = compute(DeferredOitProfile.resource("layer_commands.comp"));
+            tilesProgram = compute(DeferredOitProfile.resource("layer_tiles.comp"));
+            maskProgram = compile(VERTEX, DeferredOitProfile.resource("layer_mask.frag"));
             commands = GL45C.glCreateBuffers();
-            GL45C.glNamedBufferStorage(commands, 64L * 20, 0);
+            GL45C.glNamedBufferStorage(commands, MAX_LAYERS * 20L, 0);
+            boundLocation = GL20C.glGetUniformLocation(commandsProgram, "bound");
+            int flags = GL30C.GL_MAP_READ_BIT | GL44C.GL_MAP_PERSISTENT_BIT | GL44C.GL_MAP_COHERENT_BIT;
+            for (int i = 0; i < READBACK_SLOTS; i++) {
+                readback[i] = GL45C.glCreateBuffers();
+                GL45C.glNamedBufferStorage(readback[i], 12, flags);
+                readbackData[i] = GL45C.glMapNamedBufferRange(readback[i], 0, 12, flags);
+            }
             String[] samplers = {"saved0", "saved1", "saved2", "savedDepth", "saved5", "unused", "savedCloud", "backDepth"};
             for (int i = 0; i < samplers.length; i++)
                 GL45C.glProgramUniform1i(program, GL20C.glGetUniformLocation(program, samplers[i]), FIRST_TEXTURE + i);
             widthLocation = GL20C.glGetUniformLocation(program, "width");
             layerLocation = GL20C.glGetUniformLocation(program, "layerIndex");
+            maskLayerLocation = GL20C.glGetUniformLocation(maskProgram, "layerIndex");
         } catch (RuntimeException | Error e) {
             close();
             throw e;
         }
     }
 
-    public static @Nullable DeferredOitRenderer create(RenderTargets targets, List<?> passes, CustomUniforms uniforms) {
+    /**
+     * @param nodes the layer pool (pack binding 1); its GL buffer is replaced as demand changes.
+     */
+    public static @Nullable DeferredOitRenderer create(RenderTargets targets, List<?> passes, CustomUniforms uniforms,
+                                                       ShaderStorageBuffer nodes) {
         for (Object entry : passes) {
             DeferredCompositePass pass = (DeferredCompositePass) entry;
             if (pass.flywheel$name().equals("composite1"))
-                return new DeferredOitRenderer(targets, pass, passes, uniforms);
+                return new DeferredOitRenderer(targets, pass, passes, uniforms, nodes);
         }
         return null;
+    }
+
+    // 4 nodes/pixel.
+    private static long maxPoolNodes(int width, int height) {
+        return 4L * width * height;
     }
 
     private static void bindTexture(int unit, int texture) {
@@ -196,6 +251,16 @@ public final class DeferredOitRenderer implements AutoCloseable {
     }
 
     private void replay() {
+        harvestReadbacks();
+        GL43C.glMemoryBarrier(GL43C.GL_SHADER_STORAGE_BARRIER_BIT | GL43C.GL_BUFFER_UPDATE_BARRIER_BIT);
+        if (readbackFence[readbackSlot] == 0) {
+            GL45C.glCopyNamedBufferSubData(GL30C.glGetIntegeri(GL43C.GL_SHADER_STORAGE_BUFFER_BINDING, 2),
+                    readback[readbackSlot], 0, 0, 12);
+            readbackFence[readbackSlot] = GL32C.glFenceSync(GL32C.GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        }
+        readbackSlot = (readbackSlot + 1) % READBACK_SLOTS;
+        // One layer: replay == the pack's own frame. More than the bound: native, as intended.
+        if (layerBound == 1) return;
         int w = targets.getCurrentWidth();
         int h = targets.getCurrentHeight();
         int depth = ((GlTexture) targets.getDepthTexture()).glId();
@@ -207,7 +272,17 @@ public final class DeferredOitRenderer implements AutoCloseable {
             height = h;
             attachedDepth = depth;
             attachedOpaqueDepth = opaqueDepth;
-            textureBytes = (long) w * h * (44 + depthBytes(depth) + depthBytes(opaqueDepth));
+            textureBytes = (long) w * h * (45 + depthBytes(depth) + depthBytes(opaqueDepth));
+            tilesX = (w + 15) >> 4;
+            tilesY = (h + 15) >> 4;
+            for (int p : new int[]{tilesProgram, maskProgram}) {
+                GL45C.glProgramUniform2i(p, GL20C.glGetUniformLocation(p, "tileCount"), tilesX, tilesY);
+            }
+            stencil = GL45C.glCreateRenderbuffers();
+            GL45C.glNamedRenderbufferStorage(stencil, GL30C.GL_STENCIL_INDEX8, w, h);
+            maskFbo = GL45C.glCreateFramebuffers();
+            GL45C.glNamedFramebufferRenderbuffer(maskFbo, GL30C.GL_STENCIL_ATTACHMENT, GL30C.GL_RENDERBUFFER, stencil);
+            GL45C.glNamedFramebufferDrawBuffer(maskFbo, GL11C.GL_NONE);
             fbo = GL45C.glCreateFramebuffers();
             copyFbo = GL45C.glCreateFramebuffers();
             depthFbo = GL45C.glCreateFramebuffers();
@@ -251,10 +326,16 @@ public final class DeferredOitRenderer implements AutoCloseable {
         boolean copyColor = lastColor5 != color5;
         GL45C.glNamedFramebufferTexture(depthFbo, GL30C.GL_COLOR_ATTACHMENT0, copyColor ? color5 : 0, 0);
         GL45C.glNamedFramebufferDrawBuffer(depthFbo, copyColor ? GL30C.GL_COLOR_ATTACHMENT0 : GL11C.GL_NONE);
+        for (DeferredCompositePass pass : layerPasses) {
+            GL45C.glNamedFramebufferRenderbuffer(pass.flywheel$framebuffer().getId(), GL30C.GL_STENCIL_ATTACHMENT,
+                    GL30C.GL_RENDERBUFFER, stencil);
+        }
         if (resized) {
             requireComplete(fbo);
             requireComplete(copyFbo);
             requireComplete(depthFbo);
+            requireComplete(maskFbo);
+            for (DeferredCompositePass pass : layerPasses) requireComplete(pass.flywheel$framebuffer().getId());
         }
         boolean depthEnabled = GL11C.glIsEnabled(GL11C.GL_DEPTH_TEST);
         boolean depthWrite = GL11C.glGetBoolean(GL11C.GL_DEPTH_WRITEMASK);
@@ -262,20 +343,33 @@ public final class DeferredOitRenderer implements AutoCloseable {
         var indices = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS);
         GlStateManager._glBindBuffer(GL15C.GL_ELEMENT_ARRAY_BUFFER, ((GlBuffer) indices.getBuffer(6)).handle());
         int indexType = GlConst.toGl(indices.type());
-        int previousStorage3 = GL30C.glGetIntegeri(GL43C.GL_SHADER_STORAGE_BUFFER_BINDING, 3);
-        GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 3, commands);
+        int previousStorage4 = GL30C.glGetIntegeri(GL43C.GL_SHADER_STORAGE_BUFFER_BINDING, 4);
+        GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 4, commands);
         GlStateManager._glUseProgram(commandsProgram);
-        GL43C.glMemoryBarrier(GL43C.GL_SHADER_STORAGE_BARRIER_BIT);
+        GL45C.glProgramUniform1ui(commandsProgram, boundLocation, layerBound);
         GL43C.glDispatchCompute(1, 1, 1);
-        GL43C.glMemoryBarrier(GL43C.GL_COMMAND_BARRIER_BIT);
-        GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 3, previousStorage3);
+        GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 4, previousStorage4);
+        GlStateManager._glUseProgram(tilesProgram);
+        GL43C.glDispatchCompute((tilesX + 7) >> 3, (tilesY + 7) >> 3, 1);
+        GL43C.glMemoryBarrier(GL43C.GL_COMMAND_BARRIER_BIT | GL43C.GL_SHADER_STORAGE_BARRIER_BIT);
         GlStateManager._glBindBuffer(GL40C.GL_DRAW_INDIRECT_BUFFER, commands);
+        // Vanilla tracks no stencil state: raw, back to GL defaults after the far layers.
+        GL45C.glClearNamedFramebufferiv(maskFbo, GL11C.GL_STENCIL, 0, new int[]{0});
+        GL11C.glEnable(GL11C.GL_STENCIL_TEST);
         {
-            int layers = 64;
-            for (int layer = layers - 1; layer > 0; --layer) {
+            for (int layer = layerBound - 1; layer > 0; --layer) {
                 prepareLayer(layer, color5, indexType);
                 GlStateManager._disableDepthTest();
                 GlStateManager._depthMask(false);
+                // Tile sets only grow as the layer index falls: no per-layer clear.
+                GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, maskFbo);
+                GL11C.glStencilFunc(GL11C.GL_ALWAYS, 1, 0xFF);
+                GL11C.glStencilOp(GL11C.GL_KEEP, GL11C.GL_KEEP, GL11C.GL_REPLACE);
+                GlStateManager._glUseProgram(maskProgram);
+                GL45C.glProgramUniform1i(maskProgram, maskLayerLocation, layer);
+                draw(indexType, layer);
+                GL11C.glStencilFunc(GL11C.GL_EQUAL, 1, 0xFF);
+                GL11C.glStencilOp(GL11C.GL_KEEP, GL11C.GL_KEEP, GL11C.GL_KEEP);
                 for (int i = 0; i < layerPasses.length; i++) drawPass(i, indexType, layer);
                 bindTexture(0, depth);
                 bindTexture(1, copyColor ? lastColor5 : saved[4]);
@@ -285,6 +379,12 @@ public final class DeferredOitRenderer implements AutoCloseable {
                 GlStateManager._depthMask(true);
                 GlStateManager._glUseProgram(depthProgram);
                 draw(indexType, layer);
+            }
+            GL11C.glDisable(GL11C.GL_STENCIL_TEST);
+            GL11C.glStencilFunc(GL11C.GL_ALWAYS, 0, 0xFF);
+            for (DeferredCompositePass pass : layerPasses) {
+                GL45C.glNamedFramebufferRenderbuffer(pass.flywheel$framebuffer().getId(), GL30C.GL_STENCIL_ATTACHMENT,
+                        GL30C.GL_RENDERBUFFER, 0);
             }
             modifiedBackDepth = true;
             for (int i = 0; i < layerPasses.length; i++) {
@@ -296,6 +396,62 @@ public final class DeferredOitRenderer implements AutoCloseable {
         GlStateManager._depthFunc(depthFunc);
         GlStateManager._depthMask(depthWrite);
         first.setupState();
+    }
+
+    // Oldest first. Bound: pow2 bins 1..64. Pool: demand x1.25 in granules. Both grow at once, shrink after
+    // SHRINK_READBACKS.
+    private void harvestReadbacks() {
+        for (int i = 0; i < READBACK_SLOTS; i++) {
+            int slot = (readbackSlot + i) % READBACK_SLOTS;
+            long fence = readbackFence[slot];
+            if (fence == 0) continue;
+            int status = GL32C.glClientWaitSync(fence, 0, 0);
+            if (status != GL32C.GL_ALREADY_SIGNALED && status != GL32C.GL_CONDITION_SATISFIED) continue;
+            GL32C.glDeleteSync(fence);
+            readbackFence[slot] = 0;
+            ByteBuffer data = readbackData[slot];
+            long demand = Integer.toUnsignedLong(data.getInt(0));
+            long granules = (demand + demand / 4 + POOL_GRANULE - 1) / POOL_GRANULE;
+            long want = Math.min(maxPoolNodes(targets.getCurrentWidth(), targets.getCurrentHeight()),
+                    Math.max(MIN_POOL_NODES, granules * POOL_GRANULE));
+            if (want > poolNodes) {
+                resizePool(want);
+                poolShrinks = 0;
+            } else if (want * 2 > poolNodes) {
+                poolShrinks = 0;
+            } else if (++poolShrinks >= SHRINK_READBACKS) {
+                resizePool(want);
+                poolShrinks = 0;
+            }
+            int layers = Math.max(1, data.getInt(8));
+            int bin = Math.min(MAX_LAYERS, Integer.highestOneBit(layers * 2 - 1));
+            if (bin > layerBound) {
+                layerBound = bin;
+                shrinkReadbacks = 0;
+            } else if (bin < layerBound && ++shrinkReadbacks >= SHRINK_READBACKS) {
+                layerBound >>= 1;
+                shrinkReadbacks = 0;
+            } else if (bin == layerBound) {
+                shrinkReadbacks = 0;
+            }
+            if (layerBound > 1) {
+                idleReadbacks = 0;
+            } else if (++idleReadbacks == RELEASE_READBACKS) {
+                releaseTargets();
+                width = height = 0;
+            }
+        }
+    }
+
+    // Contents are rebuilt every frame: no copy.
+    private void resizePool(long count) {
+        int buffer = GL45C.glCreateBuffers();
+        GL45C.glNamedBufferStorage(buffer, count * NODE_BYTES, 0);
+        int old = nodes.getId();
+        ((ShaderStorageBufferAccessor) nodes).flywheel$setId(buffer);
+        GlStateManager._glDeleteBuffers(old);
+        GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, nodes.getIndex(), buffer);
+        poolNodes = count;
     }
 
     private void drawPass(int index, int indexType, int layer) {
@@ -339,7 +495,6 @@ public final class DeferredOitRenderer implements AutoCloseable {
         GlStateManager._glUseProgram(program);
         GL45C.glProgramUniform1i(program, widthLocation, width);
         GL45C.glProgramUniform1i(program, layerLocation, layer);
-        GL43C.glMemoryBarrier(GL43C.GL_SHADER_STORAGE_BARRIER_BIT);
         draw(indexType, layer);
     }
 
@@ -347,7 +502,7 @@ public final class DeferredOitRenderer implements AutoCloseable {
      * Live renderer-owned allocations, excluding the layer pool owned by Iris. Render thread only.
      */
     public long allocatedBytes() {
-        return textureBytes + (commands == 0 ? 0 : 64L * 20);
+        return textureBytes + (commands == 0 ? 0 : MAX_LAYERS * 20L + READBACK_SLOTS * 4L);
     }
 
     private void copy(int from, int to) {
@@ -361,10 +516,12 @@ public final class DeferredOitRenderer implements AutoCloseable {
         if (savedWeather != 0) GlStateManager._deleteTexture(savedWeather);
         if (copyFbo != 0) GlStateManager._glDeleteFramebuffers(copyFbo);
         if (depthFbo != 0) GlStateManager._glDeleteFramebuffers(depthFbo);
+        if (maskFbo != 0) GlStateManager._glDeleteFramebuffers(maskFbo);
+        if (stencil != 0) GL30C.glDeleteRenderbuffers(stencil);
         Arrays.fill(saved, 0);
         fbo = 0;
         savedWeather = 0;
-        copyFbo = depthFbo = 0;
+        copyFbo = depthFbo = maskFbo = stencil = 0;
         textureBytes = 0;
     }
 
@@ -375,7 +532,15 @@ public final class DeferredOitRenderer implements AutoCloseable {
         if (copyProgram != 0) GlStateManager.glDeleteProgram(copyProgram);
         if (depthProgram != 0) GlStateManager.glDeleteProgram(depthProgram);
         if (commandsProgram != 0) GlStateManager.glDeleteProgram(commandsProgram);
+        if (tilesProgram != 0) GlStateManager.glDeleteProgram(tilesProgram);
+        if (maskProgram != 0) GlStateManager.glDeleteProgram(maskProgram);
         if (commands != 0) GlStateManager._glDeleteBuffers(commands);
-        program = copyProgram = depthProgram = commandsProgram = commands = 0;
+        for (int i = 0; i < READBACK_SLOTS; i++) {
+            if (readbackFence[i] != 0) GL32C.glDeleteSync(readbackFence[i]);
+            if (readback[i] != 0) GlStateManager._glDeleteBuffers(readback[i]);
+            readbackFence[i] = 0;
+            readback[i] = 0;
+        }
+        program = copyProgram = depthProgram = commandsProgram = tilesProgram = maskProgram = commands = 0;
     }
 }

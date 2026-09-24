@@ -93,10 +93,6 @@ public class VisualManagerImpl<T, S extends Storage<T>> implements VisualManager
         return storage.shaderLightVisuals().sections();
     }
 
-    public LongSet geometryLightSections() {
-        return storage.shaderLightVisuals().geometrySections();
-    }
-
     public void invalidate() {
         storage.invalidate();
     }

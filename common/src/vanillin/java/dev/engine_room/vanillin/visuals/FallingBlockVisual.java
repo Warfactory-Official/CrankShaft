@@ -2,6 +2,7 @@ package dev.engine_room.vanillin.visuals;
 
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
 import dev.engine_room.flywheel.lib.model.Models;
@@ -45,7 +46,7 @@ public class FallingBlockVisual extends AbstractEntityVisual<FallingBlockEntity>
         }
         animate(ctx.partialTick());
         shadowComponent.radius(0.5f);
-        shadowComponent.strength((float) (1.0 - entity.distanceToSqr(ctx.camera().position()) / 256.0));
+        shadowComponent.strength(EntityFeatureCompat.shadowStrength((float) (1.0 - entity.distanceToSqr(ctx.camera().position()) / 256.0)));
         shadowComponent.beginFrame(ctx);
     }
 

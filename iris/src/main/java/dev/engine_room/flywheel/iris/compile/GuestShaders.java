@@ -53,9 +53,12 @@ import java.util.regex.Pattern;
 public final class GuestShaders {
     // InternalVertex.VERTEX_FORMAT then GuestVertexExtras.FORMAT element locations; index 3 (overlay) is never read.
     static final String[] ATTRIBUTES = {"_flw_aPosition", "_flw_aColor", "_flw_aTexCoord", "_flw_aOverlay",
-            "_flw_aLight", "_flw_aNormal", "_flw_aIrisEntity", "_flw_aMidTexCoord", "_flw_aTangent", "_flw_aMidBlock"};
+            "_flw_aLight", "_flw_aNormal", "_flw_aIrisEntity", "_flw_aMidTexCoord", "_flw_aTangent", "_flw_aMidBlock",
+            "_flw_aFaceNormal"};
 
     private static final Identifier HEADER = ResourceUtil.rl("iris/guest_header.vert");
+    private static final Identifier VERTEX_LIGHT_HEADER = ResourceUtil.rl("iris/guest_vertex_light_header.vert");
+    private static final Identifier VERTEX_LIGHT = ResourceUtil.rl("iris/guest_vertex_light.vert");
     private static final Identifier INSTANCING = ResourceUtil.rl("iris/guest_instancing.vert");
     private static final Identifier INDIRECT = ResourceUtil.rl("iris/guest_indirect.vert");
     private static final Identifier DRAW_COMMAND = ResourceUtil.rl("internal/indirect/draw_command.glsl");
@@ -77,14 +80,14 @@ public final class GuestShaders {
     // constructors).
     private static final Map<String, String> INPUT_SOURCES = Map.ofEntries(
             Map.entry("iris_Position", "vec4(flw_vertexPos.xyz, 1.0)"),
-            Map.entry("iris_Color", "flw_vertexColor"),
-            Map.entry("iris_Normal", "vec4(flw_vertexNormal, 0.0)"),
+            Map.entry("iris_Color", "_flw_guestColor()"),
+            Map.entry("iris_Normal", "vec4(_flw_guestIrisNormal(), 0.0)"),
             Map.entry("iris_UV0", "vec4(flw_vertexTexCoord, 0.0, 1.0)"),
             Map.entry("iris_UV1", "ivec4(flw_vertexOverlay, 0, 0)"),
-            Map.entry("iris_UV2", "vec4(round(flw_vertexLight * 256.0 - 8.0), 0.0, 1.0)"),
+            Map.entry("iris_UV2", "vec4(round(flw_vertexLight * 256.0), 0.0, 1.0)"),
             Map.entry("iris_Entity", "_flw_guestIrisEntity()"),
             Map.entry("iris_LineWidth", "vec4(1.0)"),
-            Map.entry("mc_Entity", "ivec4(_flw_aIrisEntity, 0, 1)"),
+            Map.entry("mc_Entity", "ivec4(_flw_guestMcEntity(), 0, 1)"),
             Map.entry("mc_midTexCoord", "vec4(_flw_irisMidTexCoord, 0.0, 1.0)"),
             Map.entry("at_tangent", "_flw_guestTangent()"),
             Map.entry("at_midBlock", "_flw_irisMidBlock"));
@@ -169,8 +172,14 @@ public final class GuestShaders {
         lastInterface = null;
         boolean proxy = contract || PROXY_INPUTS.stream()
                                                 .anyMatch(inputs.types()::containsKey);
-        String library = library(body, key.embedded() && !key.indirect(), key.crumbling(), key.indirect(),
-                contract, oit != null, proxy);
+        // A G-buffer keeps one surface of an additive stack, whose content dims each layer for the stack: draw the
+        // hue at peak, as the pack's own beacon cores are.
+        boolean emissive = key.role() == PackRole.ADDITIVE;
+        // Native stages read light and AO from their inputs, as from Sodium terrain; a contract's come from
+        // clrwl_computeFragment.
+        String library = library(body, key, !contract && !key.crumbling() && !emissive
+                        ? source.getParent().getPackDirectives() : null, contract, oit != null, proxy, emissive,
+                emissive && GuestPipelines.deferredEmissive(pipeline));
         String fragment = shiftBufferBindings(patched.get(PatchShaderType.FRAGMENT));
         if (contract) {
             String fragmentLibrary = contractLibrary(key, source.getParent().getPackDirectives(), oit != null);
@@ -246,10 +255,13 @@ public final class GuestShaders {
         return parser.transform(stage);
     }
 
-    private static String library(List<SourceComponent> body, boolean embedded, boolean crumbling,
-                                  boolean indirect, boolean contract, boolean oit, boolean proxy) {
+    private static String library(List<SourceComponent> body, GuestPipelines.ProgramKey key,
+                                  @Nullable PackDirectives vertexLight, boolean contract, boolean oit, boolean proxy,
+                                  boolean emissive, boolean emissivePeak) {
+        boolean crumbling = key.crumbling();
+        boolean indirect = key.indirect();
         Compilation ctx = new Compilation();
-        if (embedded) {
+        if (key.embedded()) {
             ctx.define("FLW_EMBEDDED");
         }
         if (crumbling || indirect) {
@@ -270,8 +282,38 @@ public final class GuestShaders {
         if (proxy) {
             ctx.define("_FLW_GUEST_PROXY_VERTEX");
         }
+        // Emissive draws keep the mesh's light: full-bright costs a forward pack's additive draw its hue. Iris lights
+        // an entities-routed layer from its lightmap.
+        if (emissive || key.role() == PackRole.ENTITIES) {
+            ctx.define("_FLW_GUEST_MESH_LIGHT");
+        }
+        if (emissivePeak) {
+            ctx.define("_FLW_GUEST_EMISSIVE_PEAK");
+        }
+        if (key.role() == PackRole.GLINT && !contract) {
+            ctx.define("_FLW_GUEST_GLINT");
+        }
         List<SourceComponent> roots = new ArrayList<>();
         roots.add(FlwPrograms.SOURCES.get(HEADER));
+        if (vertexLight != null) {
+            ctx.define("_FLW_GUEST_VERTEX_LIGHT");
+            if (vertexLight.shouldUseSeparateAo()) {
+                ctx.define("_FLW_GUEST_SEPARATE_AO");
+            }
+            ctx.define("_FLW_AO_STRENGTH", Float.toString(vertexLight.getAmbientOcclusionLevel()));
+            ctx.define("_FLW_AO_OPTION_ENABLED", "(_flw_renderOrigin.w != 0)");
+            Objects.requireNonNull(key.smoothness())
+                   .appendDefines(ctx);
+            ctx.define("flw_renderOrigin", "_flw_renderOrigin.xyz");
+            if (indirect) {
+                ctx.define("_FLW_LIGHT_LUT_BUFFER_BINDING", String.valueOf(BufferBindings.LIGHT_LUT));
+                ctx.define("_FLW_LIGHT_SECTIONS_BUFFER_BINDING", String.valueOf(BufferBindings.LIGHT_SECTION));
+            }
+            roots.add(FlwPrograms.SOURCES.get(VERTEX_LIGHT_HEADER));
+            roots.add(FlwPrograms.SOURCES.get(indirect ? INDIRECT_LIGHT : INSTANCING_LIGHT));
+            roots.add(FlwPrograms.SOURCES.get(Objects.requireNonNull(key.light())));
+            roots.add(FlwPrograms.SOURCES.get(VERTEX_LIGHT));
+        }
         roots.addAll(body);
         ShaderCache.expand(roots, ctx::appendComponent);
         return ctx.assembledSource();

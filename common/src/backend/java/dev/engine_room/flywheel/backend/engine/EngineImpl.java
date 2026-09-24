@@ -6,7 +6,6 @@ import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.instance.Instancer;
 import dev.engine_room.flywheel.api.instance.InstancerProvider;
-import dev.engine_room.flywheel.api.lighting.GeometryOcclusion;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.api.task.Plan;
 import dev.engine_room.flywheel.api.visualization.VisualEmbedding;
@@ -85,7 +84,6 @@ public class EngineImpl implements Engine {
         FlwBackend.LOGGER.info("Attempting render origin change: {} -> {} (camera drift {} blocks)",
                 oldOrigin, newOrigin, (int) Math.sqrt(distanceSqr));
         renderOrigin = newOrigin;
-        lightStorage.renderOrigin(newOrigin);
         drawManager.onRenderOriginChanged();
         FlwBackend.LOGGER.debug("Render origin snap: {} -> {} (camera drift {} blocks); recreating all visuals",
                 oldOrigin, renderOrigin, Integer.toString((int) Math.sqrt(distanceSqr)));
@@ -98,11 +96,6 @@ public class EngineImpl implements Engine {
     }
 
     @Override
-    public void geometryLightSections(LongSet sections) {
-        lightStorage.geometrySections(sections);
-    }
-
-    @Override
     public void onLightUpdate(long sectionPos, LightLayer layer) {
         lightStorage.onLightUpdate(sectionPos);
     }
@@ -111,7 +104,6 @@ public class EngineImpl implements Engine {
     public void render(RenderContext context) {
         // 26.2: no GlStateTracker save/restore -- Mojang RHI leaves GL caches consistent; raw restore() would desync them.
         try {
-            lightStorage.flushTerrainRequests();
             Uniforms.update(context);
             // Rotate the GL GPU-timer's per-frame query ring here, before the frame's labeled visual GL work
             // (no-op on a Vulkan host, which self-rotates on its submit index).
@@ -240,11 +232,6 @@ public class EngineImpl implements Engine {
         @Override
         public InstancerProvider instancerProvider() {
             return instancerProvider;
-        }
-
-        @Override
-        public GeometryOcclusion geometryOcclusion() {
-            return lightStorage.geometryOcclusion();
         }
 
         @Override

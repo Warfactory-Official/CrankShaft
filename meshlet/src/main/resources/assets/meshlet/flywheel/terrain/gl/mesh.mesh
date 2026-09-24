@@ -40,10 +40,10 @@ taskNV in TerrainTask { TERRAIN_TASK_PAYLOAD_FIELDS } payload;
 // across the NV mesh->frag boundary (scrambles the interpolated UVs while gl_Position stays intact); Nvidium's
 // terrain interpolants deliberately avoid that. Pack both UVs into one vec4 (xy = atlas, zw = lightmap) and start at
 // location 1 (Nvidium terrain/mesh.glsl convention) so the custom block can't alias the builtin per-vertex slot.
-// The per-face/per-section CONSTANTS (alpha-cutoff id, chunk-load fade, the barycentric winding bit) ride
+// The per-section CONSTANTS (chunk-load fade, the barycentric winding bit) ride
 // gl_PrimitiveID -- a per-PRIMITIVE channel the fragment reads with NO extension (perprimitiveNV would need
 // GL_NV_mesh_shader in the fragment profile, which driver 610.62 rejects). Layout: bit0 = winding,
-// bits 2-3 = cutoffId, bits 4-15 = fade quantized to 12 bits (1/4095 steps -- imperceptible for the fade).
+// bits 4-15 = fade quantized to 12 bits (1/4095 steps -- imperceptible for the fade).
 #ifdef MESHLET_BARYCENTRIC
 // Barycentric distant path (Gap C): the fragment re-fetches the 3 vertices itself, so the mesh emits only a flat
 // arena ref (identical for all 4 corners -> any provoking vertex yields it) + the small fog distances -- no
@@ -113,8 +113,6 @@ void main() {
     vec2 sminLocal = vec2(1e30);
     vec2 smaxLocal = vec2(-1e30);
     bool behindLocal = false;
-    // Per-primitive constants carried to the compaction block (draw implies inRange sets them).
-    uint cutoffId = 0u;
     if (inRange) {
         // Per-facing arena re-base: map the sequential visible quad gii to its facing's contiguous arena sub-range
         // (Sodium partitions a section's arena per facing; masked-out facings have zero visible width).
@@ -150,7 +148,6 @@ void main() {
 #else
             v_out[outIdx].uvLight = vec4(decodeVertexUV(vert), decodeLightUV(vert));
             v_out[outIdx].colour = decodeVertexColour(vert).rgb;
-            cutoffId = decodeAlphaCutoffId(vert); // per-face -> both lanes decode the same value
             // worldPos is camera-relative (== terrain_solid.vsh's `pos`): fog distances are pure geometry.
             v_out[outIdx].fog = vec2(length(worldPos), max(length(worldPos.xz), abs(worldPos.y)));
 #endif
@@ -188,10 +185,10 @@ void main() {
     if (draw) {
         // Per-primitive constants packed into gl_PrimitiveID (see the interface comment): winding bit0 (the
         // barycentric fragment picks the 3 corners gl_BaryCoordNV weights against -- compaction scrambles the
-        // implicit id), cutoffId bits 2-3, quantized fade bits 4-15.
+        // implicit id), quantized fade bits 4-15.
         uint fadeBits = uint(round(clamp(payload.chunkVisibility, 0.0, 1.0) * 4095.0));
         gl_MeshPrimitivesNV[compactId].gl_PrimitiveID =
-                int((tri1 ? 1u : 0u) | (cutoffId << 2u) | (fadeBits << 4u));
+                int((tri1 ? 1u : 0u) | (fadeBits << 4u));
         if (!tri1) {
             emitTriangle(compactId, outVertexBase + 0u, outVertexBase + 1u, outVertexBase + 2u);
         } else {

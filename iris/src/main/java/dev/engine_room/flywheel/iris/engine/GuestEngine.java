@@ -118,10 +118,11 @@ public class GuestEngine extends EngineImpl {
             preparedForMainPass = true;
             PackShadowDirectives directives = ((IrisRenderingPipelineAccessor) pipeline).flywheel$shadowDirectives();
             ContractProperties contract = GuestPipelines.contractProperties(pipeline);
-            boolean entities = contract != null ? contract.shadowEnabled() : directives.shouldRenderEntities();
-            boolean blockEntities = contract != null ? contract.shadowEnabled()
-                    : directives.shouldRenderBlockEntities();
-            if (entities || blockEntities) {
+            // Port: Colorwheel gates contract shadows on shadow.enabled alone; the pack's per-kind directives also
+            // apply to entity/BE-tagged draws, as to the vanilla renderers they replace.
+            if (contract == null || contract.shadowEnabled()) {
+                boolean entities = directives.shouldRenderEntities();
+                boolean blockEntities = directives.shouldRenderBlockEntities();
                 Matrix4f modelView = originRelative(shadowModelView, camera);
                 if (guest.drawShadow(pipeline, modelView, renderOrigin(), camera, entities, blockEntities)
                         && directives.shouldRenderTranslucent()) {

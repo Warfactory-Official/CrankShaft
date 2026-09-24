@@ -2,7 +2,7 @@ plugins {
     id("multiloader-base")
     id("java-library")
 
-    id("net.fabricmc.fabric-loom") version ("1.17.20")
+    id("net.fabricmc.fabric-loom") version ("1.18.2")
 }
 
 base {
@@ -57,6 +57,11 @@ sourceSets {
     }
 }
 
+fun nestedJars(notation: String, vararg names: String): Set<File> {
+    val jar = configurations.detachedConfiguration(dependencies.create(notation)).apply { isTransitive = false }
+    return zipTree(jar.singleFile).matching { names.forEach { include("META-INF/jars/$it-*.jar") } }.files
+}
+
 repositories {
     mavenLocal()
     maven("https://maven.caffeinemc.net/releases/")
@@ -67,6 +72,20 @@ dependencies {
 
     compileOnly("net.caffeinemc:sodium-fabric-api:${sodiumVersion}")
     compileOnly("net.caffeinemc:sodium-fabric:${sodiumVersion}")
+    compileOnly("maven.modrinth:voxy:${voxyVersion}")
+    compileOnly("maven.modrinth:entityculling:${entityCullingVersion}") { isTransitive = false }
+    compileOnly("maven.modrinth:lambdynamiclights:${lambDynLightsVersion}") { isTransitive = false }
+    compileOnly("maven.modrinth:entitytexturefeatures:${etfVersion}") { isTransitive = false }
+    compileOnly("maven.modrinth:entity-model-features:${emfVersion}") { isTransitive = false }
+    compileOnly("maven.modrinth:polytone:${polytoneVersion}") { isTransitive = false }
+    compileOnly("maven.modrinth:vitrail-shaders:${vitrailVersion}") { isTransitive = false }
+    // Jar-in-jar'd libraries their APIs expose: Polytone's content managers -> codecui; LambDynamicLights -> its
+    // behavior API, SpruceUI and Yumi supertypes.
+    compileOnly(files(provider { nestedJars("maven.modrinth:polytone:${polytoneVersion}", "codecui") }))
+    compileOnly(files(provider {
+        nestedJars("maven.modrinth:lambdynamiclights:${lambDynLightsVersion}", "lambdynamiclights-api", "spruceui",
+                "yumi-mc-foundation")
+    }))
 
     compileOnly("io.github.llamalad7:mixinextras-common:0.5.4")
     annotationProcessor("io.github.llamalad7:mixinextras-common:0.5.4")

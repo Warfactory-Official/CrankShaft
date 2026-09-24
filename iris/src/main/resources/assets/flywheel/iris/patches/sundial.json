@@ -46,7 +46,7 @@
       "global": true
     }
   ],
-  "properties": "",
+  "properties": "blend.clrwl_gbuffers_additive = ONE ONE ONE ONE\n",
   "deferred": {
     "profile": "SUNDIAL",
     "sources": {
@@ -69,5 +69,17 @@
         "ed6d68e882aeaee647079ff68c1d7e82d843ef80e88556a3ab85c02e44c32dbf"
       ]
     }
-  }
+  },
+  "deferredTranslucent": true,
+  "patches": [
+    "sundial_light.patch",
+    "sundial_contract.patch"
+  ],
+  "programs": [
+    {
+      "target": "clrwl_gbuffers_additive",
+      "fragment": "sundial_light.fsh"
+    }
+  ],
+  "emissiveLight": true
 }

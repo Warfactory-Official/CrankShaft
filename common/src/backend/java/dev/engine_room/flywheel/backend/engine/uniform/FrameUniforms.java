@@ -9,11 +9,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Vec3i;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
+import org.joml.*;
 import org.joml.Math;
-import org.joml.Matrix4f;
-import org.joml.Matrix4fc;
-import org.joml.Vector2f;
-import org.joml.Vector3f;
 import org.lwjgl.system.MemoryUtil;
 
 import java.util.function.IntSupplier;
@@ -139,8 +136,10 @@ public final class FrameUniforms extends UniformWriter {
         ptr = writeCamera(ptr);
 
         var window = Minecraft.getInstance().getWindow();
-        ptr = writeVec2(ptr, window.getWidth(), window.getHeight());
-        ptr = writeFloat(ptr, (float) window.getWidth() / (float) window.getHeight());
+        // Port: viewport = the world target (see writeCullData); line width stays window-based, as vanilla's.
+        var target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        ptr = writeVec2(ptr, target.width, target.height);
+        ptr = writeFloat(ptr, (float) target.width / (float) target.height);
         ptr = writeFloat(ptr, Math.max(2.5F, (float) window.getWidth() / 1920.0F * 2.5F));
         ptr = writeFloat(ptr, getDepthFar());
 
@@ -225,10 +224,11 @@ public final class FrameUniforms extends UniformWriter {
     }
 
     private static long writeCullData(long ptr) {
-        var window = Minecraft.getInstance().getWindow();
+        // Port: the pyramid's target, not the window: a mod may render the world at another scale.
+        var target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
 
-        int viewWidth = window.getWidth();
-        int viewHeight = window.getHeight();
+        int viewWidth = target.width;
+        int viewHeight = target.height;
         int pyramidDepth = DepthPyramid.getImageMipLevels(DepthPyramid.mip0Size(viewWidth),
                 DepthPyramid.mip0Size(viewHeight));
 

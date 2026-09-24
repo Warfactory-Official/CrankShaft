@@ -10,7 +10,11 @@
     "MixinRenderRegionManager",
     "MixinRenderSectionManager",
     "MixinSodiumWorldRenderer",
+    "NvidiumIrisCheckMixin",
     "RenderSectionManagerAccessor",
+    "SodiumOptionAccessor",
+    "SodiumOptionMixin",
+    "SodiumStatefulOptionMixin",
     "SodiumWorldRendererAccessor"
   ],
   "injectors": {

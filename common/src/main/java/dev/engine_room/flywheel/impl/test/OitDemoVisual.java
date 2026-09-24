@@ -7,6 +7,8 @@ import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
 import dev.engine_room.flywheel.lib.model.Models;
+import dev.engine_room.flywheel.lib.model.PackIdentity;
+import dev.engine_room.flywheel.lib.model.PackTaggedModel;
 import dev.engine_room.flywheel.lib.util.OverlayTexture;
 import dev.engine_room.flywheel.lib.visual.AbstractBlockEntityVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
@@ -19,6 +21,7 @@ import net.minecraft.world.phys.AABB;
 import org.joml.Matrix4f;
 import org.jspecify.annotations.Nullable;
 
+import java.util.List;
 import java.util.function.Consumer;
 
 public final class OitDemoVisual extends AbstractBlockEntityVisual<TileEntityOitDemo>
@@ -66,7 +69,9 @@ public final class OitDemoVisual extends AbstractBlockEntityVisual<TileEntityOit
 
     private TransformedInstance createInstance() {
         TransformedInstance i = instancerProvider()
-                .instancer(InstanceTypes.TRANSFORMED, Models.block(renderedState, cullMask))
+                // The glass block it stands in for, under a shaderpack: its ids, and terrain's shadow casting.
+                .instancer(InstanceTypes.TRANSFORMED, new PackTaggedModel(Models.block(renderedState, cullMask),
+                        List.of(PackIdentity.of(renderedState))))
                 .createInstance();
         i.overlay(OverlayTexture.NO_OVERLAY);
         return i;

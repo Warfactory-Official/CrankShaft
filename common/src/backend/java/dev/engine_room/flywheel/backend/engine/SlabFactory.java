@@ -1,7 +1,7 @@
 package dev.engine_room.flywheel.backend.engine;
 
 /**
- * Creates the per-instancer {@link Slab} for a backend. The GL indirect backend passes {@code GlSlab::new}; the
+ * Creates the per-instancer {@link Slab} for a backend. The GL indirect backend passes {@code GlSlabArena::create}; the
  * Vulkan indirect backend passes its VMA-backed slab constructor, so {@link IndirectInstancer} stays backend-neutral.
  */
 @FunctionalInterface

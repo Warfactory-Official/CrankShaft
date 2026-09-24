@@ -4,7 +4,6 @@ import dev.engine_room.flywheel.api.instance.InstancerProvider;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.UvTransformedInstance;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
-import dev.engine_room.flywheel.lib.model.part.ModelTrees;
 import dev.engine_room.vanillin.visuals.LivingEntityVisual.OverlayKind;
 import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.resources.Identifier;
@@ -35,7 +34,8 @@ final class InstancedOverlayLayer {
             Draw draw = new Draw(overlay.layer(), overlay.emissive(), overlay.dynamicKind(), overlay.scrollU(),
                     overlay.scrollV());
             if (overlay.textureResolver() == null) {
-                build(draw, InstanceTree.create(provider, ModelTrees.of(overlay.layer(), overlay.material()),
+                build(draw, InstanceTree.create(provider, LivingEntityVisual.overlayTree(overlay.layer(),
+                                overlay.material()),
                         overlay.scrolls() ? InstanceTypes.UV_TRANSFORMED : InstanceTypes.TRANSFORMED));
             }
             draws[i] = draw;
@@ -135,7 +135,8 @@ final class InstancedOverlayLayer {
             draw.tree.delete();
         }
         build(draw, InstanceTree.create(provider,
-                ModelTrees.of(draw.layer, LivingEntityVisual.dynamicOverlayMaterial(texture, draw.dynamicKind))));
+                LivingEntityVisual.overlayTree(draw.layer,
+                        LivingEntityVisual.dynamicOverlayMaterial(texture, draw.dynamicKind))));
         draw.currentTexture = texture;
     }
 

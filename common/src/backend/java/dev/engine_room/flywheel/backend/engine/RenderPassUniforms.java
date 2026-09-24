@@ -32,7 +32,7 @@ public final class RenderPassUniforms {
     private final DynamicUniformStorage<MaterialUniform> material = new DynamicUniformStorage<>("flywheel:material", 32,
             64);
     private final DynamicUniformStorage<RenderOriginUniform> renderOrigin = new DynamicUniformStorage<>(
-            "flywheel:render_origin", 20, 2);
+            "flywheel:render_origin", DynamicLights.UNIFORM_SIZE, 2);
     // Embedded-environment per-draw UBOs: instancing carries the composed pose/normal directly (mat4 + mat4 =
     // 128 B); indirect carries only the MultiDraw's draw-command start offset (the matrix rides the SSBO).
     private final DynamicUniformStorage<EmbedUniform> embed = new DynamicUniformStorage<>("flywheel:embed", 128, 16);
@@ -56,8 +56,9 @@ public final class RenderPassUniforms {
     private float framePartialTick;
 
     /**
-     * Rotate the rings for a new frame and write this frame's render origin (constant across every pass, so it
-     * is written once here and reused via {@link #renderOriginSlice}). Call once per frame, before any pass.
+     * Rotate the rings for a new frame and write this frame's render origin and dynamic lights (constant across
+     * every pass, so written once here and reused via {@link #renderOriginSlice}). Call once per frame, before any
+     * pass.
      */
     public void beginFrame(Vec3i origin, boolean constantAmbientLight) {
         material.endFrame();
@@ -69,9 +70,9 @@ public final class RenderPassUniforms {
         materialSlices.clear();
         taggedMaterialSlices.values()
                             .forEach(Int2ObjectOpenHashMap::clear);
+        DynamicLights.collect(Minecraft.getInstance().gameRenderer.mainCamera().position());
         renderOriginSlice = renderOrigin.writeUniform(
-                new RenderOriginUniform(origin.getX(), origin.getY(), origin.getZ(),
-                        Minecraft.getInstance().options.ambientOcclusion().get() ? 1 : 0,
+                new RenderOriginUniform(origin, Minecraft.getInstance().options.ambientOcclusion().get() ? 1 : 0,
                         constantAmbientLight ? 1 : 0));
         // Glint animation inputs, constant across the frame (upstream FrameUniforms.writeTime +
         // OptionsUniforms parity: Util.getMillis()/1000 + the glintSpeed accessibility option).
@@ -153,12 +154,17 @@ public final class RenderPassUniforms {
         }
     }
 
-    private record RenderOriginUniform(int x, int y, int z, int ambientOcclusion,
+    private record RenderOriginUniform(Vec3i origin, int ambientOcclusion,
                                        int constantAmbientLight) implements DynamicUniformStorage.DynamicUniform {
         @Override
         public void write(ByteBuffer buf) {
-            buf.putInt(x).putInt(y).putInt(z).putInt(ambientOcclusion); // xyz: origin; w: guest AO option.
-            buf.putInt(constantAmbientLight);            // uint _flw_constantAmbientLight
+            long ptr = MemoryUtil.memAddress(buf);
+            MemoryUtil.memPutInt(ptr, origin.getX());
+            MemoryUtil.memPutInt(ptr + 4, origin.getY());
+            MemoryUtil.memPutInt(ptr + 8, origin.getZ());
+            MemoryUtil.memPutInt(ptr + 12, ambientOcclusion);
+            MemoryUtil.memPutInt(ptr + 16, constantAmbientLight);
+            DynamicLights.write(ptr, origin);
         }
     }
 

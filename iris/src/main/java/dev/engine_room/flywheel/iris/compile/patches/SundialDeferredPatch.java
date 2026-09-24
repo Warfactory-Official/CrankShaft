@@ -67,7 +67,8 @@ final class SundialDeferredPatch {
                 inject(tree, parser, DeferredOitProfile.resource("layer_storage.glsl"),
                         ASTInjectionPoint.BEFORE_DECLARATIONS);
                 statements.add(last, parser.parseStatement(root,
-                        DeferredOitProfile.resource("layer_sort.glsl").replace("_FLW_VISIBILITY_BODY", perLayer)));
+                        DeferredOitProfile.resource("layer_sort.glsl").replace("_FLW_VISIBILITY_BODY", perLayer)
+                                          .replace("_FLW_SORT_PIXEL", "uvec2(gl_FragCoord.xy)")));
             } else {
                 tree.parseAndInjectNodes(parser, ASTInjectionPoint.BEFORE_DECLARATIONS, "uniform int flw_oitFarLayer;");
                 if (index == 1) {
@@ -85,12 +86,11 @@ final class SundialDeferredPatch {
                             }
                             """));
                 } else if (index == 6) {
-                    int first = declaration(statements, "weatherData");
-                    if (first >= 0) {
-                        int last = assignment(statements, "texBuffer5");
-                        if (last <= first) throw unsupported("weather range");
-                        guard(statements, first, last, parser, root);
-                    }
+                    // Front layer only: guest light + weather (weather absent without SHADOW_AND_SKY).
+                    int first = declaration(statements, "_flw_guestLight");
+                    int last = assignment(statements, "texBuffer5");
+                    if (first < 0 || last <= first) throw unsupported("guest light range");
+                    guard(statements, first, last, parser, root);
                 }
             }
         });

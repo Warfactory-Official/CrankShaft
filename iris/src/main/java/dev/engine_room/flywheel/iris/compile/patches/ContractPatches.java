@@ -27,7 +27,10 @@ public final class ContractPatches {
             "CRANKSHAFT_CLRWL_TRANSLUCENT");
     private static final Target SHADOW_TRANSLUCENT = new Target("clrwl_shadow_translucent", "shadow_water",
             "CRANKSHAFT_CLRWL_SHADOW_TRANSLUCENT");
-    private static final List<Target> TARGETS = List.of(ENTITIES, TRANSLUCENT, SHADOW_TRANSLUCENT);
+    private static final Target ADDITIVE = new Target("clrwl_gbuffers_additive", "gbuffers_beaconbeam",
+            "CRANKSHAFT_CLRWL_ADDITIVE");
+    private static final Target BLOCK = new Target("clrwl_gbuffers_block", "gbuffers_block", "CRANKSHAFT_CLRWL_BLOCK");
+    private static final List<Target> TARGETS = List.of(ENTITIES, TRANSLUCENT, SHADOW_TRANSLUCENT, ADDITIVE, BLOCK);
     private static final ThreadLocal<Map<Path, String>> OVERRIDES = new ThreadLocal<>();
 
     private ContractPatches() {
@@ -46,12 +49,18 @@ public final class ContractPatches {
         if (colorwheel == null) colorwheel = "";
         PackPatch recipe = PackPatch.select(root);
         boolean forwardOit = false;
+        boolean deferredEmissive = false;
+        boolean deferredTranslucent = false;
+        boolean emissiveLight = false;
         DeferredOitProfile deferred = null;
         String shadersProperties = null;
         if (recipe != null) {
             String patchedProperties = stageRecipe(root, recipe, present, overrides, added, colorwheel);
             if (patchedProperties != null) {
                 colorwheel = patchedProperties;
+                deferredEmissive = recipe.deferredEmissive();
+                deferredTranslucent = recipe.deferredTranslucent();
+                emissiveLight = recipe.emissiveLight();
                 forwardOit = recipe.forwardOit() != null && recipe.forwardOit().accepts(root, present);
                 if (recipe.forwardOit() != null && !forwardOit) {
                     FlwBackend.LOGGER.info("Shaderpack {} HDR-alpha sources changed; using shared/native eligibility",
@@ -68,13 +77,20 @@ public final class ContractPatches {
                             throw new IllegalStateException("Deferred clear program is occupied");
                         overrides.put(clear.resolved(root), DeferredOitProfile.resource("layer_clear.comp"));
                         added.add(clear);
+                        if (present.contains(dir + "composite.fsh")) continue;
+                        AbsolutePackPath sort = AbsolutePackPath.fromAbsolutePath(dir + "composite.csh");
+                        if (present.contains(sort.getPathString()))
+                            throw new IllegalStateException("Deferred sort program is occupied");
+                        overrides.put(sort.resolved(root), DeferredOitProfile.sortCompute());
+                        added.add(sort);
                     }
                     shadersProperties = read(root, AbsolutePackPath.fromAbsolutePath("/shaders.properties")) + """
 
                             iris.features.optional = SSBO
                             bufferObject.0 = 4 true 1.0 1.0
-                            bufferObject.1 = 128 true 1.0 1.0
+                            bufferObject.1 = 2097152
                             bufferObject.2 = 16
+                            bufferObject.3 = 4 true 0.25 0.25
                             """;
                 }
                 if (recipe.deferred() != null && DeferredOitProfile.enabled() && deferred == null) {
@@ -120,7 +136,7 @@ public final class ContractPatches {
         FlwBackend.LOGGER.info("Shaderpack patch planning: {} sources in {} ms", overrides.size(),
                 (System.nanoTime() - startNs) / 1_000_000.0);
         return new Plan(ImmutableList.<AbsolutePackPath>builder().addAll(starts).addAll(added).build(), colorwheel,
-                forwardOit, deferred, shadersProperties);
+                forwardOit, deferred, deferredEmissive, deferredTranslucent, emissiveLight, shadersProperties);
     }
 
     private static void nativeWrapper(Path root, String dir, String nativeProgram, String virtualProgram, String marker,
@@ -141,17 +157,27 @@ public final class ContractPatches {
             Target target = target(edit.target());
             List<String> dirs = contractDirs(present, target);
             if (dirs.isEmpty()) continue;
-            for (UnifiedPatch.FileEdit change : edit.changes().files()) {
-                AbsolutePackPath path = AbsolutePackPath.fromAbsolutePath("/" + change.path());
-                String source = overrides.get(path.resolved(root));
-                if (source == null) source = read(root, path);
-                String patched = source == null ? null : change.apply(source);
-                if (patched == null) return null;
-                overrides.put(path.resolved(root), patched);
-            }
+            if (!applyDiff(root, edit.changes(), overrides)) return null;
             for (String dir : dirs) {
                 if (!stageWrappers(root, dir, target, overrides, added,
                         (contract, nativeWrapper) -> withDefines(nativeWrapper, List.of(target.define)))) return null;
+            }
+        }
+        for (String diff : recipe.patches()) {
+            if (!applyDiff(root, UnifiedPatch.parse(PackPatch.resource(diff)), overrides)) return null;
+        }
+        for (PackPatch.Program program : recipe.programs()) {
+            Target target = target(program.target());
+            String fragment = PackPatch.resource(program.fragment());
+            for (String dir : contractDirs(present, target)) {
+                String vertex = read(root, AbsolutePackPath.fromAbsolutePath(dir + CONTRACT + ".vsh"));
+                if (vertex == null) return null;
+                AbsolutePackPath vsh = AbsolutePackPath.fromAbsolutePath(dir + target.virtualProgram + ".vsh");
+                AbsolutePackPath fsh = AbsolutePackPath.fromAbsolutePath(dir + target.virtualProgram + ".fsh");
+                overrides.put(vsh.resolved(root), vertex);
+                overrides.put(fsh.resolved(root), fragment);
+                added.add(vsh);
+                added.add(fsh);
             }
         }
         for (PackPatch.Wrapper wrapper : recipe.wrappers()) {
@@ -172,6 +198,18 @@ public final class ContractPatches {
             colorwheel += copied;
         }
         return colorwheel + '\n' + recipe.properties();
+    }
+
+    private static boolean applyDiff(Path root, UnifiedPatch diff, Map<Path, String> overrides) {
+        for (UnifiedPatch.FileEdit change : diff.files()) {
+            AbsolutePackPath path = AbsolutePackPath.fromAbsolutePath("/" + change.path());
+            String source = overrides.get(path.resolved(root));
+            if (source == null) source = read(root, path);
+            String patched = source == null ? null : change.apply(source);
+            if (patched == null) return false;
+            overrides.put(path.resolved(root), patched);
+        }
+        return true;
     }
 
     private static @Nullable String adaptWrapper(PackPatch.Wrapper wrapper, String contract, String nativeWrapper) {
@@ -339,6 +377,7 @@ public final class ContractPatches {
     }
 
     public record Plan(ImmutableList<AbsolutePackPath> starts, String properties, boolean forwardOit,
-                       @Nullable DeferredOitProfile deferred, @Nullable String shadersProperties) {
+                       @Nullable DeferredOitProfile deferred, boolean deferredEmissive,
+                       boolean deferredTranslucent, boolean emissiveLight, @Nullable String shadersProperties) {
     }
 }

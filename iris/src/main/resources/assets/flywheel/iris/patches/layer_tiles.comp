@@ -1,0 +1,15 @@
+#version 430 core
+layout(local_size_x=8, local_size_y=8) in;
+layout(std430, binding=3) buffer Tiles { uint tiles[]; };
+uniform ivec2 tileCount;
+// 16 px tiles; 5 => 80 px >= the layer passes' widest neighbour read (reflection filter, largest preset).
+const int RADIUS = 5;
+void main() {
+    ivec2 tile = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(tile, tileCount))) return;
+    uint layers = 0u;
+    for (int y = max(tile.y - RADIUS, 0); y <= min(tile.y + RADIUS, tileCount.y - 1); ++y)
+        for (int x = max(tile.x - RADIUS, 0); x <= min(tile.x + RADIUS, tileCount.x - 1); ++x)
+            layers = max(layers, tiles[y * tileCount.x + x]);
+    tiles[tileCount.x * tileCount.y + tile.y * tileCount.x + tile.x] = layers;
+}

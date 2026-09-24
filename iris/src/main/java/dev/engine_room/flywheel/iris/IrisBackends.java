@@ -44,7 +44,7 @@ public final class IrisBackends {
      * is what the engine's terrain takeover gates on.
      */
     public static final Backend IRIS_INDIRECT = SimpleBackend.builder()
-                                                             .gpuDriven(GuestTerrainGate.ENABLED)
+                                                             .gpuDriven(GuestTerrainGate::enabled)
                                                              .engineFactory(level -> new GuestEngine(level,
                                                                      new GuestIndirectDrawManager(
                                                                              IndirectPrograms.get())))

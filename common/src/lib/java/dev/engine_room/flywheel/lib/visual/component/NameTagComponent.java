@@ -14,6 +14,8 @@ import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.LightShaders;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.material.SimpleMaterialShaders;
+import dev.engine_room.flywheel.lib.model.PackIdentity;
+import dev.engine_room.flywheel.lib.model.PackTaggedModel;
 import dev.engine_room.flywheel.lib.model.QuadMesh;
 import dev.engine_room.flywheel.lib.model.SingleMeshModel;
 import dev.engine_room.flywheel.lib.util.OverlayTexture;
@@ -48,17 +50,13 @@ public final class NameTagComponent implements EntityComponent {
             ResourceUtil.rl("material/default.vert"), ResourceUtil.rl("material/nametag.frag"));
 
     private static final RendererReloadCache<Identifier, Model> FONT_SEE_THROUGH_MODELS =
-            new RendererReloadCache<>(id -> new SingleMeshModel(GlyphMesh.INSTANCE,
-                    fontMaterial(id, DepthTest.OFF, WriteMask.COLOR, true)));
-    private static final RendererReloadCache<Identifier, Model> FONT_SOLID_MODELS =
-            new RendererReloadCache<>(id -> new SingleMeshModel(GlyphMesh.INSTANCE,
-                    fontMaterial(id, DepthTest.LEQUAL, WriteMask.COLOR_DEPTH, true)));
+            new RendererReloadCache<>(id -> fontModel(fontMaterial(id, DepthTest.OFF, WriteMask.COLOR, true)));
+    private static final RendererReloadCache<Identifier, Model> FONT_SOLID_MODELS = new RendererReloadCache<>(
+            id -> fontModel(fontMaterial(id, DepthTest.LEQUAL, WriteMask.COLOR_DEPTH, true)));
     private static final RendererReloadCache<Identifier, Model> FONT_COLOR_SEE_THROUGH_MODELS =
-            new RendererReloadCache<>(id -> new SingleMeshModel(GlyphMesh.INSTANCE,
-                    fontMaterial(id, DepthTest.OFF, WriteMask.COLOR, false)));
-    private static final RendererReloadCache<Identifier, Model> FONT_COLOR_SOLID_MODELS =
-            new RendererReloadCache<>(id -> new SingleMeshModel(GlyphMesh.INSTANCE,
-                    fontMaterial(id, DepthTest.LEQUAL, WriteMask.COLOR_DEPTH, false)));
+            new RendererReloadCache<>(id -> fontModel(fontMaterial(id, DepthTest.OFF, WriteMask.COLOR, false)));
+    private static final RendererReloadCache<Identifier, Model> FONT_COLOR_SOLID_MODELS = new RendererReloadCache<>(
+            id -> fontModel(fontMaterial(id, DepthTest.LEQUAL, WriteMask.COLOR_DEPTH, false)));
 
     private static final Matrix4f IDENTITY = new Matrix4f();
     // 26.2 submitNameTag's see-through text color is 0x80FFFFFF: half-alpha, not 1.21.1's 0x20.
@@ -108,6 +106,12 @@ public final class NameTagComponent implements EntityComponent {
     private static boolean isGrayscale(GpuTextureView view) {
         return view.texture()
                    .getFormat() == GpuFormat.R8_UNORM;
+    }
+
+    // Compat with Iris: it draws name tags (text and background) through entities_translucent.
+    private static Model fontModel(Material material) {
+        return new PackTaggedModel(new SingleMeshModel(GlyphMesh.INSTANCE, material),
+                List.of(PackIdentity.ENTITIES_TRANSLUCENT));
     }
 
     private static Material fontMaterial(Identifier atlas, DepthTest depthTest, WriteMask writeMask,

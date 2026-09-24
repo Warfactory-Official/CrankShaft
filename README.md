@@ -15,11 +15,10 @@ by, or supported by Flywheel, Colorwheel, or their maintainers. Bugs in CrankSha
 file them here.
 
 Shipped alongside CrankShaft is **Vanillate**, the 26.2 counterpart to Vanillin: instanced rendering for vanilla
-entities and block entities via Flywheel. It is bundled inside the CrankShaft jar and is **off by default** — until you
-opt in, it registers nothing and vanilla renders as usual. Turn it on with `"enabled": true` in `config/vanillin.json`
-(Fabric) or `enabled = true` in
-`config/vanillin-client.toml` (NeoForge). Individual entities and block entities can then be enabled or disabled per
-entry in the same file.
+entities and block entities via Flywheel. It is bundled inside the CrankShaft jar and is **on by default**. Turn it off
+with `"enabled": false` in `config/vanillin.json` (Fabric) or `enabled = false` in `config/vanillin-client.toml`
+(NeoForge); it then registers nothing and vanilla renders as usual. A config written by an earlier CrankShaft keeps its
+`false`. Individual entities and block entities can be enabled or disabled per entry in the same file.
 
 ### Features
 
@@ -65,6 +64,9 @@ OpenGL-only, and the game fails to start on Vulkan without this change.
 
 Rendering features are the same on both APIs; only shaderpack support requires OpenGL.
 
+Mods that replace the world renderer (for example the path tracer Caustica) take over drawing: CrankShaft suspends
+itself while they do, and entities and block entities appear through their vanilla renderers.
+
 ### Iris shaderpacks
 
 With Iris and a shaderpack enabled, CrankShaft switches to its `iris_` backends and renders instances through the
@@ -87,22 +89,28 @@ Tested shaderpacks:
 | Solas                    | V3.7b                    | Yes                 | Yes             | Yes                                                 |
 | BSL                      | v10.1.5                  | No                  | Yes             | Yes                                                 |
 | MakeUp UltraFast         | 9.5e                     | No                  | Yes             | Yes                                                 |
-| Sundial                  | Alpha Build 2026-08-28   | Yes                 | Yes             | Opt-in, `-Dcrankshaft.iris.oit.deferred=true` below |
+| Sundial                  | Alpha Build 2026-08-28   | Yes                 | Yes             | Yes, multi-layer (see below)                        |
 | IterationRP              | Alpha 0.8.28             | Yes                 | Yes             | No (the pack disables it)                           |
-| Bliss                    | v2.1.2 (Chocapic13 edit) | No                  | No              | No                                                  |
-| Sildur's Vibrant Shaders | v2.01 Extreme            | No                  | No              | No                                                  |
-| Photon                   | v1.3b                    | No                  | No              | No                                                  |
+| Bliss                    | v2.1.2 (Chocapic13 edit) | No                  | Yes             | Yes                                                 |
+| Sildur's Vibrant Shaders | v2.01 Extreme            | No                  | Yes             | Yes                                                 |
+| Photon                   | v1.3b                    | No                  | Yes             | Yes                                                 |
 
 Instances drawn through a pack can differ slightly from what the pack's own renderer would produce.
+
+Sundial's multi-layer OIT replays the pack's deferred lighting once per translucent layer. Its GPU cost and memory
+follow the translucency on screen and drop to near zero without it. `-Dcrankshaft.iris.oit.deferred=false` turns it
+off. Under Sildur's underwater fog, translucents seen through water are tinted slightly differently from the pack's
+own sorted rendering.
+
+Under a shaderpack, any [terrain mode](#terrain-modes) but `off` also draws chunk terrain through the pack's own
+terrain programs with GPU culling.
 
 Experimental options, **off by default**, are enabled with Java arguments in your launcher:
 
 | Argument                              | Effect                                                                                                                               |
 |---------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
-| `-Dcrankshaft.iris.terrain=true`      | Draw chunk terrain through the pack's terrain programs with GPU culling. Use with `/flywheel terrain full` (or `opaque`) and Sodium. |
-| `-Dcrankshaft.iris.mesh=true`         | With the argument above: mesh-shader terrain. `flywheel:iris_mesh_shader` is then selected on supported NVIDIA GPUs.                 |
-| `-Dcrankshaft.iris.mesh.direct=true`  | With both arguments above: opaque terrain skips task-shader culling, lowering its overhead.                                          |
-| `-Dcrankshaft.iris.oit.deferred=true` | Multi-layer OIT for Sundial's deferred translucents. Costs significant GPU time and memory.                                          |
+| `-Dcrankshaft.iris.mesh=true`         | With a terrain mode other than `off`: mesh-shader terrain. `flywheel:iris_mesh_shader` is then selected on supported NVIDIA GPUs.    |
+| `-Dcrankshaft.iris.mesh.direct=true`  | With both of the above: opaque terrain skips task-shader culling, lowering its overhead.                                             |
 
 ### Commands
 
@@ -154,11 +162,18 @@ On OpenGL the insert methods run on the GPU-driven backends (`indirect`, `gl_mes
 GPU-driven backends are `indirect`, `gl_mesh_shader`, `vk_indirect` and `vk_mesh_shader`. On other backends or without
 Sodium, `opaque` behaves like `off` and `full` like `translucent`.
 
+With a shaderpack loaded, any mode but `off` additionally hands chunk terrain to the pack's terrain programs, which is
+what lets engine translucents and pack-drawn terrain sort against each other.
+
 ### Configuration
 
 Commands write the same files you can edit by hand: `config/crankshaft.json` on Fabric, `config/flywheel-client.toml`
-on NeoForge. Settings: `backend`, `limitUpdates`, `workerThreads`, `useCommonPool`, and under `flw_backends`:
-`lightSmoothness`, `terrain` and the OIT settings.
+on NeoForge. Settings: `backend`, `limitUpdates`, `workerThreads`, `useCommonPool`, `concurrentExtraction`, and under
+`flw_backends`: `lightSmoothness`, `terrain` and the OIT settings.
+
+`concurrentExtraction` (default on) extracts entity and block entity render states on Flywheel's worker threads, for vanilla's renderers
+and mod renderers implementing `ConcurrentRenderStateExtraction`, with or without a backend. Turn it off if a mod that
+hooks entity rendering misbehaves.
 
 ### Instancing
 
@@ -186,9 +201,9 @@ repositories {
 
 dependencies {
     // NeoForge
-    implementation("dev.engine_room:crankshaft-neoforge:1.4.0+mc26.2")
+    implementation("dev.engine_room:crankshaft-neoforge:1.5.0+mc26.2")
     // Fabric
-    implementation("dev.engine_room:crankshaft-fabric:1.4.0+mc26.2")
+    implementation("dev.engine_room:crankshaft-fabric:1.5.0+mc26.2")
 }
 ```
 
@@ -203,7 +218,7 @@ repositories {
     maven("https://repo.warfactory.co/snapshots")
 }
 
-implementation("dev.engine_room:crankshaft-fabric:1.4.0+mc26.2-SNAPSHOT")
+implementation("dev.engine_room:crankshaft-fabric:1.5.0+mc26.2-SNAPSHOT")
 ```
 
 ### License

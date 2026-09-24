@@ -48,7 +48,9 @@ abstract class CompositeRendererMixin {
                 var resolver = ((IrisRenderingPipelineAccessor) iris).flywheel$resolver();
                 var programs = (ContractProgramSet) ((ProgramFallbackResolverAccessor) resolver).flywheel$programs();
                 if (programs.flywheel$deferredOit() != null) {
-                    flywheel$deferred = DeferredOitRenderer.create(renderTargets, passes, customUniforms);
+                    var holder = ((IrisRenderingPipelineAccessor) iris).flywheel$shaderStorageBuffers();
+                    flywheel$deferred = DeferredOitRenderer.create(renderTargets, passes, customUniforms,
+                            ((ShaderStorageBufferHolderAccessor) holder).flywheel$buffers()[1]);
                 }
             }
         }

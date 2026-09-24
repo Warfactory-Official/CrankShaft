@@ -108,9 +108,6 @@ public final class InstancingPipeline {
                         key.debug() != DebugMode.OFF))
                 .withFragmentShader(fragmentId(key.light(), key.materialShaders(), key.smoothness(), key.cutout(),
                         key.fog(), key.debug(), key.embeddedFragment()));
-        if (RenderPassShaders.readsGeometry(key.light())) {
-            builder.withBindGroupLayout(BindGroupLayout.builder().withSampler("_flw_geometryAtlas").build());
-        }
         if (key.materialShaders().vertexSource().equals(StandardMaterialShaders.LINE.vertexSource()))
             builder.withBindGroupLayout(BindGroupLayout.builder()
                                                        .withUniform("_FlwLineFrameUniforms", UniformType.UNIFORM_BUFFER)

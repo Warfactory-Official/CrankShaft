@@ -70,10 +70,14 @@ public class ThrownItemVisual<T extends Entity & ItemSupplier> extends AbstractE
         pose.translation(x, y, z)
             .scale(scale)
             .rotate(cameraRotation);
+        orient(pose);
         int light = computePackedLight(partialTick);
         instance.setTransform(pose)
                 .light(fullBright ? LightCoordsUtil.pack(15, LightCoordsUtil.sky(light)) : light)
                 .setChanged();
+    }
+
+    protected void orient(Matrix4f pose) {
     }
 
     @Override

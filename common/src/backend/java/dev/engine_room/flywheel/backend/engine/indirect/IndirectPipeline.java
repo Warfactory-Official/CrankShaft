@@ -103,9 +103,6 @@ public final class IndirectPipeline {
                 .withVertexShader(uberVertexId(key.materialShaders(), key.debug() != DebugMode.OFF, key.embedded()))
                 .withFragmentShader(uberFragmentId(key.light(), key.materialShaders(), key.smoothness(), key.debug(),
                         key.embedded()));
-        if (RenderPassShaders.readsGeometry(key.light())) {
-            builder.withBindGroupLayout(BindGroupLayout.builder().withSampler("_flw_geometryAtlas").build());
-        }
         return builder.build();
     }
 

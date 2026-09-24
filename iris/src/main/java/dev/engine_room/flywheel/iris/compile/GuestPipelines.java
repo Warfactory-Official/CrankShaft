@@ -71,9 +71,15 @@ public final class GuestPipelines {
 
     private static final Map<RenderPipeline, Boolean> COMPOSITE_SHADOW = new IdentityHashMap<>();
     private static final RenderPipeline[] COMPOSITES = new RenderPipeline[2];
+    private static final Map<RenderPipeline, Boolean> DEPTH_SHADOW = new IdentityHashMap<>();
+    private static final RenderPipeline[] DEPTHS = new RenderPipeline[2];
     private static final BlendFunction MAX_BLEND = new BlendFunction(BlendFactor.ONE, BlendFactor.ONE, BlendOp.MAX,
             BlendFactor.ONE, BlendFactor.ONE, BlendOp.MAX);
     private static final BlendFunction ADD_BLEND = new BlendFunction(BlendFactor.ONE, BlendFactor.ONE);
+    // RenderPipelines.ENTITY_TRANSLUCENT's; Iris keeps it for entities_translucent.
+    private static final BlendModeOverride ENTITY_TRANSLUCENT_BLEND = new BlendModeOverride(new BlendMode(
+            BlendModeFunction.SRC_ALPHA.getGlId(), BlendModeFunction.ONE_MINUS_SRC_ALPHA.getGlId(),
+            BlendModeFunction.ONE.getGlId(), BlendModeFunction.ONE_MINUS_SRC_ALPHA.getGlId()));
     private static final BlendFunction COMPOSITE_BLEND = new BlendFunction(BlendFactor.SRC_ALPHA,
             BlendFactor.ONE_MINUS_SRC_ALPHA, BlendFactor.ONE, BlendFactor.ONE_MINUS_SRC_ALPHA);
     private static final Map<LinkKey, GuestProgram> PROGRAMS = new HashMap<>();
@@ -86,9 +92,10 @@ public final class GuestPipelines {
     }
 
     public static RenderPipeline instancing(PackRole role, Material material, InstanceType<?> type, boolean embedded) {
-        ProgramKey program = ProgramKey.of(role, false, type, material, embedded, false, 0);
+        PackRole routed = role.forMaterial(material);
+        ProgramKey program = ProgramKey.of(routed, false, type, material, embedded, false, 0);
         return PIPELINES.computeIfAbsent(materialKey(program, material),
-                k -> register(role, InstancingPipeline.stateBuilder(k.transparency(), k.depthTest(), k.depthWrite(),
+                k -> register(routed, InstancingPipeline.stateBuilder(k.transparency(), k.depthTest(), k.depthWrite(),
                         k.colorWrite(), k.cull(), k.polygonOffset(), embedded), k));
     }
 
@@ -97,12 +104,33 @@ public final class GuestPipelines {
      * embedded fragment variant (the vertex branches on the draw's matrix index).
      */
     public static RenderPipeline indirect(PackRole role, Material material, boolean embedded) {
-        ProgramKey program = ProgramKey.of(role, true, null, material, embedded, false, InstanceTypeIds.snapshot()
+        PackRole routed = role.forMaterial(material);
+        ProgramKey program = ProgramKey.of(routed, true, null, material, embedded, false, InstanceTypeIds.snapshot()
                                                                                                        .types()
                                                                                                        .size());
         return PIPELINES.computeIfAbsent(materialKey(program, material),
-                k -> register(role, IndirectPipeline.stateBuilder(k.transparency(), k.depthTest(), k.depthWrite(),
+                k -> register(routed, IndirectPipeline.stateBuilder(k.transparency(), k.depthTest(), k.depthWrite(),
                         k.colorWrite(), k.cull(), k.polygonOffset(), false), k));
+    }
+
+    /**
+     * Depth-only redraw of a colour-only draw through {@code role}'s program, so positions match the colour pass.
+     */
+    public static RenderPipeline instancingDepthFill(PackRole role, Material material, InstanceType<?> type,
+                                                     boolean embedded) {
+        ProgramKey program = ProgramKey.of(role, false, type, material, embedded, false, 0);
+        return PIPELINES.computeIfAbsent(depthFillKey(program, material),
+                k -> register(role, InstancingPipeline.stateBuilder(k.transparency(), k.depthTest(), true, false,
+                        k.cull(), k.polygonOffset(), embedded), k));
+    }
+
+    public static RenderPipeline indirectDepthFill(PackRole role, Material material, boolean embedded) {
+        ProgramKey program = ProgramKey.of(role, true, null, material, embedded, false, InstanceTypeIds.snapshot()
+                                                                                                       .types()
+                                                                                                       .size());
+        return PIPELINES.computeIfAbsent(depthFillKey(program, material),
+                k -> register(role, IndirectPipeline.stateBuilder(k.transparency(), k.depthTest(), true, false,
+                        k.cull(), k.polygonOffset(), false), k));
     }
 
     /**
@@ -140,7 +168,7 @@ public final class GuestPipelines {
                                               .withFragmentShader(GUEST_SHADER)
                                               .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                                               .withDepthStencilState(
-                                                      new DepthStencilState(CompareOp.ALWAYS_PASS, true, 0.0f, 0.0f))
+                                                      new DepthStencilState(CompareOp.ALWAYS_PASS, false, 0.0f, 0.0f))
                                               .withCull(false)
                                               .withColorTargetState(new ColorTargetState(Optional.of(COMPOSITE_BLEND),
                                                       GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_ALL))
@@ -150,12 +178,50 @@ public final class GuestPipelines {
         return COMPOSITES[index];
     }
 
+    /**
+     * {@link #oitComposite}'s depth: nearer-or-equal only, main reversed-Z, shadow forward-Z.
+     */
+    public static RenderPipeline oitDepth(boolean shadow) {
+        int index = shadow ? 1 : 0;
+        if (DEPTHS[index] == null) {
+            DEPTHS[index] = RenderPipeline.builder()
+                                          .withLocation(ResourceUtil.rl(
+                                                  "pipeline/iris/oit_depth" + (shadow ? "_shadow" : "")))
+                                          .withVertexShader(GUEST_SHADER)
+                                          .withFragmentShader(GUEST_SHADER)
+                                          .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                                          .withDepthStencilState(new DepthStencilState(shadow
+                                                  ? CompareOp.LESS_THAN_OR_EQUAL : CompareOp.GREATER_THAN_OR_EQUAL,
+                                                  true, 0.0f, 0.0f))
+                                          .withCull(false)
+                                          .withColorTargetState(new ColorTargetState(Optional.empty(),
+                                                  GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_NONE))
+                                          .build();
+            DEPTH_SHADOW.put(DEPTHS[index], shadow);
+        }
+        return DEPTHS[index];
+    }
+
     private static PipelineKey materialKey(ProgramKey program, Material material) {
         boolean shadow = program.role().shadow;
-        return new PipelineKey(program, material.transparency(), material.depthTest(), shadow || material.writeMask()
-                                                                                                         .depth(),
+        // A G-buffer surface without depth is lit at, and hidden by translucents behind, whatever lies beyond it; a
+        // translucent one is never found by its composite at all.
+        PackRole role = program.role();
+        boolean gbuffer = (role == PackRole.ADDITIVE || role.blockRole() == PackRole.TRANSLUCENT)
+                && Iris.getPipelineManager()
+                       .getPipelineNullable() instanceof IrisRenderingPipeline pipeline
+                && (role == PackRole.ADDITIVE ? deferredEmissive(pipeline) : deferredTranslucent(pipeline));
+        // Vanilla's blended layers routed through entities write depth.
+        return new PipelineKey(program, material.transparency(), material.depthTest(), shadow || gbuffer
+                || role == PackRole.ENTITIES || material.writeMask()
+                                                        .depth(),
                 material.writeMask()
                         .color(), !shadow && material.backfaceCulling(), !shadow && material.polygonOffset());
+    }
+
+    private static PipelineKey depthFillKey(ProgramKey program, Material material) {
+        return new PipelineKey(program, material.transparency(), material.depthTest(), true, false,
+                material.backfaceCulling(), material.polygonOffset());
     }
 
     private static CompareOp forwardZ(DepthTest depthTest) {
@@ -211,11 +277,12 @@ public final class GuestPipelines {
     public static @Nullable GlRenderPipeline compiled(RenderPipeline pipeline) {
         ProgramKey key = PROGRAM_KEYS.get(pipeline);
         Boolean compositeShadow = COMPOSITE_SHADOW.get(pipeline);
+        Boolean depthShadow = DEPTH_SHADOW.get(pipeline);
         // The engine's own terrain pipelines, claimed by identity so no guest-specific pipeline object is needed.
         // Only while a pack is live: these pipelines are also warmed up with no pack, where there is no guest.
-        TerrainPipelines.Kind terrainKind = GuestTerrainGate.ENABLED && Iris.isPackInUseQuick()
+        TerrainPipelines.Kind terrainKind = GuestTerrainGate.enabled() && Iris.isPackInUseQuick()
                 ? TerrainPipelines.terrainKind(pipeline) : null;
-        if (key == null && compositeShadow == null && terrainKind == null) {
+        if (key == null && compositeShadow == null && depthShadow == null && terrainKind == null) {
             return null;
         }
         IrisRenderingPipeline current = currentPipeline();
@@ -226,7 +293,8 @@ public final class GuestPipelines {
         if (compiled == null) {
             GuestProgram program = key != null ? program(current, pipeline, key)
                     : terrainKind != null ? terrain(current, pipeline, terrainKind, mesh)
-                    : composite(current, pipeline, compositeShadow);
+                    : compositeShadow != null ? composite(current, pipeline, compositeShadow)
+                    : compositeDepth(current, pipeline, depthShadow);
             compiled = new GlRenderPipeline(pipeline, program);
             cache.put(pipeline, compiled);
         }
@@ -467,6 +535,30 @@ public final class GuestPipelines {
     }
 
     /**
+     * Whether emissive guests draw before {@code pipeline}'s deferred passes, as opaque G-buffer surfaces.
+     */
+    public static boolean deferredEmissive(IrisRenderingPipeline pipeline) {
+        return ((ContractShaderPack) ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack())
+                .flywheel$deferredEmissive();
+    }
+
+    /**
+     * Whether emissive guests add light into a buffer {@code pipeline}'s composite merges: no depth of their own.
+     */
+    public static boolean emissiveLight(IrisRenderingPipeline pipeline) {
+        return ((ContractShaderPack) ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack())
+                .flywheel$emissiveLight();
+    }
+
+    /**
+     * Whether translucent guests must write depth for {@code pipeline}'s composite to find them.
+     */
+    public static boolean deferredTranslucent(IrisRenderingPipeline pipeline) {
+        return ((ContractShaderPack) ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack())
+                .flywheel$deferredTranslucent();
+    }
+
+    /**
      * {@code colorwheel.properties} of a pack that ships the Colorwheel contract, else {@code null}.
      */
     public static @Nullable ContractProperties contractProperties(IrisRenderingPipeline pipeline) {
@@ -502,9 +594,14 @@ public final class GuestPipelines {
                                         ProgramKey key) {
         IrisRenderingPipelineAccessor accessor = (IrisRenderingPipelineAccessor) pipeline;
         ContractProgramSet contractSet = contractSet(accessor);
-        ProgramSource contract = contractSet.flywheel$contractSource(
-                ContractProgram.of(key.role(), Objects.requireNonNull(key.transparency()),
-                        contractSet::flywheel$hasContract));
+        ContractProgram wanted = ContractProgram.of(key.role(), Objects.requireNonNull(key.transparency()),
+                contractSet::flywheel$hasContract);
+        // Port: an emissive or glint contract the pack lacks resolves natively; Colorwheel's base is the opaque
+        // clrwl_gbuffers.
+        ProgramSource contract = key.role() == PackRole.EYES || key.role() == PackRole.ENTITIES_TRANSLUCENT
+                || key.role() == PackRole.ENTITIES
+                || (key.role() == PackRole.ADDITIVE || key.role() == PackRole.GLINT)
+                && !contractSet.flywheel$hasContract(wanted) ? null : contractSet.flywheel$contractSource(wanted);
         // Colorwheel defines no tessellation contract.
         if (contract != null && (contract.getTessControlSource()
                                          .isPresent() || contract.getTessEvalSource()
@@ -527,12 +624,43 @@ public final class GuestPipelines {
     }
 
     private static ProgramSource nativeSource(IrisRenderingPipelineAccessor accessor, PackRole role) {
+        if (role == PackRole.ADDITIVE) {
+            ProgramSource beam = resolveExactly(accessor, ProgramId.BeaconBeam);
+            if (beam != null && (((ContractShaderPack) accessor.flywheel$pack()).flywheel$deferredEmissive()
+                    || writesColour(beam))) {
+                return beam;
+            }
+            ProgramSource lightning = resolveExactly(accessor, ProgramId.Lightning);
+            if (lightning != null) {
+                return lightning;
+            }
+            if (beam != null) {
+                return beam;
+            }
+        }
         ProgramSource source = accessor.flywheel$resolver()
                                        .resolveNullable(role.programId);
         if (source == null) {
             throw new IllegalStateException("Shaderpack has no program for " + role.programId);
         }
         return source;
+    }
+
+    private static @Nullable ProgramSource resolveExactly(IrisRenderingPipelineAccessor accessor, ProgramId id) {
+        ProgramSource source = accessor.flywheel$resolver()
+                                       .resolveNullable(id);
+        return source != null && source.getName()
+                                       .equals(id.getSourceName()) ? source : null;
+    }
+
+    private static boolean writesColour(ProgramSource source) {
+        for (int buffer : source.getDirectives()
+                                .getDrawBuffers()) {
+            if (buffer == 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static GuestProgram link(IrisRenderingPipeline pipeline, RenderPipeline renderPipeline, ProgramKey key,
@@ -597,7 +725,12 @@ public final class GuestPipelines {
                                            .getBufferBlendOverrides();
             blend = source.getDirectives()
                           .getBlendModeOverride()
-                          .orElse(key.role().programId.getBlendModeOverride());
+                          .orElse(key.role() == PackRole.ENTITIES_TRANSLUCENT ? ENTITY_TRANSLUCENT_BLEND
+                                  : key.role().programId.getBlendModeOverride());
+        }
+        // Blending packed G-buffer words corrupts them.
+        if (blend == null && key.role() == PackRole.ADDITIVE && deferredEmissive(pipeline)) {
+            blend = BlendModeOverride.OFF;
         }
         return new GuestProgram(programId, label, renderPipeline.getBindGroupLayouts(), key.crumbling(), pipeline,
                 shadow, packTarget(accessor, pipeline, drawBuffers, shadow), blend,
@@ -636,6 +769,19 @@ public final class GuestPipelines {
         return new GuestProgram(programId, label, renderPipeline.getBindGroupLayouts(), false, pipeline, shadow,
                 packTarget(accessor, pipeline, drawBuffers, shadow), blend,
                 bufferBlends(properties.bufferBlend(program), drawBuffers), AlphaTests.OFF, textures);
+    }
+
+    private static GuestProgram compositeDepth(IrisRenderingPipeline pipeline, RenderPipeline renderPipeline,
+                                               boolean shadow) {
+        IrisRenderingPipelineAccessor accessor = (IrisRenderingPipelineAccessor) pipeline;
+        ProgramSource source = Objects.requireNonNull(oitSource(accessor, shadow));
+        String label = "flywheel:iris/" + source.getName() + "/oit_depth";
+        int programId = linkProgram(label, new GuestShaders.Stages(GuestOitCodegen.COMPOSITE_VERTEX, null, null, null,
+                GuestOitCodegen.depthFragment(shadow)));
+        GuestOitTargets targets = oitTargets(accessor, shadow);
+        return new GuestProgram(programId, label, renderPipeline.getBindGroupLayouts(), false, pipeline, shadow,
+                packTarget(accessor, pipeline, drawBuffers(source, shadow), shadow), null, List.of(), AlphaTests.OFF,
+                List.of(new GuestProgram.RawTexture("_flw_depthRange", GL11C.GL_TEXTURE_2D, targets::depthRange)));
     }
 
     private static List<GuestProgram.RawTexture> producerTextures(GuestOitTargets targets, OitPass pass) {
@@ -816,10 +962,12 @@ public final class GuestPipelines {
                     transparency, cutout, materialFragment, light, smoothness, pass);
         }
 
-        // Indirect native vertex stages branch on the matrix index at runtime: no embedded variant.
+        // Indirect native vertex stages branch on the matrix index at runtime: an embedded variant only for the light
+        // shader, which runs per vertex (GuestShaders#library).
         ProgramKey forNative() {
-            return new ProgramKey(role, indirect, type, materialVertex, alphaTest, embedded && !indirect, crumbling,
-                    typeGen, null, null, null, null, null, null);
+            boolean vertexLight = !crumbling && role != PackRole.ADDITIVE;
+            return new ProgramKey(role == PackRole.BLOCK_ENTITY ? PackRole.SOLID : role, indirect, type, materialVertex, alphaTest,
+                    embedded && (!indirect || vertexLight), crumbling, typeGen, null, null, null, light, smoothness, null);
         }
 
         // Colorwheel programs serve entities and block entities alike.

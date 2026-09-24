@@ -20,6 +20,10 @@ final class ItemModelProperties {
             Broken.class, ComponentMatches.class, Damaged.class, FishingRodCast.class, HasComponent.class,
             IsUsingItem.class,
             net.minecraft.client.renderer.item.properties.conditional.CustomModelDataProperty.class);
+    // Port: subset read from the holder.
+    static final Set<Class<?>> OWNER_STATE = Set.of(
+            Cooldown.class, CrossbowPull.class, UseCycle.class, UseDuration.class, MainHand.class,
+            FishingRodCast.class, IsUsingItem.class);
 
     private ItemModelProperties() {
     }

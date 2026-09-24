@@ -28,6 +28,8 @@ final class GuestOitComposite {
                                                    OptionalDouble.empty())) {
             pass.setPipeline(GuestPipelines.oitComposite(shadow));
             pass.draw(3, 1, 0, 0);
+            pass.setPipeline(GuestPipelines.oitDepth(shadow));
+            pass.draw(3, 1, 0, 0);
         }
     }
 }

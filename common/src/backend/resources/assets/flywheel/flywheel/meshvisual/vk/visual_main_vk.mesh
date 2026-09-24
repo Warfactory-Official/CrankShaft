@@ -78,6 +78,8 @@ void _flw_emitVertex(uint outV, FlwInstance instance, uint matrixIndex, uint pac
     flw_materialVertex();
 #endif
 
+    flw_vertexLight.x = max(flw_vertexLight.x, _flw_dynamicBlockLight(flw_vertexPos.xyz) / 16.0);
+
     // Clip via Mojang's bob-included ProjMat (26.2: bob is in the projection, not the camera).
     vec4 viewPos = _flw_mvModelView * flw_vertexPos;
     vec2 fogDistances = flw_fogDistances(viewPos.xyz, _flw_mvModelView);

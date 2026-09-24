@@ -138,7 +138,7 @@ void main() {
 
     vec4 lightColor = vec4(1.);
     if (flw_material.useLight) {
-        lightColor = texture(Sampler2, clamp(flw_fragLight, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
+        lightColor = texture(Sampler2, clamp(flw_fragLight + 0.5 / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
         flw_fragColor *= lightColor;
     }
 

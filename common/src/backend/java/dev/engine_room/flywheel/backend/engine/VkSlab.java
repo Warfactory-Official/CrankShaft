@@ -7,9 +7,7 @@ import org.lwjgl.vulkan.VK12;
 /**
  * Vulkan {@link Slab}: a host-visible, persistently-mapped {@link VkBuffer} carved into fixed-size instance pages.
  * The instancer writes instances through {@link #ptrForPage}; the indirect upload copies dirty pages into the object
- * buffer via {@code vkCmdCopyBuffer} (the slab is a transfer source, never bound as a storage buffer). Worker pointer
- * arithmetic is identical to {@link dev.engine_room.flywheel.backend.engine.GlSlab}, so {@code IndirectInstancer} is
- * shared.
+ * buffer via {@code vkCmdCopyBuffer} (the slab is a transfer source, never bound as a storage buffer).
  */
 public final class VkSlab implements Slab {
     // Copy source for the per-page slab->object copy; the slab itself is never read by shaders.

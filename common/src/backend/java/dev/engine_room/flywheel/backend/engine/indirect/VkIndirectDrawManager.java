@@ -19,7 +19,6 @@ import dev.engine_room.flywheel.backend.BackendDebugFlags;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
-import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
@@ -50,7 +49,6 @@ import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VK10;
-import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkBufferCopy;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
@@ -429,7 +427,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        depthPyramid.resize(mc.getWindow().getWidth(), mc.getWindow().getHeight());
+        depthPyramid.resize(mc.gameRenderer.mainRenderTarget().width, mc.gameRenderer.mainRenderTarget().height);
         cullPyramidView = depthPyramid.sampledView();
 
         GpuTextureView depthTexView = mc.gameRenderer.mainRenderTarget().getDepthTextureView();
@@ -465,8 +463,8 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         if (colorView == null || depthView == null) {
             return;
         }
-        int width = mc.getWindow().getWidth();
-        int height = mc.getWindow().getHeight();
+        int width = target.width;
+        int height = target.height;
 
         TextureManager textureManager = mc.getTextureManager();
         long overlayView = VkContext.imageView(mc.gameRenderer.overlayTexture().getTextureView());
@@ -524,23 +522,11 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             }
             pending.clear();
         }
-        var update = light.pollLutUpdates();
-        if (update != null) {
-            if (update.fullWords() != null) {
-                cachedLut = update.fullWords();
-                for (FrameSet frame : frames) {
-                    frame.lutPending.clear();
-                    frame.lutPending.set(0, cachedLut.size());
-                }
-            } else {
-                assert cachedLut != null && cachedLut.size() == update.totalWords();
-                for (int span = 0; span < update.count(); span++) {
-                    int offset = update.offset(span);
-                    int source = update.source(span);
-                    int length = update.length(span);
-                    for (int i = 0; i < length; i++) cachedLut.set(offset + i, update.word(source + i));
-                    for (FrameSet frame : frames) frame.lutPending.set(offset, offset + length);
-                }
+        if (light.checkNeedsLutRebuildAndClear()) {
+            cachedLut = light.createLut();
+            for (FrameSet frame : frames) {
+                frame.lutPending.clear();
+                frame.lutPending.set(0, cachedLut.size());
             }
         }
         if (!fs.lutPending.isEmpty()) {
@@ -558,13 +544,6 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             fs.lutPending.clear();
         }
         lightReady = true;
-    }
-
-    void writeGeometryAtlas(Material material) {
-        if (RenderPassShaders.readsGeometry(material.light())) {
-            writer.sampler(GeometryAtlas.VK_BINDING, VkContext.imageView(GeometryAtlas.view()),
-                    VkContext.sampler(GeometryAtlas.sampler()));
-        }
     }
 
     void writeAtlasTrio(TextureManager textureManager, Identifier texture, long atlasSampler,
@@ -629,9 +608,8 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             }
             writeUberCommon(fs, fs.indexTable, fs.draw, multiDraw.start());
             writeLineFrame(fs, material);
-            writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms());
+            writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms()).uniform(22, f.renderOriginSlice());
             if (needsColor) {
-                writeGeometryAtlas(material);
                 if (!bindless) {
                     writeAtlasTrio(f.textureManager(), material.texture(),
                             VkContext.sampler(MaterialSamplers.get(material)),
@@ -677,7 +655,6 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                         VkContext.sampler(MaterialSamplers.get(material)),
                         f.overlayView(), f.overlaySampler(), f.lightmapView());
             }
-            writeGeometryAtlas(material);
             writeLightFog(fs, f.fog(), f.lights(), f.globals(), f.renderOriginSlice());
             mlab.bind(writer);
             writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
@@ -721,7 +698,6 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                 writeAtlasTrio(textureManager, material.texture(), VkContext.sampler(MaterialSamplers.get(material)),
                         overlayView, overlaySampler, lightmapView);
             }
-            writeGeometryAtlas(material);
             writeUberCommon(fs, indexTable, drawBuffer, multiDraw.start());
             writeLineFrame(fs, material);
             writer.uniform(16, projection).uniform(17, dynamicTransforms);
@@ -782,8 +758,8 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         long lightmapView = VkContext.imageView(mc.gameRenderer.lightmap());
         long vertexVk = VkContext.buffer(vertexBuffer);
         long indexVk = VkContext.buffer(indexBuffer);
-        int width = mc.getWindow().getWidth();
-        int height = mc.getWindow().getHeight();
+        int width = mc.gameRenderer.mainRenderTarget().width;
+        int height = mc.gameRenderer.mainRenderTarget().height;
 
         SimpleMaterial.Builder crumblingMaterial = SimpleMaterial.builder();
 

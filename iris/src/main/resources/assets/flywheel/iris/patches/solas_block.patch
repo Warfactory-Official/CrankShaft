@@ -1,0 +1,22 @@
+diff --git a/programs/gbuffers_block.glsl b/programs/gbuffers_block.glsl
+--- a/programs/gbuffers_block.glsl
++++ b/programs/gbuffers_block.glsl
+@@ -157,5 +157,18 @@
+ void main() {
++#ifdef CRANKSHAFT_CLRWL_BLOCK
++    float clrwlAo;
++    vec2 clrwlLight;
++    vec4 clrwlOverlay;
++    vec4 albedo;
++    clrwl_computeFragment(texture2D(gtexture, texCoord), albedo, clrwlLight, clrwlAo, clrwlOverlay);
++    albedo.rgb = fmix(albedo.rgb, clrwlOverlay.rgb, clrwlOverlay.a);
++#else
+     vec4 albedo = texture2D(gtexture, texCoord) * color;
++#endif
+ 
++#ifdef CRANKSHAFT_CLRWL_BLOCK
++    vec2 lightmap = clamp((clrwlLight - 0.03125) * 1.06667, vec2(0.0), vec2(0.9333, 1.0));
++#else
+     vec2 lightmap = clamp(lmCoord, vec2(0.0), vec2(1.0));
++#endif
+     vec3 newNormal = normal;

@@ -4,36 +4,26 @@
 // Derivative work of Nvidium me.cortex.nvidium.renderers.PrimaryTerrainRasterizer.
 package me.mlbv.meshlet.mesh.gl;
 
-import java.nio.ByteBuffer;
-import java.util.Optional;
-import java.util.OptionalDouble;
-
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.opengl.GlSampler;
 import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.blaze3d.pipeline.ColorTargetState;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTextureView;
-
-import com.mojang.blaze3d.opengl.GlSampler;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher;
+import dev.engine_room.flywheel.backend.gl.GlStateTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
-import dev.engine_room.flywheel.backend.gl.GlStateTracker;
-import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL11C;
-import org.lwjgl.opengl.GL13C;
-import org.lwjgl.opengl.GL15C;
-import org.lwjgl.opengl.GL30C;
-import org.lwjgl.opengl.GL31C;
-import org.lwjgl.opengl.GL33C;
-import org.lwjgl.opengl.GL42C;
-import org.lwjgl.opengl.GL43C;
-import org.lwjgl.opengl.NVMeshShader;
-import org.lwjgl.opengl.NVVertexBufferUnifiedMemory;
+import org.lwjgl.opengl.*;
 import org.lwjgl.system.MemoryUtil;
+
+import java.nio.ByteBuffer;
+import java.util.Optional;
+import java.util.OptionalDouble;
 
 // Opaque glMultiDrawMeshTasksIndirectNV draw, registered via TerrainDrawDispatcher.setMeshDrawStrategy. CrankShaft's cull/HiZ/section-test compute tail has ALREADY run and bound the resident SSBOs at their fixed bindings (0-6, 11), the HiZ UBO (8), and the depth pyramid at T10. Single multidraw (Nvidium's scheme): the emit-half encodes firstTask = slot&lt;&lt;8 per region so the task recovers its region as gl_WorkGroupID.x&gt;&gt;8 and its in-region index as &amp;0xFF -- no per-region GL state change. Reversed-Z: the HiZ pyramid (T10) is MIN-reduced and the cull uses reversed-Z; depth state is owned by the host render pass.
 public final class GlPrimaryTerrainRasterizer {
@@ -113,7 +103,9 @@ public final class GlPrimaryTerrainRasterizer {
         }
     }
 
+    // An earlier pass may leave a partial color mask.
     private static void setupOpaqueState() {
+        GlStateManager._colorMask(ColorTargetState.WRITE_ALL);
         GlStateManager._disableBlend(0);
         GlStateManager._enableDepthTest();
         GlStateManager._depthFunc(GL11C.GL_GEQUAL);

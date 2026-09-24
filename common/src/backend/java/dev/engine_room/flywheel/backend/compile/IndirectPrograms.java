@@ -28,18 +28,15 @@ public class IndirectPrograms extends AtomicReferenceCounted {
     private static final Identifier DOWNSAMPLE_FIRST = ResourceUtil.rl("internal/indirect/downsample_first.glsl");
     private static final Identifier DOWNSAMPLE_SECOND = ResourceUtil.rl("internal/indirect/downsample_second.glsl");
     private static final Identifier TERRAIN_REGION_TEST = ResourceUtil.rl("internal/indirect/terrain_region_test.comp");
-    private static final Identifier TERRAIN_SECTION_TEST = ResourceUtil.rl(
-            "internal/indirect/terrain_section_test.comp");
-    private static final Identifier TERRAIN_COMMAND_BUILDER = ResourceUtil.rl(
-            "internal/indirect/terrain_command_builder.comp");
+    private static final Identifier TERRAIN_CULL = ResourceUtil.rl("internal/indirect/terrain_cull.comp");
     private static final Identifier TERRAIN_TRANSLUCENT_CULL_BUILD = ResourceUtil.rl(
             "internal/indirect/terrain_translucent_cull_build.comp");
 
     // The terrain HiZ-cull comps deref NV-bindless device pointers from the scene UBO on GL; VK compiles the same
     // bodies with descriptor SSBOs and no NV extensions. The GL-only extensions are declared here: a conditional
     // #extension can't ride a body.
-    private static final Set<Identifier> NV_BINDLESS_UTILS = Set.of(TERRAIN_REGION_TEST, TERRAIN_SECTION_TEST,
-            TERRAIN_COMMAND_BUILDER, TERRAIN_TRANSLUCENT_CULL_BUILD);
+    private static final Set<Identifier> NV_BINDLESS_UTILS = Set.of(TERRAIN_REGION_TEST, TERRAIN_CULL,
+            TERRAIN_TRANSLUCENT_CULL_BUILD);
 
     private static final Compile<InstanceTypeIds.Snapshot> CULL = new Compile<>();
     private static final Compile<Identifier> UTIL = new Compile<>();
@@ -52,13 +49,16 @@ public class IndirectPrograms extends AtomicReferenceCounted {
 
     private final CompilationHarness<InstanceTypeIds.Snapshot> culling;
     private final CompilationHarness<InstanceTypeIds.Snapshot> cullingPass2;
+    private final CompilationHarness<InstanceTypeIds.Snapshot> cullingFrustum;
     private final CompilationHarness<Identifier> utils;
 
     private IndirectPrograms(CompilationHarness<InstanceTypeIds.Snapshot> culling,
                              CompilationHarness<InstanceTypeIds.Snapshot> cullingPass2,
+                             CompilationHarness<InstanceTypeIds.Snapshot> cullingFrustum,
                              CompilationHarness<Identifier> utils) {
         this.culling = culling;
         this.cullingPass2 = cullingPass2;
+        this.cullingFrustum = cullingFrustum;
         this.utils = utils;
     }
 
@@ -99,11 +99,13 @@ public class IndirectPrograms extends AtomicReferenceCounted {
         }
 
         try {
-            var cullingCompiler = createCullingCompiler(sources, false);
-            var cullingPass2Compiler = createCullingCompiler(sources, true);
+            var cullingCompiler = createCullingCompiler(sources, "_FLW_CULL_VIS_OUT", "");
+            var cullingPass2Compiler = createCullingCompiler(sources, "_FLW_CULL_PASS2", "_pass2");
+            var cullingFrustumCompiler = createCullingCompiler(sources, "_FLW_CULL_FRUSTUM_ONLY", "_frustum");
             var utilCompiler = createUtilCompiler(sources);
 
-            IndirectPrograms newInstance = new IndirectPrograms(cullingCompiler, cullingPass2Compiler, utilCompiler);
+            IndirectPrograms newInstance = new IndirectPrograms(cullingCompiler, cullingPass2Compiler,
+                    cullingFrustumCompiler, utilCompiler);
 
             setInstance(newInstance);
             FlwBackend.LOGGER.info("[indirect] reload complete: allLoaded={} | IndirectPrograms.CL={} id={}",
@@ -116,14 +118,14 @@ public class IndirectPrograms extends AtomicReferenceCounted {
     }
 
     private static CompilationHarness<InstanceTypeIds.Snapshot> createCullingCompiler(ShaderSources sources,
-                                                                                      boolean pass2) {
+                                                                                      String variant, String suffix) {
         return CULL.program()
                    .link(CULL.shader(GlCompat.MAX_GLSL_VERSION, ShaderType.COMPUTE)
-                             .nameMapper(snapshot -> "culling/uber" + snapshot.types().size() + (pass2 ? "_pass2" : ""))
+                             .nameMapper(snapshot -> "culling/uber" + snapshot.types().size() + suffix)
                              .requireExtensions(COMPUTE_EXTENSIONS)
                              .define("_FLW_SUBGROUP_SIZE", GlCompat.SUBGROUP_SIZE)
                              .onCompile(($, ctx) -> {
-                                 ctx.define(pass2 ? "_FLW_CULL_PASS2" : "_FLW_CULL_VIS_OUT");
+                                 ctx.define(variant);
                                  if (GlCompat.CAPABILITIES.GL_KHR_shader_subgroup) {
                                      ctx.define("_FLW_HAS_SUBGROUP");
                                      ctx.requireExtension("GL_KHR_shader_subgroup_basic");
@@ -134,7 +136,7 @@ public class IndirectPrograms extends AtomicReferenceCounted {
                              .with((snapshot, loader) -> new UberCullComponent(snapshot.types(), loader))
                              .withResource(CULL_SHADER_MAIN))
                    .postLink((key, program) -> Uniforms.setUniformBlockBindings(program))
-                   .harness(pass2 ? "cullingPass2" : "culling", sources);
+                   .harness("culling" + suffix, sources);
     }
 
     /**
@@ -188,6 +190,10 @@ public class IndirectPrograms extends AtomicReferenceCounted {
         return cullingPass2.get(InstanceTypeIds.snapshot());
     }
 
+    public GlProgram getCullingFrustumProgram() {
+        return cullingFrustum.get(InstanceTypeIds.snapshot());
+    }
+
     public GlProgram getApplyProgram() {
         return utils.get(APPLY_SHADER_MAIN);
     }
@@ -208,12 +214,8 @@ public class IndirectPrograms extends AtomicReferenceCounted {
         return utils.get(TERRAIN_REGION_TEST);
     }
 
-    public GlProgram getTerrainSectionTestProgram() {
-        return utils.get(TERRAIN_SECTION_TEST);
-    }
-
-    public GlProgram getTerrainCommandBuilderProgram() {
-        return utils.get(TERRAIN_COMMAND_BUILDER);
+    public GlProgram getTerrainCullProgram() {
+        return utils.get(TERRAIN_CULL);
     }
 
     public GlProgram getTerrainTranslucentCullBuildProgram() {
@@ -224,6 +226,7 @@ public class IndirectPrograms extends AtomicReferenceCounted {
     protected void _delete() {
         culling.delete();
         cullingPass2.delete();
+        cullingFrustum.delete();
         utils.delete();
     }
 }

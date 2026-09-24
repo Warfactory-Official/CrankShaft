@@ -1,23 +1,14 @@
 package dev.engine_room.vanillin;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
 import com.electronwill.nightconfig.core.Config;
-
-import dev.engine_room.vanillin.config.Configurator;
-import dev.engine_room.vanillin.config.ModOverrides;
-import dev.engine_room.vanillin.config.VisualConfigValue;
-import dev.engine_room.vanillin.config.VisualOverride;
-import dev.engine_room.vanillin.config.VisualOverrideValue;
+import dev.engine_room.vanillin.config.*;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.ModConfigSpec;
 import net.neoforged.neoforgespi.language.IModInfo;
+
+import java.util.*;
 
 public class NeoForgeVanillinConfig {
     public static final NeoForgeVanillinConfig INSTANCE = new NeoForgeVanillinConfig(VanillaVisuals.CONFIGURATOR);
@@ -34,7 +25,7 @@ public class NeoForgeVanillinConfig {
         var builder = new ModConfigSpec.Builder();
 
         enabled = builder.comment("Master switch for Vanillate's instanced visuals. Nothing is visualized until this is true.")
-                .define("enabled", false);
+                .define("enabled", true);
 
         // Seems like we need to register all field ahead of time so this constructor must run after VanillaVisuals#init
         var blockEntities = setup(builder, configurator.blockEntities.values(), "block_entities");
@@ -51,7 +42,7 @@ public class NeoForgeVanillinConfig {
         boolean masterEnabled = enabled.get();
 
         if (!masterEnabled) {
-            Vanillin.CONFIG_LOGGER.info("Vanillate is disabled. Set enabled = true in 'config/{}-client.toml' to opt in.", Vanillin.ID);
+            Vanillin.CONFIG_LOGGER.info("Vanillate is disabled. Set enabled = true in 'config/{}-client.toml' to enable it.", Vanillin.ID);
         }
 
         blockEntities.apply(configurator.blockEntities.values(), masterEnabled);

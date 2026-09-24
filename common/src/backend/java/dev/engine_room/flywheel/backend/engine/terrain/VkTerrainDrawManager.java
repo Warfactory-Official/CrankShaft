@@ -38,7 +38,6 @@ import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRend
 import net.caffeinemc.mods.sodium.client.util.iterator.ReversibleObjectArrayIterator;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
-import net.minecraft.util.Mth;
 import org.joml.Matrix4f;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
@@ -73,7 +72,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     private static final long CMD_BYTES_PER_REGION = ((long) MAX_COMMANDS_PER_REGION + MAX_TEMPORAL_COMMANDS_PER_REGION) * COMMAND_STRIDE;
     private static final long REGION_GEO_STRIDE = 8;  // uvec2 arena device address per visible-region slot
     private static final long DRAW_DATA_STRIDE = 32;  // 8 uints: origin xyz, visBase, geoAddr lo/hi, pad, pad
-    // Two-phase HiZ phase ids (section_test / mesh emit `phase` field).
     private static final int PHASE_1 = 1;
     private static final int PHASE_2 = 2;
     // DIAG bisect: force the opaque / translucent mesh tier OFF (fall back to the proven MDI opaque / CPU translucent
@@ -194,11 +192,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         return max;
     }
 
-    private static void computeBarrier(VkCommandBuffer cmd) {
-        VkCmd.memoryBarrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK12.VK_ACCESS_SHADER_WRITE_BIT, VK12.VK_ACCESS_SHADER_READ_BIT);
-    }
-
     private static void packRegionInput(VisibleRegionBatch visible, CullBuffers b) {
         long ptr = b.regionInput.mappedAddress();
         for (int i = 0; i < visible.count; i++) {
@@ -281,7 +274,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
             return true;
         }
 
-        hiz.pyramid.resize(mc.getWindow().getWidth(), mc.getWindow().getHeight());
+        hiz.pyramid.resize(mc.gameRenderer.mainRenderTarget().width, mc.gameRenderer.mainRenderTarget().height);
         int parity = (frameParity ^= 1);
         // Write the HiZ UBO into THIS frame's parity slot -- the one the mesh draw + cull read via boundParity/parity --
         // AFTER the flip. Writing it pre-flip landed this frame's camera + viewProjection in the OTHER slot, so the
@@ -426,10 +419,10 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         CullBuffers b = cull[pass][parity];
         packRegionInput(visible, b);
         packRegionGeo(visible, b);
-        // NO CPU clear of regionVis: region_test writes every slot < regionCount, so a memset is redundant -- AND
         long rcPtr = b.regionCountUbo[slot].mappedAddress();
         MemoryUtil.memPutInt(rcPtr, n);
         MemoryUtil.memPutInt(rcPtr + 4L, phase);
+        MemoryUtil.memPutInt(rcPtr + 8L, buildMdi ? 0 : 1);
 
         b.command.ensureCapacity((long) n * CMD_BYTES_PER_REGION);
         b.drawData.ensureCapacity((long) n * MAX_COMMANDS_PER_REGION * 2L * DRAW_DATA_STRIDE);
@@ -439,49 +432,26 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         long pyramidView = hiz.pyramid.sampledView();
 
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/cull/" + (pass == PASS_SOLID ? "solid" : "cutout"));
-        VkComputePipeline region = programs.terrain().regionTestPipeline();
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, region.handle());
-        writer.storage(0, b.regionInput)
-              .storage(2, b.regionVis);
-        bindHizAndCount(b, parity, slot);
-        writer.sampler(10, pyramidView, pyramidSampler);
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, region.layout());
-        VK12.vkCmdDispatch(cmd, Mth.positiveCeilDiv(n, 64), 1, 1);
-        computeBarrier(cmd);
-
-        VkComputePipeline section = programs.terrain().sectionTestPipeline();
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, section.handle());
+        VkComputePipeline cull = programs.terrain().cullPipeline();
+        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, cull.handle());
         writer.storage(0, b.regionInput)
               .storage(1, registry.sectionDataVkBuffer(pass), 0L, registry.sectionDataByteCapacity(pass))
               .storage(2, b.regionVis)
               .storage(3, registry.sectionVisVkBuffer(pass), 0L, registry.sectionVisByteSize())
-              .storage(6, registry.presentMaskVkBuffer(pass), 0L, registry.presentMaskByteCapacity(pass));
+              .storage(4, b.command)
+              .storage(5, b.count)
+              .storage(6, b.regionGeo)
+              .storage(7, b.drawData)
+              .storage(11, registry.presentMaskVkBuffer(pass), 0L, registry.presentMaskByteCapacity(pass));
         bindHizAndCount(b, parity, slot);
         writer.sampler(10, pyramidView, pyramidSampler);
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, section.layout());
+        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, cull.layout());
         VK12.vkCmdDispatch(cmd, n, 1, 1);
-        computeBarrier(cmd);
-
-        if (buildMdi) {
-            VkComputePipeline builder = programs.terrain().commandBuilderPipeline();
-            VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, builder.handle());
-            writer.storage(0, b.regionInput)
-                  .storage(1, registry.sectionDataVkBuffer(pass), 0L, registry.sectionDataByteCapacity(pass))
-                  .storage(2, b.regionVis)
-                  .storage(3, registry.sectionVisVkBuffer(pass), 0L, registry.sectionVisByteSize())
-                  .storage(4, b.command)
-                  .storage(5, b.count)
-                  .storage(6, b.regionGeo)
-                  .storage(7, b.drawData);
-            bindHizAndCount(b, parity, slot);
-            writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, builder.layout());
-            VK12.vkCmdDispatch(cmd, n, 1, 1);
-            // dst COMPUTE_SHADER too: the mesh tier's emit (a SEPARATE compute dispatch, later submit) reads this cull
-            VkCmd.memoryBarrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                    VK12.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK12.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                    VK12.VK_ACCESS_SHADER_WRITE_BIT,
-                    VK12.VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK12.VK_ACCESS_SHADER_READ_BIT);
-        }
+        // dst COMPUTE_SHADER too: the mesh tier's emit (a SEPARATE compute dispatch, later submit) reads this cull
+        VkCmd.memoryBarrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK12.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK12.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK12.VK_ACCESS_SHADER_WRITE_BIT,
+                VK12.VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK12.VK_ACCESS_SHADER_READ_BIT);
         VkContext.popLabel(cmd);
     }
 
@@ -534,8 +504,8 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
 
     private void drawPass(Frame f, GpuTextureView colorView, GpuTextureView depthView, int parity, Minecraft mc,
                           int phase) {
-        int width = mc.getWindow().getWidth();
-        int height = mc.getWindow().getHeight();
+        int width = mc.gameRenderer.mainRenderTarget().width;
+        int height = mc.gameRenderer.mainRenderTarget().height;
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
         // MDI opaque terrain: vanilla entities depth-test + blend into the same target next -> framebuffer-producer
         boolean temporal = phase == PHASE_2;
@@ -566,8 +536,8 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
             boundBatch = cutoutBatch;
             strategy.prepareEmit(this, PASS_CUTOUT);
         }
-        int width = mc.getWindow().getWidth();
-        int height = mc.getWindow().getHeight();
+        int width = mc.gameRenderer.mainRenderTarget().width;
+        int height = mc.gameRenderer.mainRenderTarget().height;
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
         FlwPassBarrier.expectFramebufferProducer();
         try (RenderPass pass = encoder.createRenderPass(() -> "flywheel:vk/terrain/mesh", colorView, Optional.empty(),

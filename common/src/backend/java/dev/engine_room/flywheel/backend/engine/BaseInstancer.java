@@ -27,7 +27,7 @@ public abstract class BaseInstancer<I extends Instance> extends AbstractInstance
     protected volatile long[] slabBlocks = new long[0];
     // Plain (non-volatile) on purpose: written only by the render thread, read by workers in ensureSlabBlock --
     // the executor queue publishes the write happens-before. Out-of-plan callers must make this volatile.
-    protected @Nullable GlSlab slabBuffer;
+    protected @Nullable HostSlab slabBuffer;
 
     protected BaseInstancer(InstancerKey<I> key, Recreate<I> recreate) {
         super(key, recreate);
@@ -47,7 +47,7 @@ public abstract class BaseInstancer<I extends Instance> extends AbstractInstance
         }
         long[] next = new long[pageIdx + 1];
         System.arraycopy(cur, 0, next, 0, cur.length);
-        GlSlab buf = slabBuffer;
+        HostSlab buf = slabBuffer;
         long pageBytes = (long) PAGE_SIZE * instanceStride;
         for (int p = cur.length; p <= pageIdx; p++) {
             if (buf != null && p < buf.pageCapacity()) {
@@ -61,13 +61,13 @@ public abstract class BaseInstancer<I extends Instance> extends AbstractInstance
         slabBlocks = next;
     }
 
-    protected final @Nullable GlSlab prepareUpload() {
+    protected final @Nullable HostSlab prepareUpload() {
         long[] cur = slabBlocks;
         if (cur.length == 0) {
             return slabBuffer;
         }
         ensureSlabBufferInitialized();
-        GlSlab buf = slabBuffer;
+        HostSlab buf = slabBuffer;
         // Safe: GPU and workers from the resize frame are done.
         buf.releaseRetired();
         boolean grew = buf.ensureCapacity(cur.length);
@@ -101,7 +101,7 @@ public abstract class BaseInstancer<I extends Instance> extends AbstractInstance
 
     private void ensureSlabBufferInitialized() {
         if (slabBuffer == null) {
-            slabBuffer = new GlSlab((long) PAGE_SIZE * instanceStride, INITIAL_BUFFER_PAGES);
+            slabBuffer = new HostSlab((long) PAGE_SIZE * instanceStride, INITIAL_BUFFER_PAGES);
         }
     }
 

@@ -15,7 +15,6 @@ import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.client.renderer.BindGroupLayouts;
-import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 
@@ -39,6 +38,14 @@ public final class TerrainPipelines {
     private static final Identifier CUTOUT_FRAGMENT_SOURCE = ResourceUtil.rl("terrain/terrain_cutout.frag");
 
     private static final Identifier TEXEL_FILTER = ResourceUtil.rl("internal/texel_filter.glsl");
+
+    // Vanilla terrain's uniform groups: matrices ride ChunkSection. A declared-but-unbound DynamicTransforms fails
+    // the RHI's validating trySetup (NeoForge dev).
+    private static final RenderPipeline.Snippet SNIPPET = RenderPipeline.builder()
+                                                                        .withBindGroupLayout(BindGroupLayouts.GLOBALS)
+                                                                        .withBindGroupLayout(BindGroupLayouts.FOG)
+                                                                        .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+                                                                        .buildSnippet();
 
     private static final ShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
         case VERTEX -> assembleVertex(ctx -> ctx.requireExtension("GL_ARB_shader_draw_parameters"));
@@ -147,7 +154,7 @@ public final class TerrainPipelines {
 
     private static RenderPipeline buildOit(int pass) {
         boolean capture = pass == 3;
-        return RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
+        return RenderPipeline.builder(SNIPPET)
                              .withLocation(ResourceUtil.rl("pipeline/terrain/oit_" + pass
                                      + (TerrainVertexFormat.extended() ? "_ext" : "")))
                              .withVertexShader(VERTEX)
@@ -166,7 +173,7 @@ public final class TerrainPipelines {
     }
 
     private static RenderPipeline buildShadow(boolean cutout) {
-        return RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
+        return RenderPipeline.builder(SNIPPET)
                              .withLocation(ResourceUtil.rl("pipeline/terrain/shadow_" + (cutout ? "cutout" : "solid")
                                      + (TerrainVertexFormat.extended() ? "_ext" : "")))
                              .withVertexShader(VERTEX)
@@ -187,7 +194,7 @@ public final class TerrainPipelines {
         BindGroupLayout.Builder samplerLayout = BindGroupLayout.builder()
                                                                .withSampler("Sampler0")
                                                                .withSampler("Sampler2");
-        if (GuestTerrainGate.ENABLED) {
+        if (GuestTerrainGate.enabled()) {
             // A shaderpack's Sodium-patched terrain program reads these two exactly as Sodium's own program does,
             // so they are declared on the pipeline and fed with setUniform rather than bound by hand.
             samplerLayout.withUniform("u_Globals", UniformType.UNIFORM_BUFFER)
@@ -202,7 +209,7 @@ public final class TerrainPipelines {
         Identifier fragment = linear
                 ? (cutout ? CUTOUT_FRAGMENT_LINEAR : SOLID_FRAGMENT_LINEAR)
                 : (cutout ? CUTOUT_FRAGMENT : SOLID_FRAGMENT);
-        return RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
+        return RenderPipeline.builder(SNIPPET)
                              // The layout rides the location: a compact and an extended pipeline must not share a
                              // compiled-program cache entry.
                              .withLocation(ResourceUtil.rl(

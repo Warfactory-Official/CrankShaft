@@ -25,7 +25,7 @@ final class IrisMeshBackends {
                                              .engineFactory(MeshGuest::new)
                                              .priority(895)
                                              .gpuDriven(true)
-                                             .supported(() -> GuestTerrainGate.MESH_ENABLED && !VkContext.isVulkanHost()
+                                             .supported(() -> GuestTerrainGate.meshEnabled() && !VkContext.isVulkanHost()
                                                      && GlCompat.SUPPORTS_TERRAIN_MESH && GL.getCapabilities().glMultiDrawMeshTasksIndirectCountNV != 0
                                                      && GL.getCapabilities().GL_KHR_shader_subgroup && GlCompat.SUBGROUP_SIZE == 32
                                                      && (GL11C.glGetInteger(

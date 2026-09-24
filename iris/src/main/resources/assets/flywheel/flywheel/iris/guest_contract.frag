@@ -13,8 +13,7 @@ void clrwl_computeFragment(vec4 sampleColor, out vec4 fragColor, out vec2 fragLi
 
     flw_sampleColor = sampleColor;
     flw_fragColor = sampleColor * flw_vertexColor;
-    // Engine vertex light is texel-centred (+1/32); the contract adds the half texel after the light LUT max.
-    flw_fragLight = flw_vertexLight - 1.0 / 32.0;
+    flw_fragLight = flw_vertexLight;
     flw_fragOverlay = flw_vertexOverlay;
 
     flw_materialFragment();
@@ -32,6 +31,7 @@ void clrwl_computeFragment(vec4 sampleColor, out vec4 fragColor, out vec2 fragLi
     vec3 unlit = flw_fragColor.rgb;
     #endif
     flw_shaderLight();
+    flw_fragLight.x = max(flw_fragLight.x, _flw_dynamicBlockLight(flw_vertexPos.xyz) * (1.0 / 16.0));
     #ifdef _FLW_GUEST_OLD_LIGHTING
     #ifdef _FLW_TRACKED_LIGHTING
     flw_applyCardinal(_flw_diffuseFactor());
@@ -60,5 +60,6 @@ void clrwl_computeFragment(vec4 sampleColor, out vec4 fragColor, out vec2 fragLi
     #endif
 
     fragColor = flw_fragColor;
+    // Contract light is texel-centred, as vanilla's sample_lightmap input.
     fragLight = flw_fragLight + 1.0 / 32.0;
 }

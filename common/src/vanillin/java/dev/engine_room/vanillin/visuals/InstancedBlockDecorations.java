@@ -5,6 +5,7 @@ import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
 import dev.engine_room.flywheel.lib.model.Models;
+import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import org.joml.Matrix4f;
@@ -13,6 +14,7 @@ import org.joml.Matrix4fc;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 final class InstancedBlockDecorations {
     private final Deco[] decos;
@@ -25,12 +27,13 @@ final class InstancedBlockDecorations {
             LivingEntityVisual.BlockDecoration decoration = decorations.get(di);
             BlockState state = decoration.state()
                                          .apply(entity);
-            Model model = Models.decorationBlock(state);
+            Model model = Objects.requireNonNull(Models.displayBlock(state, decoration.context()));
+            int blockLight = Models.displayBlockLight(state);
             for (LivingEntityVisual.BlockPlacement placement : decoration.placements()) {
                 TransformedInstance instance = provider.instancer(InstanceTypes.TRANSFORMED, model)
                                                        .createInstance();
                 list.add(new Deco(instance, LivingEntityVisual.resolveBonePath(placement.bone(), boneIndex),
-                        placement.offset(), di));
+                        placement.offset(), di, blockLight));
             }
         }
         this.decos = list.toArray(new Deco[0]);
@@ -68,7 +71,7 @@ final class InstancedBlockDecorations {
             }
             scratch.mul(deco.offset);
             deco.instance.setTransform(scratch);
-            deco.instance.light(light);
+            deco.instance.light(LightCoordsUtil.max(light, deco.blockLight));
             deco.instance.overlay(overlayCoords);
             deco.instance.setChanged();
         }
@@ -91,13 +94,15 @@ final class InstancedBlockDecorations {
         final int[] boneChain;
         final Matrix4fc offset;
         final int decorationIndex;
+        final int blockLight;
         boolean shown = true;
 
-        Deco(TransformedInstance instance, int[] boneChain, Matrix4fc offset, int decorationIndex) {
+        Deco(TransformedInstance instance, int[] boneChain, Matrix4fc offset, int decorationIndex, int blockLight) {
             this.instance = instance;
             this.boneChain = boneChain;
             this.offset = offset;
             this.decorationIndex = decorationIndex;
+            this.blockLight = blockLight;
         }
     }
 }

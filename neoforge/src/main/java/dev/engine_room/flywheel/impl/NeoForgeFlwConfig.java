@@ -60,6 +60,11 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
     }
 
     @Override
+    public boolean concurrentExtraction() {
+        return client.concurrentExtraction.get();
+    }
+
+    @Override
     public BackendConfig backendConfig() {
         return this;
     }
@@ -136,6 +141,7 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
         public final ModConfigSpec.BooleanValue limitUpdates;
         public final ModConfigSpec.IntValue workerThreads;
         public final ModConfigSpec.BooleanValue useCommonPool;
+        public final ModConfigSpec.BooleanValue concurrentExtraction;
         public final ModConfigSpec.EnumValue<LightSmoothness> lightSmoothness;
         public final ModConfigSpec.EnumValue<TerrainMode> terrainMode;
         public final ModConfigSpec.EnumValue<OitConfig.Path> oitPath;
@@ -164,6 +170,11 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
                             + "Flywheel pool. Saves threads but other code submitting to the common pool (incl. "
                             + "misbehaving mods) can stall Flywheel sync points. Requires a game restart to take effect.")
                     .define("useCommonPool", false);
+
+            concurrentExtraction = builder.comment("Extract entity render states on Flywheel's worker threads for "
+                            + "renderers known to allow it (vanilla's, and mods' implementing "
+                            + "ConcurrentRenderStateExtraction). Disable if a mod hooks entity extraction unsafely.")
+                    .define("concurrentExtraction", true);
 
             builder.comment("Config options for Flywheel's built-in backends.")
                     .push("flw_backends");

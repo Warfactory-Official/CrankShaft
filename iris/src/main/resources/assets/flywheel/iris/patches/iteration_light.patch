@@ -1,0 +1,20 @@
+diff --git a/Lib/Programs/Composite/Volumetric_FS.glsl b/Lib/Programs/Composite/Volumetric_FS.glsl
+--- a/Lib/Programs/Composite/Volumetric_FS.glsl
++++ b/Lib/Programs/Composite/Volumetric_FS.glsl
+@@ -13,1 +13,11 @@
+ layout(location = 0) out vec4 framebuffer_mainOutput;
++uniform sampler2D colortex13;
++uniform sampler2D colortex14;
++/*
++const int colortex13Format = RGBA16F;
++const bool colortex13Clear = true;
++const vec4 colortex13ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
++const int colortex14Format = RGBA16F;
++const bool colortex14Clear = true;
++const vec4 colortex14ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
++*/
+@@ -200,2 +210,4 @@
+ 		NetherFog(color, waterDist);
+ 	#endif
++	color += texelFetch(colortex13, texelCoord, 0).rgb
++		+ texelFetch(colortex14, texelCoord, 0).rgb * (texelFetch(pixelData2D, ivec2(PIXELDATA_EXPOSURE, 0), 0).x * 0.13);

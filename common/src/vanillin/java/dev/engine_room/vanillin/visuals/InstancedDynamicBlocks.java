@@ -1,9 +1,12 @@
 package dev.engine_room.vanillin.visuals;
 
 import dev.engine_room.flywheel.api.instance.InstancerProvider;
+import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
 import dev.engine_room.flywheel.lib.model.Models;
+import net.minecraft.client.renderer.block.model.BlockDisplayContext;
+import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.level.block.state.BlockState;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
@@ -14,11 +17,12 @@ final class InstancedDynamicBlocks {
     private final Slot[] slots;
     private final Matrix4f scratch = new Matrix4f();
 
-    InstancedDynamicBlocks(InstancerProvider provider, int[][] boneChains, Matrix4fc[] offsets) {
+    InstancedDynamicBlocks(InstancerProvider provider, int[][] boneChains, Matrix4fc[] offsets,
+                           BlockDisplayContext[] contexts) {
         this.provider = provider;
         this.slots = new Slot[boneChains.length];
         for (int i = 0; i < slots.length; i++) {
-            slots[i] = new Slot(boneChains[i], offsets[i]);
+            slots[i] = new Slot(boneChains[i], offsets[i], contexts[i]);
         }
     }
 
@@ -44,7 +48,9 @@ final class InstancedDynamicBlocks {
         for (int i = 0; i < slots.length; i++) {
             Slot slot = slots[i];
             BlockState want = states[i];
-            if (want == null) {
+            // A special-rendered block keeps the whole entity vanilla (Config.vanillaHandles).
+            Model model = want == null ? null : Models.displayBlock(want, slot.context);
+            if (model == null) {
                 hide(slot);
                 continue;
             }
@@ -52,7 +58,7 @@ final class InstancedDynamicBlocks {
                 if (slot.instance != null) {
                     slot.instance.delete();
                 }
-                slot.instance = provider.instancer(InstanceTypes.TRANSFORMED, Models.decorationBlock(want))
+                slot.instance = provider.instancer(InstanceTypes.TRANSFORMED, model)
                                         .createInstance();
                 slot.state = want;
                 slot.shown = true;
@@ -68,7 +74,7 @@ final class InstancedDynamicBlocks {
             }
             scratch.mul(slot.offset);
             slot.instance.setTransform(scratch);
-            slot.instance.light(light);
+            slot.instance.light(LightCoordsUtil.max(light, Models.displayBlockLight(want)));
             slot.instance.overlay(overlayCoords);
             slot.instance.setChanged();
         }
@@ -92,15 +98,17 @@ final class InstancedDynamicBlocks {
     private static final class Slot {
         final int[] boneChain;
         final Matrix4fc offset;
+        final BlockDisplayContext context;
         @Nullable
         TransformedInstance instance;
         @Nullable
         BlockState state;
         boolean shown;
 
-        Slot(int[] boneChain, Matrix4fc offset) {
+        Slot(int[] boneChain, Matrix4fc offset, BlockDisplayContext context) {
             this.boneChain = boneChain;
             this.offset = offset;
+            this.context = context;
         }
     }
 }

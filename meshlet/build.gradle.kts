@@ -2,7 +2,7 @@ plugins {
     id("multiloader-base")
     id("java-library")
 
-    id("net.fabricmc.fabric-loom") version ("1.17.20")
+    id("net.fabricmc.fabric-loom") version ("1.18.2")
 }
 
 base {
@@ -42,11 +42,11 @@ dependencies {
     compileOnly(project(":iris"))
     compileOnly("maven.modrinth:iris:${irisVersion}-fabric")
 
-    compileOnly("org.jspecify:jspecify:1.0.1")
+    compileOnly("org.jspecify:jspecify:1.0.0")
 
     compileOnly("io.github.llamalad7:mixinextras-common:0.5.4")
     annotationProcessor("io.github.llamalad7:mixinextras-common:0.5.4")
-    compileOnly("net.fabricmc:sponge-mixin:0.13.2+mixin.0.8.5")
+    compileOnly("net.fabricmc:sponge-mixin:0.17.3+mixin.0.8.7")
 
     compileOnly("net.fabricmc:fabric-loader:${fabricLoaderVersion}")
 }

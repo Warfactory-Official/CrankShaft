@@ -15,10 +15,10 @@ public final class SimpleBackend implements Backend {
     private final Function<LevelAccessor, Engine> engineFactory;
     private final IntSupplier priority;
     private final BooleanSupplier isSupported;
-    private final boolean gpuDriven;
+    private final BooleanSupplier gpuDriven;
 
     public SimpleBackend(Function<LevelAccessor, Engine> engineFactory, IntSupplier priority,
-                         BooleanSupplier isSupported, boolean gpuDriven) {
+                         BooleanSupplier isSupported, BooleanSupplier gpuDriven) {
         this.engineFactory = engineFactory;
         this.priority = priority;
         this.isSupported = isSupported;
@@ -46,7 +46,7 @@ public final class SimpleBackend implements Backend {
 
     @Override
     public boolean isGpuDriven() {
-        return gpuDriven;
+        return gpuDriven.getAsBoolean();
     }
 
     public static final class Builder {
@@ -55,7 +55,7 @@ public final class SimpleBackend implements Backend {
         private IntSupplier priority = () -> 0;
         @Nullable
         private BooleanSupplier isSupported;
-        private boolean gpuDriven = false;
+        private BooleanSupplier gpuDriven = () -> false;
 
         public Builder engineFactory(Function<LevelAccessor, Engine> engineFactory) {
             this.engineFactory = engineFactory;
@@ -80,6 +80,14 @@ public final class SimpleBackend implements Backend {
          * Mark this backend as GPU-driven (compute-culled + GPU-built draw). See {@link Backend#isGpuDriven()}.
          */
         public Builder gpuDriven(boolean gpuDriven) {
+            this.gpuDriven = () -> gpuDriven;
+            return this;
+        }
+
+        /**
+         * Port addition, and now live: the Iris guest's GPU-driven-ness follows the runtime terrain gate.
+         */
+        public Builder gpuDriven(BooleanSupplier gpuDriven) {
             this.gpuDriven = gpuDriven;
             return this;
         }

@@ -24,7 +24,6 @@ import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.backend.BackendDebugFlags;
 import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
 import dev.engine_room.flywheel.backend.compile.OitMode;
-import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.embed.EmbeddedEnvironment;
 import dev.engine_room.flywheel.backend.engine.embed.Environment;
@@ -129,9 +128,9 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
 
             for (var draw : allDraws) {
                 if (lineMaterial(draw.material())) hasLineDraws = true;
-                if (OitTransparency.additive(draw.material())) {
+                if (drawnInAdditivePass(draw)) {
                     oitAdditiveDraws.add(draw);
-                } else if (drawnInTranslucentPass(draw.material())) {
+                } else if (drawnInTranslucentPass(draw)) {
                     oitDraws.add(draw);
                 } else {
                     draws.add(draw);
@@ -158,8 +157,12 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         GlCompat.popDebugGroup();
     }
 
-    protected boolean drawnInTranslucentPass(Material material) {
-        return OitTransparency.orderIndependent(material);
+    protected boolean drawnInTranslucentPass(InstancedDraw draw) {
+        return OitTransparency.orderIndependent(draw.material());
+    }
+
+    protected boolean drawnInAdditivePass(InstancedDraw draw) {
+        return OitTransparency.additive(draw.material());
     }
 
     protected RenderPipeline pipelineFor(Material material, InstanceType<?> type, boolean embedded) {
@@ -277,7 +280,6 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             boolean prime = false;
             if (pipeline != lastPipeline) {
                 pass.setPipeline(pipeline);
-                if (RenderPassShaders.readsGeometry(material.light())) GeometryAtlas.bind(pass);
                 lastPipeline = pipeline;
                 prime = true;
             }
@@ -319,6 +321,8 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         boolean needsColor = mode != OitMode.DEPTH_RANGE;
         if (needsColor) {
             bindLight(pass);
+        } else {
+            pass.setUniform("_FlwRenderOrigin", renderPassUniforms.renderOriginSlice());
         }
 
         drawRuns(pass, additive ? oitAdditiveDraws : oitDraws,

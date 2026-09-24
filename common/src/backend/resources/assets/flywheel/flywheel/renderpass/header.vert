@@ -3,6 +3,7 @@
 #moj_import <minecraft:fog.glsl>
 #moj_import <minecraft:light.glsl>
 #include "flywheel:internal/fog_coordinates.glsl"
+#include "flywheel:internal/render_origin.glsl"
 
 #define flw_view ModelViewMat
 

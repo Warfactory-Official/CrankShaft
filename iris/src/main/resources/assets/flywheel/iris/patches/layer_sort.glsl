@@ -1,5 +1,6 @@
 if (flw_oitActive) {
-        uint flw_pixel = uint(gl_FragCoord.y) * uint(screenSize.x) + uint(gl_FragCoord.x);
+        uvec2 flw_coord = _FLW_SORT_PIXEL;
+        uint flw_pixel = flw_coord.y * uint(screenSize.x) + flw_coord.x;
         uint flw_node = flw_heads[flw_pixel];
         uint flw_order[64];
         int flw_length = 0;
@@ -26,5 +27,7 @@ if (flw_oitActive) {
             for (int flw_i = 0; flw_i < flw_length; ++flw_i)
                 flw_nodes[flw_order[flw_i] * 2u].x = flw_i + 1 < flw_length ? flw_order[flw_i + 1] : 0xffffffffu;
             atomicMax(flw_maxLayers, uint(flw_length));
+            uint flw_tile = (flw_coord.y >> 4u) * ((uint(screenSize.x) + 15u) >> 4u) + (flw_coord.x >> 4u);
+            if (flw_tiles[flw_tile] < uint(flw_length)) atomicMax(flw_tiles[flw_tile], uint(flw_length));
         }
     }

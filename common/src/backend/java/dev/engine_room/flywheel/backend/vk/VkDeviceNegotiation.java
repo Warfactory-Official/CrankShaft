@@ -8,6 +8,7 @@ import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.system.Pointer;
+import org.lwjgl.system.Struct;
 import org.lwjgl.util.vma.Vma;
 import org.lwjgl.util.vma.VmaAllocatorCreateInfo;
 import org.lwjgl.vulkan.*;
@@ -213,41 +214,41 @@ public final class VkDeviceNegotiation {
                                                                                                  .deviceFault(true)
                                                                                                  .deviceFaultVendorBinary(
                                                                                                          vendorBinary);
-                prepend(createInfo, faultFeatures.address());
+                chain(createInfo, faultFeatures);
             }
             if (crashDiag) {
                 VkPhysicalDeviceDiagnosticsConfigFeaturesNV diagFeatures =
                         VkPhysicalDeviceDiagnosticsConfigFeaturesNV.calloc(stack)
                                                                    .sType$Default()
                                                                    .diagnosticsConfig(true);
-                prepend(createInfo, diagFeatures.address());
+                chain(createInfo, diagFeatures);
                 VkDeviceDiagnosticsConfigCreateInfoNV diagConfig = VkDeviceDiagnosticsConfigCreateInfoNV.calloc(stack)
                                                                                                         .sType$Default()
                                                                                                         .flags(NVDeviceDiagnosticsConfig.VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV
                                                                                                                 | NVDeviceDiagnosticsConfig.VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV
                                                                                                                 | NVDeviceDiagnosticsConfig.VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV);
-                prepend(createInfo, diagConfig.address());
+                chain(createInfo, diagConfig);
             }
             if (descriptorBuffer) {
                 VkPhysicalDeviceDescriptorBufferFeaturesEXT dbFeatures =
                         VkPhysicalDeviceDescriptorBufferFeaturesEXT.calloc(stack)
                                                                    .sType$Default()
                                                                    .descriptorBuffer(true);
-                prepend(createInfo, dbFeatures.address());
+                chain(createInfo, dbFeatures);
             }
             if (localRead) {
                 VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR lrFeatures =
                         VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR.calloc(stack)
                                                                             .sType$Default()
                                                                             .dynamicRenderingLocalRead(true);
-                prepend(createInfo, lrFeatures.address());
+                chain(createInfo, lrFeatures);
             }
             if (interlock) {
                 VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT ilFeatures =
                         VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT.calloc(stack)
                                                                           .sType$Default()
                                                                           .fragmentShaderPixelInterlock(true);
-                prepend(createInfo, ilFeatures.address());
+                chain(createInfo, ilFeatures);
             }
             if (bindless) {
                 enableBindlessFeatures(createInfo, stack);
@@ -277,7 +278,7 @@ public final class VkDeviceNegotiation {
                                                                                                           true)
                                                                                                   .storageInputOutput16(
                                                                                                           f16IoSupported);
-                    prepend(createInfo, features11.address());
+                    chain(createInfo, features11);
                 }
 
                 long vulkan12 = findStruct(createInfo.pNext(), VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES);
@@ -302,7 +303,7 @@ public final class VkDeviceNegotiation {
                                                                                                           true)
                                                                                                   .shaderFloat16(
                                                                                                           f16IoSupported);
-                    prepend(createInfo, features12.address());
+                    chain(createInfo, features12);
                 }
 
                 VkPhysicalDeviceMeshShaderFeaturesEXT meshFeatures = VkPhysicalDeviceMeshShaderFeaturesEXT.calloc(stack)
@@ -311,7 +312,7 @@ public final class VkDeviceNegotiation {
                                                                                                                   true)
                                                                                                           .meshShader(
                                                                                                                   true);
-                prepend(createInfo, meshFeatures.address());
+                chain(createInfo, meshFeatures);
 
                 subgroupControl = nameChainContainsExtension(createInfo,
                         EXTSubgroupSizeControl.VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
@@ -320,7 +321,7 @@ public final class VkDeviceNegotiation {
                             VkPhysicalDeviceSubgroupSizeControlFeaturesEXT.calloc(stack)
                                                                           .sType$Default()
                                                                           .subgroupSizeControl(true);
-                    prepend(createInfo, subgroupFeatures.address());
+                    chain(createInfo, subgroupFeatures);
                 }
 
                 representativeTest = nameChainContainsExtension(createInfo,
@@ -330,7 +331,7 @@ public final class VkDeviceNegotiation {
                             VkPhysicalDeviceRepresentativeFragmentTestFeaturesNV.calloc(stack)
                                                                                 .sType$Default()
                                                                                 .representativeFragmentTest(true);
-                    prepend(createInfo, repFeatures.address());
+                    chain(createInfo, repFeatures);
                 }
             }
 
@@ -394,7 +395,7 @@ public final class VkDeviceNegotiation {
                                                                                                   true)
                                                                                           .descriptorBindingUpdateUnusedWhilePending(
                                                                                                   true);
-            prepend(createInfo, features12.address());
+            chain(createInfo, features12);
         }
     }
 
@@ -408,8 +409,19 @@ public final class VkDeviceNegotiation {
         return 0L;
     }
 
-    private static void prepend(VkDeviceCreateInfo createInfo, long structAddr) {
-        MemoryUtil.memPutAddress(structAddr + Pointer.POINTER_SIZE, createInfo.pNext());
-        createInfo.pNext(structAddr);
+    // Compat with Caustica: it chains VkPhysicalDeviceFaultFeaturesEXT through a VulkanFeature. A duplicate sType fails
+    // vkCreateDevice, so OR our VkBool32/flag words into an existing struct.
+    private static void chain(VkDeviceCreateInfo createInfo, Struct<?> struct) {
+        long structAddr = struct.address();
+        long existing = findStruct(createInfo.pNext(), MemoryUtil.memGetInt(structAddr));
+        if (existing == 0L) {
+            MemoryUtil.memPutAddress(structAddr + Pointer.POINTER_SIZE, createInfo.pNext());
+            createInfo.pNext(structAddr);
+            return;
+        }
+        for (long offset = 2L * Pointer.POINTER_SIZE; offset + Integer.BYTES <= struct.sizeof(); offset += Integer.BYTES) {
+            MemoryUtil.memPutInt(existing + offset,
+                    MemoryUtil.memGetInt(existing + offset) | MemoryUtil.memGetInt(structAddr + offset));
+        }
     }
 }

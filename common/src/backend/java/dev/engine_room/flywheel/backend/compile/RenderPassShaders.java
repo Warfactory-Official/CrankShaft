@@ -25,11 +25,7 @@ import org.jspecify.annotations.Nullable;
 
 import java.io.File;
 import java.io.FileWriter;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
@@ -47,8 +43,6 @@ public final class RenderPassShaders {
     private static final Pattern EMBEDDED_TOKEN = Pattern.compile("\\bFLW_EMBEDDED\\b");
     // Render-thread only; keyed per loaded ShaderSources.
     private static final Map<Identifier, Boolean> READS_EMBEDDED = new HashMap<>();
-    private static final Map<Identifier, Boolean> READS_GEOMETRY = new HashMap<>();
-    private static @Nullable ShaderSources readsGeometrySources;
     private static @Nullable ShaderSources readsEmbeddedSources;
     private static long registeredReadsEmbeddedGen = -1;
     private static boolean registeredReadsEmbedded;
@@ -60,6 +54,7 @@ public final class RenderPassShaders {
     private static final Identifier DRAW_COMMAND = ResourceUtil.rl("internal/indirect/draw_command.glsl");
     private static final Identifier MATRICES = ResourceUtil.rl("internal/indirect/matrices.glsl");
     private static final Identifier MATERIAL = ResourceUtil.rl("internal/material.glsl");
+    static final Identifier RENDER_ORIGIN = ResourceUtil.rl("internal/render_origin.glsl");
     private static final Identifier PACKED_MATERIAL = ResourceUtil.rl("internal/packed_material.glsl");
     private static final Identifier DIFFUSE = ResourceUtil.rl("internal/diffuse.glsl");
     private static final Identifier INSTANCING_LIGHT = ResourceUtil.rl("internal/instancing/light.glsl");
@@ -81,10 +76,6 @@ public final class RenderPassShaders {
             vec4 flw_sampleColor;
             vec4 flw_vertexColor;
             FlwMaterial flw_material;
-            layout(std140) uniform _FlwRenderOrigin {
-                ivec4 _flw_renderOrigin;
-                uint _flw_constantAmbientLight;
-            };
             """;
     // Runtime cardinalLightingMode branch (upstream common.frag _flw_diffuseFactor); the ENTITY branch flips the normal per fragment (26.2 vanilla PER_FACE_LIGHTING).
     private static final String FRAG_DIFFUSE_FACTOR = """
@@ -106,6 +97,7 @@ public final class RenderPassShaders {
     private static final Identifier OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_oit.frag");
     private static final Identifier OIT_COMPOSITE = ResourceUtil.rl("internal/oit_composite.frag");
     private static final Identifier OIT_EMISSION = ResourceUtil.rl("internal/oit_emission.frag");
+    private static final Identifier OIT_DEPTH = ResourceUtil.rl("internal/oit_depth.frag");
     private static final Identifier FULLSCREEN_VERT = ResourceUtil.rl("internal/fullscreen.vert");
     private static final Identifier MLAB_RESOLVE = ResourceUtil.rl("internal/mlab_resolve.frag");
     private static final Identifier MLAB_NEAREST_DEPTH = ResourceUtil.rl("internal/mlab_nearest_depth.frag");
@@ -154,20 +146,6 @@ public final class RenderPassShaders {
         MaterialShaders shaders = material.shaders();
         return readsEmbedded(material.light().source()) || readsEmbedded(shaders.vertexSource())
                 || readsEmbedded(shaders.fragmentSource()) || registeredReadsEmbedded();
-    }
-
-    public static boolean readsGeometry(LightShader light) {
-        if (readsGeometrySources != FlwPrograms.SOURCES) {
-            readsGeometrySources = FlwPrograms.SOURCES;
-            READS_GEOMETRY.clear();
-        }
-        return READS_GEOMETRY.computeIfAbsent(light.source(), id -> readsGeometry(FlwPrograms.SOURCES.get(id)));
-    }
-
-    private static boolean readsGeometry(SourceComponent component) {
-        if (component.source().contains("_flw_geometryAtlas")) return true;
-        for (var included : component.included()) if (readsGeometry(included)) return true;
-        return false;
     }
 
     private static boolean registeredReadsEmbedded() {
@@ -517,23 +495,19 @@ public final class RenderPassShaders {
     /**
      * The insert-OIT fullscreen resolve (plain reads after a producer barrier -- no interlock).
      */
-    public static String assembleMlabResolve(OitInsertMode oitMode, MlabResolveVariant variant) {
+    public static String assembleMlabResolve(OitInsertMode oitMode) {
         List<SourceComponent> roots = List.of(
                 FlwPrograms.SOURCES.get(MLAB),
                 FlwPrograms.SOURCES.get(MLAB_RESOLVE));
-        return assemble("mlab_resolve_" + oitMode.name().toLowerCase(Locale.ROOT) + variant.suffix + ".fsh",
-                ctx -> {
-                    mlabResolveDefines(ctx, oitMode);
-                    if (variant.define != null) {
-                        ctx.define(variant.define);
-                    }
-                }, roots);
+        return assemble("mlab_resolve_" + oitMode.name().toLowerCase(Locale.ROOT) + ".fsh",
+                ctx -> mlabResolveDefines(ctx, oitMode), roots);
     }
 
     private static List<SourceComponent> lightingRoots(LightShader light, boolean indirect) {
         return List.of(
                 FlwPrograms.SOURCES.get(MATERIAL),
                 new RawSource("flw_frag_lighting_prelude", FRAG_LIGHTING_PRELUDE),
+                FlwPrograms.SOURCES.get(RENDER_ORIGIN),
                 FlwPrograms.SOURCES.get(PACKED_MATERIAL),
                 FlwPrograms.SOURCES.get(DIFFUSE),
                 FlwPrograms.SOURCES.get(COLORIZER),
@@ -744,6 +718,10 @@ public final class RenderPassShaders {
 
     public static String assembleOitEmission() {
         return assembleFullscreenFragment(OIT_EMISSION, "oit_emission.fsh", ShaderAssembly.NO_EXTRA);
+    }
+
+    public static String assembleOitDepth() {
+        return assembleFullscreenFragment(OIT_DEPTH, "oit_depth.fsh", ShaderAssembly.NO_EXTRA);
     }
 
     public static String assembleMlabNearestDepth() {

@@ -1,20 +1,18 @@
 package dev.engine_room.flywheel.backend.engine;
 
-import dev.engine_room.flywheel.api.lighting.GeometryOcclusion;
 import dev.engine_room.flywheel.api.task.Plan;
 import dev.engine_room.flywheel.backend.engine.indirect.StagingBuffer;
 import dev.engine_room.flywheel.backend.gl.buffer.GlBuffer;
-import dev.engine_room.flywheel.backend.lighting.*;
+import dev.engine_room.flywheel.backend.lighting.LightDataCollector;
+import dev.engine_room.flywheel.backend.lighting.LightLut;
+import dev.engine_room.flywheel.backend.lighting.LightPacking;
 import dev.engine_room.flywheel.lib.task.SimplePlan;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
-import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
-import net.minecraft.core.Vec3i;
 import net.minecraft.world.level.LevelAccessor;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
@@ -23,8 +21,7 @@ import java.util.BitSet;
 
 /**
  * Shared GPU light data: 18-cubed section neighborhoods with light bytes and solid bits.
- * The LUT also carries opt-in occlusion geometry. Frame preparation follows visual updates;
- * backend uploads consume the prepared arrays after the frame plan joins.
+ * Frame preparation follows visual updates; backend uploads consume the prepared arrays after the frame plan joins.
  */
 public class LightStorage {
     public static final int BLOCKS_PER_SECTION = LightPacking.BLOCKS_PER_SECTION;
@@ -39,18 +36,8 @@ public class LightStorage {
     private final LightLut lut;
     private final Long2IntMap section2ArenaIndex;
     private final LightDataCollector collector;
-    private final GeometryAoStorage geometry;
-    private final @Nullable WorldLighting worldLighting;
-    private final WorldLighting.@Nullable Subscription geometryInterest;
-    private long geometryLayoutRevision = -1, geometryPoseRevision = -1;
-    private Vec3i renderOrigin = BlockPos.ZERO;
     private final LongSet updatedSections = new LongOpenHashSet();
     private boolean needsLutRebuild = true;
-    private boolean geometryPosesChanged;
-    private int geometryPoseOffset;
-    private int lutWords;
-    private final IntArrayList geometryRanges = new IntArrayList();
-    private final LutUpdates lutUpdates = new LutUpdates(geometryRanges);
     @Nullable
     private LongSet requestedSections;
 
@@ -61,9 +48,6 @@ public class LightStorage {
         section2ArenaIndex = new Long2IntOpenHashMap();
         section2ArenaIndex.defaultReturnValue(INVALID_SECTION);
         collector = LightDataCollector.of(level);
-        worldLighting = level instanceof ClientLevel client ? WorldLighting.of(client) : null;
-        geometryInterest = worldLighting == null ? null : worldLighting.subscribe();
-        geometry = worldLighting == null ? new GeometryAoStorage() : worldLighting.geometry();
     }
 
     public LevelAccessor level() {
@@ -78,25 +62,6 @@ public class LightStorage {
      */
     public void sections(LongSet sections) {
         requestedSections = new LongOpenHashSet(sections);
-    }
-
-    public GeometryOcclusion geometryOcclusion() {
-        return geometry;
-    }
-
-    public void renderOrigin(Vec3i origin) {
-        renderOrigin = origin;
-    }
-
-    public void geometrySections(LongSet sections) {
-        if (geometryInterest != null) geometryInterest.sections(sections);
-        else if (!sections.isEmpty())
-            throw new UnsupportedOperationException("Terrain lighting requires a client world");
-    }
-
-    public void flushTerrainRequests() {
-        if (worldLighting != null) worldLighting.prepare();
-        else geometry.prepare(renderOrigin);
     }
 
     public void onLightUpdate(long section) {
@@ -214,38 +179,13 @@ public class LightStorage {
     }
 
     public void delete() {
-        if (geometryInterest != null) geometryInterest.close();
-        else geometry.delete();
         arena.delete();
     }
 
-    public @Nullable LutUpdates pollLutUpdates() {
-        flushTerrainRequests();
-        long previousPoseRevision = geometryPoseRevision;
-        if (geometryLayoutRevision != geometry.layoutRevision()) needsLutRebuild = true;
-        else if (geometryPoseRevision != geometry.poseRevision()) geometryPosesChanged = true;
-        geometryLayoutRevision = geometry.layoutRevision();
-        geometryPoseRevision = geometry.poseRevision();
-        if (needsLutRebuild) {
-            IntArrayList words = createLut();
-            lutWords = words.size();
-            geometryPoseOffset = geometry.isEmpty() ? 0 : words.getInt(0) + geometry.staticWords();
-            needsLutRebuild = false;
-            geometryPosesChanged = false;
-            geometryRanges.clear();
-            geometryRanges.add(0);
-            geometryRanges.add(lutWords);
-            lutUpdates.set(0, lutWords, words.elements(), words);
-            return lutUpdates;
-        }
-        if (geometryPosesChanged) {
-            geometryPosesChanged = false;
-            geometry.fillDynamicRanges(previousPoseRevision, geometryRanges);
-            if (geometryRanges.isEmpty()) return null;
-            lutUpdates.set(geometryPoseOffset, lutWords, geometry.preparedDynamicWords(), null);
-            return lutUpdates;
-        }
-        return null;
+    public boolean checkNeedsLutRebuildAndClear() {
+        var out = needsLutRebuild;
+        needsLutRebuild = false;
+        return out;
     }
 
     public void uploadChangedSections(StagingBuffer staging, int dstVbo) {
@@ -284,66 +224,6 @@ public class LightStorage {
     }
 
     public IntArrayList createLut() {
-        var words = new IntArrayList();
-        words.add(0);
-        lut.indices.fillLut(words, (y, out) -> y.fillLut(out, LightLut.IntLayer::fillLut));
-        if (!geometry.isEmpty()) {
-            words.set(0, words.size());
-            geometry.append(words);
-        }
-        return words;
-    }
-
-    /**
-     * Reused until the next poll; callers consume all spans before returning to the draw manager.
-     */
-    public static final class LutUpdates {
-        private final IntArrayList ranges;
-        private int baseOffset, totalWords;
-        private int[] words;
-        private @Nullable IntArrayList fullWords;
-
-        private LutUpdates(IntArrayList ranges) {
-            this.ranges = ranges;
-        }
-
-        private void set(int baseOffset, int totalWords, int[] words, @Nullable IntArrayList fullWords) {
-            this.baseOffset = baseOffset;
-            this.totalWords = totalWords;
-            this.words = words;
-            this.fullWords = fullWords;
-        }
-
-        public int count() {
-            return ranges.size() / 2;
-        }
-
-        public int offset(int index) {
-            return baseOffset + ranges.getInt(index * 2);
-        }
-
-        public int source(int index) {
-            return ranges.getInt(index * 2);
-        }
-
-        public int length(int index) {
-            return ranges.getInt(index * 2 + 1) - source(index);
-        }
-
-        public int[] words() {
-            return words;
-        }
-
-        public int word(int index) {
-            return words[index];
-        }
-
-        public int totalWords() {
-            return totalWords;
-        }
-
-        public @Nullable IntArrayList fullWords() {
-            return fullWords;
-        }
+        return lut.flatten();
     }
 }

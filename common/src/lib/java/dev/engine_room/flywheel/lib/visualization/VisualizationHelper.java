@@ -110,6 +110,15 @@ public final class VisualizationHelper {
         return visualizer != null && visualizer.skipVanillaRender(entity);
     }
 
+    /**
+     * Port: see {@link SimpleEntityVisualizer#skipVanillaPrimary}.
+     */
+    @SuppressWarnings("unchecked")
+    public static <T extends Entity> boolean skipVanillaPrimary(T entity) {
+        return getVisualizer(entity) instanceof SimpleEntityVisualizer<?> visualizer
+                && ((SimpleEntityVisualizer<? super T>) visualizer).skipVanillaPrimary(entity);
+    }
+
     public static <T extends BlockEntity> boolean tryAddBlockEntity(T blockEntity) {
         Level level = blockEntity.getLevel();
         VisualizationManager manager = VisualizationManager.get(level);

@@ -1,5 +1,5 @@
-// ORDER_INDEPENDENT_ADDITIVE emission over pixels the composite discarded (no occluding layer): its gl_FragDepth
-// write has no value for them, so they take this depth-write-free pass. Threshold == oit_composite.frag.
+// ORDER_INDEPENDENT_ADDITIVE emission over pixels the composite discarded (no occluding layer). Threshold ==
+// oit_composite.frag.
 
 layout(location = 0) out vec4 frag;
 

@@ -27,5 +27,17 @@
       "global": false
     }
   ],
-  "properties": ""
+  "properties": "blend.clrwl_gbuffers_additive = ONE ONE ONE ONE\n",
+  "deferredTranslucent": true,
+  "patches": [
+    "iteration_contract.patch",
+    "iteration_light.patch"
+  ],
+  "programs": [
+    {
+      "target": "clrwl_gbuffers_additive",
+      "fragment": "iteration_light.fsh"
+    }
+  ],
+  "emissiveLight": true
 }

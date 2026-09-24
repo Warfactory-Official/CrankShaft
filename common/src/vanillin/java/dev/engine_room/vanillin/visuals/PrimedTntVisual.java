@@ -3,6 +3,7 @@ package dev.engine_room.vanillin.visuals;
 import com.mojang.math.Axis;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
 import dev.engine_room.flywheel.lib.model.Models;
@@ -11,10 +12,13 @@ import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import dev.engine_room.flywheel.lib.visual.component.ShadowComponent;
 import net.minecraft.client.renderer.entity.TntRenderer;
 import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.item.PrimedTnt;
 import net.minecraft.world.level.block.state.BlockState;
 import org.joml.Matrix4f;
+
+import java.util.Objects;
 
 public class PrimedTntVisual extends AbstractEntityVisual<PrimedTnt> implements SimpleDynamicVisual {
     private static final int WHITE_OVERLAY = OverlayTexture.pack(OverlayTexture.u(1.0F), 10);
@@ -22,12 +26,16 @@ public class PrimedTntVisual extends AbstractEntityVisual<PrimedTnt> implements 
     private final TransformedInstance instance;
     private final ShadowComponent shadowComponent;
     private final Matrix4f pose = new Matrix4f();
+    private final int blockLight;
 
     public PrimedTntVisual(VisualizationContext ctx, PrimedTnt entity, float partialTick) {
         super(ctx, entity, partialTick);
         BlockState blockState = entity.getBlockState();
-        instance = instancerProvider().instancer(InstanceTypes.TRANSFORMED, Models.block(blockState))
+        instance = instancerProvider().instancer(InstanceTypes.TRANSFORMED,
+                                              Objects.requireNonNull(Models.displayBlock(blockState,
+                                                      TntRenderer.BLOCK_DISPLAY_CONTEXT)))
                                       .createInstance();
+        blockLight = Models.displayBlockLight(blockState);
         shadowComponent = new ShadowComponent(ctx, entity);
         animate(partialTick);
     }
@@ -39,7 +47,7 @@ public class PrimedTntVisual extends AbstractEntityVisual<PrimedTnt> implements 
         }
         animate(ctx.partialTick());
         shadowComponent.radius(0.5f);
-        shadowComponent.strength((float) (1.0 - entity.distanceToSqr(ctx.camera().position()) / 256.0));
+        shadowComponent.strength(EntityFeatureCompat.shadowStrength((float) (1.0 - entity.distanceToSqr(ctx.camera().position()) / 256.0)));
         shadowComponent.beginFrame(ctx);
     }
 
@@ -62,7 +70,7 @@ public class PrimedTntVisual extends AbstractEntityVisual<PrimedTnt> implements 
 
         instance.setTransform(pose)
                 .overlay(TntRenderer.isLit(fuse) ? WHITE_OVERLAY : OverlayTexture.NO_OVERLAY)
-                .light(computePackedLight(partialTick))
+                .light(LightCoordsUtil.max(computePackedLight(partialTick), blockLight))
                 .setChanged();
     }
 

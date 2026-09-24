@@ -2,6 +2,7 @@ package dev.engine_room.vanillin.visuals;
 
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
 import dev.engine_room.flywheel.lib.visual.AbstractEntityVisual;
@@ -9,13 +10,18 @@ import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import dev.engine_room.flywheel.lib.visual.component.FireComponent;
 import dev.engine_room.flywheel.lib.visual.component.NameTagComponent;
 import dev.engine_room.flywheel.lib.visual.component.ShadowComponent;
+import dev.engine_room.flywheel.lib.visual.util.ItemStackSlot;
 import dev.engine_room.vanillin.item.ItemModels;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.entity.state.ItemClusterRenderState;
+import net.minecraft.client.renderer.item.ItemStackRenderState;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.AABB;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
@@ -23,6 +29,7 @@ public class ItemVisual extends AbstractEntityVisual<ItemEntity> implements Simp
     private static final float ITEM_MIN_HOVER_HEIGHT = 0.0625f;
     private static final float FLAT_ITEM_DEPTH_THRESHOLD = 0.0625f;
     private static final TransformedInstance[] NO_INSTANCES = new TransformedInstance[0];
+    private static final ItemStackSlot[] NO_SLOTS = new ItemStackSlot[0];
     private static final Vector3f[] NO_OFFSETS = new Vector3f[0];
     private final ShadowComponent shadowComponent;
     private final FireComponent fireComponent;
@@ -30,6 +37,8 @@ public class ItemVisual extends AbstractEntityVisual<ItemEntity> implements Simp
     private final Matrix4f pose = new Matrix4f();
     private ItemStack currentStack = ItemStack.EMPTY;
     private TransformedInstance[] instances = NO_INSTANCES;
+    // Copies drawn by the item's own visualizer.
+    private ItemStackSlot[] slots = NO_SLOTS;
     private Vector3f[] offsets = NO_OFFSETS;
     private float minOffsetY;
 
@@ -43,7 +52,8 @@ public class ItemVisual extends AbstractEntityVisual<ItemEntity> implements Simp
     }
 
     public static boolean isSupported(ItemEntity entity) {
-        return ItemModels.isSupported(entity.getItem(), ItemDisplayContext.GROUND, entity, entity.getId());
+        return ItemStackSlot.isVisualized(entity.getItem())
+                || ItemModels.isSupported(entity.getItem(), ItemDisplayContext.GROUND, entity, entity.getId());
     }
 
     private static Vector3f[] computeOffsets(int count, int seed, float modelDepth) {
@@ -75,6 +85,23 @@ public class ItemVisual extends AbstractEntityVisual<ItemEntity> implements Simp
         currentStack = entity.getItem();
         deleteInstances();
         minOffsetY = 0.0f;
+        if (ItemStackSlot.isVisualized(currentStack)) {
+            // ItemEntityRenderer.submit's cluster from the stack's model bounds, special-renderer extents included.
+            Minecraft minecraft = Minecraft.getInstance();
+            ItemStackRenderState state = new ItemStackRenderState();
+            minecraft.getItemModelResolver()
+                     .updateForTopItem(state, currentStack, ItemDisplayContext.GROUND, level, entity, entity.getId());
+            AABB bounds = state.getModelBoundingBox();
+            minOffsetY = -(float) bounds.minY + ITEM_MIN_HOVER_HEIGHT;
+            int count = ItemClusterRenderState.getRenderedAmount(currentStack.getCount());
+            offsets = computeOffsets(count, ItemClusterRenderState.getSeedForItemStack(currentStack),
+                    (float) bounds.getZsize());
+            slots = new ItemStackSlot[count];
+            for (int i = 0; i < count; i++) {
+                slots[i] = new ItemStackSlot();
+            }
+            return;
+        }
         // Honor the gate BOTH ways: a gate-rejected stack is vanilla's even when its own bake would produce meshes (a sibling stack may have demoted the key's verdict).
         if (!isSupported(entity)) {
             return;
@@ -101,12 +128,13 @@ public class ItemVisual extends AbstractEntityVisual<ItemEntity> implements Simp
         if (!isVisible(context.frustum())) {
             return;
         }
-        if (!ItemStack.matches(entity.getItem(), currentStack)) {
+        if (!ItemStack.matches(entity.getItem(), currentStack)
+                || ItemStackSlot.isVisualized(currentStack) != (slots.length != 0)) {
             updateStack();
         } else if (instances.length != 0 && !isSupported(entity)) {
             deleteInstances();
         }
-        if (instances.length == 0) {
+        if (instances.length == 0 && slots.length == 0) {
             shadowComponent.radius(0.0f);
             shadowComponent.beginFrame(context);
             fireComponent.delete();
@@ -115,15 +143,15 @@ public class ItemVisual extends AbstractEntityVisual<ItemEntity> implements Simp
         }
         animate(context.partialTick());
         shadowComponent.radius(0.15f);
-        shadowComponent.strength((float) ((1.0 - entity.distanceToSqr(context.camera()
-                                                                             .position()) / 256.0) * 0.75));
+        shadowComponent.strength(EntityFeatureCompat.shadowStrength((float) ((1.0 - entity.distanceToSqr(context.camera()
+                                                                             .position()) / 256.0) * 0.75)));
         shadowComponent.beginFrame(context);
         fireComponent.beginFrame(context);
         nameTagComponent.beginFrame(context);
     }
 
     private void animate(float partialTick) {
-        if (instances.length == 0) {
+        if (instances.length == 0 && slots.length == 0) {
             return;
         }
         var renderOrigin = renderOrigin();
@@ -145,13 +173,24 @@ public class ItemVisual extends AbstractEntityVisual<ItemEntity> implements Simp
                         .light(light)
                         .setChanged();
         }
+        for (int i = 0; i < slots.length; i++) {
+            pose.translation((float) x, (float) (y + bob + minOffsetY), (float) z)
+                .rotateY(spin)
+                .translate(offsets[i]);
+            slots[i].draw(visualizationContext, currentStack, ItemDisplayContext.GROUND, entity, entity.getId(), pose,
+                    light, OverlayTexture.NO_OVERLAY, partialTick);
+        }
     }
 
     private void deleteInstances() {
         for (TransformedInstance instance : instances) {
             instance.delete();
         }
+        for (ItemStackSlot slot : slots) {
+            slot.delete();
+        }
         instances = NO_INSTANCES;
+        slots = NO_SLOTS;
         offsets = NO_OFFSETS;
     }
 

@@ -6,13 +6,16 @@ import dev.engine_room.flywheel.api.layout.LayoutBuilder;
 import dev.engine_room.flywheel.api.registry.IdRegistry;
 import dev.engine_room.flywheel.api.visualization.BlockEntityVisualizer;
 import dev.engine_room.flywheel.api.visualization.EntityVisualizer;
+import dev.engine_room.flywheel.api.visualization.ItemStackVisualizer;
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
 import dev.engine_room.flywheel.impl.layout.LayoutBuilderImpl;
 import dev.engine_room.flywheel.impl.registry.IdRegistryImpl;
+import dev.engine_room.flywheel.impl.visualization.ConcurrentExtraction;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
 import dev.engine_room.flywheel.impl.visualization.VisualizerRegistryImpl;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
@@ -86,5 +89,21 @@ public class FlwApiLinkImpl implements FlwApiLink {
     @Override
     public <T extends Entity> void setVisualizer(EntityType<T> type, @Nullable EntityVisualizer<? super T> visualizer) {
         VisualizerRegistryImpl.setVisualizer(type, visualizer);
+    }
+
+    @Override
+    @Nullable
+    public ItemStackVisualizer getVisualizer(Item item) {
+        return VisualizerRegistryImpl.getVisualizer(item);
+    }
+
+    @Override
+    public void setVisualizer(Item item, @Nullable ItemStackVisualizer visualizer) {
+        VisualizerRegistryImpl.setVisualizer(item, visualizer);
+    }
+
+    @Override
+    public boolean supportsConcurrentExtraction(Object renderer) {
+        return ConcurrentExtraction.supports(renderer);
     }
 }

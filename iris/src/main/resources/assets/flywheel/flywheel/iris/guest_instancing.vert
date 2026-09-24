@@ -34,8 +34,8 @@ void _flw_guestVertex() {
     flw_vertexColor = _flw_aColor;
     flw_vertexTexCoord = _flw_aTexCoord;
     flw_vertexOverlay = ivec2(0, 10);
-    flw_vertexLight = (vec2(_flw_aLight) + 8.0) / 256.0;
-    flw_vertexNormal = _flw_aNormal;
+    flw_vertexLight = vec2(_flw_aLight) / 256.0;
+    flw_vertexNormal = _flw_guestNormal();
 
     flw_instanceVertex(instance);
     flw_materialVertex();
@@ -46,6 +46,17 @@ void _flw_guestVertex() {
     #endif
 
     flw_vertexNormal = normalize(flw_vertexNormal);
+    #ifdef _FLW_GUEST_VERTEX_LIGHT
+    _flw_guestVertexLight(_flw_drawPackedMaterial.y);
+    #endif
+    #ifdef _FLW_GUEST_EMISSIVE_PEAK
+    flw_vertexColor.rgb /= max(max(flw_vertexColor.r, flw_vertexColor.g), max(flw_vertexColor.b, 1.0 / 255.0));
+    #endif
+    #if !defined(_FLW_GUEST_MESH_LIGHT) && !defined(_FLW_CRUMBLING)
+    if ((_flw_drawPackedMaterial.y & _FLW_USE_LIGHT_MASK) == 0u) {
+        flw_vertexLight = _FLW_GUEST_UNLIT_LIGHT;
+    }
+    #endif
     #ifdef _FLW_GUEST_PROXY_VERTEX
     _flw_proxyFinish();
     #endif

@@ -69,7 +69,7 @@ void _flw_loadVertex(uint vi) {
 
     uint l = verts.w[b + 7u];
     // Half-texel offset to match vanilla's lightmap UV (renderpass/header.vsh: (UV2 + 8) / 256).
-    flw_vertexLight = (vec2(float(l & 0xFFFFu), float(l >> 16u)) + 8.0) / 256.0;
+    flw_vertexLight = vec2(float(l & 0xFFFFu), float(l >> 16u)) / 256.0;
 
     uint n = verts.w[b + 8u];
     flw_vertexNormal = vec3(float(int(n << 24u) >> 24), float(int(n << 16u) >> 24),

@@ -6,7 +6,6 @@ import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.backend.engine.BaseInstancer;
-import dev.engine_room.flywheel.backend.engine.GlSlab;
 import dev.engine_room.flywheel.backend.engine.InstancerKey;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.GL11C;
@@ -22,9 +21,6 @@ import static dev.engine_room.flywheel.backend.engine.EngineConstants.LOG_2_PAGE
 import static dev.engine_room.flywheel.backend.engine.EngineConstants.PAGE_MASK;
 
 public class InstancedInstancer<I extends Instance> extends BaseInstancer<I> {
-    private static final int PAGE_SIZE = PAGE_MASK + 1;
-    @Nullable
-    private static ByteBuffer texelStaging;
     private final List<InstancedDraw> draws = new ArrayList<>();
     @Nullable
     private GpuBuffer instanceTexels;
@@ -35,20 +31,6 @@ public class InstancedInstancer<I extends Instance> extends BaseInstancer<I> {
 
     public InstancedInstancer(InstancerKey<I> key, Recreate<I> recreate) {
         super(key, recreate);
-    }
-
-    private static ByteBuffer acquireTexelStaging(int bytes) {
-        ByteBuffer buf = texelStaging;
-        if (buf == null || buf.capacity() < bytes) {
-            if (buf != null) {
-                MemoryUtil.memFree(buf);
-            }
-            buf = MemoryUtil.memAlloc(Math.max(bytes, buf == null ? bytes : buf.capacity() * 2));
-            texelStaging = buf;
-        }
-        buf.clear();
-        buf.limit(bytes);
-        return buf;
     }
 
     @Nullable
@@ -80,14 +62,8 @@ public class InstancedInstancer<I extends Instance> extends BaseInstancer<I> {
         }
 
         long needBytes = (long) count * instanceStride;
-        ByteBuffer staging = acquireTexelStaging((int) needBytes);
-        long dstBase = MemoryUtil.memAddress(staging);
-        long[] blocks = slabBlocks;
-        for (int base = 0; base < count; base += PAGE_SIZE) {
-            int n = Math.min(PAGE_SIZE, count - base);
-            MemoryUtil.memCopy(blocks[base >>> LOG_2_PAGE_SIZE], dstBase + (long) base * instanceStride,
-                    (long) n * instanceStride);
-        }
+        // updateBuffer migrated every page into the slab: contiguous.
+        ByteBuffer instances = MemoryUtil.memByteBuffer(slabBlocks[0], (int) needBytes);
 
         if (needsGrow) {
             if (instanceTexels != null) {
@@ -106,7 +82,7 @@ public class InstancedInstancer<I extends Instance> extends BaseInstancer<I> {
         }
         RenderSystem.getDevice()
                     .createCommandEncoder()
-                    .writeToBuffer(instanceTexels.slice(0L, needBytes), staging);
+                    .writeToBuffer(instanceTexels.slice(0L, needBytes), instances);
         texelsValid = true;
         texelsReady = true;
     }
@@ -119,29 +95,10 @@ public class InstancedInstancer<I extends Instance> extends BaseInstancer<I> {
     }
 
     public void updateBuffer() {
-        GlSlab buf = prepareUpload();
-        if (buf == null || changed.isEmpty()) {
+        if (prepareUpload() == null || changed.isEmpty()) {
             return;
         }
         texelsValid = false;
-
-        int size = instances.size();
-        long stride = instanceStride;
-        long maxByte = (long) size * stride;
-
-        changed.forEachSetSpan((startInclusive, endInclusive) -> {
-            if (startInclusive >= size) {
-                return;
-            }
-            int actualEnd = Math.min(endInclusive, size - 1);
-            long byteStart = (long) startInclusive * stride;
-            long byteSize = ((long) (actualEnd - startInclusive + 1)) * stride;
-            if (byteStart + byteSize > maxByte) {
-                byteSize = maxByte - byteStart;
-            }
-            buf.flushRange(byteStart, byteSize);
-        });
-
         changed.clear();
     }
 

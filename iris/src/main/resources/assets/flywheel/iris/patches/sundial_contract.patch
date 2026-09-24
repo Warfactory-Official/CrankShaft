@@ -1,0 +1,21 @@
+diff --git a/programs/gbuffers/Textured.frag b/programs/gbuffers/Textured.frag
+--- a/programs/gbuffers/Textured.frag
++++ b/programs/gbuffers/Textured.frag
+@@ -253,5 +253,5 @@
+         albedoData *= mix(vec4(1.0), texAlbedo, vec4(float(useTexAlbedo)));
+         #ifdef COLORWHEEL
+             float ao;
+             vec4 overlayColor;
+-            clrwl_computeFragment(albedoData, albedoData, rawData.lightmap, ao, overlayColor);
++            clrwl_computeFragment(mix(vec4(1.0), texAlbedo, vec4(float(useTexAlbedo))), albedoData, rawData.lightmap, ao, overlayColor);
+diff --git a/programs/gbuffers/Overlay.frag b/programs/gbuffers/Overlay.frag
+--- a/programs/gbuffers/Overlay.frag
++++ b/programs/gbuffers/Overlay.frag
+@@ -9,6 +9,6 @@
+     vec4 albedo = color * texture(gtexture, texcoord);
+     #ifdef COLORWHEEL
+         float ao;
+         vec2 lightmap;
+         vec4 overlayColor;
+-        clrwl_computeFragment(albedo, albedo, lightmap, ao, overlayColor);
++        clrwl_computeFragment(texture(gtexture, texcoord), albedo, lightmap, ao, overlayColor);

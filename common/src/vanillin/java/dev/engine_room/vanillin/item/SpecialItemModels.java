@@ -1,6 +1,8 @@
 package dev.engine_room.vanillin.item;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import dev.engine_room.flywheel.lib.util.ItemFoil;
+import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.PlayerSkinRenderCache;
 import net.minecraft.client.renderer.blockentity.SkullBlockRenderer;
@@ -20,13 +22,28 @@ import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Resolves an item stack's special-model layers (in-hand trident/shield/skull/banner) into instanceable draw
  * plans, mirroring {@code ItemStackRenderState}'s special branch; unsupported renderers resolve to nothing.
  */
 public final class SpecialItemModels {
+    private static final RendererReloadCache<Boolean, Map<SupportKey, Boolean>> SUPPORT_CACHE =
+            new RendererReloadCache<>($ -> new ConcurrentHashMap<>());
+
     private SpecialItemModels() {
+    }
+
+    /**
+     * {@link #resolve} yields something for this item, model and context.
+     */
+    public static boolean isSupported(ItemStack stack, ItemDisplayContext displayContext, @Nullable ItemOwner owner,
+                                      int seed) {
+        return SUPPORT_CACHE.get(true).computeIfAbsent(
+                new SupportKey(stack.getItem(), stack.get(DataComponents.ITEM_MODEL), displayContext),
+                $ -> !resolve(stack, displayContext, owner, seed).isEmpty());
     }
 
     public static List<Resolved> resolve(ItemStack stack, ItemDisplayContext displayContext, @Nullable ItemOwner owner,
@@ -42,7 +59,7 @@ public final class SpecialItemModels {
             if (layer.specialRenderer == null) {
                 continue;
             }
-            Key key = keyFor(layer.specialRenderer, stack, layer.foilType != ItemStackRenderState.FoilType.NONE);
+            Key key = keyFor(layer.specialRenderer, stack, ItemFoil.of(stack));
             if (key == null) {
                 continue;
             }
@@ -109,5 +126,8 @@ public final class SpecialItemModels {
     }
 
     public record Resolved(Key key, Matrix4f transform) {
+    }
+
+    private record SupportKey(Item item, @Nullable Identifier modelId, ItemDisplayContext displayContext) {
     }
 }

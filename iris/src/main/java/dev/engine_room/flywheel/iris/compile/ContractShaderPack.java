@@ -12,4 +12,10 @@ public interface ContractShaderPack {
     boolean flywheel$forwardOit();
 
     @Nullable DeferredOitProfile flywheel$deferredOit();
+
+    boolean flywheel$deferredEmissive();
+
+    boolean flywheel$deferredTranslucent();
+
+    boolean flywheel$emissiveLight();
 }

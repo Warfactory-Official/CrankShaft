@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visual.TickableVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.instance.FlatLit;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
@@ -15,13 +16,14 @@ import dev.engine_room.flywheel.lib.visual.AbstractEntityVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleTickableVisual;
 import net.minecraft.client.model.geom.ModelLayerLocation;
+import net.minecraft.client.renderer.entity.AbstractMinecartRenderer;
 import net.minecraft.resources.Identifier;
+import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.vehicle.minecart.AbstractMinecart;
 import net.minecraft.world.entity.vehicle.minecart.MinecartBehavior;
 import net.minecraft.world.entity.vehicle.minecart.NewMinecartBehavior;
 import net.minecraft.world.entity.vehicle.minecart.OldMinecartBehavior;
-import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
@@ -45,6 +47,7 @@ public class MinecartVisual<T extends AbstractMinecart> extends AbstractEntityVi
 
     public MinecartVisual(VisualizationContext ctx, T entity, float partialTick, ModelLayerLocation layerLocation) {
         super(ctx, entity, partialTick);
+        EntityFeatureCompat.observeTexture(entity.getType(), TEXTURE);
 
         instances = InstanceTree.create(instancerProvider(), ModelTrees.of(layerLocation, MATERIAL));
         blockState = entity.getDisplayBlockState();
@@ -54,13 +57,24 @@ public class MinecartVisual<T extends AbstractMinecart> extends AbstractEntityVi
         updateLight(partialTick);
     }
 
+    /**
+     * 26.2: contents drawn by a special renderer (chests) leave the whole cart to vanilla, as upstream's
+     * {@code ENTITYBLOCK_ANIMATED} check did.
+     */
+    public static boolean isSupported(AbstractMinecart minecart) {
+        return Models.displayBlock(minecart.getDisplayBlockState(), AbstractMinecartRenderer.BLOCK_DISPLAY_CONTEXT)
+                != null;
+    }
+
     @Nullable
     private TransformedInstance createContentsInstance() {
-        if (blockState.getRenderShape() == RenderShape.INVISIBLE) {
+        if (blockState.isAir()) {
             return null;
         }
 
-        return instancerProvider().instancer(InstanceTypes.TRANSFORMED, Models.block(blockState))
+        return instancerProvider().instancer(InstanceTypes.TRANSFORMED,
+                                          Objects.requireNonNull(Models.displayBlock(blockState,
+                                                  AbstractMinecartRenderer.BLOCK_DISPLAY_CONTEXT)))
                                   .createInstance();
     }
 
@@ -192,7 +206,7 @@ public class MinecartVisual<T extends AbstractMinecart> extends AbstractEntityVi
             instance.light(packedLight)
                     .setChanged();
         });
-        FlatLit.relight(packedLight, contents);
+        FlatLit.relight(LightCoordsUtil.max(packedLight, Models.displayBlockLight(blockState)), contents);
     }
 
     @Override

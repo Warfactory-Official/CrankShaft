@@ -1,5 +1,5 @@
-// MlabResolveVariant.ADDITIVE depth: the colour resolve writes no depth (none exists for additive-only pixels); the
-// nearest occluding node depth it recorded (-1 = none) lands here.
+// The resolve writes no depth; the nearest occluding node depth it recorded (-1 = none) lands here under GEQUAL:
+// a depth-test-off node behind the scene must not push its depth back.
 
 layout(location = 0) out vec4 frag;
 

@@ -1,6 +1,7 @@
 layout(std430, binding = 0) coherent buffer FlwHeads { uint flw_heads[]; };
 layout(std430, binding = 1) coherent buffer FlwNodes { uvec4 flw_nodes[]; };
 layout(std430, binding = 2) coherent buffer FlwCounts { uint flw_count; uint flw_overflow; uint flw_maxLayers; uint flw_pad; };
+layout(std430, binding = 3) coherent buffer FlwTiles { uint flw_tiles[]; };
 uniform bool flw_oitActive;
 
 bool flw_layerBefore(uint left, uint right) {

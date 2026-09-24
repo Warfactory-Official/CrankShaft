@@ -1,10 +1,5 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
-import org.joml.Matrix3fc;
-import org.joml.Matrix4fc;
-import org.joml.Vector3f;
-
-import dev.engine_room.flywheel.lib.model.baked.BakedMesh;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.client.model.geom.builders.UVPair;
@@ -14,8 +9,12 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.item.Item;
-import org.jspecify.annotations.Nullable;
+import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.client.model.quad.BakedNormals;
+import org.joml.Matrix3fc;
+import org.joml.Matrix4fc;
+import org.joml.Vector3f;
+import org.jspecify.annotations.Nullable;
 
 // Item variant of MeshEmitter: consumes raw BakedQuads (no QuadInstance) with a full display-space transform + a
 // flat per-quad tint. NeoForge multiplies the patched bakedColors() (baked face shade); the Fabric counterpart,
@@ -79,6 +78,11 @@ final class ItemMeshEmitter {
 
     boolean isEmpty() {
         return positions.isEmpty();
+    }
+
+    BakedMesh build(BlockState state) {
+        return new BakedMesh(positions.toFloatArray(), uvs.toFloatArray(), normals.toFloatArray(),
+                colors.toIntArray(), overlays.toIntArray(), lights.toIntArray(), state);
     }
 
     BakedMesh build(Item item, @Nullable Identifier itemModel) {

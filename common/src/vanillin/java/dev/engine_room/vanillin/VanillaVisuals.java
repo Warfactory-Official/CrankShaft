@@ -2,9 +2,13 @@ package dev.engine_room.vanillin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
-import dev.engine_room.flywheel.api.material.*;
+import dev.engine_room.flywheel.api.material.CardinalLightingMode;
+import dev.engine_room.flywheel.api.material.Material;
+import dev.engine_room.flywheel.api.material.Transparency;
+import dev.engine_room.flywheel.api.material.WriteMask;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
+import dev.engine_room.flywheel.lib.model.PackIdentity;
 import dev.engine_room.vanillin.compose.*;
 import dev.engine_room.vanillin.config.BlockEntityVisualizerBuilder;
 import dev.engine_room.vanillin.config.Configurator;
@@ -110,6 +114,7 @@ import net.minecraft.world.entity.monster.cubemob.AbstractCubeMob;
 import net.minecraft.world.entity.npc.villager.VillagerData;
 import net.minecraft.world.entity.npc.villager.VillagerProfession;
 import net.minecraft.world.entity.projectile.ItemSupplier;
+import net.minecraft.world.entity.vehicle.boat.AbstractBoat;
 import net.minecraft.world.entity.vehicle.minecart.AbstractMinecart;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.DyeColor;
@@ -670,11 +675,12 @@ public class VanillaVisuals {
                 .apply(STABLE);
 
         builder(EntityTypes.BLOCK_DISPLAY).factory(BlockDisplayVisual::new)
+                                          .skipVanillaRender(BlockDisplayVisual::isSupported)
                                           .apply(STABLE);
 
         builder(BlockEntityTypes.COPPER_GOLEM_STATUE)
                 .factory(CopperGolemStatueVisual::new)
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
 
         minecart(EntityTypes.CHEST_MINECART, ModelLayers.CHEST_MINECART)
                 .apply(STABLE);
@@ -696,78 +702,114 @@ public class VanillaVisuals {
                                                                                 .build())
                                             .with(element(VisualElements.FIRE).build())
                                             .with(element(VisualElements.TNT_MINECART).build())
-                                            .apply(VanillaVisuals::experimentalElements)
+                                            .apply(VanillaVisuals::hostElements)
                                             .build()
                                             .apply(STABLE);
 
         builder(EntityTypes.ITEM)
                 .factory(ItemVisual::new)
                 .skipVanillaRender(ItemVisual::isSupported)
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
 
         itemFrame(EntityTypes.ITEM_FRAME)
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
         itemFrame(EntityTypes.GLOW_ITEM_FRAME)
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
 
         builder(EntityTypes.ITEM_DISPLAY)
                 .factory(ItemDisplayVisual::new)
                 .skipVanillaRender(ItemDisplayVisual::shouldVisualize)
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
 
         builder(EntityTypes.EXPERIENCE_ORB)
                 .factory(ExperienceOrbVisual::new)
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
 
         builder(EntityTypes.FALLING_BLOCK)
                 .factory(FallingBlockVisual::new)
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
         builder(EntityTypes.TNT)
                 .factory(PrimedTntVisual::new)
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
 
-        thrownItem(EntityTypes.SNOWBALL, 1.0F, false).apply(EXPERIMENTAL);
-        thrownItem(EntityTypes.EGG, 1.0F, false).apply(EXPERIMENTAL);
-        thrownItem(EntityTypes.ENDER_PEARL, 1.0F, false).apply(EXPERIMENTAL);
-        thrownItem(EntityTypes.SPLASH_POTION, 1.0F, false).apply(EXPERIMENTAL);
-        thrownItem(EntityTypes.LINGERING_POTION, 1.0F, false).apply(EXPERIMENTAL);
-        thrownItem(EntityTypes.EXPERIENCE_BOTTLE, 1.0F, false).apply(EXPERIMENTAL);
-        thrownItem(EntityTypes.EYE_OF_ENDER, 1.0F, true).apply(EXPERIMENTAL);
+        thrownItem(EntityTypes.SNOWBALL, 1.0F, false).apply(STABLE);
+        thrownItem(EntityTypes.EGG, 1.0F, false).apply(STABLE);
+        thrownItem(EntityTypes.ENDER_PEARL, 1.0F, false).apply(STABLE);
+        thrownItem(EntityTypes.SPLASH_POTION, 1.0F, false).apply(STABLE);
+        thrownItem(EntityTypes.LINGERING_POTION, 1.0F, false).apply(STABLE);
+        thrownItem(EntityTypes.EXPERIENCE_BOTTLE, 1.0F, false).apply(STABLE);
+        thrownItem(EntityTypes.EYE_OF_ENDER, 1.0F, true).apply(STABLE);
 
         builder(EntityTypes.LEASH_KNOT)
                 .factory(LeashKnotVisual::new)
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
         builder(EntityTypes.EVOKER_FANGS)
                 .factory(EvokerFangsVisual::new)
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
+        builder(EntityTypes.LLAMA_SPIT)
+                .factory(LlamaSpitVisual::new)
+                .apply(STABLE);
+        builder(EntityTypes.PAINTING)
+                .factory(PaintingVisual::new)
+                .apply(STABLE);
+        boat(EntityTypes.ACACIA_BOAT, ModelLayers.ACACIA_BOAT, false).apply(STABLE);
+        boat(EntityTypes.ACACIA_CHEST_BOAT, ModelLayers.ACACIA_CHEST_BOAT, false).apply(STABLE);
+        boat(EntityTypes.BIRCH_BOAT, ModelLayers.BIRCH_BOAT, false).apply(STABLE);
+        boat(EntityTypes.BIRCH_CHEST_BOAT, ModelLayers.BIRCH_CHEST_BOAT, false).apply(STABLE);
+        boat(EntityTypes.CHERRY_BOAT, ModelLayers.CHERRY_BOAT, false).apply(STABLE);
+        boat(EntityTypes.CHERRY_CHEST_BOAT, ModelLayers.CHERRY_CHEST_BOAT, false).apply(STABLE);
+        boat(EntityTypes.DARK_OAK_BOAT, ModelLayers.DARK_OAK_BOAT, false).apply(STABLE);
+        boat(EntityTypes.DARK_OAK_CHEST_BOAT, ModelLayers.DARK_OAK_CHEST_BOAT, false).apply(STABLE);
+        boat(EntityTypes.JUNGLE_BOAT, ModelLayers.JUNGLE_BOAT, false).apply(STABLE);
+        boat(EntityTypes.JUNGLE_CHEST_BOAT, ModelLayers.JUNGLE_CHEST_BOAT, false).apply(STABLE);
+        boat(EntityTypes.MANGROVE_BOAT, ModelLayers.MANGROVE_BOAT, false).apply(STABLE);
+        boat(EntityTypes.MANGROVE_CHEST_BOAT, ModelLayers.MANGROVE_CHEST_BOAT, false).apply(STABLE);
+        boat(EntityTypes.OAK_BOAT, ModelLayers.OAK_BOAT, false).apply(STABLE);
+        boat(EntityTypes.OAK_CHEST_BOAT, ModelLayers.OAK_CHEST_BOAT, false).apply(STABLE);
+        boat(EntityTypes.PALE_OAK_BOAT, ModelLayers.PALE_OAK_BOAT, false).apply(STABLE);
+        boat(EntityTypes.PALE_OAK_CHEST_BOAT, ModelLayers.PALE_OAK_CHEST_BOAT, false).apply(STABLE);
+        boat(EntityTypes.SPRUCE_BOAT, ModelLayers.SPRUCE_BOAT, false).apply(STABLE);
+        boat(EntityTypes.SPRUCE_CHEST_BOAT, ModelLayers.SPRUCE_CHEST_BOAT, false).apply(STABLE);
+        boat(EntityTypes.BAMBOO_RAFT, ModelLayers.BAMBOO_RAFT, true).apply(STABLE);
+        boat(EntityTypes.BAMBOO_CHEST_RAFT, ModelLayers.BAMBOO_CHEST_RAFT, true).apply(STABLE);
+        builder(EntityTypes.FISHING_BOBBER)
+                .factory(FishingBobberVisual::new)
+                .skipVanillaPrimary(FishingBobberVisual::isSupported)
+                .apply(STABLE);
+        builder(EntityTypes.FIREWORK_ROCKET)
+                .factory(FireworkVisual::new)
+                .skipVanillaRender(ThrownItemVisual::isSupported)
+                .apply(STABLE);
         builder(EntityTypes.END_CRYSTAL)
                 .factory(EndCrystalVisual::new)
                 .skipVanillaRender(EndCrystalVisual::isSupported)
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
 
         builder(EntityTypes.ARROW)
                 .factory((ctx, entity, partialTick) -> new ArrowVisual<>(ctx, entity, partialTick,
                         s -> ((TippableArrowRenderState) s).isTipped
                                 ? TippableArrowRenderer.TIPPED_ARROW_LOCATION
                                 : TippableArrowRenderer.NORMAL_ARROW_LOCATION))
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
         builder(EntityTypes.SPECTRAL_ARROW)
                 .factory((ctx, entity, partialTick) -> new ArrowVisual<>(ctx, entity, partialTick,
                         s -> SpectralArrowRenderer.SPECTRAL_ARROW_LOCATION))
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
         builder(EntityTypes.TRIDENT)
                 .factory(TridentVisual::new)
-                .apply(EXPERIMENTAL);
+                .apply(STABLE);
 
         living(EntityTypes.CREEPER, cfg(ModelLayers.CREEPER).scale(CREEPER_SCALE).whiteOverlay(CREEPER_WHITE)
                                                             .scrollOverlay(ModelLayers.CREEPER_ARMOR,
-                                                                    CREEPER_SWIRL_MATERIAL, 0.01F, 0.01F,
+                                                                    LivingEntityVisual.irisRouted(
+                                                                            CREEPER_SWIRL_MATERIAL,
+                                                                            PackIdentity.ENTITIES), 0.01F, 0.01F,
                                                                     CREEPER_SWIRL_TINT,
-                                                                    CREEPER_POWERED)).apply(EXPERIMENTAL);
+                                                                    CREEPER_POWERED)).apply(STABLE);
         living(EntityTypes.SPIDER, cfg(ModelLayers.SPIDER).flipDegrees(180.0F)
                                                           .emissiveOverlay(ModelLayers.SPIDER, SPIDER_EYES)).apply(
-                EXPERIMENTAL);
-        living(EntityTypes.BLAZE, ModelLayers.BLAZE).apply(EXPERIMENTAL);
+                STABLE);
+        living(EntityTypes.BLAZE, ModelLayers.BLAZE).apply(STABLE);
         living(EntityTypes.IRON_GOLEM, cfg(ModelLayers.IRON_GOLEM).rotations(IRON_GOLEM_ROTATIONS)
                                                                   .coplanarOverlay(ModelLayers.IRON_GOLEM,
                                                                           IRON_CRACK_LOW,
@@ -779,53 +821,62 @@ public class VanillaVisuals {
                                                                           IRON_CRACK_HIGH,
                                                                           crackiness(Crackiness.Level.HIGH))
                                                                   .blockDecoration(IRON_GOLEM_OFFERING,
+                                                                          IronGolemRenderer.BLOCK_DISPLAY_CONTEXT,
                                                                           IRON_GOLEM_FLOWER,
                                                                           new LivingEntityVisual.BlockPlacement(
                                                                                   "right_arm", IRON_FLOWER))).apply(
-                EXPERIMENTAL);
+                STABLE);
         living(EntityTypes.SNOW_GOLEM,
-                cfg(ModelLayers.SNOW_GOLEM).blockDecoration(SNOW_GOLEM_HAS_PUMPKIN, SNOW_GOLEM_PUMPKIN,
-                        new LivingEntityVisual.BlockPlacement("head", PUMPKIN))).apply(EXPERIMENTAL);
+                cfg(ModelLayers.SNOW_GOLEM).blockDecoration(SNOW_GOLEM_HAS_PUMPKIN,
+                        SnowGolemRenderer.BLOCK_DISPLAY_CONTEXT, SNOW_GOLEM_PUMPKIN,
+                        new LivingEntityVisual.BlockPlacement("head", PUMPKIN))).apply(STABLE);
         living(EntityTypes.SKELETON,
                 cfg(ModelLayers.SKELETON).heldItems().armor(ModelLayers.SKELETON_ARMOR).shaking(SKELETON_SHAKING)
-                                         .elytra().headItem()).apply(EXPERIMENTAL);
+                                         .elytra().headItem()).apply(STABLE);
         living(EntityTypes.STRAY,
                 cfg(ModelLayers.STRAY).heldItems().armor(ModelLayers.STRAY_ARMOR).shaking(SKELETON_SHAKING).elytra()
                                       .headItem()
-                                      .overlay(ModelLayers.STRAY_OUTER_LAYER, STRAY_CLOTHES)).apply(EXPERIMENTAL);
-        living(EntityTypes.SILVERFISH, cfg(ModelLayers.SILVERFISH).flipDegrees(180.0F)).apply(EXPERIMENTAL);
-        living(EntityTypes.ENDERMITE, cfg(ModelLayers.ENDERMITE).flipDegrees(180.0F)).apply(EXPERIMENTAL);
+                                      .overlay(ModelLayers.STRAY_OUTER_LAYER, STRAY_CLOTHES)).apply(STABLE);
+        living(EntityTypes.SILVERFISH, cfg(ModelLayers.SILVERFISH).flipDegrees(180.0F)).apply(STABLE);
+        living(EntityTypes.ENDERMITE, cfg(ModelLayers.ENDERMITE).flipDegrees(180.0F)).apply(STABLE);
         // Vex + allay: entityTranslucent models whose textures carry REAL alpha gradients (ghostly lower body,
         // wispy tail) -- a cutout body renders those texels opaque, so both take the OIT-translucent body.
-        living(EntityTypes.VEX, cfg(ModelLayers.VEX).heldItems().translucentBody()).apply(EXPERIMENTAL);
-        living(EntityTypes.BAT, ModelLayers.BAT).apply(EXPERIMENTAL);
-        living(EntityTypes.GHAST, ModelLayers.GHAST).apply(EXPERIMENTAL);
+        living(EntityTypes.VEX, cfg(ModelLayers.VEX).heldItems().translucentBody()).apply(STABLE);
+        living(EntityTypes.BAT, ModelLayers.BAT).apply(STABLE);
+        living(EntityTypes.GHAST, ModelLayers.GHAST).apply(STABLE);
         living(EntityTypes.ENDERMAN, cfg(ModelLayers.ENDERMAN)
                 .emissiveOverlay(ModelLayers.ENDERMAN, ENDERMAN_EYES)
-                .dynamicBlock(ENDERMAN_CARRIED, null, ENDERMAN_BLOCK)).apply(EXPERIMENTAL);
+                .dynamicBlock(EndermanRenderer.BLOCK_DISPLAY_CONTEXT, ENDERMAN_CARRIED, null, ENDERMAN_BLOCK))
+                .apply(STABLE);
         living(EntityTypes.WITCH, cfg(ModelLayers.WITCH)
                 .customHeldItem(LivingEntity::getMainHandItem, WITCH_NOSE, ItemDisplayContext.GROUND,
-                        s -> ((WitchRenderState) s).isHoldingPotion)).apply(EXPERIMENTAL);
+                        s -> ((WitchRenderState) s).isHoldingPotion)).apply(STABLE);
         living(EntityTypes.BREEZE, cfg(ModelLayers.BREEZE)
-                .scrollOverlay(ModelLayers.BREEZE_WIND, BREEZE_WIND_MATERIAL, 0.02F, 0.0F, null, null)
-                .emissiveTranslucentOverlay(ModelLayers.BREEZE_EYES, BREEZE_EYES, s -> -1, null)).apply(EXPERIMENTAL);
-        living(EntityTypes.GUARDIAN, cfg(ModelLayers.GUARDIAN).vanillaFallback(GUARDIAN_BEAMING)).apply(EXPERIMENTAL);
+                .scrollOverlay(ModelLayers.BREEZE_WIND,
+                        LivingEntityVisual.irisRouted(BREEZE_WIND_MATERIAL, PackIdentity.ENTITIES_TRANSLUCENT), 0.02F,
+                        0.0F, null, null)
+                .emissiveTranslucentOverlay(ModelLayers.BREEZE_EYES, BREEZE_EYES, s -> -1, null)).apply(STABLE);
+        living(EntityTypes.GUARDIAN, cfg(ModelLayers.GUARDIAN).vanillaFallback(GUARDIAN_BEAMING)).apply(STABLE);
         living(EntityTypes.VINDICATOR, cfg(ModelLayers.VINDICATOR)
-                .heldItems(s -> ((IllagerRenderState) s).isAggressive).headItem()).apply(EXPERIMENTAL);
-        living(EntityTypes.PILLAGER, cfg(ModelLayers.PILLAGER).heldItems().headItem()).apply(EXPERIMENTAL);
-        living(EntityTypes.EVOKER, cfg(ModelLayers.EVOKER).headItem()).apply(EXPERIMENTAL);
+                .heldItems(s -> ((IllagerRenderState) s).isAggressive).headItem()).apply(STABLE);
+        living(EntityTypes.PILLAGER, cfg(ModelLayers.PILLAGER).heldItems().headItem()).apply(STABLE);
+        living(EntityTypes.EVOKER, cfg(ModelLayers.EVOKER).headItem()).apply(STABLE);
+        // Renderer's model: its constructor shows the hat. Invisible frames stay vanilla (four clones).
+        living(EntityTypes.ILLUSIONER, cfg(ModelLayers.ILLUSIONER)
+                .heldItems(s -> ((IllusionerRenderState) s).isCastingSpell || ((IllagerRenderState) s).isAggressive)
+                .headItem()).apply(STABLE);
         ageable(EntityTypes.ZOMBIE, baby -> (baby
                 ? cfg(ModelLayers.ZOMBIE_BABY).modelFactory(root -> new BabyZombieModel<>(root))
                                               .babyArmor(ModelLayers.ZOMBIE_BABY_ARMOR).elytra(ModelLayers.ELYTRA_BABY)
                 : cfg(ModelLayers.ZOMBIE).modelFactory(root -> new ZombieModel<>(root)).armor(ModelLayers.ZOMBIE_ARMOR)
                                          .elytra())
-                .heldItems().shaking(ZOMBIE_CONVERTING).headItem()).apply(EXPERIMENTAL);
+                .heldItems().shaking(ZOMBIE_CONVERTING).headItem()).apply(STABLE);
         ageable(EntityTypes.HUSK, baby -> (baby
                 ? cfg(ModelLayers.HUSK_BABY).modelFactory(root -> new BabyZombieModel<>(root))
                                             .babyArmor(ModelLayers.HUSK_BABY_ARMOR).elytra(ModelLayers.ELYTRA_BABY)
                 : cfg(ModelLayers.HUSK).modelFactory(root -> new ZombieModel<>(root)).armor(ModelLayers.HUSK_ARMOR)
                                        .elytra())
-                .heldItems().shaking(ZOMBIE_CONVERTING).headItem()).apply(EXPERIMENTAL);
+                .heldItems().shaking(ZOMBIE_CONVERTING).headItem()).apply(STABLE);
         ageable(EntityTypes.DROWNED, baby -> (baby
                 ? cfg(ModelLayers.DROWNED_BABY).modelFactory(BabyDrownedModel::new)
                                                .babyArmor(ModelLayers.DROWNED_BABY_ARMOR)
@@ -833,51 +884,51 @@ public class VanillaVisuals {
                                                .overlay(ModelLayers.DROWNED_BABY_OUTER_LAYER, DROWNED_OUTER_TEX)
                 : cfg(ModelLayers.DROWNED).modelFactory(DrownedModel::new).armor(ModelLayers.DROWNED_ARMOR).elytra()
                                           .overlay(ModelLayers.DROWNED_OUTER_LAYER, DROWNED_OUTER_TEX))
-                .rotations(DROWNED_ROTATIONS).heldItems().headItem()).apply(EXPERIMENTAL);
+                .rotations(DROWNED_ROTATIONS).heldItems().headItem()).apply(STABLE);
         ageable(EntityTypes.ZOMBIFIED_PIGLIN, baby -> (baby
                 ? cfg(ModelLayers.ZOMBIFIED_PIGLIN_BABY).modelFactory(BabyZombifiedPiglinModel::new)
                                                         .babyArmor(ModelLayers.ZOMBIFIED_PIGLIN_BABY_ARMOR)
                                                         .elytra(ModelLayers.ELYTRA_BABY)
                 : cfg(ModelLayers.ZOMBIFIED_PIGLIN).modelFactory(AdultZombifiedPiglinModel::new)
                                                    .armor(ModelLayers.ZOMBIFIED_PIGLIN_ARMOR).elytra())
-                .heldItems().headItem(PiglinRenderer.PIGLIN_CUSTOM_HEAD_TRANSFORMS)).apply(EXPERIMENTAL);
+                .heldItems().headItem(PiglinRenderer.PIGLIN_CUSTOM_HEAD_TRANSFORMS)).apply(STABLE);
         ageable(EntityTypes.SQUID, baby ->
                 cfg(baby ? ModelLayers.SQUID_BABY : ModelLayers.SQUID).modelFactory(SquidModel::new)
-                                                                      .rotations(SQUID_ROTATIONS)).apply(EXPERIMENTAL);
+                                                                      .rotations(SQUID_ROTATIONS)).apply(STABLE);
         ageable(EntityTypes.GLOW_SQUID, baby ->
                 cfg(baby ? ModelLayers.SQUID_BABY : ModelLayers.SQUID).modelFactory(SquidModel::new)
-                                                                      .rotations(SQUID_ROTATIONS)).apply(EXPERIMENTAL);
+                                                                      .rotations(SQUID_ROTATIONS)).apply(STABLE);
         living(EntityTypes.SLIME, cfg(ModelLayers.SLIME).scale(CUBE_SCALE).shadowRadius(CUBE_SHADOW)
                                                         .translucentOverlay(ModelLayers.SLIME_OUTER,
-                                                                SLIME_TEXTURE)).apply(EXPERIMENTAL);
+                                                                SLIME_TEXTURE)).apply(STABLE);
         living(EntityTypes.MAGMA_CUBE, cfg(ModelLayers.MAGMA_CUBE).scale(CUBE_SCALE).shadowRadius(CUBE_SHADOW)).apply(
-                EXPERIMENTAL);
+                STABLE);
 
-        living(EntityTypes.WITHER, cfg(ModelLayers.WITHER).scale(WITHER_SCALE)).apply(EXPERIMENTAL);
+        living(EntityTypes.WITHER, cfg(ModelLayers.WITHER).scale(WITHER_SCALE)).apply(STABLE);
         living(EntityTypes.PHANTOM, cfg(ModelLayers.PHANTOM).scale(PHANTOM_SCALE).rotations(PHANTOM_ROTATIONS)
                                                             .emissiveOverlay(ModelLayers.PHANTOM, PHANTOM_EYES)).apply(
-                EXPERIMENTAL);
+                STABLE);
         living(EntityTypes.WITHER_SKELETON,
                 cfg(ModelLayers.WITHER_SKELETON).heldItems().armor(ModelLayers.WITHER_SKELETON_ARMOR)
-                                                .shaking(SKELETON_SHAKING).elytra().headItem()).apply(EXPERIMENTAL);
+                                                .shaking(SKELETON_SHAKING).elytra().headItem()).apply(STABLE);
         living(EntityTypes.CAVE_SPIDER, cfg(ModelLayers.CAVE_SPIDER).flipDegrees(180.0F)
                                                                     .emissiveOverlay(ModelLayers.CAVE_SPIDER,
-                                                                            SPIDER_EYES)).apply(EXPERIMENTAL);
+                                                                            SPIDER_EYES)).apply(STABLE);
         ageable(EntityTypes.PIGLIN, baby -> (baby
                 ? cfg(ModelLayers.PIGLIN_BABY).modelFactory(BabyPiglinModel::new)
                                               .babyArmor(ModelLayers.PIGLIN_BABY_ARMOR).elytra(ModelLayers.ELYTRA_BABY)
                 : cfg(ModelLayers.PIGLIN).modelFactory(AdultPiglinModel::new).armor(ModelLayers.PIGLIN_ARMOR).elytra())
                 .heldItems().shaking(PIGLIN_CONVERTING)
-                .headItem(PiglinRenderer.PIGLIN_CUSTOM_HEAD_TRANSFORMS)).apply(EXPERIMENTAL);
+                .headItem(PiglinRenderer.PIGLIN_CUSTOM_HEAD_TRANSFORMS)).apply(STABLE);
         living(EntityTypes.PIGLIN_BRUTE, cfg(ModelLayers.PIGLIN_BRUTE).heldItems().armor(ModelLayers.PIGLIN_BRUTE_ARMOR)
                                                                       .shaking(PIGLIN_CONVERTING).elytra()
                                                                       .headItem(
                                                                               PiglinRenderer.PIGLIN_CUSTOM_HEAD_TRANSFORMS)).apply(
-                EXPERIMENTAL);
+                STABLE);
         living(EntityTypes.BOGGED,
                 cfg(ModelLayers.BOGGED).heldItems().armor(ModelLayers.BOGGED_ARMOR).shaking(SKELETON_SHAKING).elytra()
                                        .headItem()
-                                       .overlay(ModelLayers.BOGGED_OUTER_LAYER, BOGGED_OUTER_TEX)).apply(EXPERIMENTAL);
+                                       .overlay(ModelLayers.BOGGED_OUTER_LAYER, BOGGED_OUTER_TEX)).apply(STABLE);
         living(EntityTypes.WARDEN, cfg(ModelLayers.WARDEN)
                 .emissiveTranslucentOverlay(ModelLayers.WARDEN_BIOLUMINESCENT, WARDEN_BIOLUMINESCENT_TEX, s -> -1, null)
                 .emissiveTranslucentOverlay(ModelLayers.WARDEN_PULSATING_SPOTS, WARDEN_SPOTS_1_TEX,
@@ -889,76 +940,77 @@ public class VanillaVisuals {
                         s -> ((WardenRenderState) s).tendrilAnimation > 1.0E-5F)
                 .emissiveTranslucentOverlay(ModelLayers.WARDEN_HEART, WARDEN_HEART_TEX,
                         s -> ARGB.white(((WardenRenderState) s).heartAnimation),
-                        s -> ((WardenRenderState) s).heartAnimation > 1.0E-5F)).apply(EXPERIMENTAL);
-        living(EntityTypes.ZOGLIN, ModelLayers.ZOGLIN).apply(EXPERIMENTAL);
-        living(EntityTypes.RAVAGER, ModelLayers.RAVAGER).apply(EXPERIMENTAL);
-        living(EntityTypes.TADPOLE, ModelLayers.TADPOLE).apply(EXPERIMENTAL);
+                        s -> ((WardenRenderState) s).heartAnimation > 1.0E-5F)).apply(STABLE);
+        living(EntityTypes.ZOGLIN, ModelLayers.ZOGLIN).apply(STABLE);
+        living(EntityTypes.RAVAGER, ModelLayers.RAVAGER).apply(STABLE);
+        living(EntityTypes.TADPOLE, ModelLayers.TADPOLE).apply(STABLE);
 
         living(EntityTypes.COW,
                 (Cow e) -> COW_CFGS.get(e.getVariant().value().modelAndTexture().model())[e.isBaby() ? 1 : 0]).apply(
-                EXPERIMENTAL);
+                STABLE);
         living(EntityTypes.PIG,
                 (Pig e) -> PIG_CFGS.get(e.getVariant().value().modelAndTexture().model())[e.isBaby() ? 1 : 0]).apply(
-                EXPERIMENTAL);
+                STABLE);
         living(EntityTypes.CHICKEN, (Chicken e) -> CHICKEN_CFGS.get(
-                e.getVariant().value().modelAndTexture().model())[e.isBaby() ? 1 : 0]).apply(EXPERIMENTAL);
+                e.getVariant().value().modelAndTexture().model())[e.isBaby() ? 1 : 0]).apply(STABLE);
         ageable(EntityTypes.MOOSHROOM, baby -> baby
                 ? cfg(ModelLayers.MOOSHROOM_BABY).modelFactory(BabyCowModel::new)
-                : cfg(ModelLayers.MOOSHROOM).modelFactory(CowModel::new).blockDecoration(MOOSHROOM_MUSHROOM,
+                : cfg(ModelLayers.MOOSHROOM).modelFactory(CowModel::new).blockDecoration(
+                MushroomCowRenderer.BLOCK_DISPLAY_CONTEXT, MOOSHROOM_MUSHROOM,
                 new LivingEntityVisual.BlockPlacement(null, MUSHROOM_1),
                 new LivingEntityVisual.BlockPlacement(null, MUSHROOM_2),
-                new LivingEntityVisual.BlockPlacement("head", MUSHROOM_3))).apply(EXPERIMENTAL);
+                new LivingEntityVisual.BlockPlacement("head", MUSHROOM_3))).apply(STABLE);
         ageable(EntityTypes.TURTLE, baby -> (baby
                 ? cfg(ModelLayers.TURTLE_BABY).modelFactory(BabyTurtleModel::new)
                 : cfg(ModelLayers.TURTLE).modelFactory(AdultTurtleModel::new))
-                .shadowRadius(TURTLE_SHADOW)).apply(EXPERIMENTAL);
+                .shadowRadius(TURTLE_SHADOW)).apply(STABLE);
         ageable(EntityTypes.GOAT, baby -> baby
                 ? cfg(ModelLayers.GOAT_BABY).modelFactory(BabyGoatModel::new)
-                : cfg(ModelLayers.GOAT).modelFactory(GoatModel::new)).apply(EXPERIMENTAL);
+                : cfg(ModelLayers.GOAT).modelFactory(GoatModel::new)).apply(STABLE);
         ageable(EntityTypes.POLAR_BEAR, baby ->
                 cfg(baby ? ModelLayers.POLAR_BEAR_BABY : ModelLayers.POLAR_BEAR).modelFactory(
-                        PolarBearModel::new)).apply(EXPERIMENTAL);
+                        PolarBearModel::new)).apply(STABLE);
         ageable(EntityTypes.HOGLIN, baby -> (baby
                 ? cfg(ModelLayers.HOGLIN_BABY).modelFactory(BabyHoglinModel::new)
                 : cfg(ModelLayers.HOGLIN).modelFactory(HoglinModel::new))
-                .shaking(HOGLIN_CONVERTING)).apply(EXPERIMENTAL);
+                .shaking(HOGLIN_CONVERTING)).apply(STABLE);
         ageable(EntityTypes.ZOGLIN, baby -> baby
                 ? cfg(ModelLayers.ZOGLIN_BABY).modelFactory(BabyHoglinModel::new)
-                : cfg(ModelLayers.ZOGLIN).modelFactory(HoglinModel::new)).apply(EXPERIMENTAL);
+                : cfg(ModelLayers.ZOGLIN).modelFactory(HoglinModel::new)).apply(STABLE);
         ageable(EntityTypes.ARMADILLO, baby -> baby
                 ? cfg(ModelLayers.ARMADILLO_BABY).modelFactory(BabyArmadilloModel::new)
-                : cfg(ModelLayers.ARMADILLO).modelFactory(AdultArmadilloModel::new)).apply(EXPERIMENTAL);
+                : cfg(ModelLayers.ARMADILLO).modelFactory(AdultArmadilloModel::new)).apply(STABLE);
         ageable(EntityTypes.SNIFFER, baby ->
                 cfg(baby ? ModelLayers.SNIFFER_BABY : ModelLayers.SNIFFER).modelFactory(SnifferModel::new)).apply(
-                EXPERIMENTAL);
+                STABLE);
         ageable(EntityTypes.RABBIT, baby -> baby
                 ? cfg(ModelLayers.RABBIT_BABY).modelFactory(BabyRabbitModel::new)
-                : cfg(ModelLayers.RABBIT).modelFactory(AdultRabbitModel::new)).apply(EXPERIMENTAL);
-        living(EntityTypes.PARROT, ModelLayers.PARROT).apply(EXPERIMENTAL);
+                : cfg(ModelLayers.RABBIT).modelFactory(AdultRabbitModel::new)).apply(STABLE);
+        living(EntityTypes.PARROT, ModelLayers.PARROT).apply(STABLE);
         ageable(EntityTypes.AXOLOTL, baby -> baby
                 ? cfg(ModelLayers.AXOLOTL_BABY).modelFactory(BabyAxolotlModel::new)
-                : cfg(ModelLayers.AXOLOTL).modelFactory(AdultAxolotlModel::new)).apply(EXPERIMENTAL);
-        living(EntityTypes.FROG, ModelLayers.FROG).apply(EXPERIMENTAL);
-        living(EntityTypes.COD, cfg(ModelLayers.COD).rotations(COD_ROTATIONS)).apply(EXPERIMENTAL);
+                : cfg(ModelLayers.AXOLOTL).modelFactory(AdultAxolotlModel::new)).apply(STABLE);
+        living(EntityTypes.FROG, ModelLayers.FROG).apply(STABLE);
+        living(EntityTypes.COD, cfg(ModelLayers.COD).rotations(COD_ROTATIONS)).apply(STABLE);
         ageable(EntityTypes.DOLPHIN, baby ->
                 cfg(baby ? ModelLayers.DOLPHIN_BABY : ModelLayers.DOLPHIN).modelFactory(DolphinModel::new)).apply(
-                EXPERIMENTAL);
+                STABLE);
         living(EntityTypes.SALMON, (Salmon e) -> switch (e.getVariant()) {
             case SMALL -> SALMON_SMALL_CFG;
             case MEDIUM -> SALMON_MEDIUM_CFG;
             case LARGE -> SALMON_LARGE_CFG;
-        }).apply(EXPERIMENTAL);
+        }).apply(STABLE);
         living(EntityTypes.TROPICAL_FISH, (TropicalFish e) -> switch (e.getPattern().base()) {
             case SMALL -> TROPICAL_SMALL_CFG;
             case LARGE -> TROPICAL_LARGE_CFG;
-        }).apply(EXPERIMENTAL);
+        }).apply(STABLE);
         living(EntityTypes.PUFFERFISH, cfg(ModelLayers.PUFFERFISH_BIG)
                 .modelVariants(PUFFER_STATE,
                         new LivingEntityVisual.ModelVariant(ModelLayers.PUFFERFISH_SMALL, PufferfishSmallModel::new),
                         new LivingEntityVisual.ModelVariant(ModelLayers.PUFFERFISH_MEDIUM, PufferfishMidModel::new),
                         new LivingEntityVisual.ModelVariant(ModelLayers.PUFFERFISH_BIG, PufferfishBigModel::new))
                 .rotations(PUFFERFISH_ROTATIONS)
-                .shadowRadius(PUFFERFISH_SHADOW)).apply(EXPERIMENTAL);
+                .shadowRadius(PUFFERFISH_SHADOW)).apply(STABLE);
         ageable(EntityTypes.NAUTILUS, baby -> baby
                 ? cfg(ModelLayers.NAUTILUS_BABY).modelFactory(NautilusModel::new)
                 : cfg(ModelLayers.NAUTILUS).modelFactory(NautilusModel::new)
@@ -967,12 +1019,12 @@ public class VanillaVisuals {
                                                    ModelLayers.NAUTILUS_ARMOR)
                                            .bodyEquipment(e -> e.getItemBySlot(EquipmentSlot.SADDLE),
                                                    EquipmentClientInfo.LayerType.NAUTILUS_SADDLE,
-                                                   ModelLayers.NAUTILUS_SADDLE)).apply(EXPERIMENTAL);
+                                                   ModelLayers.NAUTILUS_SADDLE)).apply(STABLE);
         living(EntityTypes.ZOMBIE_NAUTILUS,
                 (ZombieNautilus e) -> switch (e.getVariant().value().modelAndTexture().model()) {
                     case NORMAL -> ZOMBIE_NAUTILUS_CFG;
                     case WARM -> ZOMBIE_NAUTILUS_CORAL_CFG;
-                }).apply(EXPERIMENTAL);
+                }).apply(STABLE);
 
         ageable(EntityTypes.SHEEP, baby -> baby
                 ? cfg(ModelLayers.SHEEP_BABY).modelFactory(BabySheepModel::new)
@@ -982,7 +1034,7 @@ public class VanillaVisuals {
                                         .coloredOverlay(ModelLayers.SHEEP_WOOL, SHEEP_WOOL_TEX, SHEEP_WOOL_COLOR,
                                                 s -> !((SheepRenderState) s).isSheared)
                                         .coloredOverlay(ModelLayers.SHEEP_WOOL_UNDERCOAT, SHEEP_UNDERCOAT_TEX,
-                                                SHEEP_WOOL_COLOR, SHEEP_UNDERCOAT_VISIBLE)).apply(EXPERIMENTAL);
+                                                SHEEP_WOOL_COLOR, SHEEP_UNDERCOAT_VISIBLE)).apply(STABLE);
         ageable(EntityTypes.WOLF, baby -> baby
                 ? cfg(ModelLayers.WOLF_BABY).modelFactory(BabyWolfModel::new)
                                             .coloredCoplanarOverlay(ModelLayers.WOLF_BABY, WOLF_BABY_COLLAR_TEX,
@@ -992,7 +1044,7 @@ public class VanillaVisuals {
                                                WOLF_HAS_COLLAR)
                                        .bodyEquipment(e -> e.getItemBySlot(EquipmentSlot.BODY),
                                                EquipmentClientInfo.LayerType.WOLF_BODY, ModelLayers.WOLF_ARMOR, null,
-                                               WOLF_ARMOR_CRACK)).apply(EXPERIMENTAL);
+                                               WOLF_ARMOR_CRACK)).apply(STABLE);
         ageable(EntityTypes.CAT, baby -> (baby
                 ? cfg(ModelLayers.CAT_BABY).modelFactory(BabyCatModel::new)
                                            .coloredCoplanarOverlay(ModelLayers.CAT_BABY_COLLAR, CAT_BABY_COLLAR_TEX,
@@ -1000,26 +1052,26 @@ public class VanillaVisuals {
                 : cfg(ModelLayers.CAT).modelFactory(AdultCatModel::new)
                                       .coloredCoplanarOverlay(ModelLayers.CAT_COLLAR, CAT_COLLAR_TEX, CAT_COLLAR_COLOR,
                                               CAT_HAS_COLLAR))
-                .rotations(CAT_ROTATIONS)).apply(EXPERIMENTAL);
+                .rotations(CAT_ROTATIONS)).apply(STABLE);
         ageable(EntityTypes.OCELOT, baby -> baby
                 ? cfg(ModelLayers.OCELOT_BABY).modelFactory(BabyOcelotModel::new)
-                : cfg(ModelLayers.OCELOT).modelFactory(AdultOcelotModel::new)).apply(EXPERIMENTAL);
+                : cfg(ModelLayers.OCELOT).modelFactory(AdultOcelotModel::new)).apply(STABLE);
         ageable(EntityTypes.BEE, baby -> baby
                 ? cfg(ModelLayers.BEE_BABY).modelFactory(BabyBeeModel::new)
-                : cfg(ModelLayers.BEE).modelFactory(AdultBeeModel::new)).apply(EXPERIMENTAL);
+                : cfg(ModelLayers.BEE).modelFactory(AdultBeeModel::new)).apply(STABLE);
 
         ageable(EntityTypes.FOX, baby -> (baby
                 ? cfg(ModelLayers.FOX_BABY).modelFactory(BabyFoxModel::new)
                 : cfg(ModelLayers.FOX).modelFactory(AdultFoxModel::new))
                 .rotations(FOX_ROTATIONS)
                 .customHeldItem(LivingEntity::getMainHandItem, FOX_MOUTH, ItemDisplayContext.GROUND, null)).apply(
-                EXPERIMENTAL);
+                STABLE);
         ageable(EntityTypes.PANDA, baby -> (baby
                 ? cfg(ModelLayers.PANDA_BABY).modelFactory(BabyPandaModel::new)
                 : cfg(ModelLayers.PANDA).modelFactory(PandaModel::new))
                 .rotations(PANDA_ROTATIONS)
                 .customHeldItem(LivingEntity::getMainHandItem, PANDA_HELD, ItemDisplayContext.GROUND,
-                        PANDA_HOLDING)).apply(EXPERIMENTAL);
+                        PANDA_HOLDING)).apply(STABLE);
         ageable(EntityTypes.HORSE, baby -> baby
                 ? cfg(ModelLayers.HORSE_BABY).modelFactory(BabyHorseModel::new)
                                              .texturedTranslucentOverlay(ModelLayers.HORSE_BABY, HORSE_MARKINGS, null)
@@ -1029,19 +1081,19 @@ public class VanillaVisuals {
                                                 EquipmentClientInfo.LayerType.HORSE_BODY, ModelLayers.HORSE_ARMOR)
                                         .bodyEquipment(e -> e.getItemBySlot(EquipmentSlot.SADDLE),
                                                 EquipmentClientInfo.LayerType.HORSE_SADDLE, ModelLayers.HORSE_SADDLE,
-                                                EQUINE_RIDDEN, null)).apply(EXPERIMENTAL);
+                                                EQUINE_RIDDEN, null)).apply(STABLE);
         ageable(EntityTypes.DONKEY, baby -> baby
                 ? cfg(ModelLayers.DONKEY_BABY).modelFactory(BabyDonkeyModel::new)
                 : cfg(ModelLayers.DONKEY).modelFactory(DonkeyModel::new)
                                          .bodyEquipment(e -> e.getItemBySlot(EquipmentSlot.SADDLE),
                                                  EquipmentClientInfo.LayerType.DONKEY_SADDLE, ModelLayers.DONKEY_SADDLE,
-                                                 EQUINE_RIDDEN, null)).apply(EXPERIMENTAL);
+                                                 EQUINE_RIDDEN, null)).apply(STABLE);
         ageable(EntityTypes.MULE, baby -> baby
                 ? cfg(ModelLayers.MULE_BABY).modelFactory(BabyDonkeyModel::new)
                 : cfg(ModelLayers.MULE).modelFactory(DonkeyModel::new)
                                        .bodyEquipment(e -> e.getItemBySlot(EquipmentSlot.SADDLE),
                                                EquipmentClientInfo.LayerType.MULE_SADDLE, ModelLayers.MULE_SADDLE,
-                                               EQUINE_RIDDEN, null)).apply(EXPERIMENTAL);
+                                               EQUINE_RIDDEN, null)).apply(STABLE);
         ageable(EntityTypes.SKELETON_HORSE, baby -> baby
                 ? cfg(ModelLayers.SKELETON_HORSE_BABY).modelFactory(BabyHorseModel::new)
                 : cfg(ModelLayers.SKELETON_HORSE).modelFactory(HorseModel::new)
@@ -1051,7 +1103,7 @@ public class VanillaVisuals {
                                                  .bodyEquipment(e -> e.getItemBySlot(EquipmentSlot.SADDLE),
                                                          EquipmentClientInfo.LayerType.SKELETON_HORSE_SADDLE,
                                                          ModelLayers.SKELETON_HORSE_SADDLE, EQUINE_RIDDEN, null)).apply(
-                EXPERIMENTAL);
+                STABLE);
         ageable(EntityTypes.ZOMBIE_HORSE, baby -> baby
                 ? cfg(ModelLayers.ZOMBIE_HORSE_BABY).modelFactory(BabyHorseModel::new)
                 : cfg(ModelLayers.ZOMBIE_HORSE).modelFactory(HorseModel::new)
@@ -1061,7 +1113,7 @@ public class VanillaVisuals {
                                                .bodyEquipment(e -> e.getItemBySlot(EquipmentSlot.SADDLE),
                                                        EquipmentClientInfo.LayerType.ZOMBIE_HORSE_SADDLE,
                                                        ModelLayers.ZOMBIE_HORSE_SADDLE, EQUINE_RIDDEN, null)).apply(
-                EXPERIMENTAL);
+                STABLE);
         // Villager: the biome TYPE texture is clothing-only -- an overlay over the base skin, not the body texture.
         // The type overlay is a complementary pair reproducing the no-hat model swap (mcmeta hat flags).
         ageable(EntityTypes.VILLAGER, baby -> (baby
@@ -1082,7 +1134,7 @@ public class VanillaVisuals {
                                                    villagerProfession("villager"), null)
                                            .texturedCoplanarOverlay(ModelLayers.VILLAGER, villagerLevel("villager"),
                                                    null))
-                .shadowRadius(VILLAGER_SHADOW)).apply(EXPERIMENTAL);
+                .shadowRadius(VILLAGER_SHADOW)).apply(STABLE);
         ageable(EntityTypes.ZOMBIE_VILLAGER, baby -> (baby
                 ? cfg(ModelLayers.ZOMBIE_VILLAGER_BABY).modelFactory(root -> new BabyZombieVillagerModel<>(root))
                                                        .babyArmor(ModelLayers.ZOMBIE_VILLAGER_BABY_ARMOR)
@@ -1106,14 +1158,14 @@ public class VanillaVisuals {
                                                   .texturedCoplanarOverlay(ModelLayers.ZOMBIE_VILLAGER,
                                                           villagerLevel("zombie_villager"), null))
                 .heldItems().shaking(ZOMBIE_CONVERTING)
-                .headItem(VillagerRenderer.CUSTOM_HEAD_TRANSFORMS)).apply(EXPERIMENTAL);
+                .headItem(VillagerRenderer.CUSTOM_HEAD_TRANSFORMS)).apply(STABLE);
 
         ageable(EntityTypes.CAMEL, baby -> baby
                 ? cfg(ModelLayers.CAMEL_BABY).modelFactory(BabyCamelModel::new)
                 : cfg(ModelLayers.CAMEL).modelFactory(AdultCamelModel::new)
                                         .bodyEquipment(e -> e.getItemBySlot(EquipmentSlot.SADDLE),
                                                 EquipmentClientInfo.LayerType.CAMEL_SADDLE, ModelLayers.CAMEL_SADDLE,
-                                                CAMEL_RIDDEN, null)).apply(EXPERIMENTAL);
+                                                CAMEL_RIDDEN, null)).apply(STABLE);
         ageable(EntityTypes.STRIDER, baby -> (baby
                 ? cfg(ModelLayers.STRIDER_BABY).modelFactory(BabyStriderModel::new)
                 : cfg(ModelLayers.STRIDER).modelFactory(AdultStriderModel::new)
@@ -1121,18 +1173,18 @@ public class VanillaVisuals {
                                                   EquipmentClientInfo.LayerType.STRIDER_SADDLE,
                                                   ModelLayers.STRIDER_SADDLE))
                 .shaking(STRIDER_SHAKING)
-                .shadowRadius(STRIDER_SHADOW)).apply(EXPERIMENTAL);
-        living(EntityTypes.ALLAY, cfg(ModelLayers.ALLAY).heldItems().translucentBody()).apply(EXPERIMENTAL);
-        living(EntityTypes.WANDERING_TRADER, cfg(ModelLayers.WANDERING_TRADER).headItem()).apply(EXPERIMENTAL);
+                .shadowRadius(STRIDER_SHADOW)).apply(STABLE);
+        living(EntityTypes.ALLAY, cfg(ModelLayers.ALLAY).heldItems().translucentBody()).apply(STABLE);
+        living(EntityTypes.WANDERING_TRADER, cfg(ModelLayers.WANDERING_TRADER).headItem()).apply(STABLE);
         living(EntityTypes.GIANT, cfg(ModelLayers.GIANT).heldItems().armor(ModelLayers.GIANT_ARMOR)).apply(
-                EXPERIMENTAL);
+                STABLE);
 
         ageable(EntityTypes.LLAMA, baby -> baby
                 ? cfg(ModelLayers.LLAMA_BABY).modelFactory(BabyLlamaModel::new)
                 : cfg(ModelLayers.LLAMA).modelFactory(LlamaModel::new)
                                         .bodyEquipment(e -> e.getItemBySlot(EquipmentSlot.BODY),
                                                 EquipmentClientInfo.LayerType.LLAMA_BODY, ModelLayers.LLAMA_DECOR,
-                                                EquipmentAssets.TRADER_LLAMA, IS_TRADER_LLAMA)).apply(EXPERIMENTAL);
+                                                EquipmentAssets.TRADER_LLAMA, IS_TRADER_LLAMA)).apply(STABLE);
         ageable(EntityTypes.TRADER_LLAMA, baby -> baby
                 ? cfg(ModelLayers.TRADER_LLAMA_BABY).modelFactory(BabyLlamaModel::new)
                                                     .bodyEquipment(e -> ItemStack.EMPTY,
@@ -1144,28 +1196,29 @@ public class VanillaVisuals {
                                                        EquipmentClientInfo.LayerType.LLAMA_BODY,
                                                        ModelLayers.LLAMA_DECOR,
                                                        EquipmentAssets.TRADER_LLAMA, IS_TRADER_LLAMA)).apply(
-                EXPERIMENTAL);
+                STABLE);
 
         // Armor stand: a LivingEntity whose isBaby() IS isSmall(), so the small variant dispatches its own config
         // (handlesBaby); invisible stands keep vanilla via the isInvisible complement.
         living(EntityTypes.ARMOR_STAND, (ArmorStand e) ->
-                e.isSmall() ? ARMOR_STAND_SMALL_CFG : ARMOR_STAND_CFG).apply(EXPERIMENTAL);
+                e.isSmall() ? ARMOR_STAND_SMALL_CFG : ARMOR_STAND_CFG).apply(STABLE);
         living(EntityTypes.SHULKER, cfg(ModelLayers.SHULKER).rotations(SHULKER_ROTATIONS)
-                                                            .bodyTexture(SHULKER_TEXTURE)).apply(EXPERIMENTAL);
+                                                            .bodyTexture(SHULKER_TEXTURE)).apply(STABLE);
         living(EntityTypes.ELDER_GUARDIAN, cfg(ModelLayers.ELDER_GUARDIAN).vanillaFallback(GUARDIAN_BEAMING)).apply(
-                EXPERIMENTAL);
+                STABLE);
         living(EntityTypes.CREAKING, cfg(ModelLayers.CREAKING)
                 .emissiveOverlay(ModelLayers.CREAKING_EYES, CREAKING_EYES_TEX, CREAKING_EYES_GLOWING)).apply(
-                EXPERIMENTAL);
+                STABLE);
         living(EntityTypes.PARCHED, cfg(ModelLayers.PARCHED).heldItems().armor(ModelLayers.PARCHED_ARMOR)
                                                             .shaking(SKELETON_SHAKING).elytra().headItem()).apply(
-                EXPERIMENTAL);
+                STABLE);
         living(EntityTypes.COPPER_GOLEM, cfg(ModelLayers.COPPER_GOLEM)
                 .bodyTexture(COPPER_GOLEM_TEXTURE)
                 .texturedEmissiveOverlay(ModelLayers.COPPER_GOLEM, COPPER_GOLEM_EYES, null)
                 .heldItems()
                 .headItem()
-                .dynamicBlock(COPPER_GOLEM_ANTENNA, "/body/head", COPPER_ANTENNA_BLOCK)).apply(EXPERIMENTAL);
+                .dynamicBlock(CopperGolemRenderer.BLOCK_DISPLAY_CONTEXT, COPPER_GOLEM_ANTENNA, "/body/head",
+                        COPPER_ANTENNA_BLOCK)).apply(STABLE);
         ageable(EntityTypes.HAPPY_GHAST, baby -> (baby
                 ? cfg(ModelLayers.HAPPY_GHAST_BABY).modelFactory(HappyGhastModel::new)
                                                    .overlay(ModelLayers.HAPPY_GHAST_BABY_ROPES, GHAST_ROPES_TEX,
@@ -1179,7 +1232,7 @@ public class VanillaVisuals {
                                               .bodyEquipmentPosed(e -> e.getItemBySlot(EquipmentSlot.BODY),
                                                       EquipmentClientInfo.LayerType.HAPPY_GHAST_BODY,
                                                       ModelLayers.HAPPY_GHAST_HARNESS, GHAST_IS_RIDDEN,
-                                                      GHAST_GOGGLES))).apply(EXPERIMENTAL);
+                                                      GHAST_GOGGLES))).apply(STABLE);
         // Sulfur cube: translucent outer body + inner jelly, the swallowed block as a dynamic block, the fuse
         // swell + TNT-style flash, and the size/squish scale.
         living(EntityTypes.SULFUR_CUBE, cfg(ModelLayers.SULFUR_CUBE).modelFactory(SulfurCubeModel::new)
@@ -1189,8 +1242,10 @@ public class VanillaVisuals {
                                                                     .whiteOverlay(SULFUR_FUSE_FLASH)
                                                                     .translucentOverlay(ModelLayers.SULFUR_CUBE_INNER,
                                                                             SULFUR_INNER_TEX, SULFUR_INNER_VISIBLE)
-                                                                    .dynamicBlock(SULFUR_CONTAINED, null,
-                                                                            SULFUR_BLOCK_OFFSET)).apply(EXPERIMENTAL);
+                                                                    .dynamicBlock(
+                                                                            SulfurCubeRenderer.BLOCK_DISPLAY_CONTEXT,
+                                                                            SULFUR_CONTAINED, null,
+                                                                            SULFUR_BLOCK_OFFSET)).apply(STABLE);
     }
 
     private static Predicate<LivingEntityRenderState> crackiness(Crackiness.Level level) {
@@ -1406,6 +1461,13 @@ public class VanillaVisuals {
                 .skipVanillaRender(ItemFrameVisual::shouldSkipVanilla);
     }
 
+    private static <T extends AbstractBoat> EntityVisualizerBuilder<T> boat(EntityType<T> type,
+                                                                           ModelLayerLocation layer, boolean raft) {
+        return builder(type)
+                .factory((ctx, entity, partialTick) -> new BoatVisual(ctx, entity, partialTick, layer, raft))
+                .skipVanillaPrimary(entity -> true);
+    }
+
     private static <T extends Entity & ItemSupplier> EntityVisualizerBuilder<T> thrownItem(EntityType<T> type,
                                                                                            float scale,
                                                                                            boolean fullBright) {
@@ -1417,15 +1479,17 @@ public class VanillaVisuals {
 
     public static <T extends AbstractMinecart> EntityVisualizerBuilder<T> minecart(EntityType<T> type,
                                                                                    ModelLayerLocation variant) {
-        return composable(type).apply(VanillaVisuals::commonElements)
+        return composable(type).shouldVisualize((ctx, cart) -> MinecartVisual.isSupported(cart))
+                               .apply(VanillaVisuals::commonElements)
                                .with(element(VisualElements.SHADOW).configure(
                                                                            new ShadowElement.Config(0.7f, ShadowElement.Config.DEFAULT_STRENGTH))
                                                                    .build())
                                .with(element(VisualElements.FIRE).build())
                                .with(element(VisualElements.MINECART).configure(variant)
                                                                      .build())
-                               .apply(VanillaVisuals::experimentalElements)
-                               .build();
+                               .apply(VanillaVisuals::hostElements)
+                               .build()
+                               .skipVanillaRender(MinecartVisual::isSupported);
     }
 
     public static <T extends Entity> void commonElements(EntityBuilder<T> builder) {
@@ -1435,10 +1499,7 @@ public class VanillaVisuals {
 
     // Composable visuals fully replace vanilla rendering, so a named/leashed host would otherwise lose its
     // nameplate and leash: NAME_TAG restores it; LEASH is wired for a future leashable host.
-    public static <T extends Entity> void experimentalElements(EntityBuilder<T> builder) {
-        if (!EXPERIMENTAL) {
-            return;
-        }
+    public static <T extends Entity> void hostElements(EntityBuilder<T> builder) {
         builder.with(element(VisualElements.NAME_TAG).build());
         builder.with(element(VisualElements.LEASH).build());
     }

@@ -17,15 +17,33 @@ import java.util.regex.Pattern;
 
 /**
  * Family manifests select candidates; diff context and capability checks establish applicability.
+ * {@code deferredEmissive}: the pack's emissive program writes G-buffers its deferred lighting consumes.
+ * {@code deferredTranslucent}: its translucent program writes G-buffers that composite finds by
+ * {@code depthtex0 != depthtex1}. {@code emissiveLight}: its emissive contract adds light into a buffer that a
+ * {@code patches} diff merges into the lit scene; {@code programs} builds that contract.
  */
 record PackPatch(int schema, String name, List<String> testedVersions, List<SourceMatch> matches, List<FileEdit> files,
                  List<Wrapper> wrappers, List<BlendCopy> blends, String properties, @Nullable SourceGuard forwardOit,
-                 @Nullable DeferredAdapter deferred) {
+                 @Nullable DeferredAdapter deferred, boolean deferredEmissive, boolean deferredTranslucent,
+                 List<String> patches, List<Program> programs, boolean emissiveLight) {
     private static final String RESOURCE_ROOT = "/assets/flywheel/iris/patches/";
     private static final Pattern INCLUDE = Pattern.compile("(?m)^\\h*#\\h*include\\h+\"([^\"]+)\"");
-    private static final List<PackPatch> PATCHES = List.of("complementary", "solas", "iteration", "sundial", "bsl",
-                                                               "makeup")
+    private static final List<PackPatch> PATCHES = List.of("complementary", "euphoria", "solas", "iteration", "sundial", "bsl",
+                                                               "makeup", "photon", "bliss", "sildur")
                                                        .stream().map(PackPatch::load).toList();
+
+    PackPatch {
+        patches = patches == null ? List.of() : patches;
+        programs = programs == null ? List.of() : programs;
+    }
+
+    static String resource(String name) {
+        try (var stream = PackPatch.class.getResourceAsStream(RESOURCE_ROOT + name)) {
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
 
     private static PackPatch load(String id) {
         try (var reader = new InputStreamReader(PackPatch.class.getResourceAsStream(RESOURCE_ROOT + id + ".json"),
@@ -35,6 +53,8 @@ record PackPatch(int schema, String name, List<String> testedVersions, List<Sour
                 throw new IllegalStateException("Invalid bundled shaderpack patch: " + id);
             }
             for (FileEdit edit : patch.files) edit.changes();
+            for (String diff : patch.patches) UnifiedPatch.parse(resource(diff));
+            for (Program program : patch.programs) resource(program.fragment);
             if (patch.forwardOit != null) validate(patch.forwardOit);
             if (patch.deferred != null) {
                 DeferredOitProfile.valueOf(patch.deferred.profile);
@@ -126,13 +146,23 @@ record PackPatch(int schema, String name, List<String> testedVersions, List<Sour
         return (text.startsWith("\uFEFF") ? text.substring(1) : text).replace("\r\n", "\n");
     }
 
-    record SourceMatch(String path, List<String> contains) {
+    record SourceMatch(String path, List<String> contains, List<String> excludes) {
+        SourceMatch {
+            excludes = excludes == null ? List.of() : excludes;
+        }
+
         boolean matches(Path root) throws IOException {
             Path file = root.resolve(path);
             if (!Files.isRegularFile(file)) return false;
             String source = Files.readString(file);
-            return contains.stream().allMatch(source::contains);
+            return contains.stream().allMatch(source::contains) && excludes.stream().noneMatch(source::contains);
         }
+    }
+
+    /**
+     * A contract program from the pack's {@code clrwl_gbuffers} vertex stage and a bundled fragment stage.
+     */
+    record Program(String target, String fragment) {
     }
 
     record FileEdit(String target, String patch) {

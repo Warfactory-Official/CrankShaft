@@ -11,6 +11,9 @@
       "contains": [
         "Complementary Shaders",
         "FRAGMENT_SHADER"
+      ],
+      "excludes": [
+        "Euphoria Patches"
       ]
     },
     {
@@ -22,6 +25,10 @@
     {
       "target": "clrwl_gbuffers_entities",
       "patch": "complementary.patch"
+    },
+    {
+      "target": "clrwl_gbuffers_block",
+      "patch": "complementary_block.patch"
     }
   ],
   "wrappers": [],

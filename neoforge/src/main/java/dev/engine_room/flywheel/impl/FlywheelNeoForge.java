@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.impl;
 
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.backend.compile.FlwProgramsReloader;
+import dev.engine_room.flywheel.impl.compat.LambDynLightsCompat;
 import dev.engine_room.flywheel.impl.event.RenderContextImpl;
 import dev.engine_room.flywheel.impl.test.OitDemoRegistration;
 import dev.engine_room.flywheel.impl.test.OitDemoVisual;
@@ -51,6 +52,7 @@ public final class FlywheelNeoForge {
         modEventBus.addListener((ModConfigEvent.Loading e) -> NeoForgeFlwConfig.INSTANCE.syncOitToRuntime());
         modEventBus.addListener((ModConfigEvent.Reloading e) -> NeoForgeFlwConfig.INSTANCE.syncOitToRuntime());
         BackendManagerImpl.init();
+        LambDynLightsCompat.init();
         InstanceTypes.TRANSFORMED.hashCode();
         Materials.SOLID_BLOCK.hashCode();
         FlwImpl.freezeRegistries();

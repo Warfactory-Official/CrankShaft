@@ -4,7 +4,6 @@ import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
-import dev.engine_room.flywheel.backend.engine.GeometryAtlas;
 import dev.engine_room.flywheel.backend.engine.OitTransparency;
 import dev.engine_room.flywheel.backend.engine.indirect.InstanceTypeIds;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
@@ -17,7 +16,6 @@ import dev.engine_room.flywheel.backend.vk.shader.VkShaderCompiler;
 import dev.engine_room.flywheel.backend.vk.shader.VkShaderTransform;
 import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import org.lwjgl.vulkan.VK10;
-import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkDevice;
 
 import java.util.ArrayList;
@@ -72,15 +70,13 @@ public final class VkUberPipelines {
         b.add(new Binding(19, TYPE_UNIFORM_BUFFER, vsfs));
         b.add(new Binding(20, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT));
         b.add(new Binding(21, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
-        b.add(new Binding(22, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT));
+        b.add(new Binding(22, TYPE_UNIFORM_BUFFER, vsfs));
         if (!bindless) {
             // Bindless: all three ride the global table (Sampler0 by draw slot, overlay/lightmap at reserved slots).
             b.add(new Binding(10, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
             b.add(new Binding(11, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
             b.add(new Binding(12, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
         }
-        if (RenderPassShaders.readsGeometry(light))
-            b.add(new Binding(GeometryAtlas.VK_BINDING, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
         if (embedded || bindless) {
             b.add(new Binding(23, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
         }
@@ -97,6 +93,7 @@ public final class VkUberPipelines {
         b.add(new Binding(16, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
         b.add(new Binding(17, TYPE_UNIFORM_BUFFER, vsfs));
         b.add(new Binding(21, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
+        b.add(new Binding(22, TYPE_UNIFORM_BUFFER, vsfs));
         int oitRead = folded ? TYPE_INPUT_ATTACHMENT : TYPE_COMBINED_IMAGE_SAMPLER;
         if (mode != OitMode.DEPTH_RANGE) {
             b.add(new Binding(5, TYPE_STORAGE_BUFFER, STAGE_FRAGMENT));
@@ -104,7 +101,6 @@ public final class VkUberPipelines {
             b.add(new Binding(18, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT));
             b.add(new Binding(19, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT));
             b.add(new Binding(20, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT));
-            b.add(new Binding(22, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT));
             if (!bindless) {
                 b.add(new Binding(10, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
                 b.add(new Binding(11, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
@@ -124,8 +120,6 @@ public final class VkUberPipelines {
         if (embedded) {
             b.add(new Binding(7, TYPE_STORAGE_BUFFER, STAGE_VERTEX));
         }
-        if (RenderPassShaders.readsGeometry(light))
-            b.add(new Binding(GeometryAtlas.VK_BINDING, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
         if (embedded || bindless) {
             b.add(new Binding(23, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
         }
@@ -146,7 +140,7 @@ public final class VkUberPipelines {
         b.add(new Binding(18, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT));
         b.add(new Binding(19, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT));
         b.add(new Binding(20, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT));
-        b.add(new Binding(22, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT));
+        b.add(new Binding(22, TYPE_UNIFORM_BUFFER, vsfs));
         if (!bindless) {
             b.add(new Binding(10, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
             b.add(new Binding(11, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
@@ -154,8 +148,6 @@ public final class VkUberPipelines {
         }
         b.add(new Binding(7, TYPE_STORAGE_BUFFER, STAGE_VERTEX));
         b.add(new Binding(23, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
-        if (RenderPassShaders.readsGeometry(light))
-            b.add(new Binding(GeometryAtlas.VK_BINDING, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
         VkOitPipelines.mlabBindings(b, oitMode);
         return b;
     }
@@ -172,7 +164,7 @@ public final class VkUberPipelines {
         b.add(new Binding(19, TYPE_UNIFORM_BUFFER, vsfs));
         b.add(new Binding(20, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT));
         b.add(new Binding(21, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
-        b.add(new Binding(22, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT));
+        b.add(new Binding(22, TYPE_UNIFORM_BUFFER, vsfs));
         b.add(new Binding(10, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
         b.add(new Binding(11, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
         b.add(new Binding(12, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));

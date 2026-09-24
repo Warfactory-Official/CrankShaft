@@ -1,19 +1,11 @@
 layout(location = 0) out vec4 frag;
 
-#ifdef _FLW_MLAB_ADDITIVE
 // Alpha 1: 26.2 GL toggles GL_BLEND for every draw buffer (GlStateManager BLEND[i] is non-indexed), so this target
 // takes attachment 0's premultiplied blend; with src.a = 1 that is an exact replace.
 layout(location = 1) out vec4 _flw_nearestOut;
 #define _FLW_TRACK_NODE(c, depth) if (!occluded && (c).a > 0.0) { occluded = true; nearestDepth = (depth); }
-#define _FLW_NEAREST_DEPTH(depth)
 #define _FLW_RESOLVE_OUT(acc, transmittance, occluded, nearestDepth) { frag = vec4(acc, 1.0 - (transmittance)); \
     _flw_nearestOut = vec4((occluded) ? (nearestDepth) : -1.0, 0.0, 0.0, 1.0); }
-#else
-#define _FLW_TRACK_NODE(c, depth)
-#define _FLW_NEAREST_DEPTH(depth) nearestDepth = (depth);
-#define _FLW_RESOLVE_OUT(acc, transmittance, occluded, nearestDepth) { frag = vec4(acc, 1.0 - (transmittance)); \
-    gl_FragDepth = nearestDepth; }
-#endif
 
 uniform sampler2D _flw_layerColor;   // clouds (mask bit 0)
 uniform sampler2D _flw_layerDepth;
@@ -153,7 +145,6 @@ void main() {
         float transmittance = 1.0;
         bool occluded = false;
         float nearestDepth = 0.0;
-        _FLW_NEAREST_DEPTH(uintBitsToFloat(s[0].x))
         for (uint i = 0u; i < _FLW_MLAB_WINDOW; ++i) {
             if (i < count) {
                 vec4 c = unpackUnorm4x8(s[i].y);
@@ -185,7 +176,6 @@ void main() {
         float transmittance = 1.0;
         bool occluded = false;
         float nearestDepth = 0.0;
-        _FLW_NEAREST_DEPTH(uintBitsToFloat(s[0].x))
         for (uint i = 0u; i < count; ++i) {
             vec4 c = unpackUnorm4x8(s[i].y);
             _FLW_TRACK_NODE(c, uintBitsToFloat(s[i].x))
@@ -216,7 +206,6 @@ void main() {
         if (hasL1) { _flw_layerInsertW(s, count, l1); }
         if (hasL2) { _flw_layerInsertW(s, count, l2); }
         if (hasL3) { _flw_layerInsertW(s, count, l3); }
-        _FLW_NEAREST_DEPTH(uintBitsToFloat(s[0].x))
         for (uint i = 0u; i < _FLW_MLAB_WINDOW; ++i) {
             if (i < count) {
                 vec4 c = unpackUnorm4x8(s[i].y);
@@ -234,7 +223,6 @@ void main() {
         if (hasL1) { _flw_layerInsertM(s, count, _flw_mlabK, l1); }
         if (hasL2) { _flw_layerInsertM(s, count, _flw_mlabK, l2); }
         if (hasL3) { _flw_layerInsertM(s, count, _flw_mlabK, l3); }
-        _FLW_NEAREST_DEPTH(uintBitsToFloat(s[0].x))
         for (uint i = 0u; i < count; ++i) {
             vec4 c = unpackUnorm4x8(s[i].y);
             _FLW_TRACK_NODE(c, uintBitsToFloat(s[i].x))
@@ -279,7 +267,6 @@ void main() {
         if (hasL1) { _flw_layerInsertW(s, n, l1); }
         if (hasL2) { _flw_layerInsertW(s, n, l2); }
         if (hasL3) { _flw_layerInsertW(s, n, l3); }
-        _FLW_NEAREST_DEPTH(uintBitsToFloat(s[0].x))
         for (uint i = 0u; i < _FLW_MLAB_WINDOW; ++i) {
             if (i < n) {
                 vec4 c = unpackUnorm4x8(s[i].y);
@@ -317,7 +304,6 @@ void main() {
         if (hasL1) { _flw_layerInsertM(s, n, cap, l1); }
         if (hasL2) { _flw_layerInsertM(s, n, cap, l2); }
         if (hasL3) { _flw_layerInsertM(s, n, cap, l3); }
-        _FLW_NEAREST_DEPTH(uintBitsToFloat(s[0].x))
         for (uint i = 0u; i < n; ++i) {
             vec4 c = unpackUnorm4x8(s[i].y);
             _FLW_TRACK_NODE(c, uintBitsToFloat(s[i].x))

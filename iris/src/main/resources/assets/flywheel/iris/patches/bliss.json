@@ -1,0 +1,29 @@
+{
+  "schema": 2,
+  "name": "Bliss",
+  "testedVersions": [
+    "Bliss v2.1.2 (Chocapic13 Shaders edit)"
+  ],
+  "matches": [
+    {
+      "path": "dimensions/all_translucent.fsh",
+      "contains": [
+        "RENDERTARGETS:2,7,11,14",
+        "GLASS_TINT_COLORS"
+      ]
+    }
+  ],
+  "files": [],
+  "wrappers": [],
+  "blends": [],
+  "properties": "oit.gbuffers = true\noit.gbuffers.colortex2 = 0\noit.gbuffers.colortex7 = frontmost\noit.gbuffers.colortex11 = frontmost\noit.gbuffers.colortex14 = frontmost\n",
+  "forwardOit": {
+    "programs": [
+      "gbuffers_water"
+    ],
+    "paths": [],
+    "fingerprints": [
+      "4a4ab5f138442fcd1d6626c97476d7aaa0cbf30cdff684058fafb27fb3e9992e"
+    ]
+  }
+}
