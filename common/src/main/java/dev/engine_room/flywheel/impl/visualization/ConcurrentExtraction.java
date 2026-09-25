@@ -185,8 +185,12 @@ public final class ConcurrentExtraction {
             List<EntityRenderState> output = this.output;
             if (output != null) {
                 // Distinct slots: set never resizes, so concurrent sets on an ArrayList are safe.
-                forEach(entities.size(), i -> output.set(slots.getInt(i),
-                        dispatcher.extractEntity(entities.get(i), partialTicks.getFloat(i))));
+                forEach(entities.size(), i -> {
+                    Entity entity = entities.get(i);
+                    EntityRenderState state = dispatcher.extractEntity(entity, partialTicks.getFloat(i));
+                    HeldItemHosts.extract(entity, state);
+                    output.set(slots.getInt(i), state);
+                });
             }
             entities.clear();
             partialTicks.clear();

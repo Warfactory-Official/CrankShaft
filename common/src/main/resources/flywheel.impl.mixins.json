@@ -36,7 +36,6 @@
     "VulkanTransientMemoryMixin",
     "VulkanUtilsMixin",
     "visualmanage.AbstractBoatRendererMixin",
-    "visualmanage.ArmedEntityRenderStateMixin",
     "visualmanage.BetterBlockEntitiesMixin",
     "visualmanage.BlockEntityMixin",
     "visualmanage.BlockEntityRenderDispatcherMixin",

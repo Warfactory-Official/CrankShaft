@@ -10,6 +10,7 @@ import dev.engine_room.flywheel.impl.FlwImplXplat;
 import dev.engine_room.flywheel.impl.compat.EntityCullingCompat;
 import dev.engine_room.flywheel.impl.visualization.ConcurrentExtraction;
 import dev.engine_room.flywheel.impl.visualization.EntityOutlineSubmits;
+import dev.engine_room.flywheel.impl.visualization.HeldItemHosts;
 import dev.engine_room.flywheel.lib.model.Models;
 import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import dev.engine_room.flywheel.lib.visualization.VisualizationHelper;
@@ -72,8 +73,12 @@ abstract class LevelExtractorMixin {
     @WrapOperation(method = "extractEntity(Lnet/minecraft/world/entity/Entity;F)Lnet/minecraft/client/renderer/entity/state/EntityRenderState;", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;extractEntity(Lnet/minecraft/world/entity/Entity;F)Lnet/minecraft/client/renderer/entity/state/EntityRenderState;"), require = 1)
     private EntityRenderState flw$deferEntity(EntityRenderDispatcher dispatcher, Entity entity, float partialTick,
                                               Operation<EntityRenderState> original) {
-        return ConcurrentExtraction.deferEntity(dispatcher, entity, partialTick) ? ConcurrentExtraction.PENDING
-                : original.call(dispatcher, entity, partialTick);
+        if (ConcurrentExtraction.deferEntity(dispatcher, entity, partialTick)) {
+            return ConcurrentExtraction.PENDING;
+        }
+        EntityRenderState state = original.call(dispatcher, entity, partialTick);
+        HeldItemHosts.extract(entity, state);
+        return state;
     }
 
     @WrapOperation(method = "extractVisibleEntities", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/extract/LevelExtractor;extractEntity(Lnet/minecraft/world/entity/Entity;F)Lnet/minecraft/client/renderer/entity/state/EntityRenderState;"), require = 1)

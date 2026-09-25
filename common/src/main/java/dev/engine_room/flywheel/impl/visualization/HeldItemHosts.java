@@ -12,15 +12,16 @@ import dev.engine_room.flywheel.lib.visual.AbstractVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import dev.engine_room.flywheel.lib.visual.util.HeldItemPoses;
 import dev.engine_room.flywheel.lib.visual.util.ItemStackSlot;
-import dev.engine_room.flywheel.lib.visualization.VisualizationHelper;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.ArmedModel;
 import net.minecraft.client.model.EntityModel;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
 import net.minecraft.client.renderer.entity.state.ArmedEntityRenderState;
+import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
@@ -38,7 +39,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * Held stacks whose item has an {@code ItemStackVisualizer}, on entities vanilla renders (players; every entity
  * without a visual): vanilla's extraction poses the hands, the stack's visual draws them, vanilla's hand items are
  * cleared. A host joins the effects on first sight and takes over once its visual exists: no frame draws both or
- * neither.
+ * neither. Only the level's own entity extraction feeds hosts; any other extraction (inventory doll, foreign mods)
+ * keeps vanilla's hand items, since nothing guarantees its state reaches the level's submit.
  */
 public final class HeldItemHosts {
     private static final RendererReloadCache<Boolean, Map<LivingEntity, Host>> HOSTS = new RendererReloadCache<>(
@@ -48,17 +50,19 @@ public final class HeldItemHosts {
     private HeldItemHosts() {
     }
 
-    // ArmedEntityRenderState.extractArmedEntityRenderState TAIL, on extraction threads.
+    // LevelExtractor.extractEntity's dispatcher call, serial or on ConcurrentExtraction's workers.
     @SuppressWarnings({"unchecked", "rawtypes"})
-    public static void extract(LivingEntity entity, ArmedEntityRenderState state) {
+    public static void extract(Entity extracted, EntityRenderState extractedState) {
+        if (!(extracted instanceof LivingEntity entity) || !(extractedState instanceof ArmedEntityRenderState state)) {
+            return;
+        }
         boolean right = ItemStackSlot.isVisualized(state.rightHandItemStack);
         boolean left = ItemStackSlot.isVisualized(state.leftHandItemStack);
         if (!right && !left) {
             return;
         }
         VisualizationManager manager = VisualizationManager.get(entity.level());
-        // A visual's own capture runs this extraction too: its visual draws the hands.
-        if (manager == null || VisualizationHelper.skipVanillaRender(entity)
+        if (manager == null
                 || !(Minecraft.getInstance().getEntityRenderDispatcher()
                               .getRenderer(entity) instanceof LivingEntityRenderer renderer)
                 || !(renderer.getModel() instanceof ArmedModel)) {
