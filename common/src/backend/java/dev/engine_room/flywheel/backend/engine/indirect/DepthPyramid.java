@@ -127,18 +127,29 @@ public class DepthPyramid {
 
     public void delete() {
         if (pyramidTextureId != -1) {
-            GL11.glDeleteTextures(pyramidTextureId);
+            deleteTexture(pyramidTextureId);
             FlwMemoryTracker._freeGpuMemory(pyramidBytes);
             pyramidBytes = 0;
             pyramidTextureId = -1;
         }
         if (placeholderTextureId != -1) {
-            GL11.glDeleteTextures(placeholderTextureId);
+            deleteTexture(placeholderTextureId);
             FlwMemoryTracker._freeGpuMemory(PLACEHOLDER_BYTES);
             placeholderTextureId = -1;
         }
         lastWidth = -1;
         lastHeight = -1;
+    }
+
+    // DSA-created => uncounted by _genTexture, so _deleteTexture would skew numTextures. bindForCull binds through
+    // GlStateManager => its T10 cache keeps a raw-deleted id.
+    private static void deleteTexture(int id) {
+        GL11.glDeleteTextures(id);
+        for (GlStateManager.TextureState state : GlStateManager.TEXTURES) {
+            if (state.binding == id) {
+                state.binding = -1;
+            }
+        }
     }
 
     private void createPyramidMips(int mipLevels, int width, int height) {
@@ -150,7 +161,7 @@ public class DepthPyramid {
         lastHeight = height;
 
         if (pyramidTextureId != -1) {
-            GL11.glDeleteTextures(pyramidTextureId);
+            deleteTexture(pyramidTextureId);
             FlwMemoryTracker._freeGpuMemory(pyramidBytes);
         }
 

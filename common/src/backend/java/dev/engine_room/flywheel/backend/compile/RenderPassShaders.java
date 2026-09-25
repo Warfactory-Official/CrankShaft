@@ -184,13 +184,6 @@ public final class RenderPassShaders {
         ctx.mojImport("minecraft:globals.glsl");
     }
 
-    // fragmentImports MINUS dynamictransforms (the OIT color path never reads it; importing it would change the compiled uniform interface).
-    private static void oitFragmentImports(Compilation ctx) {
-        ctx.mojImport("minecraft:fog.glsl");
-        ctx.mojImport("minecraft:light.glsl");
-        ctx.mojImport("minecraft:globals.glsl");
-    }
-
     public static void mlabProducerDefines(Compilation ctx, OitInsertMode mode) {
         // The interlock extension must ride right after #version, so it is emitted first.
         if (mode.needsInterlock()) {
@@ -411,7 +404,7 @@ public final class RenderPassShaders {
                         ctx.define(mode.define);
                     }
                     if (!depthRange) {
-                        oitFragmentImports(ctx);
+                        fragmentImports(ctx);
                         lightingDefines(ctx, true, smoothness);
                         ctx.define("_FLW_UBER_FRAGMENT");
                         debugDefine(ctx, debug);
@@ -438,7 +431,7 @@ public final class RenderPassShaders {
                 ctx -> {
                     mlabProducerDefines(ctx, oitMode);
                     ctx.define("_FLW_OIT");
-                    oitFragmentImports(ctx);
+                    fragmentImports(ctx);
                     lightingDefines(ctx, true, smoothness);
                     ctx.define("_FLW_UBER_FRAGMENT");
                     debugDefine(ctx, debug);
@@ -572,7 +565,7 @@ public final class RenderPassShaders {
                     }
                     if (!depthRange) {
                         // fog.glsl must precede the spliced flw_fogFilter root; the preamble lands it first (the in-body dup dedups).
-                        oitFragmentImports(ctx);
+                        fragmentImports(ctx);
                         lightingDefines(ctx, indirect, smoothness);
                         debugDefine(ctx, debug);
                         if (useDiscard) {
