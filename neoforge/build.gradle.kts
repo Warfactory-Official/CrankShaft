@@ -116,7 +116,7 @@ neoForge {
     }
 
     mods {
-        create("flywheel") {
+        create("crankshaft") {
             sourceSet(sourceSets["main"])
             sourceSet(sourceSets["api"])
             sourceSet(sourceSets["lib"])
@@ -126,7 +126,7 @@ neoForge {
             sourceSet(project(":common").sourceSets["lib"])
             sourceSet(project(":common").sourceSets["backend"])
         }
-        create("vanillin") {
+        create("vanillate") {
             sourceSet(project(":vanillinNeoForge").sourceSets["main"])
             sourceSet(project(":common").sourceSets["vanillin"])
         }

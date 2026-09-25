@@ -11,6 +11,8 @@ import net.irisshaders.iris.shaderpack.loading.ProgramId;
 public enum PackRole {
     SOLID(ProgramId.Block, false),
     BLOCK_ENTITY(ProgramId.Block, false),
+    // Borrowed block ids ride mc_Entity, which packs read in their terrain programs.
+    TERRAIN(ProgramId.TerrainCutout, false),
     TRANSLUCENT(ProgramId.BlockTrans, false),
     ADDITIVE(ProgramId.BeaconBeam, false),
     DAMAGED(ProgramId.DamagedBlock, false),
@@ -44,6 +46,7 @@ public enum PackRole {
                 default -> this;
             };
             case TaggedEnvironment.KIND_BLOCK_ENTITY -> this == SOLID ? BLOCK_ENTITY : this;
+            case TaggedEnvironment.KIND_BORROWED_BLOCK -> this == SOLID ? TERRAIN : this;
             case TaggedEnvironment.KIND_ENTITY_EYES -> shadow ? ENTITY_SHADOW : EYES;
             case TaggedEnvironment.KIND_ENTITY_TRANSLUCENT -> shadow ? ENTITY_SHADOW : ENTITIES_TRANSLUCENT;
             case TaggedEnvironment.KIND_ENTITY_BLENDED -> shadow ? ENTITY_SHADOW : ENTITIES;
@@ -60,7 +63,7 @@ public enum PackRole {
 
     PackRole blockRole() {
         return switch (this) {
-            case ENTITY_SOLID, BLOCK_ENTITY -> SOLID;
+            case ENTITY_SOLID, BLOCK_ENTITY, TERRAIN -> SOLID;
             case ENTITY_TRANSLUCENT, ENTITIES_TRANSLUCENT -> TRANSLUCENT;
             case ENTITY_SHADOW -> SHADOW;
             default -> this;

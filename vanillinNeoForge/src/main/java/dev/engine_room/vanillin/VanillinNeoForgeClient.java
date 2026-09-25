@@ -12,7 +12,7 @@ import net.neoforged.neoforge.client.event.AddClientReloadListenersEvent;
 import net.neoforged.neoforge.client.event.RenderFrameEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
-@Mod(value = Vanillin.ID, dist = Dist.CLIENT)
+@Mod(value = Vanillin.MOD_ID, dist = Dist.CLIENT)
 public class VanillinNeoForgeClient {
     public VanillinNeoForgeClient(IEventBus modEventBus, ModContainer modContainer) {
         // VanillaVisuals.init() registers every STABLE visualizer into the Configurator; the config's apply()
@@ -26,7 +26,7 @@ public class VanillinNeoForgeClient {
         modEventBus.<ModConfigEvent>addListener(event -> {
             if (event.getConfig()
                      .getModId()
-                     .equals(Vanillin.ID)) {
+                     .equals(Vanillin.MOD_ID)) {
                 NeoForgeVanillinConfig.INSTANCE.apply();
             }
         });

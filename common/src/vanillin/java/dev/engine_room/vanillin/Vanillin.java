@@ -5,6 +5,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class Vanillin {
+    /**
+     * The mod ID of Vanillate.
+     */
+    public static final String MOD_ID = "vanillate";
+    /**
+     * The resource namespace, shared with upstream Vanillin.
+     */
     public static final String ID = "vanillin";
 
     public static final Logger LOGGER = LoggerFactory.getLogger(ID);

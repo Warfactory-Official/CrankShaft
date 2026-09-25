@@ -45,7 +45,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.SortedSet;
 
-@Mod(value = Flywheel.ID, dist = Dist.CLIENT)
+@Mod(value = Flywheel.MOD_ID, dist = Dist.CLIENT)
 public final class FlywheelNeoForge {
     public FlywheelNeoForge(IEventBus modEventBus, ModContainer modContainer) {
         NeoForgeFlwConfig.INSTANCE.registerSpecs(modContainer);

@@ -58,6 +58,7 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.regex.Pattern;
 
 /**
  * Guest {@link RenderPipeline}s (pack-independent state + bind group) and their programs, compiled against the
@@ -65,6 +66,7 @@ import java.util.*;
  */
 public final class GuestPipelines {
     private static final Identifier GUEST_SHADER = ResourceUtil.rl("iris/guest");
+    private static final Pattern MC_ENTITY = Pattern.compile("\\bmc_Entity\\b");
 
     private static final Map<PipelineKey, RenderPipeline> PIPELINES = new HashMap<>();
     private static final Map<RenderPipeline, ProgramKey> PROGRAM_KEYS = new IdentityHashMap<>();
@@ -610,6 +612,13 @@ public final class GuestPipelines {
                     contract.getName());
             contract = null;
         }
+        // Port: IterationRP builds clrwl_gbuffers from its entity program, which never reads mc_Entity: a borrowed
+        // block id would be dropped there, so the draw takes the pack's terrain program.
+        if (contract != null && key.role() == PackRole.TERRAIN && !readsMcEntity(contract)) {
+            FlwBackend.LOGGER.info("{} ignores mc_Entity; borrowed block draws take the pack's terrain program",
+                    contract.getName());
+            contract = null;
+        }
         if (contract == null) {
             if (key.oit() != null) {
                 throw new IllegalStateException("OIT producer without a contract translucent program");
@@ -621,6 +630,13 @@ public final class GuestPipelines {
         ProgramSource source = contract;
         return PROGRAMS.computeIfAbsent(new LinkKey(key.forContract(), id),
                 k -> link(pipeline, renderPipeline, k.program(), id, source));
+    }
+
+    private static boolean readsMcEntity(ProgramSource source) {
+        return source.getVertexSource()
+                     .map(vertex -> MC_ENTITY.matcher(vertex)
+                                             .find())
+                     .orElse(false);
     }
 
     private static ProgramSource nativeSource(IrisRenderingPipelineAccessor accessor, PackRole role) {

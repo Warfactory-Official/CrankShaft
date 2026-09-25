@@ -21,7 +21,7 @@ import java.util.Map;
 public class FabricVanillinConfig {
     public static final Path PATH = FabricLoader.getInstance()
             .getConfigDir()
-            .resolve("vanillin.json");
+            .resolve("vanillate.json");
 
     public static final FabricVanillinConfig INSTANCE = new FabricVanillinConfig(PATH.toFile());
 

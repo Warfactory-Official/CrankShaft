@@ -42,7 +42,7 @@ public class NeoForgeVanillinConfig {
         boolean masterEnabled = enabled.get();
 
         if (!masterEnabled) {
-            Vanillin.CONFIG_LOGGER.info("Vanillate is disabled. Set enabled = true in 'config/{}-client.toml' to enable it.", Vanillin.ID);
+            Vanillin.CONFIG_LOGGER.info("Vanillate is disabled. Set enabled = true in 'config/{}-client.toml' to enable it.", Vanillin.MOD_ID);
         }
 
         blockEntities.apply(configurator.blockEntities.values(), masterEnabled);

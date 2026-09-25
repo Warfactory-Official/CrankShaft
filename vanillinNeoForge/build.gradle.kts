@@ -64,7 +64,7 @@ neoForge {
     version = neoVersion
 
     mods {
-        create("vanillin") {
+        create("vanillate") {
             sourceSet(sourceSets["main"])
             sourceSet(project(":common").sourceSets["vanillin"])
         }

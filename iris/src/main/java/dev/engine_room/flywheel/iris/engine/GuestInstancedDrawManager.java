@@ -37,6 +37,7 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
     private final List<InstancedDraw> depthFillScratch = new ArrayList<>();
     private final List<InstancedDraw> blockScratch = new ArrayList<>();
     private final List<InstancedDraw> blockEntityScratch = new ArrayList<>();
+    private final List<InstancedDraw> borrowedScratch = new ArrayList<>();
     private final List<InstancedDraw> entityScratch = new ArrayList<>();
     private final List<InstancedDraw> eyesScratch = new ArrayList<>();
     private final List<InstancedDraw> translucentEntityScratch = new ArrayList<>();
@@ -191,6 +192,7 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         GuestProgram.setModelView(modelView);
         blockScratch.clear();
         blockEntityScratch.clear();
+        borrowedScratch.clear();
         entityScratch.clear();
         eyesScratch.clear();
         translucentEntityScratch.clear();
@@ -213,6 +215,10 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
                 blendedEntityScratch.add(draw);
                 continue;
             }
+            if (routedKind == TaggedEnvironment.KIND_BORROWED_BLOCK) {
+                borrowedScratch.add(draw);
+                continue;
+            }
             switch (TaggedEnvironment.kind(draw.groupKey.environment()
                                                          .drawTag())) {
                 case TaggedEnvironment.KIND_ENTITY -> entityScratch.add(draw);
@@ -221,6 +227,8 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
             }
         }
         submitKind(label, blockScratch, 0, modelView, pipelineFor);
+        submitKind(label + "_borrowed_blocks", borrowedScratch, TaggedEnvironment.KIND_BORROWED_BLOCK, modelView,
+                pipelineFor);
         if (passBlockEntities) {
             submitKind(label + "_block_entities", blockEntityScratch, TaggedEnvironment.KIND_BLOCK_ENTITY, modelView,
                     pipelineFor);

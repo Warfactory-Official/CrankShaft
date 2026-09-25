@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "flywheel",
+  "id": "crankshaft",
+  "provides": ["flywheel"],
   "version": "${version}",
   "name": "CrankShaft",
   "description": "Dual-backend (raw OpenGL + raw Vulkan) instanced rendering engine.",

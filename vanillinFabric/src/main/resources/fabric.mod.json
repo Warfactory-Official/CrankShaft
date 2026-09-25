@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "vanillin",
+  "id": "vanillate",
+  "provides": ["vanillin"],
   "version": "${version}",
   "name": "Vanillate",
   "description": "Vanilla content visuals (chests, minecarts, ...) rendered through the CrankShaft instanced engine.",
@@ -14,6 +15,6 @@
   "depends": {
     "minecraft": "~26.2",
     "fabricloader": ">=0.19.3",
-    "flywheel": "*"
+    "crankshaft": "*"
   }
 }

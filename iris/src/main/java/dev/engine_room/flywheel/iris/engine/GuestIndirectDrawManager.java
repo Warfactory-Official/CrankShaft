@@ -48,6 +48,7 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
     private final List<UberDraw> depthFillScratch = new ArrayList<>();
     private final List<UberDraw> blockScratch = new ArrayList<>();
     private final List<UberDraw> blockEntityScratch = new ArrayList<>();
+    private final List<UberDraw> borrowedScratch = new ArrayList<>();
     private final List<UberDraw> entityScratch = new ArrayList<>();
     private final List<UberDraw> eyesScratch = new ArrayList<>();
     private final List<UberDraw> translucentEntityScratch = new ArrayList<>();
@@ -269,6 +270,7 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         GuestProgram.setModelView(modelViewMatrix);
         blockScratch.clear();
         blockEntityScratch.clear();
+        borrowedScratch.clear();
         entityScratch.clear();
         eyesScratch.clear();
         translucentEntityScratch.clear();
@@ -284,10 +286,13 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
                 case TaggedEnvironment.KIND_ENTITY_TRANSLUCENT -> translucentEntityScratch.add(batch);
                 case TaggedEnvironment.KIND_ENTITY_BLENDED -> blendedEntityScratch.add(batch);
                 case TaggedEnvironment.KIND_BLOCK_ENTITY -> blockEntityScratch.add(batch);
+                case TaggedEnvironment.KIND_BORROWED_BLOCK -> borrowedScratch.add(batch);
                 default -> blockScratch.add(batch);
             }
         }
         submitKind(label, blockScratch, 0, modelViewMatrix, pass2, pipelineFor);
+        submitKind(label + "_borrowed_blocks", borrowedScratch, TaggedEnvironment.KIND_BORROWED_BLOCK,
+                modelViewMatrix, pass2, pipelineFor);
         if (passBlockEntities) {
             submitKind(label + "_block_entities", blockEntityScratch, TaggedEnvironment.KIND_BLOCK_ENTITY,
                     modelViewMatrix, pass2, pipelineFor);

@@ -16,7 +16,7 @@ file them here.
 
 Shipped alongside CrankShaft is **Vanillate**, the 26.2 counterpart to Vanillin: instanced rendering for vanilla
 entities and block entities via Flywheel. It is bundled inside the CrankShaft jar and is **on by default**. Turn it off
-with `"enabled": false` in `config/vanillin.json` (Fabric) or `enabled = false` in `config/vanillin-client.toml`
+with `"enabled": false` in `config/vanillate.json` (Fabric) or `enabled = false` in `config/vanillate-client.toml`
 (NeoForge); it then registers nothing and vanilla renders as usual. A config written by an earlier CrankShaft keeps its
 `false`. Individual entities and block entities can be enabled or disabled per entry in the same file.
 
@@ -167,7 +167,7 @@ what lets engine translucents and pack-drawn terrain sort against each other.
 
 ### Configuration
 
-Commands write the same files you can edit by hand: `config/crankshaft.json` on Fabric, `config/flywheel-client.toml`
+Commands write the same files you can edit by hand: `config/crankshaft.json` on Fabric, `config/crankshaft-client.toml`
 on NeoForge. Settings: `backend`, `limitUpdates`, `workerThreads`, `useCommonPool`, `concurrentExtraction`, and under
 `flw_backends`: `lightSmoothness`, `terrain` and the OIT settings.
 
