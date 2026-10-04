@@ -32,10 +32,10 @@ public class IndirectPrograms extends AtomicReferenceCounted {
     private static final Identifier TERRAIN_TRANSLUCENT_CULL_BUILD = ResourceUtil.rl(
             "internal/indirect/terrain_translucent_cull_build.comp");
 
-    // The terrain HiZ-cull comps deref NV-bindless device pointers from the scene UBO on GL; VK compiles the same
-    // bodies with descriptor SSBOs and no NV extensions. The GL-only extensions are declared here: a conditional
-    // #extension can't ride a body.
-    private static final Set<Identifier> NV_BINDLESS_UTILS = Set.of(TERRAIN_REGION_TEST, TERRAIN_CULL,
+    // The terrain HiZ-cull comps deref NV-bindless device pointers from the scene UBO on GL with NV_shader_buffer_load,
+    // else bind the same buffers as SSBOs (_FLW_TERRAIN_SSBO); VK compiles them with descriptor SSBOs. The GL-only
+    // extensions are declared here: a conditional #extension can't ride a body.
+    private static final Set<Identifier> TERRAIN_CULL_UTILS = Set.of(TERRAIN_REGION_TEST, TERRAIN_CULL,
             TERRAIN_TRANSLUCENT_CULL_BUILD);
 
     private static final Compile<InstanceTypeIds.Snapshot> CULL = new Compile<>();
@@ -150,9 +150,14 @@ public class IndirectPrograms extends AtomicReferenceCounted {
                              .requireExtensions(COMPUTE_EXTENSIONS)
                              .define("_FLW_SUBGROUP_SIZE", GlCompat.SUBGROUP_SIZE)
                              .onCompile((id, ctx) -> {
-                                 if (NV_BINDLESS_UTILS.contains(id)) {
+                                 if (!TERRAIN_CULL_UTILS.contains(id)) {
+                                     return;
+                                 }
+                                 if (GlCompat.SUPPORTS_NV_BUFFER_LOAD) {
                                      ctx.requireExtension("GL_NV_gpu_shader5");
                                      ctx.requireExtension("GL_NV_shader_buffer_load");
+                                 } else {
+                                     ctx.define("_FLW_TERRAIN_SSBO");
                                  }
                              })
                              .withResource(s -> s))

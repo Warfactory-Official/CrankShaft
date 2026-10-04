@@ -9,6 +9,8 @@ import dev.engine_room.flywheel.backend.BackendDebugFlags;
 import dev.engine_room.flywheel.backend.NoiseTextures;
 import dev.engine_room.flywheel.backend.engine.FabulousCaptures;
 import dev.engine_room.flywheel.backend.engine.FabulousLayerTargets;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainDispatchers;
+import dev.engine_room.flywheel.impl.compat.SodiumCompat;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.state.GameRenderState;
@@ -22,6 +24,7 @@ import org.jspecify.annotations.Nullable;
  */
 public final class FabulousReroute {
     private static final FabulousCaptures CAPTURES = new FabulousCaptures();
+    private static boolean active;
     private static boolean capturing;
     private static boolean suppressClouds;
     private static boolean suppressWeather;
@@ -51,12 +54,22 @@ public final class FabulousReroute {
         FabulousLayerTargets.closeWindow();
     }
 
-    public static boolean active() {
-        return BackendManagerImpl.isBackendOn()
+    /**
+     * Fixes the reroute for one level frame, at its transparency-chain query: Sodium's translucent target is the
+     * chain's, so a mid-frame flip (terrain dispatcher init failure) must wait for the next frame graph.
+     */
+    public static boolean latchFrame() {
+        active = BackendManagerImpl.isBackendOn()
                 && BackendConfig.INSTANCE.terrainMode().compositesTranslucent()
+                && (!SodiumCompat.isSodiumActive() || TerrainDispatchers.isSupported())
                 && Minecraft.getInstance().gameRenderer.gameRenderState().useShaderTransparency()
                 && !BackendDebugFlags.SKIP_OIT
                 && NoiseTextures.BLUE_NOISE != null;
+        return active;
+    }
+
+    public static boolean active() {
+        return active;
     }
 
     @Nullable

@@ -35,6 +35,9 @@ import static org.lwjgl.opengl.GL45.*;
 
 public final class GlInsertOitChain {
     private static final int ABUF_DEPTH = 8;
+    private static final int COUNT_OR_HEAD_BINDING = 24;
+    private static final int DATA_BINDING = 25;
+    private static final int COUNTER_BINDING = 27;
     private static final List<String> CHUNK_SECTION_UNIFORM = List.of("ChunkSection");
     private final OitFramebuffer framebuffer = new OitFramebuffer();
     @Nullable
@@ -48,6 +51,13 @@ public final class GlInsertOitChain {
     private OitInsertMode allocatedMode;
 
     public GlInsertOitChain() {
+    }
+
+    /**
+     * Whether the host accepts {@code mlab.glsl}'s storage bindings; Intel Windows GL caps them at 16.
+     */
+    public static boolean isSupported() {
+        return GlCompat.MAX_SHADER_STORAGE_BUFFER_BINDINGS > COUNTER_BINDING;
     }
 
     private static void drawWeatherColumns(RenderPass pass, AbstractTexture texture, int startColumn, int columnCount) {
@@ -294,10 +304,10 @@ public final class GlInsertOitChain {
     }
 
     private void bindStorage(OitInsertMode mode) {
-        GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 24, countOrHead.handle());
-        GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 25, data.handle());
+        GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, COUNT_OR_HEAD_BINDING, countOrHead.handle());
+        GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, DATA_BINDING, data.handle());
         if (mode == OitInsertMode.ABUFFER) {
-            GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 27, counter.handle());
+            GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, COUNTER_BINDING, counter.handle());
         }
         GL30.glBindBufferBase(GL31.GL_UNIFORM_BUFFER, 26, ubo);
     }

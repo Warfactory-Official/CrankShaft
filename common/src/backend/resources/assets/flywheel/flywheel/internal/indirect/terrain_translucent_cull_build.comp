@@ -1,11 +1,21 @@
 // SPDX-License-Identifier: MIT
-// SETTLED (vis==1.0) and FADING (vis<1.0) streams; GL-bindless-only (VK uses terrain_translucent_oit_cull.comp).
+// SETTLED (vis==1.0) and FADING (vis<1.0) streams; GL-only (VK uses terrain_translucent_oit_cull.comp).
 
 #include "flywheel:internal/indirect/terrain_hiz.glsl"
 
 // Field order mirrors the opaque cull scene UBO; region_test reads regionInput@0 / regionVis@16 identically.
 layout(local_size_x = 256) in;
 
+#ifdef _FLW_TERRAIN_SSBO
+layout(std430, binding = 9) restrict readonly buffer RegionInputBuf { uvec4 regionInput[]; };
+layout(std430, binding = 10) restrict readonly buffer SectionDataBuf { uvec4 sectionData0[]; };
+layout(std430, binding = 11) restrict writeonly buffer RegionVisBuf { uint regionVis[]; };
+layout(std430, binding = 12) restrict readonly buffer TranslucentVisBuf { float translucentVis[]; };
+layout(std430, binding = 13) restrict writeonly buffer CommandBuf { uint commandWords[]; };
+layout(std430, binding = 14) restrict buffer CommandCountBuf { uint regionCommandCount[]; };
+layout(std140, binding = 7) uniform TerrainScenePass { uint regionCount; uint phase; uint groupBase; };
+#define _FLW_COMMAND_COUNT_ADD(i, v) atomicAdd(regionCommandCount[i], v)
+#else
 layout(std140, binding = 7) uniform TerrainSceneUbo {
     restrict readonly uvec4 *regionInput;
     restrict readonly uvec4 *sectionData0;      // 3 uvec4 / section, region-id-keyed (TRANSLUCENT mirror)
@@ -17,6 +27,8 @@ layout(std140, binding = 7) uniform TerrainSceneUbo {
     uint regionCount;                           // visible-region count (replaces regionInput.length())
     uint phase;
 };
+#define _FLW_COMMAND_COUNT_ADD(i, v) atomicAdd(regionCommandCount + (i), v)
+#endif
 layout(std430, binding = 6) restrict readonly buffer NativeSectionMaskBuf { uint nativeSectionMask[]; };
 
 const uint REGION_SIZE = 256u; // sections per CrankShaft region (8 x 4 x 8)
@@ -78,12 +90,12 @@ void main() {
             uint indexCount = (t.sumVertexCount >> 2u) * 6u;
             // Route by resident fade: settled (vis == 1.0) avoids the per-vertex SSBO fetch in its producer.
             if (translucentVis[regionId * REGION_SIZE + s] < 1.0) {
-                uint wi = atomicAdd(regionCommandCount + runStart * 2u + 1u, 1u);
+                uint wi = _FLW_COMMAND_COUNT_ADD(runStart * 2u + 1u, 1u);
                 if (wi < laneCapacity) {
                     emitCommand(settledBase + laneCapacity, wi, indexCount, t.baseVertex, slot);
                 }
             } else {
-                uint wi = atomicAdd(regionCommandCount + runStart * 2u, 1u);
+                uint wi = _FLW_COMMAND_COUNT_ADD(runStart * 2u, 1u);
                 if (wi < laneCapacity) {
                     emitCommand(settledBase, wi, indexCount, t.baseVertex, slot);
                 }

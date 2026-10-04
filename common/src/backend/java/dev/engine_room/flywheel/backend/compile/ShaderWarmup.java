@@ -12,6 +12,7 @@ import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.engine.BerFamily;
 import dev.engine_room.flywheel.backend.engine.CrumblingPipelines;
 import dev.engine_room.flywheel.backend.engine.OitTransparency;
+import dev.engine_room.flywheel.backend.engine.indirect.GlInsertOitChain;
 import dev.engine_room.flywheel.backend.engine.indirect.IndirectPipeline;
 import dev.engine_room.flywheel.backend.engine.indirect.InstanceTypeIds;
 import dev.engine_room.flywheel.backend.engine.indirect.MeshVisualDrawManager;
@@ -33,6 +34,7 @@ import org.lwjgl.vulkan.VK10;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -159,7 +161,10 @@ public final class ShaderWarmup {
 
     private static void warmGl() {
         boolean sodium = sodiumLoaded();
-        boolean interlock = GlCompat.SUPPORTS_FRAGMENT_INTERLOCK;
+        List<OitInsertMode> insertModes = GlInsertOitChain.isSupported()
+                ? Arrays.stream(OitInsertMode.values())
+                        .filter(mode -> !mode.needsInterlock() || GlCompat.SUPPORTS_FRAGMENT_INTERLOCK).toList()
+                : List.of();
         OitPipelines.composite(false);
         OitPipelines.composite(true);
         OitPipelines.emission();
@@ -181,10 +186,7 @@ public final class ShaderWarmup {
                 OitPipelines.chunkSodiumProducer(mode, true);
             }
         }
-        for (OitInsertMode mode : OitInsertMode.values()) {
-            if (mode == OitInsertMode.MLAB && !interlock) {
-                continue;
-            }
+        for (OitInsertMode mode : insertModes) {
             OitPipelines.mlabResolve(mode);
             OitPipelines.chunkMlab(mode);
             for (BerFamily family : BerFamily.VALUES) {
@@ -219,10 +221,8 @@ public final class ShaderWarmup {
                             OitPipelines.uberProducer(material, mode, embedded);
                         }
                     }
-                    for (OitInsertMode mode : OitInsertMode.values()) {
-                        if (mode != OitInsertMode.MLAB || interlock) {
-                            OitPipelines.uberMlab(material, mode, embedded);
-                        }
+                    for (OitInsertMode mode : insertModes) {
+                        OitPipelines.uberMlab(material, mode, embedded);
                     }
                 }
             }

@@ -13,7 +13,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 abstract class LevelRendererTransparencyMixin {
     @Inject(method = "getTransparencyChain", at = @At("HEAD"), cancellable = true)
     private void flywheel$rerouteImprovedTransparency(CallbackInfoReturnable<@Nullable PostChain> cir) {
-        if (FabulousReroute.active()) {
+        if (FabulousReroute.latchFrame()) {
             cir.setReturnValue(null);
         }
     }

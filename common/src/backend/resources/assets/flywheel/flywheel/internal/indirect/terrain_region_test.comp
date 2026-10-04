@@ -5,6 +5,11 @@
 layout(local_size_x = 64) in;
 
 // regionInput slot = 4 u32: (packed X/Z24 + Y16, regionId, pad).
+#ifdef _FLW_TERRAIN_SSBO
+layout(std430, binding = 9) restrict readonly buffer RegionInputBuf { uvec4 regionInput[]; };
+layout(std430, binding = 11) restrict writeonly buffer RegionVisBuf { uint regionVis[]; };
+layout(std140, binding = 7) uniform TerrainScenePass { uint regionCount; uint phase; uint groupBase; };
+#else
 layout(std140, binding = 7) uniform TerrainSceneUbo {
     restrict readonly uvec4 *regionInput;       // [slot].xyzw as above
     restrict readonly uvec4 *sectionData;       // 3 uvec4 / section, region-id-keyed (unused here)
@@ -16,6 +21,7 @@ layout(std140, binding = 7) uniform TerrainSceneUbo {
     uint regionCount;                           // visible-region count (replaces regionInput.length())
     uint phase;
 };
+#endif
 
 void main() {
     uint slot = gl_GlobalInvocationID.x;

@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.backend;
 
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
+import dev.engine_room.flywheel.backend.engine.indirect.GlInsertOitChain;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
@@ -98,16 +99,20 @@ public final class OitConfig {
         return !VkContext.isVulkanHost() && GlCompat.SUPPORTS_TEXTURE_VIEW;
     }
 
+    private static boolean hostSupportsInsert() {
+        return VkContext.isVulkanHost() || GlInsertOitChain.isSupported();
+    }
+
     /**
-     * The concrete Path this frame given device capability -- AUTO picks MLAB on interlock hardware else wavelet,
-     * and an explicitly-chosen MLAB falls back to wavelet where interlock is absent.
+     * The concrete Path this frame given device capability -- AUTO picks MLAB on interlock hardware else wavelet;
+     * an explicitly-chosen MLAB falls back to wavelet where interlock is absent, and every insert path where the
+     * host cannot bind the insert storage.
      */
     public static Path resolvePath() {
         boolean interlock = hostSupportsInterlock();
-        // AUTO = best available on BOTH hosts: the single-geometry-pass insert MLAB where interlock is present (VK or
-        // GL), else the multi-pass wavelet chain. An explicit mode is honored either way (MLAB falls back below).
-        Path p = path == Path.AUTO ? (interlock ? Path.MLAB : Path.WAVELET) : path;
-        if (p == Path.MLAB && !interlock) {
+        boolean insert = hostSupportsInsert();
+        Path p = path == Path.AUTO ? (interlock && insert ? Path.MLAB : Path.WAVELET) : path;
+        if (p == Path.MLAB && !interlock || p != Path.WAVELET && !insert) {
             p = Path.WAVELET;
         }
         return p;

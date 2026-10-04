@@ -38,9 +38,11 @@ public final class GlCompat {
     public static final GlslVersion MAX_GLSL_VERSION = maxGlslVersion();
     public static final boolean SUPPORTS_INSTANCING = isInstancingSupported();
     public static final boolean SUPPORTS_INDIRECT = isIndirectSupported();
+    public static final int MAX_SHADER_STORAGE_BUFFER_BINDINGS = maxShaderStorageBufferBindings();
     @Nullable
     public static final String TERRAIN_UNSUPPORTED_REASON = terrainUnsupportedReason();
     public static final boolean SUPPORTS_TERRAIN = TERRAIN_UNSUPPORTED_REASON == null;
+    public static final boolean SUPPORTS_NV_BUFFER_LOAD = isNvBufferLoadSupported();
     public static final boolean SUPPORTS_TERRAIN_MESH = isMeshShaderSupported();
     public static final boolean SUPPORTS_BINDLESS_TEXTURES = isBindlessTextureSupported();
     public static final boolean SUPPORTS_DEBUG_GROUP = CAPABILITIES != null && CAPABILITIES.glPushDebugGroup != MemoryUtil.NULL;
@@ -175,6 +177,16 @@ public final class GlCompat {
                 CAPABILITIES.GL_ARB_shading_language_420pack, CAPABILITIES.GL_ARB_vertex_attrib_binding,
                 CAPABILITIES.GL_ARB_shader_image_load_store, CAPABILITIES.GL_ARB_shader_image_size);
         return result;
+    }
+
+    private static int maxShaderStorageBufferBindings() {
+        return SUPPORTS_INDIRECT ? GL11C.glGetInteger(GL43C.GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS) : 0;
+    }
+
+    // Fn-pointer gate, as isMeshShaderSupported.
+    private static boolean isNvBufferLoadSupported() {
+        return CAPABILITIES != null && CAPABILITIES.glMakeNamedBufferResidentNV != MemoryUtil.NULL
+                && CAPABILITIES.glGetNamedBufferParameterui64vNV != MemoryUtil.NULL;
     }
 
     private static boolean isMeshShaderSupported() {

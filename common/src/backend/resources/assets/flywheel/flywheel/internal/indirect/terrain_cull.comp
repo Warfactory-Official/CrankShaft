@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // One workgroup per visible-region slot, one lane per section: region HiZ -> section HiZ -> MDI command emit.
-// GL: one dispatch over solid slots, then cutout slots.
+// GL NV: one dispatch over solid slots, then cutout slots. GL SSBO: one dispatch per pass.
 // sectionVis bit0 = visible vs carried pyramid (phase 1); bit1 = phase-1 reject visible vs fresh pyramid (phase 2).
 
 #include "flywheel:internal/indirect/terrain_hiz.glsl"
@@ -24,6 +24,26 @@ layout(std430, binding = 7) restrict writeonly buffer DrawDataBuf { uvec4 drawDa
 layout(std430, binding = 11) restrict readonly buffer GeometryMaskBuf { uint geometryMask[]; };
 // cullOnly != 0: the mesh tier emits its own commands from sectionVis.
 layout(std140, binding = 9) uniform TerrainRegionCount { uint regionCount; uint phase; uint cullOnly; uint _rcPad; };
+#define _FLW_REGION_VIS(slot) regionVis[slot]
+#elif defined(_FLW_TERRAIN_SSBO)
+// groupBase = the pass's first global group (cutout after solid): regionVis and shadow masks span both passes.
+layout(std430, binding = 6) restrict readonly buffer ShadowSectionMaskBuf { uint shadowSectionMask[]; };
+layout(std430, binding = 9) restrict readonly buffer RegionInputBuf { uvec4 regionInput[]; };
+layout(std430, binding = 10) restrict readonly buffer SectionDataBuf { uvec4 sectionData0[]; };
+layout(std430, binding = 11) restrict writeonly buffer RegionVisBuf { uint regionVis[]; };
+layout(std430, binding = 12) restrict buffer SectionVisBuf { uint sectionVis[]; };
+layout(std430, binding = 13) restrict writeonly buffer CommandBuf { uint commandWords[]; };
+layout(std430, binding = 14) restrict buffer CommandCountBuf { uint regionCommandCount[]; };
+layout(std430, binding = 15) restrict readonly buffer GeometryMaskBuf { uint geometryMask[]; };
+layout(std140, binding = 7) uniform TerrainScenePass { uint regionCount; uint phase; uint groupBase; };
+
+uint selectPass(uint group) {
+    return group;
+}
+
+#define _FLW_REGION_VIS(slot) regionVis[groupBase + (slot)]
+#define _FLW_GLOBAL_GROUP (groupBase + gl_WorkGroupID.x)
+#define _FLW_COMMAND_COUNT_ADD(i, v) atomicAdd(regionCommandCount[i], v)
 #else
 layout(std430, binding = 6) restrict readonly buffer ShadowSectionMaskBuf { uint shadowSectionMask[]; };
 // Scene UBO (7): per pass 7 terrain device pointers + region count (Nvidium scheme).
@@ -69,6 +89,10 @@ uint selectPass(uint group) {
     geometryMask = cutout ? cutoutGeometryMask : solidGeometryMask;
     return cutout ? group - solidRegionCount : group;
 }
+
+#define _FLW_REGION_VIS(slot) regionVis[slot]
+#define _FLW_GLOBAL_GROUP gl_WorkGroupID.x
+#define _FLW_COMMAND_COUNT_ADD(i, v) atomicAdd(regionCommandCount + (i), v)
 #endif
 
 shared bool regionVisible;
@@ -138,7 +162,7 @@ void emitGlobal(uint g, uint firstIndex, uint baseVertex, uint indexCount, uvec4
 #else
 // in4.w = first slot of this slot's same-arena run; baseInstance = slot (terrain_solid.vert reads regionInput by it).
 void emitCommand(uint slot, uint runSlot, uint firstIndex, uint baseVertex, uint indexCount) {
-    uint wi = runSlot * MAX_COMMANDS_PER_REGION_MAIN + atomicAdd(regionCommandCount + runSlot * 2u, 1u);
+    uint wi = runSlot * MAX_COMMANDS_PER_REGION_MAIN + _FLW_COMMAND_COUNT_ADD(runSlot * 2u, 1u);
     if (wi >= regionCount * MAX_COMMANDS_PER_REGION_MAIN) {
         return;
     }
@@ -257,7 +281,7 @@ void main() {
         // Pack displacement and side effects are not bounded by the untransformed region AABB.
         bool visible = live && ((phase & 12u) != 0u || _flw_terrainRegionVisible(in4));
 #endif
-        regionVis[slot] = visible ? 1u : 0u;
+        _FLW_REGION_VIS(slot) = visible ? 1u : 0u;
         regionVisible = visible;
     }
     barrier();
@@ -277,7 +301,7 @@ void main() {
     uint geometryWord = geometryMask[regionId * GEOMETRY_MASK_WORDS + (s >> 5u)];
 #ifndef _FLW_VK
     if ((phase & 12u) != 0u) {
-        geometryWord &= shadowSectionMask[gl_WorkGroupID.x * GEOMETRY_MASK_WORDS + (s >> 5u)];
+        geometryWord &= shadowSectionMask[_FLW_GLOBAL_GROUP * GEOMETRY_MASK_WORDS + (s >> 5u)];
     }
 #endif
     bool present = (geometryWord & (1u << (s & 31u))) != 0u;

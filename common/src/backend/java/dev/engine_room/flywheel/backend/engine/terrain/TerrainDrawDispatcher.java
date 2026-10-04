@@ -80,7 +80,8 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
     private static final int MAX_VISIBLE_REGIONS = 4096;
     private static final int PASS_CUTOUT = 1;
     private static final int PASS_COUNT = 2;
-    private static final int SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV = 0x10;
+    // SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV; an unknown bit fails glMemoryBarrier with GL_INVALID_VALUE.
+    private static final int GLOBAL_ACCESS_BARRIER = GlCompat.SUPPORTS_NV_BUFFER_LOAD ? 0x10 : 0;
     private static final int PHASE_1 = 1;
     private static final int PHASE_2 = 2;
     // Shadow lists own visibility: use their section mask without camera-facing or projected-AABB rejection.
@@ -100,6 +101,14 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
             2L * MAX_TRANSLUCENT_COMMANDS_PER_STREAM * COMMAND_STRIDE;
     private static final int BINDING_SECTION_FADE_VIS = 11;
     private static final int BINDING_DRAW_REGION_INPUT = 10;
+    // Cull comps without NV pointers (_FLW_TERRAIN_SSBO); the translucent build reads its fade visibility at 12.
+    private static final int BINDING_CULL_REGION_INPUT = 9;
+    private static final int BINDING_CULL_SECTION_DATA = 10;
+    private static final int BINDING_CULL_REGION_VIS = 11;
+    private static final int BINDING_CULL_SECTION_VIS = 12;
+    private static final int BINDING_CULL_COMMANDS = 13;
+    private static final int BINDING_CULL_COMMAND_COUNT = 14;
+    private static final int BINDING_CULL_GEOMETRY_MASK = 15;
     /**
      * Per-region {@code u_RegionChunkOrigin} UBO binding (UBO namespace, distinct from the SSBO binds above).
      */
@@ -694,7 +703,7 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         GL30.glBindBufferRange(GL31.GL_UNIFORM_BUFFER, BINDING_TERRAIN_HIZ_UBO,
                 hizUniformBuffer.handle(), 0, hizUniformScratch.size());
         // Prior shader stores must also complete before API clears, not merely before another shader reads them.
-        GL42.glMemoryBarrier(SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV | GL43.GL_SHADER_STORAGE_BARRIER_BIT
+        GL42.glMemoryBarrier(GLOBAL_ACCESS_BARRIER | GL43.GL_SHADER_STORAGE_BARRIER_BIT
                 | GL42.GL_BUFFER_UPDATE_BARRIER_BIT);
 
         if ((phase & (PHASE_SHADOW | PHASE_NATIVE_LIST)) != 0) {
@@ -716,20 +725,57 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
 
         // The mesh tier emits its own task commands into the same buffers.
         boolean cullOnly = meshDrawStrategy != null && !GuestTerrainGate.meshActive;
-        long ptr = terrainSceneUboScratch.ptr();
-        putOpaqueScenePass(ptr, solid, regionVisBuffer.deviceAddress());
-        MemoryUtil.memPutInt(ptr + 60L, cullOnly ? phase | PHASE_CULL_ONLY : phase);
-        putOpaqueScenePass(ptr + 64L, cutout,
-                regionVisBuffer.deviceAddress() + (long) solid.count * VISIBILITY_STRIDE);
-        uploadAndBindSceneUbo();
+        int cullPhase = cullOnly ? phase | PHASE_CULL_ONLY : phase;
+        if (GlCompat.SUPPORTS_NV_BUFFER_LOAD) {
+            long ptr = terrainSceneUboScratch.ptr();
+            putOpaqueScenePass(ptr, solid, regionVisBuffer.deviceAddress());
+            MemoryUtil.memPutInt(ptr + 60L, cullPhase);
+            putOpaqueScenePass(ptr + 64L, cutout,
+                    regionVisBuffer.deviceAddress() + (long) solid.count * VISIBILITY_STRIDE);
+            uploadAndBindSceneUbo();
+        }
 
         GlCompat.pushDebugGroup("flywheel:gl/terrain/cull");
         cullProgram.bind();
         bindCullPyramid();
-        GL43.glDispatchCompute(groups, 1, 1);
+        if (GlCompat.SUPPORTS_NV_BUFFER_LOAD) {
+            GL43.glDispatchCompute(groups, 1, 1);
+        } else {
+            dispatchCullPass(solid, cullPhase, 0);
+            dispatchCullPass(cutout, cullPhase, solid.count);
+        }
         GL42.glMemoryBarrier(
-                SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV | GL43.GL_SHADER_STORAGE_BARRIER_BIT | GL42.GL_COMMAND_BARRIER_BIT);
+                GLOBAL_ACCESS_BARRIER | GL43.GL_SHADER_STORAGE_BARRIER_BIT | GL42.GL_COMMAND_BARRIER_BIT);
         GlCompat.popDebugGroup();
+    }
+
+    private void dispatchCullPass(VisibleRegionBatch visible, int phase, int groupBase) {
+        if (visible.count == 0) {
+            return;
+        }
+        int pass = visible.passIndex;
+        bindCullStorage(BINDING_CULL_REGION_INPUT, regionInputBuffers[pass].handle());
+        bindCullStorage(BINDING_CULL_SECTION_DATA, registry.sectionDataHandle(pass));
+        bindCullStorage(BINDING_CULL_REGION_VIS, regionVisBuffer.handle());
+        bindCullStorage(BINDING_CULL_SECTION_VIS, registry.sectionVisHandle(pass));
+        bindCullStorage(BINDING_CULL_COMMANDS, commandBuffers[pass].handle());
+        bindCullStorage(BINDING_CULL_COMMAND_COUNT, regionCommandCounts[pass].handle());
+        bindCullStorage(BINDING_CULL_GEOMETRY_MASK, registry.presentMaskHandle(pass));
+        uploadAndBindScenePass(visible.count, phase, groupBase);
+        GL43.glDispatchCompute(visible.count, 1, 1);
+    }
+
+    private static void bindCullStorage(int binding, int buffer) {
+        GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, binding, buffer);
+    }
+
+    // TerrainScenePass (std140): regionCount, phase, groupBase.
+    private void uploadAndBindScenePass(int regionCount, int phase, int groupBase) {
+        long ptr = terrainSceneUboScratch.ptr();
+        MemoryUtil.memPutInt(ptr, regionCount);
+        MemoryUtil.memPutInt(ptr + 4L, phase);
+        MemoryUtil.memPutInt(ptr + 8L, groupBase);
+        uploadAndBindSceneUbo();
     }
 
     // Cutout's regionVis follows solid's slots in the shared buffer.
@@ -1231,7 +1277,7 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         translucentDepthPyramid.regenerate(depthGlId, width, height);
         GlCompat.popDebugGroup();
         GL42.glMemoryBarrier(
-                SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV | GL43.GL_SHADER_STORAGE_BARRIER_BIT | GL42.GL_TEXTURE_FETCH_BARRIER_BIT);
+                GLOBAL_ACCESS_BARRIER | GL43.GL_SHADER_STORAGE_BARRIER_BIT | GL42.GL_TEXTURE_FETCH_BARRIER_BIT);
 
         GL30.glBindBufferRange(GL31.GL_UNIFORM_BUFFER, BINDING_TERRAIN_HIZ_UBO,
                 translucentHizUniformBuffer.handle(), 0, translucentHizUniformScratch.size());
@@ -1245,7 +1291,7 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         if (translucentMesh) {
             regionTestProgram.bind();
             GL43.glDispatchCompute(Mth.positiveCeilDiv(count, 64), 1, 1);
-            GL42.glMemoryBarrier(SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV | GL43.GL_SHADER_STORAGE_BARRIER_BIT);
+            GL42.glMemoryBarrier(GLOBAL_ACCESS_BARRIER | GL43.GL_SHADER_STORAGE_BARRIER_BIT);
             strategy.prepareCommands(this);
             GlCompat.popDebugGroup();
             return;
@@ -1254,16 +1300,27 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         translucentCullBuildProgram.bind();
         GL43.glDispatchCompute(count, 1, 1);
         GL42.glMemoryBarrier(
-                SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV | GL43.GL_SHADER_STORAGE_BARRIER_BIT | GL42.GL_COMMAND_BARRIER_BIT);
+                GLOBAL_ACCESS_BARRIER | GL43.GL_SHADER_STORAGE_BARRIER_BIT | GL42.GL_COMMAND_BARRIER_BIT);
         GlCompat.popDebugGroup();
     }
 
     private void uploadAndBindTranslucentSceneUbo(int count) {
+        int phase = PHASE_1 | (GuestTerrainGate.packActive ? PHASE_NATIVE_LIST : 0);
+        if (!GlCompat.SUPPORTS_NV_BUFFER_LOAD) {
+            bindCullStorage(BINDING_CULL_REGION_INPUT, translucentRegionInputBuffer.handle());
+            bindCullStorage(BINDING_CULL_SECTION_DATA, registry.translucentSectionDataHandle());
+            bindCullStorage(BINDING_CULL_REGION_VIS, translucentRegionVisBuffer.handle());
+            bindCullStorage(BINDING_CULL_SECTION_VIS, registry.translucentVisHandle());
+            bindCullStorage(BINDING_CULL_COMMANDS, translucentCommandBuffer.handle());
+            bindCullStorage(BINDING_CULL_COMMAND_COUNT, translucentCommandCount.handle());
+            uploadAndBindScenePass(count, phase, 0);
+            return;
+        }
         packAndBindSceneUbo(translucentRegionInputBuffer.deviceAddress(), registry.translucentSectionDataAddress(),
                 translucentRegionVisBuffer.deviceAddress(), registry.translucentVisAddress(),
                 translucentCommandBuffer.deviceAddress(), translucentCommandCount.deviceAddress(),
                 0L, // unused by region_test + the translucent cull-build
-                count, PHASE_1 | (GuestTerrainGate.packActive ? PHASE_NATIVE_LIST : 0));
+                count, phase);
     }
 
     private void replayTranslucentOitGpu(RenderPass pass, OitMode mode, OitFramebuffer framebuffer,
