@@ -17,7 +17,7 @@ import dev.engine_room.flywheel.lib.visual.util.SmartRecycler;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.resources.model.ModelBakery;
-import net.minecraft.client.resources.model.sprite.SpriteId;
+import net.minecraft.client.resources.model.sprite.AtlasManager;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
@@ -29,10 +29,10 @@ import org.joml.Vector4fc;
  * A component that uses instances to render the fire animation on an entity.
  */
 public final class FireElement extends AbstractVisual implements SimpleDynamicVisual {
-    private static final RendererReloadCache<SpriteId, Model> FIRE_MODELS = new RendererReloadCache<>(id -> model(id,
-            false));
-    private static final RendererReloadCache<SpriteId, Model> FLIPPED_FIRE_MODELS = new RendererReloadCache<>(
-            id -> model(id, true));
+    private static final RendererReloadCache<TextureAtlasSprite, Model> FIRE_MODELS = new RendererReloadCache<>(
+            sprite -> model(sprite, false));
+    private static final RendererReloadCache<TextureAtlasSprite, Model> FLIPPED_FIRE_MODELS = new RendererReloadCache<>(
+            sprite -> model(sprite, true));
 
     private final Entity entity;
     private final Matrix4f scratch = new Matrix4f();
@@ -49,10 +49,7 @@ public final class FireElement extends AbstractVisual implements SimpleDynamicVi
     }
 
     // Port: FireComponent's material, which shaderpack guests tag as the Iris entity_flame.
-    private static Model model(SpriteId id, boolean flipped) {
-        TextureAtlasSprite sprite = Minecraft.getInstance()
-                                             .getAtlasManager()
-                                             .get(id);
+    private static Model model(TextureAtlasSprite sprite, boolean flipped) {
         return new SingleMeshModel(new FireMesh(sprite, flipped), FireComponent.FIRE_MATERIAL);
     }
 
@@ -104,10 +101,15 @@ public final class FireElement extends AbstractVisual implements SimpleDynamicVi
                                                        .yRot()))
                .translate(0.0F, 0.0F, -0.3F + (float) ((int) maxHeight) * 0.02F);
 
+        // Compat with Sodium: per-frame lookup, as in FlameFeatureRenderer, keeps the fire sprites animating.
+        AtlasManager atlases = Minecraft.getInstance()
+                                        .getAtlasManager();
+        TextureAtlasSprite fire0 = atlases.get(ModelBakery.FIRE_0);
+        TextureAtlasSprite fire1 = atlases.get(ModelBakery.FIRE_1);
+
         for (int i = 0; y < maxHeight; ++i) {
             // Port: vanilla's uv flip, not a mirrored model: a mirror reverses the winding shaderpacks read.
-            Model model = (i / 2 % 2 == 0 ? FLIPPED_FIRE_MODELS : FIRE_MODELS).get(
-                    i % 2 == 0 ? ModelBakery.FIRE_0 : ModelBakery.FIRE_1);
+            Model model = (i / 2 % 2 == 0 ? FLIPPED_FIRE_MODELS : FIRE_MODELS).get(i % 2 == 0 ? fire0 : fire1);
             rowScratch.set(scratch)
                       .scale(width, 1, 1)
                       .translate(0, y, z);

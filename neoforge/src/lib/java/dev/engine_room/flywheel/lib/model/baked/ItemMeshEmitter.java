@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
+import dev.engine_room.flywheel.lib.util.AnimatedSprites;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.client.model.geom.builders.UVPair;
@@ -31,6 +32,7 @@ final class ItemMeshEmitter {
     private final Vector3f scratchNormal = new Vector3f();
 
     void accept(Matrix4fc pose, Matrix3fc normalMatrix, BakedQuad quad, int tint) {
+        AnimatedSprites.add(quad.materialInfo().sprite());
         // Flat face-direction normal, used as the fallback where a vertex leaves its baked normal unspecified.
         normalMatrix.transform(quad.direction().getUnitVec3f(), scratchNormal).normalize();
         float fnx = scratchNormal.x;

@@ -6,6 +6,7 @@ import dev.engine_room.flywheel.backend.glsl.ShaderSources;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.VkPipelineCaches;
 import dev.engine_room.flywheel.lib.model.Models;
+import dev.engine_room.flywheel.lib.util.AnimatedSprites;
 import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import dev.engine_room.flywheel.lib.util.ResourceReloadHolder;
 import net.minecraft.server.packs.resources.ResourceManager;
@@ -23,6 +24,7 @@ public final class FlwPrograms {
     public static void reload(ResourceManager manager) {
         Models.invalidate();
         RendererReloadCache.onReloadLevelRenderer();
+        AnimatedSprites.clear();
         ResourceReloadHolder.onEndClientResourceReload();
         var sources = new ShaderSources(manager);
         SOURCES = sources;

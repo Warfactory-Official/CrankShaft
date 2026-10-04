@@ -11,6 +11,7 @@ import dev.engine_room.flywheel.lib.instance.UvTransformedInstance;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.model.QuadMesh;
 import dev.engine_room.flywheel.lib.model.SingleMeshModel;
+import dev.engine_room.flywheel.lib.util.AnimatedSprites;
 import dev.engine_room.flywheel.lib.visual.AbstractEntityVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import net.minecraft.client.Minecraft;
@@ -111,6 +112,8 @@ public final class PaintingVisual extends AbstractEntityVisual<Painting> impleme
         TextureAtlas atlas = Minecraft.getInstance().getAtlasManager().getAtlasOrThrow(AtlasIds.PAINTINGS);
         TextureAtlasSprite front = atlas.getSprite(current.assetId());
         TextureAtlasSprite back = atlas.getSprite(BACK_SPRITE);
+        AnimatedSprites.add(front);
+        AnimatedSprites.add(back);
         float du = 1.0F / width;
         float dv = 1.0F / height;
 

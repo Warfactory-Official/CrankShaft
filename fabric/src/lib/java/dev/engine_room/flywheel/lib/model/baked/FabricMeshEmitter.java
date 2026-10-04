@@ -1,9 +1,13 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
+import dev.engine_room.flywheel.lib.util.AnimatedSprites;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.fabricmc.fabric.api.client.renderer.v1.mesh.MutableQuadView;
+import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadView;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.world.level.block.state.BlockState;
 import org.joml.Matrix3fc;
@@ -35,7 +39,16 @@ final class FabricMeshEmitter {
         this.normalMatrix = normalMatrix;
     }
 
+    static TextureAtlasSprite sprite(QuadView quad) {
+        return Minecraft.getInstance()
+                        .getAtlasManager()
+                        .getAtlasOrThrow(quad.atlas().getId())
+                        .spriteFinder()
+                        .find(quad);
+    }
+
     void accept(MutableQuadView quad) {
+        AnimatedSprites.add(sprite(quad));
         for (int vertex = 0; vertex < BakedQuad.VERTEX_COUNT; vertex++) {
             if (pose != null) {
                 pose.transformPosition(quad.x(vertex), quad.y(vertex), quad.z(vertex), scratchPos);

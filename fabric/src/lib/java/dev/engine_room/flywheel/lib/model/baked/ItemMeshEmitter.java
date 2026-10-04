@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
+import dev.engine_room.flywheel.lib.util.AnimatedSprites;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadView;
@@ -31,6 +32,7 @@ final class ItemMeshEmitter {
     private final Vector3f scratchNormal = new Vector3f();
 
     void accept(Matrix4fc pose, Matrix3fc normalMatrix, BakedQuad quad, int tint) {
+        AnimatedSprites.add(quad.materialInfo().sprite());
         normalMatrix.transform(quad.direction().getUnitVec3f(), scratchNormal).normalize();
         // Per-quad light emission; the vertex shader's max(meshLight, instanceLight) then mirrors vanilla's
         // LightCoordsUtil.lightCoordsWithEmission (max in both halves).
@@ -59,6 +61,7 @@ final class ItemMeshEmitter {
     }
 
     void accept(Matrix4fc pose, Matrix3fc normalMatrix, QuadView quad, int tint) {
+        AnimatedSprites.add(FabricMeshEmitter.sprite(quad));
         int light = quad.emissive() ? LightCoordsUtil.FULL_BRIGHT : -1;
         for (int vertex = 0; vertex < BakedQuad.VERTEX_COUNT; vertex++) {
             pose.transformPosition(quad.x(vertex), quad.y(vertex), quad.z(vertex), scratchPos);

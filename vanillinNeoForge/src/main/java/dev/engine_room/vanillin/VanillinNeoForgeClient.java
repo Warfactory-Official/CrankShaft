@@ -1,16 +1,10 @@
 package dev.engine_room.vanillin;
 
-import dev.engine_room.vanillin.item.SodiumAnimatedTextureCompat;
-import net.minecraft.resources.Identifier;
-import net.minecraft.server.packs.resources.PreparableReloadListener;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.config.ModConfigEvent;
-import net.neoforged.neoforge.client.event.AddClientReloadListenersEvent;
-import net.neoforged.neoforge.client.event.RenderFrameEvent;
-import net.neoforged.neoforge.common.NeoForge;
 
 @Mod(value = Vanillin.MOD_ID, dist = Dist.CLIENT)
 public class VanillinNeoForgeClient {
@@ -30,15 +24,5 @@ public class VanillinNeoForgeClient {
                 NeoForgeVanillinConfig.INSTANCE.apply();
             }
         });
-
-        // Re-mark observed sprites active once per frame (same wiring as upstream's RenderFrameEvent.Pre).
-        NeoForge.EVENT_BUS.addListener((RenderFrameEvent.Pre stage) -> SodiumAnimatedTextureCompat.beginFrame());
-        // Port: drops the observed-sprite set on resource reload (upstream: ReloadLevelRendererEvent), so it holds no
-        // stale (re-)baked sprites.
-        modEventBus.addListener((AddClientReloadListenersEvent e) -> e.addListener(
-                Identifier.fromNamespaceAndPath(Vanillin.ID, "sodium_animated_textures"),
-                (PreparableReloadListener) (state, bgExec, barrier, reloadExec) ->
-                        barrier.wait(null)
-                               .thenRunAsync(SodiumAnimatedTextureCompat::onReloadRenderer, reloadExec)));
     }
 }

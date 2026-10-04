@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
 import com.mojang.blaze3d.vertex.QuadInstance;
+import dev.engine_room.flywheel.lib.util.AnimatedSprites;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.client.model.geom.builders.UVPair;
@@ -40,6 +41,7 @@ final class MeshEmitter {
     }
 
     void accept(float ox, float oy, float oz, BakedQuad quad, QuadInstance instance) {
+        AnimatedSprites.add(quad.materialInfo().sprite());
         // Flat face-direction normal, used as the fallback where a vertex leaves its baked normal unspecified.
         Vector3fc faceNormal = quad.direction().getUnitVec3f();
         float fnx;

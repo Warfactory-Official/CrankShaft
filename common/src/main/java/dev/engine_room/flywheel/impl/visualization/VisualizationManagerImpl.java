@@ -18,6 +18,7 @@ import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDispatcher;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDispatchers;
 import dev.engine_room.flywheel.impl.*;
+import dev.engine_room.flywheel.impl.compat.SodiumCompat;
 import dev.engine_room.flywheel.impl.extension.LevelExtension;
 import dev.engine_room.flywheel.impl.mixin.sodium.RenderSectionManagerAccessor;
 import dev.engine_room.flywheel.impl.sodium.TerrainCullGate;
@@ -696,6 +697,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
     private class RenderDispatcherImpl implements RenderDispatcher {
         @Override
         public void onStartLevelRender(RenderContext ctx) {
+            SodiumCompat.markAnimatedSprites();
             beginFrame(ctx);
         }
 

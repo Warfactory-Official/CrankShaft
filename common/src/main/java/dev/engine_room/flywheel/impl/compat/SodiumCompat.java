@@ -2,9 +2,11 @@ package dev.engine_room.flywheel.impl.compat;
 
 import dev.engine_room.flywheel.api.visualization.BlockEntityVisualizer;
 import dev.engine_room.flywheel.impl.FlwImpl;
+import dev.engine_room.flywheel.lib.util.AnimatedSprites;
 import dev.engine_room.flywheel.lib.visualization.VisualizationHelper;
 import net.caffeinemc.mods.sodium.api.blockentity.BlockEntityRenderHandler;
 import net.caffeinemc.mods.sodium.api.blockentity.BlockEntityRenderPredicate;
+import net.caffeinemc.mods.sodium.api.texture.SpriteUtil;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import org.jspecify.annotations.Nullable;
@@ -24,6 +26,12 @@ public final class SodiumCompat {
 
     public static boolean isSodiumActive() {
         return ACTIVE;
+    }
+
+    public static void markAnimatedSprites() {
+        if (ACTIVE) {
+            Internals.markAnimatedSprites();
+        }
     }
 
     @Nullable
@@ -62,6 +70,10 @@ public final class SodiumCompat {
 
         static <T extends BlockEntity> void removePredicate(BlockEntityType<T> type, Object predicate) {
             BlockEntityRenderHandler.instance().removeRenderPredicate(type, (BlockEntityRenderPredicate<T>) predicate);
+        }
+
+        static void markAnimatedSprites() {
+            AnimatedSprites.forEach(SpriteUtil.INSTANCE::markSpriteActive);
         }
     }
 }
