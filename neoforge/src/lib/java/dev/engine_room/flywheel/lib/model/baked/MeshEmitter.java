@@ -1,21 +1,18 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
+import com.mojang.blaze3d.vertex.QuadInstance;
+import it.unimi.dsi.fastutil.floats.FloatArrayList;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import net.minecraft.client.model.geom.builders.UVPair;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.util.ARGB;
+import net.minecraft.world.level.block.state.BlockState;
+import net.neoforged.neoforge.client.model.quad.BakedNormals;
 import org.joml.Matrix3fc;
 import org.joml.Matrix4fc;
 import org.joml.Vector3f;
 import org.joml.Vector3fc;
 import org.jspecify.annotations.Nullable;
-
-import com.mojang.blaze3d.vertex.QuadInstance;
-
-import dev.engine_room.flywheel.lib.model.baked.BakedMesh;
-import it.unimi.dsi.fastutil.floats.FloatArrayList;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
-import net.minecraft.client.model.geom.builders.UVPair;
-import net.minecraft.client.resources.model.geometry.BakedQuad;
-import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.util.ARGB;
-import net.neoforged.neoforge.client.model.quad.BakedNormals;
 
 // NeoForge patches bakedColors + bakedNormals directly onto the vanilla 26.2 BakedQuad record.
 final class MeshEmitter {
@@ -88,7 +85,8 @@ final class MeshEmitter {
                 normals.add(fny);
                 normals.add(fnz);
             } else {
-                scratchNormal.set(BakedNormals.unpackX(packedNormal), BakedNormals.unpackY(packedNormal), BakedNormals.unpackZ(packedNormal));
+                scratchNormal.set(BakedNormals.unpackX(packedNormal), BakedNormals.unpackY(packedNormal),
+                        BakedNormals.unpackZ(packedNormal));
                 normalMatrix.transform(scratchNormal);
                 scratchNormal.normalize();
                 normals.add(scratchNormal.x);

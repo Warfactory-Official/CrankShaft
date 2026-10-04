@@ -70,9 +70,6 @@ public final class LeashComponent implements EntityComponent {
                            .add(attachOffset);
         Vec3 end = holder.getRopeHoldPosition(partialTick);
 
-        // Reveal BEFORE writing: a hidden handle's slabPtr() is the write-only trash slot, so setters
-        // are dropped while hidden and the reveal re-seeds the fresh slot (scale 0 = a degenerate rope).
-        // Scale is rewritten every frame, else an unleash/re-leash cycle leaves the rope collapsed.
         instance.setVisible(true);
         Vec3i origin = context.renderOrigin();
         instance.endpoints(

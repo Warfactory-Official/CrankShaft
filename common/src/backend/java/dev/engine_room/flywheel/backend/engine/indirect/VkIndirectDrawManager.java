@@ -16,7 +16,6 @@ import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.BackendDebugFlags;
-import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
@@ -835,7 +834,9 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
     @Override
     public void triggerFallback() {
-        FlwBackend.LOGGER.error("flywheel:vk_indirect requested a fallback");
+        VkPrograms.kill();
+        Minecraft mc = Minecraft.getInstance();
+        mc.levelExtractor.allChanged();
     }
 
     @Override

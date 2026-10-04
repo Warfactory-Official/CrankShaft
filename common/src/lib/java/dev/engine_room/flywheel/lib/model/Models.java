@@ -71,7 +71,8 @@ public final class Models {
      * The block's own light for {@link #displayBlock}; the draw uses {@code LightCoordsUtil.max(entityLight, this)}.
      */
     public static int displayBlockLight(BlockState state) {
-        return state.emissiveRendering() ? LightCoordsUtil.FULL_BRIGHT : LightCoordsUtil.pack(state.getLightEmission(), 0);
+        return state.emissiveRendering() ? LightCoordsUtil.FULL_BRIGHT : LightCoordsUtil.pack(state.getLightEmission(),
+                0);
     }
 
     private static Optional<Model> bakeDisplayBlock(DisplayKey key) {

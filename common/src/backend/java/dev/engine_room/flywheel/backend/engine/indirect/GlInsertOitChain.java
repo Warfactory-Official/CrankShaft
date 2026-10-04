@@ -46,6 +46,7 @@ public final class GlInsertOitChain {
     private int ubo;                            // host-writable _FlwMlabUniforms (raw GL name; bound at 26)
     @Nullable
     private OitInsertMode allocatedMode;
+
     public GlInsertOitChain() {
     }
 

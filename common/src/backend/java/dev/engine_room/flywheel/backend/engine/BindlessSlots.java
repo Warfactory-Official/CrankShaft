@@ -25,6 +25,7 @@ public final class BindlessSlots {
     // doubles as the not-yet-allocated marker.
     private static final Object2IntMap<Key> slots = new Object2IntOpenHashMap<>();
     private static final List<Key> keys = new ArrayList<>();
+
     private BindlessSlots() {
     }
 

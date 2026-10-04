@@ -6,55 +6,15 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import org.jspecify.annotations.Nullable;
 
 import java.util.List;
 
 public sealed interface PackIdentity {
-    record OfBlock(Block block) implements PackIdentity {
-    }
-
-    record OfState(BlockState state) implements PackIdentity {
-    }
-
-    record OfEntity(String irisName) implements PackIdentity {
-    }
-
-    /**
-     * Draw through the pack program Iris routes this vanilla draw to ({@code spidereyes},
-     * {@code entities_translucent}, {@code entities}), keeping the draw's own ids.
-     */
-    record OfProgram(String irisProgram) implements PackIdentity {
-    }
-
-    /**
-     * Report {@code irisItem} as the rendered item ({@code currentRenderedItemId}), alongside the other identities.
-     */
-    record OfItem(Identifier irisItem) implements PackIdentity {
-    }
-
-    static PackIdentity of(Block block) {
-        return new OfBlock(block);
-    }
-
-    static PackIdentity of(BlockState state) {
-        return new OfState(state);
-    }
-
-    static PackIdentity ofIrisEntity(String irisName) {
-        return new OfEntity(irisName);
-    }
-
-    static PackIdentity ofIrisProgram(String irisProgram) {
-        return new OfProgram(irisProgram);
-    }
-
-    static PackIdentity ofIrisItem(Identifier irisItem) {
-        return new OfItem(irisItem);
-    }
-
     PackIdentity FLAME = ofIrisEntity("entity_flame");
     PackIdentity SPIDER_EYES = ofIrisProgram("spidereyes");
     PackIdentity ENTITIES_TRANSLUCENT = ofIrisProgram("entities_translucent");
+    PackIdentity NAME_TAG = ofIrisProgram("entities_translucent", "name_tag");
     PackIdentity ENTITIES = ofIrisProgram("entities");
     PackIdentity GLOWSTONE = of(Blocks.GLOWSTONE);
     PackIdentity TORCH = of(Blocks.TORCH);
@@ -101,10 +61,65 @@ public sealed interface PackIdentity {
     PackIdentity NETHER_PORTAL = of(Blocks.NETHER_PORTAL);
     PackIdentity OAK_LEAVES = of(Blocks.OAK_LEAVES);
     PackIdentity LIT_CAMPFIRE = of(Blocks.CAMPFIRE.defaultBlockState().setValue(BlockStateProperties.LIT, true));
-    PackIdentity LIT_SOUL_CAMPFIRE = of(Blocks.SOUL_CAMPFIRE.defaultBlockState().setValue(BlockStateProperties.LIT, true));
-    PackIdentity LIT_REDSTONE_LAMP = of(Blocks.REDSTONE_LAMP.defaultBlockState().setValue(BlockStateProperties.LIT, true));
+    PackIdentity LIT_SOUL_CAMPFIRE = of(
+            Blocks.SOUL_CAMPFIRE.defaultBlockState().setValue(BlockStateProperties.LIT, true));
+    PackIdentity LIT_REDSTONE_LAMP = of(
+            Blocks.REDSTONE_LAMP.defaultBlockState().setValue(BlockStateProperties.LIT, true));
     PackIdentity LIT_CANDLE = of(Blocks.CANDLE.defaultBlockState().setValue(BlockStateProperties.LIT, true));
-    PackIdentity GLOW_BERRY_VINES = of(Blocks.CAVE_VINES.defaultBlockState().setValue(BlockStateProperties.BERRIES, true));
+    PackIdentity GLOW_BERRY_VINES = of(
+            Blocks.CAVE_VINES.defaultBlockState().setValue(BlockStateProperties.BERRIES, true));
+
+    static PackIdentity of(Block block) {
+        return new OfBlock(block);
+    }
+
+    static PackIdentity of(BlockState state) {
+        return new OfState(state);
+    }
+
+    static PackIdentity ofIrisEntity(String irisName) {
+        return new OfEntity(irisName);
+    }
+
+    static PackIdentity ofIrisProgram(String irisProgram) {
+        return new OfProgram(irisProgram);
+    }
+
+    static PackIdentity ofIrisProgram(String irisProgram, String irisEntity) {
+        return new OfProgram(irisProgram, irisEntity);
+    }
+
+    static PackIdentity ofIrisItem(Identifier irisItem) {
+        return new OfItem(irisItem);
+    }
+
+    record OfBlock(Block block) implements PackIdentity {
+    }
+
+    record OfState(BlockState state) implements PackIdentity {
+    }
+
+    record OfEntity(String irisName) implements PackIdentity {
+    }
+
+    /**
+     * Draw through the pack program Iris routes this vanilla draw to ({@code spidereyes},
+     * {@code entities_translucent}, {@code entities}). A null entity name keeps the actor identity; a supplied
+     * name selects that synthetic Minecraft entity identity while retaining the requested program route.
+     * Both loaders resolve it against the active pack when the model's draw tags are created on the render
+     * thread. Pack reload replaces those tags; without Iris the identity has no effect.
+     */
+    record OfProgram(String irisProgram, @Nullable String irisEntity) implements PackIdentity {
+        public OfProgram(String irisProgram) {
+            this(irisProgram, null);
+        }
+    }
+
+    /**
+     * Report {@code irisItem} as the rendered item ({@code currentRenderedItemId}), alongside the other identities.
+     */
+    record OfItem(Identifier irisItem) implements PackIdentity {
+    }
 
     final class Effect {
         public static final List<PackIdentity> WARM_LIGHT = List.of(LANTERN, JACK_O_LANTERN, TORCH, GLOWSTONE);
@@ -112,8 +127,10 @@ public sealed interface PackIdentity {
         public static final List<PackIdentity> SOUL_LIGHT = List.of(SOUL_TORCH, SOUL_LANTERN, SOUL_FIRE, TORCH);
         public static final List<PackIdentity> FIRE_GLOW = List.of(FLAME, LIT_CAMPFIRE, PackIdentity.FIRE, TORCH);
         public static final List<PackIdentity> LAVA_GLOW = List.of(LAVA, MAGMA, GLOWSTONE);
-        public static final List<PackIdentity> ORGANIC_GLOW = List.of(SHROOMLIGHT, GLOW_LICHEN, OCHRE_FROGLIGHT, GLOWSTONE);
-        public static final List<PackIdentity> ARCANE = List.of(ENCHANTING_TABLE, AMETHYST_CLUSTER, CRYING_OBSIDIAN, BEACON);
+        public static final List<PackIdentity> ORGANIC_GLOW = List.of(SHROOMLIGHT, GLOW_LICHEN, OCHRE_FROGLIGHT,
+                GLOWSTONE);
+        public static final List<PackIdentity> ARCANE = List.of(ENCHANTING_TABLE, AMETHYST_CLUSTER, CRYING_OBSIDIAN,
+                BEACON);
         public static final List<PackIdentity> END_GLOW = List.of(END_ROD, END_GATEWAY, END_PORTAL, BEACON);
         public static final List<PackIdentity> REDSTONE_GLOW = List.of(LIT_REDSTONE_LAMP, TORCH, GLOWSTONE);
         public static final List<PackIdentity> GLASS_LIKE = List.of(GLASS, WHITE_STAINED_GLASS, GRAY_STAINED_GLASS);

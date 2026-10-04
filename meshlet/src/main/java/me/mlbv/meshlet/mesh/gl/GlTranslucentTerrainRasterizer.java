@@ -4,8 +4,6 @@
 // Derivative work of Nvidium me.cortex.nvidium.renderers.PrimaryTerrainRasterizer (translucent variant).
 package me.mlbv.meshlet.mesh.gl;
 
-import java.nio.ByteBuffer;
-
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.opengl.GlSampler;
 import com.mojang.blaze3d.opengl.GlStateManager;
@@ -14,7 +12,6 @@ import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
-
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
@@ -26,18 +23,10 @@ import dev.engine_room.flywheel.backend.gl.GlStateTracker;
 import dev.engine_room.flywheel.backend.gl.buffer.GlBufferType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
-import org.lwjgl.opengl.GL11C;
-import org.lwjgl.opengl.GL12C;
-import org.lwjgl.opengl.GL14C;
-import org.lwjgl.opengl.GL15C;
-import org.lwjgl.opengl.GL20C;
-import org.lwjgl.opengl.GL30C;
-import org.lwjgl.opengl.GL31C;
-import org.lwjgl.opengl.GL33C;
-import org.lwjgl.opengl.GL40C;
-import org.lwjgl.opengl.GL42C;
-import org.lwjgl.opengl.GL43C;
+import org.lwjgl.opengl.*;
 import org.lwjgl.system.MemoryUtil;
+
+import java.nio.ByteBuffer;
 
 // Peer producer into CrankShaft's OIT chain (not back-to-front sorted). Decode-once: the emit-half builds the
 // compacted section list (prepareCommands, outside any pass), then the FIRST draw of the frame runs
@@ -102,6 +91,39 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         this.pipelines = pipelines;
     }
 
+    // Insert has no color outputs (the frag writes the mlab sample SSBOs), so no MRT blend/draw-buffer table -- only
+    // the reversed-Z depth discipline mlab's early_fragment_tests relies on.
+    private static void setupInsertOitState() {
+        GlStateManager._enableDepthTest();
+        GlStateManager._depthFunc(GL11C.GL_GEQUAL);
+        GlStateManager._depthMask(false);
+        GlStateManager._enableCull();
+        GlStateManager._colorMask(ColorTargetState.WRITE_ALL);
+        GlStateManager._disableBlend(0);
+        GL20C.glDrawBuffers(DRAW_BUFFERS_ONE);
+    }
+
+    private static void setupOitState(OitMode mode) {
+        GlStateManager._enableDepthTest();
+        GlStateManager._depthFunc(GL11C.GL_GEQUAL);
+        GlStateManager._depthMask(false);
+        GlStateManager._enableCull();
+        GlStateManager._colorMask(ColorTargetState.WRITE_ALL);
+
+        GlStateManager._enableBlend(0);
+        GlStateManager._blendFuncSeparate(GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE);
+        int eq = (mode == OitMode.DEPTH_RANGE) ? GL14C.GL_MAX : GL14C.GL_FUNC_ADD;
+        GlStateManager._blendEquationSeparate(eq, eq);
+
+        // _enableBlend(0) already enables the GLOBAL GL_BLEND over all draw buffers; the per-index
+        // _enableBlend(1/2/3) only flips BLEND[i] cache bits over that same global flag -- dropped.
+        if (mode == OitMode.GENERATE_COEFFICIENTS) {
+            GL20C.glDrawBuffers(DRAW_BUFFERS_FOUR);
+        } else {
+            GL20C.glDrawBuffers(DRAW_BUFFERS_ONE);
+        }
+    }
+
     @Override
     public void prepareCommands(TerrainDrawDispatcher d) {
         int regionCount = d.translucentRegionBatch.count;
@@ -148,7 +170,7 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         // Atlas fetched here (not passed); must be the shared LINEAR+mipmap cache entry -- flw_sampleAtlas
         // requires the mip taps (a plain non-mip LINEAR sampler broke the crisp/NEAREST look).
         GpuTextureView atlasView = Minecraft.getInstance().getTextureManager()
-                .getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView();
+                                            .getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView();
         int atlasSamplerObj = ((GlSampler) TerrainAtlasFilter.sampler()).getId();
         GlMeshUtil.bindTexture(UNIT_ATLAS, atlasView, atlasSamplerObj);
         GlMeshUtil.bindTexture(UNIT_LIGHTMAP, lightmapView, lightmapSamplerObj);
@@ -278,7 +300,7 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         setupInsertOitState();
 
         GpuTextureView atlasView = Minecraft.getInstance().getTextureManager()
-                .getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView();
+                                            .getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView();
         int atlasSamplerObj = ((GlSampler) TerrainAtlasFilter.sampler()).getId();
         GlMeshUtil.bindTexture(UNIT_ATLAS, atlasView, atlasSamplerObj);
         GlMeshUtil.bindTexture(UNIT_LIGHTMAP, lightmapView, lightmapSamplerObj);
@@ -304,39 +326,6 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
 
         GL33C.glBindSampler(UNIT_ATLAS, 0);
         GL33C.glBindSampler(UNIT_LIGHTMAP, 0);
-    }
-
-    // Insert has no color outputs (the frag writes the mlab sample SSBOs), so no MRT blend/draw-buffer table -- only
-    // the reversed-Z depth discipline mlab's early_fragment_tests relies on.
-    private static void setupInsertOitState() {
-        GlStateManager._enableDepthTest();
-        GlStateManager._depthFunc(GL11C.GL_GEQUAL);
-        GlStateManager._depthMask(false);
-        GlStateManager._enableCull();
-        GlStateManager._colorMask(ColorTargetState.WRITE_ALL);
-        GlStateManager._disableBlend(0);
-        GL20C.glDrawBuffers(DRAW_BUFFERS_ONE);
-    }
-
-    private static void setupOitState(OitMode mode) {
-        GlStateManager._enableDepthTest();
-        GlStateManager._depthFunc(GL11C.GL_GEQUAL);
-        GlStateManager._depthMask(false);
-        GlStateManager._enableCull();
-        GlStateManager._colorMask(ColorTargetState.WRITE_ALL);
-
-        GlStateManager._enableBlend(0);
-        GlStateManager._blendFuncSeparate(GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE);
-        int eq = (mode == OitMode.DEPTH_RANGE) ? GL14C.GL_MAX : GL14C.GL_FUNC_ADD;
-        GlStateManager._blendEquationSeparate(eq, eq);
-
-        // _enableBlend(0) already enables the GLOBAL GL_BLEND over all draw buffers; the per-index
-        // _enableBlend(1/2/3) only flips BLEND[i] cache bits over that same global flag -- dropped.
-        if (mode == OitMode.GENERATE_COEFFICIENTS) {
-            GL20C.glDrawBuffers(DRAW_BUFFERS_FOUR);
-        } else {
-            GL20C.glDrawBuffers(DRAW_BUFFERS_ONE);
-        }
     }
 
     private void unbindSamplers() {
@@ -393,7 +382,8 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         GL15C.glBufferSubData(GL31C.GL_UNIFORM_BUFFER, 0L, s);
         GL15C.glBindBuffer(GL31C.GL_UNIFORM_BUFFER, 0);
         s.clear();
-        GL30C.glBindBufferRange(GL31C.GL_UNIFORM_BUFFER, BINDING_TERRAIN_SCENE_UBO, sceneUbo, 0L, TERRAIN_SCENE_UBO_BYTES);
+        GL30C.glBindBufferRange(GL31C.GL_UNIFORM_BUFFER, BINDING_TERRAIN_SCENE_UBO, sceneUbo, 0L,
+                TERRAIN_SCENE_UBO_BYTES);
     }
 
     private void ensureCompactSectionsCapacity(int regionCount) {

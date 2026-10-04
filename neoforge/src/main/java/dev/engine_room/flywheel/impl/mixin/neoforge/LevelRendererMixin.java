@@ -1,17 +1,15 @@
 package dev.engine_room.flywheel.impl.mixin.neoforge;
 
-import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-
 import com.mojang.blaze3d.systems.RenderSystem;
-
 import dev.engine_room.flywheel.impl.event.RenderContextImpl;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(value = LevelRenderer.class, priority = 1001)
 abstract class LevelRendererMixin {
@@ -29,7 +27,7 @@ abstract class LevelRendererMixin {
             return;
         }
         manager.renderDispatcher()
-                .onStartLevelRender(flywheel$buildContext(level));
+               .onStartLevelRender(flywheel$buildContext(level));
     }
 
     private RenderContextImpl flywheel$buildContext(ClientLevel level) {

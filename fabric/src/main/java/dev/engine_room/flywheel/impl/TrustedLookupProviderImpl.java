@@ -43,9 +43,23 @@ public final class TrustedLookupProviderImpl implements TrustedLookupProvider {
 
             try (Arena ARENA = Arena.ofConfined()) {
                 SymbolLookup JVM = SymbolLookup.libraryLookup(System.mapLibraryName("jvm"), ARENA);
-                MethodHandle JNI_GetCreatedJavaVMs = LINKER.downcallHandle(JVM.find("JNI_GetCreatedJavaVMs").orElseThrow(() -> new IllegalStateException("JNI_GetCreatedJavaVMs must exist.")), FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
-                MethodHandle JVM_LatestUserDefinedLoader = LINKER.downcallHandle(JVM.find("JVM_LatestUserDefinedLoader").orElseThrow(() -> new IllegalStateException("JVM_LatestUserDefinedLoader must exist.")), FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
-                MethodHandle JVM_FindClassFromCaller = LINKER.downcallHandle(JVM.find("JVM_FindClassFromCaller").orElseThrow(() -> new IllegalStateException("JVM_FindClassFromCaller must exist.")), FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_BYTE, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+                MethodHandle JNI_GetCreatedJavaVMs = LINKER.downcallHandle(JVM.find("JNI_GetCreatedJavaVMs")
+                                                                              .orElseThrow(
+                                                                                      () -> new IllegalStateException(
+                                                                                              "JNI_GetCreatedJavaVMs must exist.")),
+                        FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_INT,
+                                ValueLayout.ADDRESS));
+                MethodHandle JVM_LatestUserDefinedLoader = LINKER.downcallHandle(JVM.find("JVM_LatestUserDefinedLoader")
+                                                                                    .orElseThrow(
+                                                                                            () -> new IllegalStateException(
+                                                                                                    "JVM_LatestUserDefinedLoader must exist.")),
+                        FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+                MethodHandle JVM_FindClassFromCaller = LINKER.downcallHandle(JVM.find("JVM_FindClassFromCaller")
+                                                                                .orElseThrow(
+                                                                                        () -> new IllegalStateException(
+                                                                                                "JVM_FindClassFromCaller must exist.")),
+                        FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                                ValueLayout.JAVA_BYTE, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
 
                 MemorySegment pVM = ARENA.allocate(VL_PP_JNIInvokeInterface);
                 MemorySegment nVMs = ARENA.allocate(ValueLayout.JAVA_INT);
@@ -57,7 +71,11 @@ public final class TrustedLookupProviderImpl implements TrustedLookupProvider {
                     throw new IllegalStateException("There must be one VM.");
                 }
 
-                MethodHandle GetEnv = LINKER.downcallHandle(pVM.get(VL_PP_JNIInvokeInterface, 0L).get(VL_P_JNIInvokeInterface, 0L).getAtIndex(ValueLayout.ADDRESS, 6L), FunctionDescriptor.of(ValueLayout.JAVA_INT, VL_PP_JNIInvokeInterface, VL_PP_JNINativeInterface, ValueLayout.JAVA_INT));
+                MethodHandle GetEnv = LINKER.downcallHandle(
+                        pVM.get(VL_PP_JNIInvokeInterface, 0L).get(VL_P_JNIInvokeInterface, 0L)
+                           .getAtIndex(ValueLayout.ADDRESS, 6L),
+                        FunctionDescriptor.of(ValueLayout.JAVA_INT, VL_PP_JNIInvokeInterface, VL_PP_JNINativeInterface,
+                                ValueLayout.JAVA_INT));
                 MemorySegment ppEnv = ARENA.allocate(VL_PP_JNINativeInterface);
                 ec = (int) GetEnv.invokeExact(pVM, ppEnv, 0x00010008);
                 if (ec != 0) {
@@ -66,24 +84,47 @@ public final class TrustedLookupProviderImpl implements TrustedLookupProvider {
 
                 MemorySegment pEnv = ppEnv.get(VL_PP_JNINativeInterface, 0L);
                 MemorySegment pJNINativeInterface = pEnv.get(VL_P_JNINativeInterface, 0L);
-                MethodHandle FindClass = LINKER.downcallHandle(pJNINativeInterface.getAtIndex(ValueLayout.ADDRESS, 6L), FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)).bindTo(pEnv);
-                MethodHandle NewGlobalRef = LINKER.downcallHandle(pJNINativeInterface.getAtIndex(ValueLayout.ADDRESS, 21L), FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)).bindTo(pEnv);
-                MethodHandle DeleteGlobalRef = LINKER.downcallHandle(pJNINativeInterface.getAtIndex(ValueLayout.ADDRESS, 22L), FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS)).bindTo(pEnv);
-                MethodHandle GetStaticFieldID = LINKER.downcallHandle(pJNINativeInterface.getAtIndex(ValueLayout.ADDRESS, 144L), FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)).bindTo(pEnv);
-                MethodHandle GetStaticObjectField = LINKER.downcallHandle(pJNINativeInterface.getAtIndex(ValueLayout.ADDRESS, 145L), FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)).bindTo(pEnv);
-                MethodHandle SetStaticObjectField = LINKER.downcallHandle(pJNINativeInterface.getAtIndex(ValueLayout.ADDRESS, 154L), FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)).bindTo(pEnv);
+                MethodHandle FindClass = LINKER.downcallHandle(pJNINativeInterface.getAtIndex(ValueLayout.ADDRESS, 6L),
+                                                       FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS))
+                                               .bindTo(pEnv);
+                MethodHandle NewGlobalRef = LINKER.downcallHandle(
+                                                          pJNINativeInterface.getAtIndex(ValueLayout.ADDRESS, 21L),
+                                                          FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS))
+                                                  .bindTo(pEnv);
+                MethodHandle DeleteGlobalRef = LINKER.downcallHandle(
+                        pJNINativeInterface.getAtIndex(ValueLayout.ADDRESS, 22L),
+                        FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS)).bindTo(pEnv);
+                MethodHandle GetStaticFieldID = LINKER.downcallHandle(
+                        pJNINativeInterface.getAtIndex(ValueLayout.ADDRESS, 144L),
+                        FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                                ValueLayout.ADDRESS, ValueLayout.ADDRESS)).bindTo(pEnv);
+                MethodHandle GetStaticObjectField = LINKER.downcallHandle(
+                        pJNINativeInterface.getAtIndex(ValueLayout.ADDRESS, 145L),
+                        FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                                ValueLayout.ADDRESS)).bindTo(pEnv);
+                MethodHandle SetStaticObjectField = LINKER.downcallHandle(
+                        pJNINativeInterface.getAtIndex(ValueLayout.ADDRESS, 154L),
+                        FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                                ValueLayout.ADDRESS)).bindTo(pEnv);
 
-                MemorySegment lookupJClass = (MemorySegment) FindClass.invokeExact(ARENA.allocateFrom("java/lang/invoke/MethodHandles$Lookup"));
+                MemorySegment lookupJClass = (MemorySegment) FindClass.invokeExact(
+                        ARENA.allocateFrom("java/lang/invoke/MethodHandles$Lookup"));
                 MemorySegment lookupJClassRef = (MemorySegment) NewGlobalRef.invokeExact(lookupJClass);
-                MemorySegment lookupJFieldID = (MemorySegment) GetStaticFieldID.invokeExact(lookupJClassRef, ARENA.allocateFrom("IMPL_LOOKUP"), ARENA.allocateFrom("Ljava/lang/invoke/MethodHandles$Lookup;"));
-                MemorySegment lookupJObject = (MemorySegment) GetStaticObjectField.invokeExact(lookupJClassRef, lookupJFieldID);
+                MemorySegment lookupJFieldID = (MemorySegment) GetStaticFieldID.invokeExact(lookupJClassRef,
+                        ARENA.allocateFrom("IMPL_LOOKUP"),
+                        ARENA.allocateFrom("Ljava/lang/invoke/MethodHandles$Lookup;"));
+                MemorySegment lookupJObject = (MemorySegment) GetStaticObjectField.invokeExact(lookupJClassRef,
+                        lookupJFieldID);
                 MemorySegment lookupJObjectRef = (MemorySegment) NewGlobalRef.invokeExact(lookupJObject);
 
-                MemorySegment targetJName = ARENA.allocateFrom(TrustedLookupProviderImpl.class.getName().replace('.', '/'));
+                MemorySegment targetJName = ARENA.allocateFrom(
+                        TrustedLookupProviderImpl.class.getName().replace('.', '/'));
                 MemorySegment userLoader = (MemorySegment) JVM_LatestUserDefinedLoader.invokeExact(pEnv);
-                MemorySegment targetJClass = (MemorySegment) JVM_FindClassFromCaller.invokeExact(pEnv, targetJName, (byte) 0, userLoader, MemorySegment.NULL);
+                MemorySegment targetJClass = (MemorySegment) JVM_FindClassFromCaller.invokeExact(pEnv, targetJName,
+                        (byte) 0, userLoader, MemorySegment.NULL);
                 MemorySegment targetJClassRef = (MemorySegment) NewGlobalRef.invokeExact(targetJClass);
-                MemorySegment targetJFieldID = (MemorySegment) GetStaticFieldID.invokeExact(targetJClassRef, ARENA.allocateFrom("lookup"), ARENA.allocateFrom("Ljava/lang/invoke/MethodHandles$Lookup;"));
+                MemorySegment targetJFieldID = (MemorySegment) GetStaticFieldID.invokeExact(targetJClassRef,
+                        ARENA.allocateFrom("lookup"), ARENA.allocateFrom("Ljava/lang/invoke/MethodHandles$Lookup;"));
                 SetStaticObjectField.invokeExact(targetJClassRef, targetJFieldID, lookupJObjectRef);
 
                 DeleteGlobalRef.invoke(lookupJClassRef);

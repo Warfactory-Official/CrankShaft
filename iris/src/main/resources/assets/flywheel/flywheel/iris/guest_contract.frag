@@ -7,6 +7,42 @@ float _flw_diffuseFactor() {
     return 1.0;
 }
 
+bool _flw_isUnlit() {
+    return !flw_material.useLight;
+}
+
+bool _flw_borrowedBlock() {
+    #ifdef _FLW_GUEST_BORROWED_BLOCK
+    return true;
+    #else
+    return false;
+    #endif
+}
+
+bool _flw_hasFog() {
+    #ifdef _FLW_GUEST_FOG_NONE
+    return false;
+    #else
+    return true;
+    #endif
+}
+
+float _flw_unlitCardinalFactor() {
+    #ifdef _FLW_GUEST_OLD_LIGHTING
+    return 1.0;
+    #else
+    return _flw_diffuseFactor();
+    #endif
+}
+
+float _flw_emissionCoverage() {
+    #ifdef _FLW_GUEST_ADDITIVE_ONE
+    return 1.0;
+    #else
+    return flw_sampleColor.a > 0.0 ? flw_fragColor.a / flw_sampleColor.a : 0.0;
+    #endif
+}
+
 void clrwl_computeFragment(vec4 sampleColor, out vec4 fragColor, out vec2 fragLight, out float ao,
                            out vec4 fragOverlay) {
     _flw_unpackMaterialProperties(_flw_packedMaterial.y, flw_material);
@@ -17,6 +53,11 @@ void clrwl_computeFragment(vec4 sampleColor, out vec4 fragColor, out vec2 fragLi
     flw_fragOverlay = flw_vertexOverlay;
 
     flw_materialFragment();
+
+    #if defined(_FLW_GUEST_MAIN_OIT) && !defined(_FLW_GUEST_BORROWED_BLOCK)
+    // Pack auxiliary outputs can carry opacity even when the model's coverage is zero.
+    if (flw_fragColor.a <= 0.0) discard;
+    #endif
 
     fragOverlay = vec4(0.0);
     if (flw_material.useOverlay) {
@@ -60,6 +101,9 @@ void clrwl_computeFragment(vec4 sampleColor, out vec4 fragColor, out vec2 fragLi
     #endif
 
     fragColor = flw_fragColor;
+    #ifdef _FLW_GUEST_ADDITIVE_ONE
+    fragColor.a = 1.0;
+    #endif
     // Contract light is texel-centred, as vanilla's sample_lightmap input.
     fragLight = flw_fragLight + 1.0 / 32.0;
 }

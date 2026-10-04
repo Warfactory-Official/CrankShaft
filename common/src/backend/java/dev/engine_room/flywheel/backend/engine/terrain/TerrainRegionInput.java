@@ -8,8 +8,10 @@ public final class TerrainRegionInput {
     private TerrainRegionInput() {
     }
 
-    /** Packs a render-thread region record consumed by native and guest terrain shaders. X/Z use signed 24-bit
-     * chunk coordinates (beyond Minecraft's world border), Y uses signed 16-bit; the record remains 16 bytes. */
+    /**
+     * Packs a render-thread region record consumed by native and guest terrain shaders. X/Z use signed 24-bit
+     * chunk coordinates (beyond Minecraft's world border), Y uses signed 16-bit; the record remains 16 bytes.
+     */
     public static void write(long address, int x, int y, int z, int regionId, int run) {
         MemoryUtil.memPutInt(address, (x & 0xFFFF) | (z << 16));
         MemoryUtil.memPutInt(address + 4, (y & 0xFFFF) | (x & 0xFF0000) | ((z & 0xFF0000) << 8));

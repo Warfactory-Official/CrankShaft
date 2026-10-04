@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceHandle;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.layout.Layout;
+import dev.engine_room.flywheel.lib.util.ShaderWarmupRegistry;
 import net.minecraft.resources.Identifier;
 
 import java.util.Objects;
@@ -23,6 +24,8 @@ public final class SimpleInstanceType<I extends Instance> implements InstanceTyp
         this.seed = seed;
         this.vertexShader = vertexShader;
         this.cullShader = cullShader;
+        // Port: expose downstream layouts before loading-time uber shader compilation.
+        ShaderWarmupRegistry.register(this);
     }
 
     public static <I extends Instance> Builder<I> builder(Factory<I> factory) {

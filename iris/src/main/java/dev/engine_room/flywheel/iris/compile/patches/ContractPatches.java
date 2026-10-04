@@ -17,6 +17,7 @@ import java.util.regex.Pattern;
 public final class ContractPatches {
     public static final String NATIVE_TRANSLUCENT = "_flw_nativeTranslucent";
     public static final String NATIVE_SHADOW_TRANSLUCENT = "_flw_nativeShadowTranslucent";
+    public static final String NATIVE_ADDITIVE = "_flw_nativeAdditive";
     private static final String CONTRACT = "clrwl_gbuffers";
     private static final List<String> CONTRACT_MARKERS = List.of("COLORWHEEL", "CLRWL");
     private static final List<String> OTHER_PROGRAMS = List.of("TERRAIN", "WATER", "BLOCK", "HAND", "SHADOW", "GLINT",
@@ -29,8 +30,13 @@ public final class ContractPatches {
             "CRANKSHAFT_CLRWL_SHADOW_TRANSLUCENT");
     private static final Target ADDITIVE = new Target("clrwl_gbuffers_additive", "gbuffers_beaconbeam",
             "CRANKSHAFT_CLRWL_ADDITIVE");
+    private static final Target UNLIT_TRANSLUCENT = new Target("clrwl_gbuffers_unlit_translucent", "gbuffers_water",
+            "CRANKSHAFT_CLRWL_UNLIT_TRANSLUCENT");
     private static final Target BLOCK = new Target("clrwl_gbuffers_block", "gbuffers_block", "CRANKSHAFT_CLRWL_BLOCK");
-    private static final List<Target> TARGETS = List.of(ENTITIES, TRANSLUCENT, SHADOW_TRANSLUCENT, ADDITIVE, BLOCK);
+    private static final Target NATIVE_EMISSION = new Target("crankshaft_gbuffers_additive", "gbuffers_beaconbeam",
+            "CRANKSHAFT_NATIVE_ADDITIVE");
+    private static final List<Target> TARGETS = List.of(ENTITIES, TRANSLUCENT, SHADOW_TRANSLUCENT, ADDITIVE, BLOCK,
+            NATIVE_EMISSION, UNLIT_TRANSLUCENT);
     private static final ThreadLocal<Map<Path, String>> OVERRIDES = new ThreadLocal<>();
 
     private ContractPatches() {
@@ -67,33 +73,15 @@ public final class ContractPatches {
                             recipe.name());
                 }
                 if (recipe.deferred() != null && DeferredOitProfile.enabled()
+                        && DeferredOitProfile.valueOf(recipe.deferred().profile()).available()
                         && recipe.deferred().sources().accepts(root, present)) {
                     deferred = DeferredOitProfile.valueOf(recipe.deferred().profile());
-                    for (String path : present) {
-                        if (!path.endsWith("/gbuffers_water.fsh")) continue;
-                        String dir = path.substring(0, path.length() - "gbuffers_water.fsh".length());
-                        AbsolutePackPath clear = AbsolutePackPath.fromAbsolutePath(dir + "deferred98.csh");
-                        if (present.contains(clear.getPathString()))
-                            throw new IllegalStateException("Deferred clear program is occupied");
-                        overrides.put(clear.resolved(root), DeferredOitProfile.resource("layer_clear.comp"));
-                        added.add(clear);
-                        if (present.contains(dir + "composite.fsh")) continue;
-                        AbsolutePackPath sort = AbsolutePackPath.fromAbsolutePath(dir + "composite.csh");
-                        if (present.contains(sort.getPathString()))
-                            throw new IllegalStateException("Deferred sort program is occupied");
-                        overrides.put(sort.resolved(root), DeferredOitProfile.sortCompute());
-                        added.add(sort);
-                    }
-                    shadersProperties = read(root, AbsolutePackPath.fromAbsolutePath("/shaders.properties")) + """
-
-                            iris.features.optional = SSBO
-                            bufferObject.0 = 4 true 1.0 1.0
-                            bufferObject.1 = 2097152
-                            bufferObject.2 = 16
-                            bufferObject.3 = 4 true 0.25 0.25
-                            """;
+                    deferred.stage(root, present, overrides, added);
+                    shadersProperties = read(root, AbsolutePackPath.fromAbsolutePath("/shaders.properties"))
+                            + deferred.storageProperties();
                 }
-                if (recipe.deferred() != null && DeferredOitProfile.enabled() && deferred == null) {
+                if (recipe.deferred() != null && DeferredOitProfile.enabled()
+                        && DeferredOitProfile.valueOf(recipe.deferred().profile()).available() && deferred == null) {
                     FlwBackend.LOGGER.info(
                             "Shaderpack {} deferred material sources changed; preserving native translucency",
                             recipe.name());
@@ -169,15 +157,36 @@ public final class ContractPatches {
         for (PackPatch.Program program : recipe.programs()) {
             Target target = target(program.target());
             String fragment = PackPatch.resource(program.fragment());
-            for (String dir : contractDirs(present, target)) {
-                String vertex = read(root, AbsolutePackPath.fromAbsolutePath(dir + CONTRACT + ".vsh"));
+            List<String> dirs = program.vertex() == null ? contractDirs(present, target) : present.stream()
+                                                                                                  .filter(path -> path.endsWith(
+                                                                                                          "/" + program.vertex() + ".vsh"))
+                                                                                                  .map(path -> path.substring(
+                                                                                                          0,
+                                                                                                          path.length() - program.vertex()
+                                                                                                                                 .length() - 4))
+                                                                                                  .sorted().toList();
+            for (String dir : dirs) {
+                String vertex = read(root, AbsolutePackPath.fromAbsolutePath(dir
+                        + (program.vertex() == null ? CONTRACT : program.vertex()) + ".vsh"));
                 if (vertex == null) return null;
                 AbsolutePackPath vsh = AbsolutePackPath.fromAbsolutePath(dir + target.virtualProgram + ".vsh");
                 AbsolutePackPath fsh = AbsolutePackPath.fromAbsolutePath(dir + target.virtualProgram + ".fsh");
                 overrides.put(vsh.resolved(root), vertex);
-                overrides.put(fsh.resolved(root), fragment);
+                overrides.put(fsh.resolved(root), program.nativeDraw()
+                        ? withDefines(fragment, List.of("CRANKSHAFT_NATIVE_ADDITIVE")) : fragment);
                 added.add(vsh);
                 added.add(fsh);
+                if (program.nativeDraw() && target == NATIVE_EMISSION) {
+                    AbsolutePackPath colorVertex = AbsolutePackPath.fromAbsolutePath(
+                            dir + "crankshaft_gbuffers_additive_color.vsh");
+                    AbsolutePackPath colorFragment = AbsolutePackPath.fromAbsolutePath(
+                            dir + "crankshaft_gbuffers_additive_color.fsh");
+                    overrides.put(colorVertex.resolved(root), vertex);
+                    overrides.put(colorFragment.resolved(root), withDefines(fragment,
+                            List.of("CRANKSHAFT_NATIVE_ADDITIVE", "CRANKSHAFT_NATIVE_COLOR")));
+                    added.add(colorVertex);
+                    added.add(colorFragment);
+                }
             }
         }
         for (PackPatch.Wrapper wrapper : recipe.wrappers()) {

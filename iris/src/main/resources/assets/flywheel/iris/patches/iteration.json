@@ -2,7 +2,8 @@
   "schema": 2,
   "name": "iterationRP",
   "testedVersions": [
-    "iterationRP Alpha 0.8.28"
+    "iterationRP Alpha 0.8.28",
+    "iterationRP Alpha 0.8.29"
   ],
   "matches": [
     {
@@ -27,7 +28,7 @@
       "global": false
     }
   ],
-  "properties": "blend.clrwl_gbuffers_additive = ONE ONE ONE ONE\n",
+  "properties": "blend.clrwl_gbuffers_additive = ONE ONE ONE ONE\nblend.clrwl_gbuffers_unlit_translucent = SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ONE_MINUS_SRC_ALPHA\n",
   "deferredTranslucent": true,
   "patches": [
     "iteration_contract.patch",
@@ -35,9 +36,135 @@
   ],
   "programs": [
     {
+      "target": "clrwl_gbuffers_unlit_translucent",
+      "fragment": "iteration_unlit_translucent.fsh"
+    },
+    {
       "target": "clrwl_gbuffers_additive",
       "fragment": "iteration_light.fsh"
+    },
+    {
+      "target": "crankshaft_gbuffers_additive",
+      "fragment": "iteration_light.fsh",
+      "vertex": "gbuffers_entities",
+      "nativeDraw": true
     }
   ],
-  "emissiveLight": true
+  "emissiveLight": true,
+  "deferred": {
+    "profile": "ITERATION",
+    "sources": {
+      "programs": [
+        "gbuffers_water",
+        "clrwl_gbuffers",
+        "composite",
+        "final",
+        "composite1",
+        "composite2",
+        "composite3",
+        "composite4",
+        "composite5",
+        "composite6",
+        "composite7",
+        "composite8",
+        "composite9",
+        "composite10",
+        "composite11",
+        "composite12",
+        "composite13",
+        "composite14",
+        "composite15",
+        "composite16",
+        "composite17",
+        "composite18",
+        "composite19",
+        "composite20",
+        "composite21",
+        "composite22",
+        "composite23",
+        "composite24",
+        "composite25",
+        "composite26",
+        "composite27",
+        "composite28",
+        "composite29",
+        "composite30",
+        "composite31",
+        "composite32",
+        "composite33",
+        "composite34",
+        "composite35",
+        "composite36",
+        "composite37",
+        "composite38",
+        "composite39",
+        "composite40",
+        "composite41",
+        "composite42",
+        "composite43",
+        "composite44",
+        "composite45",
+        "composite46",
+        "composite47",
+        "composite48",
+        "composite49",
+        "composite50",
+        "composite51",
+        "composite52",
+        "composite53",
+        "composite54",
+        "composite55",
+        "composite56",
+        "composite57",
+        "composite58",
+        "composite59",
+        "composite60",
+        "composite61",
+        "composite62",
+        "composite63",
+        "composite64",
+        "composite65",
+        "composite66",
+        "composite67",
+        "composite68",
+        "composite69",
+        "composite70",
+        "composite71",
+        "composite72",
+        "composite73",
+        "composite74",
+        "composite75",
+        "composite76",
+        "composite77",
+        "composite78",
+        "composite79",
+        "composite80",
+        "composite81",
+        "composite82",
+        "composite83",
+        "composite84",
+        "composite85",
+        "composite86",
+        "composite87",
+        "composite88",
+        "composite89",
+        "composite90",
+        "composite91",
+        "composite92",
+        "composite93",
+        "composite94",
+        "composite95",
+        "composite96",
+        "composite97",
+        "composite98",
+        "composite99"
+      ],
+      "paths": [
+        "shaders.properties"
+      ],
+      "fingerprints": [
+        "dfb8416b8af5ec7b647e38436f47ce5919308a5fbe23654f50d2584d5c03e8a8"
+      ]
+    }
+  }
 }

@@ -42,6 +42,14 @@ final class GlSlabArena implements SlabPageCopier {
         this.programs = programs;
     }
 
+    private static int chunkIndex(long slot) {
+        return (int) (slot >>> 32);
+    }
+
+    private static long offset(long slot) {
+        return slot & 0xFFFFFFFFL;
+    }
+
     Slab create(long pageBytes, int initialPages) {
         return new ArenaSlab(pageBytes);
     }
@@ -123,14 +131,6 @@ final class GlSlabArena implements SlabPageCopier {
         long slot = ((long) (chunks.size() - 1) << 32) | chunk.top;
         chunk.top += pageBytes;
         return slot;
-    }
-
-    private static int chunkIndex(long slot) {
-        return (int) (slot >>> 32);
-    }
-
-    private static long offset(long slot) {
-        return slot & 0xFFFFFFFFL;
     }
 
     private static final class Chunk {

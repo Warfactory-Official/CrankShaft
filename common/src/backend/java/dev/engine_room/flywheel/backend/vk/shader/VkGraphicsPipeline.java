@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.backend.vk.shader;
 import dev.engine_room.flywheel.api.material.DepthTest;
 import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.backend.vk.VkContext;
+import dev.engine_room.flywheel.backend.vk.VkPipelineCaches;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
@@ -206,7 +207,8 @@ public final class VkGraphicsPipeline {
                 .layout(layout.pipelineLayout());
 
             LongBuffer pPipeline = stack.callocLong(1);
-            int result = VK10.vkCreateGraphicsPipelines(VkContext.vkDevice(), 0L, info, null, pPipeline);
+            int result = VK10.vkCreateGraphicsPipelines(VkContext.vkDevice(), VkPipelineCaches.handle(), info, null,
+                    pPipeline);
             if (result != VK10.VK_SUCCESS) {
                 throw new IllegalStateException("Vulkan error " + result + " creating graphics pipeline");
             }

@@ -47,7 +47,8 @@ public class PrimedTntVisual extends AbstractEntityVisual<PrimedTnt> implements 
         }
         animate(ctx.partialTick());
         shadowComponent.radius(0.5f);
-        shadowComponent.strength(EntityFeatureCompat.shadowStrength((float) (1.0 - entity.distanceToSqr(ctx.camera().position()) / 256.0)));
+        shadowComponent.strength(EntityFeatureCompat.shadowStrength(
+                (float) (1.0 - entity.distanceToSqr(ctx.camera().position()) / 256.0)));
         shadowComponent.beginFrame(ctx);
     }
 

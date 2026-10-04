@@ -1,17 +1,15 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
-import org.joml.Matrix3fc;
-import org.joml.Matrix4fc;
-import org.joml.Vector3f;
-import org.jspecify.annotations.Nullable;
-
-import dev.engine_room.flywheel.lib.model.baked.BakedMesh;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.fabricmc.fabric.api.client.renderer.v1.mesh.MutableQuadView;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.world.level.block.state.BlockState;
+import org.joml.Matrix3fc;
+import org.joml.Matrix4fc;
+import org.joml.Vector3f;
+import org.jspecify.annotations.Nullable;
 
 final class FabricMeshEmitter {
     private final FloatArrayList positions = new FloatArrayList();

@@ -9,6 +9,8 @@ import net.fabricmc.fabric.api.client.renderer.v1.render.AltModelBlockRenderer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.renderer.block.BlockModelLighter;
+import net.minecraft.client.renderer.block.ModelBlockRenderer;
+import net.minecraft.client.renderer.block.MovingBlockRenderState;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
 import net.minecraft.client.renderer.block.model.BlockDisplayContext;
@@ -35,12 +37,162 @@ import java.util.List;
 import java.util.function.Consumer;
 
 public class BakedModelBuffererImpl implements BakedModelBufferer {
+    private static void emitParts(ItemMeshEmitter emitter, List<BlockStateModelPart> parts, PoseStack.Pose pose,
+                                  int[] tints) {
+        for (BlockStateModelPart part : parts) {
+            for (Direction direction : Direction.values()) {
+                emitQuads(emitter, part.getQuads(direction), pose, tints);
+            }
+            emitQuads(emitter, part.getQuads(null), pose, tints);
+        }
+    }
+
+    // BlockModelFeatureRenderer.putQuad with the submit's -1 base tint.
+    private static void emitQuads(ItemMeshEmitter emitter, List<BakedQuad> quads, PoseStack.Pose pose, int[] tints) {
+        for (BakedQuad quad : quads) {
+            int tintIndex = quad.materialInfo().tintIndex();
+            int tint = tintIndex != -1 && tintIndex < tints.length ? tints[tintIndex] : -1;
+            emitter.accept(pose.pose(), pose.normal(), quad, tint);
+        }
+    }
+
+    @Nullable
+    private static ItemMeshes bufferItem(ItemStack stack, ItemDisplayContext displayContext, @Nullable ItemOwner owner,
+                                         int seed, boolean visualFrame) {
+        Minecraft minecraft = Minecraft.getInstance();
+        // Fresh scratch state per bake (cached upstream by model identity); Tracking* captures the model-identity elements for the cache key.
+        TrackingItemStackRenderState renderState = new TrackingItemStackRenderState();
+        minecraft.getItemModelResolver()
+                 .updateForTopItem(renderState, stack, displayContext, minecraft.level, owner, seed);
+        if (renderState.activeLayerCount == 0) {
+            return null;
+        }
+
+        EnumMap<ItemMeshKey, ItemMeshEmitter> emitters = new EnumMap<>(ItemMeshKey.class);
+        boolean foil = ItemFoil.of(stack);
+        // The combined display transform (ItemTransform + localTransform, incl. the -0.5 recenter) per layer.
+        PoseStack.Pose pose = new PoseStack.Pose();
+        @Nullable Matrix4f first = null;
+
+        for (int i = 0; i < renderState.activeLayerCount; i++) {
+            ItemStackRenderState.LayerRenderState layer = renderState.layers[i];
+            if (layer.specialRenderer != null) {
+                return null; // special / block-entity-renderer item (skull, banner, shield, ...) -> vanilla renders it
+            }
+            List<BakedQuad> quads = layer.prepareQuadList();
+            if (quads.isEmpty()) {
+                continue;
+            }
+            int[] tints = layer.tintLayers().toIntArray();
+
+            pose.setIdentity();
+            layer.applyTransform(pose);
+            if (visualFrame) {
+                if (first == null) {
+                    first = new Matrix4f(pose.pose());
+                } else if (!first.equals(pose.pose())) {
+                    throw new IllegalStateException("layers of " + stack + " differ in display transform");
+                }
+                pose.setIdentity();
+            }
+            Matrix4fc poseMatrix = pose.pose();
+            Matrix3fc normalMatrix = pose.normal();
+
+            for (BakedQuad quad : quads) {
+                int tintIndex = quad.materialInfo().tintIndex();
+                int tint = tintIndex >= 0 && tintIndex < tints.length ? tints[tintIndex] : -1;
+                // Mirrors MaterialInfo.of's ITEM branch: item rendering is cutout MINIMUM (Sheets.cutoutItemSheet),
+                // not the quad's terrain-context SOLID layer; the atlas axis mirrors atlasLocation() -- 26.2 stitches
+                // item sprites onto their own atlas, so UVs are only meaningful against the atlas its sprite lives on.
+                boolean blocksAtlas = quad.materialInfo().sprite().atlasLocation().equals(TextureAtlas.LOCATION_BLOCKS);
+                emitters.computeIfAbsent(ItemMeshKey.of(quad.materialInfo().layer().translucent(), blocksAtlas),
+                                $ -> new ItemMeshEmitter())
+                        .accept(poseMatrix, normalMatrix, quad, tint);
+            }
+        }
+
+        EnumMap<ItemMeshKey, BakedMesh> meshes = new EnumMap<>(ItemMeshKey.class);
+        for (var entry : emitters.entrySet()) {
+            if (!entry.getValue().isEmpty()) {
+                meshes.put(entry.getKey(),
+                        entry.getValue().build(stack.getItem(), stack.get(DataComponents.ITEM_MODEL)));
+            }
+        }
+        if (meshes.isEmpty()) {
+            return null;
+        }
+        var boundingBox = renderState.getModelBoundingBox();
+        return new ItemMeshes(meshes, foil, (float) boundingBox.minY, (float) boundingBox.getZsize(),
+                isStackDetermined(renderState), isOwnerDependent(renderState), renderState.getModelIdentity());
+    }
+
+    // The tracked identity IS the resolved path; it stays time-stable iff every on-path decision node selects by a stack-determined property.
+    private static boolean isStackDetermined(TrackingItemStackRenderState renderState) {
+        for (Object element : (List<?>) renderState.getModelIdentity()) {
+            Object property = property(element);
+            if (property != null && !ItemModelProperties.STACK_DETERMINED.contains(property.getClass())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isOwnerDependent(TrackingItemStackRenderState renderState) {
+        for (Object element : (List<?>) renderState.getModelIdentity()) {
+            Object property = property(element);
+            if (property != null && ItemModelProperties.OWNER_STATE.contains(property.getClass())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Nullable
+    private static Object property(Object element) {
+        return switch (element) {
+            case ConditionalItemModel model -> model.property;
+            case SelectItemModel<?> model -> model.property;
+            case RangeSelectItemModel model -> model.property;
+            default -> null;
+        };
+    }
+
+    @Override
+    public EnumMap<ChunkSectionLayer, BakedMesh> bufferMovingBlock(MovingBlockRenderState renderState) {
+        Minecraft minecraft = Minecraft.getInstance();
+        BlockState state = renderState.blockState;
+        BlockStateModel model = minecraft.getModelManager().getBlockStateModelSet().get(state);
+        boolean forceOpaque = ModelBlockRenderer.forceOpaque(minecraft.options.cutoutLeaves().get(), state);
+        Renderer rendererApi = Renderer.get();
+        EnumMap<ChunkSectionLayer, FabricMeshEmitter> emitters = new EnumMap<>(ChunkSectionLayer.class);
+        Consumer<MutableQuadView> consumer = quad ->
+                emitters.computeIfAbsent(forceOpaque ? ChunkSectionLayer.SOLID : quad.chunkLayer(),
+                        $ -> new FabricMeshEmitter()).accept(quad);
+        QuadEmitter quadEmitter = rendererApi.quadEmitter(consumer);
+        AltModelBlockRenderer renderer = rendererApi.altModelBlockRenderer(minecraft.options.ambientOcclusion().get(),
+                false, minecraft.getBlockColors());
+        BlockModelLighter.enableCaching();
+        try {
+            renderer.tesselateBlock(quadEmitter, 0.0f, 0.0f, 0.0f, renderState, renderState.blockPos, state, model,
+                    state.getSeed(renderState.randomSeedPos));
+        } finally {
+            BlockModelLighter.clearCache();
+        }
+        EnumMap<ChunkSectionLayer, BakedMesh> result = new EnumMap<>(ChunkSectionLayer.class);
+        for (var entry : emitters.entrySet()) {
+            if (!entry.getValue().isEmpty()) {
+                result.put(entry.getKey(), entry.getValue().build(state));
+            }
+        }
+        return result;
+    }
+
     @Override
     public EnumMap<ChunkSectionLayer, BakedMesh> bufferBlock(BlockState state, int cullMask, long seed) {
         Minecraft minecraft = Minecraft.getInstance();
         BlockStateModel model = minecraft.getModelManager()
-                .getBlockStateModelSet()
-                .get(state);
+                                         .getBlockStateModelSet()
+                                         .get(state);
         BlockColors blockColors = minecraft.getBlockColors();
         SinglePosVirtualBlockGetter level = new SinglePosVirtualBlockGetter(state);
 
@@ -99,7 +251,8 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
 
         BlockModelLighter.enableCaching();
         try {
-            renderer.tesselateBlock(quadEmitter, 0.0f, 0.0f, 0.0f, level, BlockPos.ZERO, state, model, state.getSeed(BlockPos.ZERO));
+            renderer.tesselateBlock(quadEmitter, 0.0f, 0.0f, 0.0f, level, BlockPos.ZERO, state, model,
+                    state.getSeed(BlockPos.ZERO));
         } finally {
             BlockModelLighter.clearCache();
         }
@@ -142,28 +295,10 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
         return meshes;
     }
 
-    private static void emitParts(ItemMeshEmitter emitter, List<BlockStateModelPart> parts, PoseStack.Pose pose,
-                                  int[] tints) {
-        for (BlockStateModelPart part : parts) {
-            for (Direction direction : Direction.values()) {
-                emitQuads(emitter, part.getQuads(direction), pose, tints);
-            }
-            emitQuads(emitter, part.getQuads(null), pose, tints);
-        }
-    }
-
-    // BlockModelFeatureRenderer.putQuad with the submit's -1 base tint.
-    private static void emitQuads(ItemMeshEmitter emitter, List<BakedQuad> quads, PoseStack.Pose pose, int[] tints) {
-        for (BakedQuad quad : quads) {
-            int tintIndex = quad.materialInfo().tintIndex();
-            int tint = tintIndex != -1 && tintIndex < tints.length ? tints[tintIndex] : -1;
-            emitter.accept(pose.pose(), pose.normal(), quad, tint);
-        }
-    }
-
     @Override
     @Nullable
-    public ItemMeshes bufferItem(ItemStack stack, ItemDisplayContext displayContext, @Nullable ItemOwner owner, int seed) {
+    public ItemMeshes bufferItem(ItemStack stack, ItemDisplayContext displayContext, @Nullable ItemOwner owner,
+                                 int seed) {
         return bufferItem(stack, displayContext, owner, seed, false);
     }
 
@@ -172,103 +307,5 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
     public ItemMeshes bufferItemInVisualFrame(ItemStack stack, ItemDisplayContext displayContext,
                                               @Nullable ItemOwner owner, int seed) {
         return bufferItem(stack, displayContext, owner, seed, true);
-    }
-
-    @Nullable
-    private static ItemMeshes bufferItem(ItemStack stack, ItemDisplayContext displayContext, @Nullable ItemOwner owner,
-                                         int seed, boolean visualFrame) {
-        Minecraft minecraft = Minecraft.getInstance();
-        // Fresh scratch state per bake (cached upstream by model identity); Tracking* captures the model-identity elements for the cache key.
-        TrackingItemStackRenderState renderState = new TrackingItemStackRenderState();
-        minecraft.getItemModelResolver().updateForTopItem(renderState, stack, displayContext, minecraft.level, owner, seed);
-        if (renderState.activeLayerCount == 0) {
-            return null;
-        }
-
-        EnumMap<ItemMeshKey, ItemMeshEmitter> emitters = new EnumMap<>(ItemMeshKey.class);
-        boolean foil = ItemFoil.of(stack);
-        // The combined display transform (ItemTransform + localTransform, incl. the -0.5 recenter) per layer.
-        PoseStack.Pose pose = new PoseStack.Pose();
-        @Nullable Matrix4f first = null;
-
-        for (int i = 0; i < renderState.activeLayerCount; i++) {
-            ItemStackRenderState.LayerRenderState layer = renderState.layers[i];
-            if (layer.specialRenderer != null) {
-                return null; // special / block-entity-renderer item (skull, banner, shield, ...) -> vanilla renders it
-            }
-            List<BakedQuad> quads = layer.prepareQuadList();
-            if (quads.isEmpty()) {
-                continue;
-            }
-            int[] tints = layer.tintLayers().toIntArray();
-
-            pose.setIdentity();
-            layer.applyTransform(pose);
-            if (visualFrame) {
-                if (first == null) {
-                    first = new Matrix4f(pose.pose());
-                } else if (!first.equals(pose.pose())) {
-                    throw new IllegalStateException("layers of " + stack + " differ in display transform");
-                }
-                pose.setIdentity();
-            }
-            Matrix4fc poseMatrix = pose.pose();
-            Matrix3fc normalMatrix = pose.normal();
-
-            for (BakedQuad quad : quads) {
-                int tintIndex = quad.materialInfo().tintIndex();
-                int tint = tintIndex >= 0 && tintIndex < tints.length ? tints[tintIndex] : -1;
-                // Mirrors MaterialInfo.of's ITEM branch: item rendering is cutout MINIMUM (Sheets.cutoutItemSheet),
-                // not the quad's terrain-context SOLID layer; the atlas axis mirrors atlasLocation() -- 26.2 stitches
-                // item sprites onto their own atlas, so UVs are only meaningful against the atlas its sprite lives on.
-                boolean blocksAtlas = quad.materialInfo().sprite().atlasLocation().equals(TextureAtlas.LOCATION_BLOCKS);
-                emitters.computeIfAbsent(ItemMeshKey.of(quad.materialInfo().layer().translucent(), blocksAtlas), $ -> new ItemMeshEmitter())
-                        .accept(poseMatrix, normalMatrix, quad, tint);
-            }
-        }
-
-        EnumMap<ItemMeshKey, BakedMesh> meshes = new EnumMap<>(ItemMeshKey.class);
-        for (var entry : emitters.entrySet()) {
-            if (!entry.getValue().isEmpty()) {
-                meshes.put(entry.getKey(), entry.getValue().build(stack.getItem(), stack.get(DataComponents.ITEM_MODEL)));
-            }
-        }
-        if (meshes.isEmpty()) {
-            return null;
-        }
-        var boundingBox = renderState.getModelBoundingBox();
-        return new ItemMeshes(meshes, foil, (float) boundingBox.minY, (float) boundingBox.getZsize(),
-                isStackDetermined(renderState), isOwnerDependent(renderState), renderState.getModelIdentity());
-    }
-
-    // The tracked identity IS the resolved path; it stays time-stable iff every on-path decision node selects by a stack-determined property.
-    private static boolean isStackDetermined(TrackingItemStackRenderState renderState) {
-        for (Object element : (List<?>) renderState.getModelIdentity()) {
-            Object property = property(element);
-            if (property != null && !ItemModelProperties.STACK_DETERMINED.contains(property.getClass())) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean isOwnerDependent(TrackingItemStackRenderState renderState) {
-        for (Object element : (List<?>) renderState.getModelIdentity()) {
-            Object property = property(element);
-            if (property != null && ItemModelProperties.OWNER_STATE.contains(property.getClass())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    @Nullable
-    private static Object property(Object element) {
-        return switch (element) {
-            case ConditionalItemModel model -> model.property;
-            case SelectItemModel<?> model -> model.property;
-            case RangeSelectItemModel model -> model.property;
-            default -> null;
-        };
     }
 }

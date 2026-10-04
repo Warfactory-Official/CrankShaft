@@ -2,6 +2,8 @@ package dev.engine_room.flywheel.impl;
 
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.backend.FlwBackend;
+import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
+import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
 import dev.engine_room.flywheel.lib.backend.SimpleBackend;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
@@ -121,7 +123,8 @@ public final class BackendManagerImpl {
                 break;
             }
         }
-        if (backend == OFF_BACKEND) {
+        // 26.2: A failed GL instancing tier ends recovery; do not retry higher tiers.
+        if (backend == OFF_BACKEND && (VkContext.isVulkanHost() || InstancingPrograms.allLoaded())) {
             for (Backend candidate : sorted) {
                 if (candidate.isSupported()) {
                     backend = candidate;

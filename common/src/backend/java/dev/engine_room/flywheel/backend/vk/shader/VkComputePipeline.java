@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.backend.vk.shader;
 
 import dev.engine_room.flywheel.backend.vk.VkContext;
+import dev.engine_room.flywheel.backend.vk.VkPipelineCaches;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.EXTDescriptorBuffer;
@@ -31,7 +32,8 @@ public final class VkComputePipeline {
                                                                                  .stage(stage)
                                                                                  .layout(layout.pipelineLayout());
             LongBuffer pPipeline = stack.callocLong(1);
-            int result = VK12.vkCreateComputePipelines(VkContext.vkDevice(), 0L, info, null, pPipeline);
+            int result = VK12.vkCreateComputePipelines(VkContext.vkDevice(), VkPipelineCaches.handle(), info, null,
+                    pPipeline);
             if (result != VK12.VK_SUCCESS) {
                 throw new IllegalStateException("Vulkan error " + result + " creating compute pipeline");
             }

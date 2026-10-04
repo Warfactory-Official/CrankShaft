@@ -23,6 +23,11 @@ public final class HostSlab {
         ptr = allocate(capacityBytes());
     }
 
+    private static long allocate(long bytes) {
+        FlwMemoryTracker._allocCpuMemory(bytes);
+        return MemoryUtil.nmemAlloc(bytes);
+    }
+
     public long ptrForPage(int pageNo) {
         return ptr + (long) pageNo * pageSizeBytes;
     }
@@ -73,11 +78,6 @@ public final class HostSlab {
         for (Retired r : retiredLastFrame) r.free();
         retiredThisFrame.clear();
         retiredLastFrame.clear();
-    }
-
-    private static long allocate(long bytes) {
-        FlwMemoryTracker._allocCpuMemory(bytes);
-        return MemoryUtil.nmemAlloc(bytes);
     }
 
     private record Retired(long ptr, long bytes) {

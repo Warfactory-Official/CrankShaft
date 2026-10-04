@@ -2,7 +2,8 @@
   "schema": 2,
   "name": "BSL",
   "testedVersions": [
-    "BSL v10.1.5"
+    "BSL v10.1.5",
+    "BSL v10.1.8"
   ],
   "matches": [
     {
@@ -16,14 +17,29 @@
   "files": [],
   "wrappers": [],
   "blends": [],
-  "properties": "",
+  "properties": "blend.clrwl_gbuffers_additive=ONE ONE ZERO ONE\n",
+  "programs": [
+    {
+      "target": "clrwl_gbuffers_additive",
+      "fragment": "bsl_light.fsh",
+      "vertex": "gbuffers_beaconbeam"
+    },
+    {
+      "target": "crankshaft_gbuffers_additive",
+      "fragment": "bsl_light.fsh",
+      "vertex": "gbuffers_beaconbeam",
+      "nativeDraw": true
+    }
+  ],
+  "emissiveLight": true,
   "forwardOit": {
     "programs": [
       "gbuffers_water"
     ],
     "paths": [],
     "fingerprints": [
-      "a2e283adefcf8024c72cec9c5962841037cfc65aa049b0467109f1c81acdcf41"
+      "a2e283adefcf8024c72cec9c5962841037cfc65aa049b0467109f1c81acdcf41",
+      "db28685e622ea9f73fee7446ed25a68bcb6a7ffc9cdfba04daf03f88259c3758"
     ]
   }
 }

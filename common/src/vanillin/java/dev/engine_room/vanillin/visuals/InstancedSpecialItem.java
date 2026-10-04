@@ -74,10 +74,10 @@ final class InstancedSpecialItem {
     private static final float PATTERN_INFLATE_STEP = 0.001F;
 
     private final InstancerProvider provider;
-    // The item of the layer being rebuilt; its models carry it.
-    private @Nullable Item item;
     private final Matrix4f scratch = new Matrix4f();
     private final List<Draw> draws = new ArrayList<>();
+    // The item of the layer being rebuilt; its models carry it.
+    private @Nullable Item item;
     private List<SpecialItemModels.Resolved> current = List.of();
     private boolean hidden;
 

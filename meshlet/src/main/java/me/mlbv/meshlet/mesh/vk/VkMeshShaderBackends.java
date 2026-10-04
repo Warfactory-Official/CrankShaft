@@ -6,35 +6,35 @@ package me.mlbv.meshlet.mesh.vk;
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.backend.Backends;
-import dev.engine_room.flywheel.backend.engine.EngineImpl;
-import dev.engine_room.flywheel.backend.vk.VkCaps;
-import dev.engine_room.flywheel.backend.vk.VkContext;
-import dev.engine_room.flywheel.backend.engine.indirect.VkMeshVisualDrawManager;
 import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
+import dev.engine_room.flywheel.backend.engine.EngineImpl;
+import dev.engine_room.flywheel.backend.engine.indirect.VkMeshVisualDrawManager;
 import dev.engine_room.flywheel.backend.engine.terrain.VkTerrainDrawManager;
+import dev.engine_room.flywheel.backend.vk.VkCaps;
+import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.impl.compat.SodiumCompat;
 import dev.engine_room.flywheel.lib.backend.SimpleBackend;
-
-
-import net.minecraft.resources.Identifier;
 import net.minecraft.client.Minecraft;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.LevelAccessor;
 import org.jspecify.annotations.Nullable;
 
 public final class VkMeshShaderBackends {
+    public static final Backend VK_MESH_SHADER = register();
     private static final int PRIORITY = 1900;
 
-    public static final Backend VK_MESH_SHADER = register();
+    private VkMeshShaderBackends() {
+    }
 
     private static Backend register() {
-        ShaderWarmup.register(VkMeshShaderBackends::warmUp);
+        ShaderWarmup.registerVk(VkMeshShaderBackends::warmUp);
         return SimpleBackend.builder()
-                .engineFactory(VkMeshShaderBackends::createEngine)
-                .priority(PRIORITY)
-                .supported(VkMeshShaderBackends::isSupported)
-                .gpuDriven(true)
-                .register(Identifier.fromNamespaceAndPath(Flywheel.ID, "vk_mesh_shader"));
+                            .engineFactory(VkMeshShaderBackends::createEngine)
+                            .priority(PRIORITY)
+                            .supported(VkMeshShaderBackends::isSupported)
+                            .gpuDriven(true)
+                            .register(Identifier.fromNamespaceAndPath(Flywheel.ID, "vk_mesh_shader"));
     }
 
     private static void warmUp() {
@@ -47,9 +47,6 @@ public final class VkMeshShaderBackends {
         } finally {
             pipelines.destroy();
         }
-    }
-
-    private VkMeshShaderBackends() {
     }
 
     private static boolean isSupported() {
@@ -67,7 +64,8 @@ public final class VkMeshShaderBackends {
         private static @Nullable MeshEngine terrainOwner;
         private final VkMeshPipelines pipelines = new VkMeshPipelines();
         private final VkPrimaryTerrainRasterizer rasterizer = new VkPrimaryTerrainRasterizer(pipelines);
-        private final VkTranslucentTerrainRasterizer translucentRasterizer = new VkTranslucentTerrainRasterizer(pipelines);
+        private final VkTranslucentTerrainRasterizer translucentRasterizer = new VkTranslucentTerrainRasterizer(
+                pipelines);
 
         MeshEngine(LevelAccessor level) {
             super(level, new VkMeshVisualDrawManager(VkPrograms.get()), Backends.MAX_ORIGIN_DISTANCE);

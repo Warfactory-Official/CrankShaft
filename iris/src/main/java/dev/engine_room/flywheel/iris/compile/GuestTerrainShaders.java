@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.iris.compile;
 import com.google.common.primitives.Ints;
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
+import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import io.github.douira.glsl_transformer.ast.node.TranslationUnit;
@@ -46,11 +47,14 @@ final class GuestTerrainShaders {
                 int UseRgss;
             };
             """;
-    // The transformer's own chunk-fade path; the engine fades through its own visibility buffer instead.
-    // u_CurrentTime is NOT demoted: Iris supplies it, and overriding it desyncs mc_chunkFade from the value
-    // Iris's own terrain draw computes.
-    private static final List<String> REGION_UNIFORMS = List.of("u_RegionOffset", "u_RegionID");
+    // Sodium's clock and section timestamps share a per-region epoch, including across one MDI call.
+    private static final List<String> REGION_UNIFORMS = List.of("u_RegionOffset", "u_RegionID", "u_CurrentTime");
     private static final Pattern VERSION_LINE = Pattern.compile("#version\\s+(\\d+)[^\\n]*\\n");
+    static final String REGION_TIME_BLOCK = """
+            layout(std430, binding = %d) restrict readonly buffer _flw_RegionTimeBuf {
+                int _flw_regionTime[];
+            };
+            """.formatted(GuestTerrainGate.REGION_TIME_BINDING);
     // Mojang's Globals UBO reaches a guest program under Iris's name: GuestProgram.iris$getBlockIndex maps
     // Globals -> iris_Globals, so declaring "Globals" here would never be bound. Declared only when the patched
     // stage did not already declare it, since two declarations of one block fail to link.
@@ -67,16 +71,18 @@ final class GuestTerrainShaders {
     private static final Map<String, String> REGION_ASSIGNMENTS = Map.of("u_RegionOffset",
             "u_RegionOffset = vec3(_flw_regionOrigin * 16 - _flw_sodiumCameraInt) - _flw_sodiumCameraFrac;",
             "u_RegionID",
-            "u_RegionID = _flw_region.z;");
+            "u_RegionID = _flw_region.z;",
+            "u_CurrentTime",
+            "u_CurrentTime = _flw_regionTime[gl_BaseInstanceARB];");
 
     private static final SingleASTTransformer<JobParameters> TRANSFORMER = GuestShaders.versionedTransformer();
-
-    // Render thread only: the transformation reports through here.
-    private static @Nullable List<String> lastDemoted;
 
     static {
         TRANSFORMER.setTransformation(GuestTerrainShaders::demoteRegionUniforms);
     }
+
+    // Render thread only: the transformation reports through here.
+    private static @Nullable List<String> lastDemoted;
 
     private GuestTerrainShaders() {
     }
@@ -181,6 +187,8 @@ final class GuestTerrainShaders {
         parts.add(new ShaderAssembly.RawSource("pack terrain vertex", body));
         if (!body.contains(IRIS_GLOBALS)) parts.add(new ShaderAssembly.RawSource("terrain globals", GLOBALS_BLOCK));
         parts.add(new ShaderAssembly.RawSource("terrain region bridge", PROLOGUE_HEAD));
+        if (demoted.contains("u_CurrentTime"))
+            parts.add(new ShaderAssembly.RawSource("terrain region clock", REGION_TIME_BLOCK));
         if (oit) parts.add(new ShaderAssembly.RawSource("terrain view depth", "out float _flw_oitViewZ;\n"));
         parts.add(new ShaderAssembly.RawSource("terrain entry", main.toString()));
         return ShaderAssembly.assemble(ctx -> ctx.requireExtension("GL_ARB_shader_draw_parameters"), parts);

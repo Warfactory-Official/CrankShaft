@@ -1,3 +1,5 @@
+#define ColorModulator iris_transforms.ColorModulator
+
 #include "flywheel:internal/material.glsl"
 #include "flywheel:internal/packed_material.glsl"
 

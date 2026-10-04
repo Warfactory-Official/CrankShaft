@@ -12,11 +12,11 @@ import org.lwjgl.opengl.GL43C;
  * Iris binds a pack's storage buffers once per pipeline; engine SSBO binds clobber them.
  */
 public final class GuestSsbos {
-    // Above IndirectBuffers/LightBuffers/MatrixBuffer (0..7).
-    static final int BINDING_OFFSET = 8;
     // Terrain draws additionally hold the region input (10) and section fade (11) buffers, so a pack's buffers
     // have to clear those too.
     public static final int TERRAIN_BINDING_OFFSET = 12;
+    // Above IndirectBuffers/LightBuffers/MatrixBuffer (0..7).
+    static final int BINDING_OFFSET = 8;
 
     private GuestSsbos() {
     }

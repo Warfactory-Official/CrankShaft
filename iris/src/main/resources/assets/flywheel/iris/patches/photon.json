@@ -23,7 +23,7 @@
   "files": [],
   "wrappers": [],
   "blends": [],
-  "properties": "oit.gbuffers = true\noit.gbuffers.colortex13 = 0\noit.gbuffers.colortex3 = frontmost\n",
+  "properties": "oit.gbuffers = true\noit.gbuffers.colortex13 = 0\noit.gbuffers.colortex3 = frontmost\nblend.clrwl_gbuffers_additive = ONE ONE ZERO ONE\n",
   "forwardOit": {
     "programs": [
       "gbuffers_water"
@@ -33,5 +33,21 @@
       "ed7dcb1e51aba50f553d918f72759ca3dd33b6aa45873c68ee0a43d92a1eb8bb"
     ]
   },
-  "deferredEmissive": true
+  "programs": [
+    {
+      "target": "clrwl_gbuffers_additive",
+      "fragment": "photon_light.fsh",
+      "vertex": "gbuffers_textured"
+    },
+    {
+      "target": "crankshaft_gbuffers_additive",
+      "fragment": "photon_light.fsh",
+      "vertex": "gbuffers_textured",
+      "nativeDraw": true
+    }
+  ],
+  "patches": [
+    "photon_light.patch"
+  ],
+  "emissiveLight": true
 }

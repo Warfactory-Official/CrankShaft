@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.impl.visualization;
 
 import dev.engine_room.flywheel.api.visualization.ConcurrentRenderStateExtraction;
 import dev.engine_room.flywheel.impl.FlwConfig;
+import dev.engine_room.flywheel.impl.compat.CompatMod;
 import dev.engine_room.flywheel.impl.task.FlwTaskExecutor;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -37,6 +38,7 @@ import java.util.function.IntConsumer;
  * {@code BlockEntityRenderDispatcher.tryExtractRenderState}) still run on the render thread. Render thread only.
  */
 public final class ConcurrentExtraction {
+    private static final boolean EMF = CompatMod.ENTITY_MODEL_FEATURES.isLoaded;
     // Vanilla extraction touching render-thread-only state: map textures, player skins, Font line splitting, spawners'
     // lazily created display entities.
     private static final Set<Class<?>> VANILLA_EXCLUDED = Set.of(ItemFrameRenderer.class, AvatarRenderer.class,
@@ -50,15 +52,13 @@ public final class ConcurrentExtraction {
                     || type.getName().startsWith("net.minecraft.") && !VANILLA_EXCLUDED.contains(type);
         }
     };
-    // Below this, task dispatch costs more than serial extraction.
-    private static final int MIN_BATCH = 16;
-    private static final int SLICE = 4;
-
     /**
      * Stands in for a deferred entity state until the batch replaces it.
      */
     public static final EntityRenderState PENDING = new EntityRenderState();
-
+    // Below this, task dispatch costs more than serial extraction.
+    private static final int MIN_BATCH = 16;
+    private static final int SLICE = 4;
     private static final EntityBatch ENTITIES = new EntityBatch();
     private static final BlockEntityBatch BLOCK_ENTITIES = new BlockEntityBatch();
     private static @Nullable Thread scope;
@@ -67,7 +67,10 @@ public final class ConcurrentExtraction {
     }
 
     public static boolean supports(Object renderer) {
-        return FlwConfig.INSTANCE.concurrentExtraction() && SUPPORTED.get(renderer.getClass());
+        // EMF/ETF mount entity state on a JVM-wide deque; vanilla model animation reads it during visual capture.
+        return FlwConfig.INSTANCE.concurrentExtraction()
+                && !(EMF && renderer instanceof EntityRenderer<?, ?>)
+                && SUPPORTED.get(renderer.getClass());
     }
 
     /**

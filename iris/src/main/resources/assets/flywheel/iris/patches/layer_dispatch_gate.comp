@@ -1,0 +1,13 @@
+#version 430 core
+layout(local_size_x=1) in;
+layout(std430,binding=FLW_REPLAY_COUNTS) readonly buffer Counts { uint count; uint overflow; uint maxLayers; uint pad; };
+layout(std430,binding=FLW_REPLAY_COMMANDS) buffer Commands { uint command[]; };
+uniform uint layer;
+uniform uint offset;
+void main() {
+    if (overflow != 0u || layer >= maxLayers) {
+        command[offset] = 0u;
+        command[offset+1u] = 0u;
+        command[offset+2u] = 0u;
+    }
+}

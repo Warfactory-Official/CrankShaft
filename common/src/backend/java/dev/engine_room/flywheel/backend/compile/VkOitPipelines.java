@@ -24,8 +24,8 @@ public final class VkOitPipelines {
     public static final int[] FOLDED_INPUT_INDICES = {0, 1, 2, 3, 4, VK12.VK_ATTACHMENT_UNUSED};
     static final int FMT_RGBA32F = VK12.VK_FORMAT_R32G32B32A32_SFLOAT;
     static final int FMT_RGBA16F = VK12.VK_FORMAT_R16G16B16A16_SFLOAT;
-    static final int FMT_R32F = VK12.VK_FORMAT_R32_SFLOAT;
     public static final int[] FOLDED_FORMATS = {FMT_RGBA32F, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F};
+    static final int FMT_R32F = VK12.VK_FORMAT_R32_SFLOAT;
     static final int FMT_RGBA8 = VK12.VK_FORMAT_R8G8B8A8_UNORM;
     static final int FMT_D32 = VK12.VK_FORMAT_D32_SFLOAT;
     static final int[] MLAB_NO_COLOR = new int[0];
@@ -233,6 +233,13 @@ public final class VkOitPipelines {
         }
     }
 
+    // Composite/resolve depth writeback: never farther than the scene, which a depth-test-off fragment can be.
+    private static VkGraphicsPipeline.Config writebackConfig() {
+        return new VkGraphicsPipeline.Config(new int[]{FMT_RGBA8},
+                new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.noColorWrite()}, true, true,
+                VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_NONE, FMT_D32);
+    }
+
     /**
      * {@code emission}: frames with {@code ORDER_INDEPENDENT_ADDITIVE} producers; adds binding 38 inside the composite
      * write.
@@ -309,13 +316,6 @@ public final class VkOitPipelines {
             }
         }
         return emission;
-    }
-
-    // Composite/resolve depth writeback: never farther than the scene, which a depth-test-off fragment can be.
-    private static VkGraphicsPipeline.Config writebackConfig() {
-        return new VkGraphicsPipeline.Config(new int[]{FMT_RGBA8},
-                new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.noColorWrite()}, true, true,
-                VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_NONE, FMT_D32);
     }
 
     public VkGraphicsPipeline oitDepthPipeline() {

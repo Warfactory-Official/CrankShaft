@@ -1,0 +1,28 @@
+#version 430 compatibility
+layout(local_size_x = 8, local_size_y = 8) in;
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+uniform vec2 screenSize;
+_FLW_ITERATION_LAYERS
+_FLW_ITERATION_MATERIALS
+void main() {
+    if (any(greaterThanEqual(gl_GlobalInvocationID.xy, uvec2(screenSize)))) return;
+    _FLW_LAYER_SORT
+    _FLW_MATERIAL_SORT
+    if (flw_oitActive) {
+        uint pixel=gl_GlobalInvocationID.y*uint(screenSize.x)+gl_GlobalInvocationID.x;
+        uint node=flw_materialHeads[pixel], layer=0u;
+        while(node!=0xffffffffu) {
+            if(layer>=uint(flw_tiles.length())) {
+                if ((flw_overflow&4u)==0u) atomicOr(flw_overflow,4u);
+                break;
+            }
+            uint kind=uint(round(unpackUnorm2x16(flw_nodes[node+1u].y).x*65535.0))&255u;
+            uint smoothness=uint(round(unpackUnorm2x16(flw_nodes[node+1u].y).x*65535.0))>>8u;
+            if((kind>=100u&&kind<=104u)||(kind==7u&&smoothness>0u&&smoothness<255u)) {
+                if ((flw_tiles[layer]&1u)==0u) atomicOr(flw_tiles[layer],1u);
+                if ((flw_pad&0x80000000u)==0u) atomicOr(flw_pad,0x80000000u);
+            }
+            node=flw_nodes[node].x; ++layer;
+        }
+    }
+}

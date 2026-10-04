@@ -79,6 +79,7 @@ final class IrisTerrainRasterizer {
         }
         GpuBuffer[] buffers = oit ? dispatcher.translucentRegionBatch.geometryBuffers : dispatcher.boundBatch.geometryBuffers;
         GlResidentBuffer input = oit ? dispatcher.translucentRegionInputBuffer : dispatcher.regionInputBuffers[passIndex];
+        dispatcher.bindGuestRegionTimes(passIndex);
         GlResidentBuffer commands = oit ? dispatcher.translucentCommandBuffer : dispatcher.commandBuffers[passIndex];
         GlResidentBuffer counts = oit ? dispatcher.translucentCommandCount : dispatcher.regionCommandCounts[passIndex];
         boolean compact = GuestTerrainGate.CACHE_RECOVERY && !shadow && !oit && dispatcher.boundPhase == 2 && program.meshCompactSafe();

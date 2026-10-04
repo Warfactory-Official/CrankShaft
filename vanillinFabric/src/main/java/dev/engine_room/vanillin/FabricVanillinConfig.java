@@ -20,14 +20,12 @@ import java.util.Map;
 
 public class FabricVanillinConfig {
     public static final Path PATH = FabricLoader.getInstance()
-            .getConfigDir()
-            .resolve("vanillate.json");
+                                                .getConfigDir()
+                                                .resolve("vanillate.json");
 
     public static final FabricVanillinConfig INSTANCE = new FabricVanillinConfig(PATH.toFile());
-
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     public static final String VANILLIN_OVERRIDES = "vanillin:overrides";
-
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private final File file;
 
     private ModOverrides overrides;
@@ -35,6 +33,83 @@ public class FabricVanillinConfig {
 
     public FabricVanillinConfig(File file) {
         this.file = file;
+    }
+
+    private static void apply(Configurator.ConfiguredVisual configured, Map<String, VisualConfigValue> config,
+                              Map<String, List<VisualOverride>> overrides, boolean masterEnabled) {
+        var key = configured.configKey();
+        var enabled = config.computeIfAbsent(key, $ -> VisualConfigValue.DEFAULT);
+
+        if (masterEnabled) {
+            configured.set(enabled, overrides.get(key));
+        } else {
+            configured.set(VisualConfigValue.DISABLE, null);
+        }
+    }
+
+    public static ModOverrides modOverrides() {
+        var blockEntities = new ArrayList<VisualOverride>();
+        var entities = new ArrayList<VisualOverride>();
+
+        for (ModContainer container : FabricLoader.getInstance().getAllMods()) {
+            ModMetadata meta = container.getMetadata();
+            var modid = meta.getId();
+
+            if (meta.containsCustomValue(VANILLIN_OVERRIDES)) {
+                CustomValue overridesValue = meta.getCustomValue(VANILLIN_OVERRIDES);
+
+                if (overridesValue.getType() != CustomValue.CvType.OBJECT) {
+                    Vanillin.CONFIG_LOGGER.warn(
+                            "Mod '{}' attempted to override options with an invalid value, ignoring", modid);
+                    continue;
+                }
+
+                var overrides = overridesValue.getAsObject();
+
+                readSection(blockEntities, modid, overrides, "block_entities", "block entity");
+                readSection(entities, modid, overrides, "entities", "entity");
+            }
+        }
+
+        return new ModOverrides(blockEntities, entities);
+    }
+
+    private static void readSection(List<VisualOverride> dst, String modid, CustomValue.CvObject overrides,
+                                    String sectionName, String singular) {
+        if (!overrides.containsKey(sectionName)) {
+            return;
+        }
+
+        var section = overrides.get(sectionName);
+
+        if (section.getType() != CustomValue.CvType.OBJECT) {
+            Vanillin.CONFIG_LOGGER.warn("Mod '{}' attempted to override {} with an invalid value, ignoring", modid,
+                    sectionName);
+            return;
+        }
+
+        for (Map.Entry<String, CustomValue> entry : section.getAsObject()) {
+            var value = entry.getValue();
+            var key = entry.getKey();
+            if (value.getType() != CustomValue.CvType.STRING) {
+                Vanillin.CONFIG_LOGGER.warn("Mod '{}' attempted to override {} '{}' with an invalid value, ignoring",
+                        modid, singular, key);
+                continue;
+            }
+
+            var valueString = value.getAsString();
+
+            var parsed = VisualOverrideValue.parse(valueString);
+
+            if (parsed == null) {
+                Vanillin.CONFIG_LOGGER.warn(
+                        "Mod '{}' attempted to override {} '{}' with an invalid value '{}', ignoring", modid, singular,
+                        key, valueString);
+                continue;
+            }
+
+            dst.add(new VisualOverride(key, modid, parsed));
+        }
     }
 
     public void load() {
@@ -53,7 +128,8 @@ public class FabricVanillinConfig {
         var masterEnabled = config.enabled;
 
         if (!masterEnabled) {
-            Vanillin.CONFIG_LOGGER.info("Vanillate is disabled. Set \"enabled\": true in '{}' to enable it.", file.getName());
+            Vanillin.CONFIG_LOGGER.info("Vanillate is disabled. Set \"enabled\": true in '{}' to enable it.",
+                    file.getName());
         }
 
         var blockEntities = config.blockEntities;
@@ -70,81 +146,11 @@ public class FabricVanillinConfig {
         }
     }
 
-    private static void apply(Configurator.ConfiguredVisual configured, Map<String, VisualConfigValue> config, Map<String, List<VisualOverride>> overrides, boolean masterEnabled) {
-        var key = configured.configKey();
-        var enabled = config.computeIfAbsent(key, $ -> VisualConfigValue.DEFAULT);
-
-        if (masterEnabled) {
-            configured.set(enabled, overrides.get(key));
-        } else {
-            configured.set(VisualConfigValue.DISABLE, null);
-        }
-    }
-
     public void save() {
         try (FileWriter writer = new FileWriter(file)) {
             GSON.toJson(config, writer);
         } catch (Exception e) {
             Vanillin.CONFIG_LOGGER.warn("Could not save config to file '{}'", file.getAbsolutePath(), e);
-        }
-    }
-
-    public static ModOverrides modOverrides() {
-        var blockEntities = new ArrayList<VisualOverride>();
-        var entities = new ArrayList<VisualOverride>();
-
-        for (ModContainer container : FabricLoader.getInstance().getAllMods()) {
-            ModMetadata meta = container.getMetadata();
-            var modid = meta.getId();
-
-            if (meta.containsCustomValue(VANILLIN_OVERRIDES)) {
-                CustomValue overridesValue = meta.getCustomValue(VANILLIN_OVERRIDES);
-
-                if (overridesValue.getType() != CustomValue.CvType.OBJECT) {
-                    Vanillin.CONFIG_LOGGER.warn("Mod '{}' attempted to override options with an invalid value, ignoring", modid);
-                    continue;
-                }
-
-                var overrides = overridesValue.getAsObject();
-
-                readSection(blockEntities, modid, overrides, "block_entities", "block entity");
-                readSection(entities, modid, overrides, "entities", "entity");
-            }
-        }
-
-        return new ModOverrides(blockEntities, entities);
-    }
-
-    private static void readSection(List<VisualOverride> dst, String modid, CustomValue.CvObject overrides, String sectionName, String singular) {
-        if (!overrides.containsKey(sectionName)) {
-            return;
-        }
-
-        var section = overrides.get(sectionName);
-
-        if (section.getType() != CustomValue.CvType.OBJECT) {
-            Vanillin.CONFIG_LOGGER.warn("Mod '{}' attempted to override {} with an invalid value, ignoring", modid, sectionName);
-            return;
-        }
-
-        for (Map.Entry<String, CustomValue> entry : section.getAsObject()) {
-            var value = entry.getValue();
-            var key = entry.getKey();
-            if (value.getType() != CustomValue.CvType.STRING) {
-                Vanillin.CONFIG_LOGGER.warn("Mod '{}' attempted to override {} '{}' with an invalid value, ignoring", modid, singular, key);
-                continue;
-            }
-
-            var valueString = value.getAsString();
-
-            var parsed = VisualOverrideValue.parse(valueString);
-
-            if (parsed == null) {
-                Vanillin.CONFIG_LOGGER.warn("Mod '{}' attempted to override {} '{}' with an invalid value '{}', ignoring", modid, singular, key, valueString);
-                continue;
-            }
-
-            dst.add(new VisualOverride(key, modid, parsed));
         }
     }
 
@@ -159,7 +165,8 @@ public class FabricVanillinConfig {
             this(true, new HashMap<>(), new HashMap<>());
         }
 
-        public Config(boolean enabled, Map<String, VisualConfigValue> blockEntities, Map<String, VisualConfigValue> entities) {
+        public Config(boolean enabled, Map<String, VisualConfigValue> blockEntities,
+                      Map<String, VisualConfigValue> entities) {
             this.enabled = enabled;
             this.blockEntities = blockEntities;
             this.entities = entities;

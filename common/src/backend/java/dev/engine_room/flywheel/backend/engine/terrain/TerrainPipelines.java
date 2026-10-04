@@ -8,9 +8,9 @@ import com.mojang.blaze3d.platform.BlendOp;
 import com.mojang.blaze3d.platform.CompareOp;
 import com.mojang.blaze3d.shaders.ShaderSource;
 import com.mojang.blaze3d.shaders.UniformType;
-import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
+import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
@@ -44,7 +44,8 @@ public final class TerrainPipelines {
     private static final RenderPipeline.Snippet SNIPPET = RenderPipeline.builder()
                                                                         .withBindGroupLayout(BindGroupLayouts.GLOBALS)
                                                                         .withBindGroupLayout(BindGroupLayouts.FOG)
-                                                                        .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+                                                                        .withBindGroupLayout(
+                                                                                BindGroupLayouts.PROJECTION)
                                                                         .buildSnippet();
 
     private static final ShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
@@ -86,7 +87,7 @@ public final class TerrainPipelines {
             pipeline = buildOit(pass);
             oitPipelines[pass] = pipeline;
         }
-        RenderSystem.getDevice().precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -101,7 +102,7 @@ public final class TerrainPipelines {
             pipeline = buildShadow(cutout);
             shadowPipelines[c] = pipeline;
         }
-        RenderSystem.getDevice().precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -123,7 +124,7 @@ public final class TerrainPipelines {
             pipeline = build(cutout, linear);
             pipelines[c][l] = pipeline;
         }
-        RenderSystem.getDevice().precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 

@@ -5,8 +5,6 @@
 
 package me.mlbv.meshlet.mesh.vk;
 
-import dev.engine_room.flywheel.backend.engine.terrain.TerrainRegionInput;
-
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -17,26 +15,23 @@ import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vulkan.VulkanGpuBuffer;
 import com.mojang.blaze3d.vulkan.VulkanGpuSampler;
 import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
-
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
-import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher.VisibleRegionBatch;
-import dev.engine_room.flywheel.backend.vk.buffer.VkBuffer;
-import dev.engine_room.flywheel.backend.vk.shader.VkComputePipeline;
-import dev.engine_room.flywheel.backend.vk.VkContext;
-import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorWriter;
-import dev.engine_room.flywheel.backend.vk.shader.VkMeshPipeline;
 import dev.engine_room.flywheel.backend.engine.indirect.VkMlabBuffers;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher.VisibleRegionBatch;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainRegionInput;
 import dev.engine_room.flywheel.backend.engine.terrain.VkTerrainDrawManager;
 import dev.engine_room.flywheel.backend.engine.terrain.VkTerrainTranslucentMeshDrawStrategy;
-import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
-
+import dev.engine_room.flywheel.backend.vk.VkContext;
+import dev.engine_room.flywheel.backend.vk.buffer.VkBuffer;
+import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorWriter;
+import dev.engine_room.flywheel.backend.vk.shader.VkComputePipeline;
+import dev.engine_room.flywheel.backend.vk.shader.VkMeshPipeline;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
-
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
-
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -60,15 +55,12 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
     private static final int TRANSFER_DST = VK12.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     private static final int CACHED_VERT_BYTES = 24;
     private static final int DRAW_COMMAND_BYTES = 16;
-
-    private final VkMeshPipelines pipelines;
-    private final VkDescriptorWriter writer = new VkDescriptorWriter();
-
     // Per-frame SLOT-keyed live-section mask (8 uints/slot) filled by the manager from Sodium's CURRENT translucent
     // storage; the emit AND-gates on it (binding 14) so a stale resident-union mirror slot never emits garbage into
     // the shared OIT -- under ABUFFER that garbage stalls the resolve past vanilla's 5s submit timeout.
     private static final int LIVE_MASK_SLOT_BYTES = VkMeshUtil.REGION_SIZE / Integer.SIZE * Integer.BYTES;
-
+    private final VkMeshPipelines pipelines;
+    private final VkDescriptorWriter writer = new VkDescriptorWriter();
     private final VkBuffer[] regionInput = new VkBuffer[2];
     private final VkBuffer[] command = new VkBuffer[2];
     private final VkBuffer[] compactSections = new VkBuffer[2];
@@ -107,7 +99,8 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
         ensureBuffers(phase, count);
         packRegionInput(batch, phase, count);
         manager.fillTranslucentLiveMask(liveMask[phase].mappedAddress());
-        new Matrix4f(manager.boundModelView()).get(0, MemoryUtil.memByteBuffer(modelViewUbo[phase].mappedAddress(), 64));
+        new Matrix4f(manager.boundModelView()).get(0,
+                MemoryUtil.memByteBuffer(modelViewUbo[phase].mappedAddress(), 64));
         if (cacheMaxQuads == 0) {
             return;
         }
@@ -126,9 +119,11 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
 
         VkComputePipeline emit = pipelines.translucentEmitPipeline();
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, emit.handle());
-        long pyramidSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST)).vkSampler();
+        long pyramidSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache()
+                                                              .getClampToEdge(FilterMode.NEAREST)).vkSampler();
         writer.storage(0, regionInput[phase]);
-        writer.storage(1, manager.registry.translucentSectionDataVkBuffer(), 0L, manager.registry.translucentSectionDataByteCapacity());
+        writer.storage(1, manager.registry.translucentSectionDataVkBuffer(), 0L,
+                manager.registry.translucentSectionDataByteCapacity());
         writer.storage(7, compactSections[phase]);
         writer.storage(8, command[phase]);
         writer.storage(14, liveMask[phase]);
@@ -140,11 +135,13 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
         VkMeshUtil.gatherInputBarrier(cmd);
 
         GpuTextureView lightmapView = Minecraft.getInstance().gameRenderer.lightmap();
-        long lightmapSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR)).vkSampler();
+        long lightmapSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache()
+                                                               .getClampToEdge(FilterMode.LINEAR)).vkSampler();
         VkComputePipeline gather = pipelines.translucentGatherPipeline();
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, gather.handle());
         writer.storage(0, regionInput[phase]);
-        writer.storage(1, manager.registry.translucentSectionDataVkBuffer(), 0L, manager.registry.translucentSectionDataByteCapacity());
+        writer.storage(1, manager.registry.translucentSectionDataVkBuffer(), 0L,
+                manager.registry.translucentSectionDataByteCapacity());
         writer.storage(2, compactSections[phase]);
         writer.storage(3, geoAddrTable[phase]);
         writer.storage(4, manager.registry.translucentVisVkBuffer(), 0L, manager.registry.translucentVisByteSize());
@@ -164,8 +161,8 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
 
     @Override
     public void draw(VkTerrainDrawManager manager, OitMode mode, VkCommandBuffer cmd, OitFramebuffer framebuffer,
-            boolean fading, GpuTextureView lightmapView, GpuTextureView blueNoiseView, GpuSampler clampLinear,
-            GpuSampler oitSampler, GpuSampler noiseSampler, boolean localRead) {
+                     boolean fading, GpuTextureView lightmapView, GpuTextureView blueNoiseView, GpuSampler clampLinear,
+                     GpuSampler oitSampler, GpuSampler noiseSampler, boolean localRead) {
         if (fading || count == 0 || cacheMaxQuads == 0) {
             return; // single stream: all translucent rides the settled (fading=false) call
         }
@@ -174,7 +171,8 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
         VkMeshPipeline pipeline = pipelines.translucentDrawPipeline(mode, VK12.VK_FORMAT_D32_SFLOAT, localRead);
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
 
-        long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView()).vkImageView();
+        long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS)
+                                                   .getTextureView()).vkImageView();
         long atlasSampler = ((VulkanGpuSampler) TerrainAtlasFilter.sampler()).vkSampler();
         GpuBufferSlice proj = RenderSystem.getProjectionMatrixBuffer();
         GpuBufferSlice fog = RenderSystem.getShaderFog();
@@ -196,7 +194,8 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
             } else {
                 writer.sampler(14, depthRangeView, ((VulkanGpuSampler) oitSampler).vkSampler());
             }
-            writer.sampler(15, ((VulkanGpuTextureView) blueNoiseView).vkImageView(), ((VulkanGpuSampler) noiseSampler).vkSampler());
+            writer.sampler(15, ((VulkanGpuTextureView) blueNoiseView).vkImageView(),
+                    ((VulkanGpuSampler) noiseSampler).vkSampler());
         }
         if (mode == OitMode.EVALUATE) {
             long oitSamplerVk = ((VulkanGpuSampler) oitSampler).vkSampler();
@@ -217,7 +216,7 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
 
     @Override
     public void drawMlab(VkTerrainDrawManager manager, OitInsertMode oitMode, VkCommandBuffer cmd, boolean fading,
-            VkMlabBuffers mlab, GpuTextureView lightmapView, GpuSampler clampLinear) {
+                         VkMlabBuffers mlab, GpuTextureView lightmapView, GpuSampler clampLinear) {
         if (fading || count == 0 || cacheMaxQuads == 0) {
             return;
         }
@@ -226,7 +225,8 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
         VkMeshPipeline pipeline = pipelines.translucentMlabPipeline(oitMode, VK12.VK_FORMAT_D32_SFLOAT);
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
 
-        long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView()).vkImageView();
+        long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS)
+                                                   .getTextureView()).vkImageView();
         long atlasSampler = ((VulkanGpuSampler) TerrainAtlasFilter.sampler()).vkSampler();
         GpuBufferSlice proj = RenderSystem.getProjectionMatrixBuffer();
         GpuBufferSlice fog = RenderSystem.getShaderFog();

@@ -1,7 +1,5 @@
 package dev.engine_room.flywheel.backend.vk;
 
-import dev.engine_room.flywheel.backend.vk.descriptor.VkBindlessTable;
-
 /**
  * Negotiated Vulkan device capabilities, set once at device creation; a cap is true only if the device advertised AND
  * creation requested the feature, so an unsupported feature stays dormant instead of failing {@code vkCreateDevice}.

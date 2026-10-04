@@ -1462,7 +1462,7 @@ public class VanillaVisuals {
     }
 
     private static <T extends AbstractBoat> EntityVisualizerBuilder<T> boat(EntityType<T> type,
-                                                                           ModelLayerLocation layer, boolean raft) {
+                                                                            ModelLayerLocation layer, boolean raft) {
         return builder(type)
                 .factory((ctx, entity, partialTick) -> new BoatVisual(ctx, entity, partialTick, layer, raft))
                 .skipVanillaPrimary(entity -> true);

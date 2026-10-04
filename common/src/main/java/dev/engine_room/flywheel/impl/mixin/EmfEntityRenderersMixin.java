@@ -24,9 +24,14 @@ abstract class EmfEntityRenderersMixin {
                                                 Operation<Void> original) {
         Set<EntityType<?>> restyled = new HashSet<>();
         original.call(providers, (BiConsumer<EntityType<?>, EntityRendererProvider<?>>) (type, provider) -> {
-            if (EntityFeatureCompat.bakesEmfRoot(() -> create.accept(type, provider))) {
-                restyled.add(type);
+            EntityFeatureCompat.beginEmfRootCapture();
+            boolean baked;
+            try {
+                create.accept(type, provider);
+            } finally {
+                baked = EntityFeatureCompat.endEmfRootCapture();
             }
+            if (baked) restyled.add(type);
         });
         EntityFeatureCompat.emfRestyled(restyled);
     }

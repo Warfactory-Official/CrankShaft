@@ -49,6 +49,14 @@ public final class GuestOitTargets {
         return (1 << (rank + 1)) / 4;
     }
 
+    private static void requireComplete(int fbo, String name) {
+        int status = GL45C.glCheckNamedFramebufferStatus(fbo, GL30C.GL_FRAMEBUFFER);
+        if (status != GL30C.GL_FRAMEBUFFER_COMPLETE) {
+            throw new IllegalStateException(
+                    "OIT " + name + " framebuffer incomplete: 0x" + Integer.toHexString(status));
+        }
+    }
+
     int[] ranks() {
         return ranks;
     }
@@ -126,13 +134,6 @@ public final class GuestOitTargets {
             drawBuffers[i] = GL30C.GL_COLOR_ATTACHMENT0 + i;
         }
         GL45C.glNamedFramebufferDrawBuffers(accumulateFbo, drawBuffers);
-    }
-
-    private static void requireComplete(int fbo, String name) {
-        int status = GL45C.glCheckNamedFramebufferStatus(fbo, GL30C.GL_FRAMEBUFFER);
-        if (status != GL30C.GL_FRAMEBUFFER_COMPLETE) {
-            throw new IllegalStateException("OIT " + name + " framebuffer incomplete: 0x" + Integer.toHexString(status));
-        }
     }
 
     private int texture2d(int format) {

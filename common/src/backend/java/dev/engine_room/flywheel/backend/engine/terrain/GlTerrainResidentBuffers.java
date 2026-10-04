@@ -109,10 +109,10 @@ public final class GlTerrainResidentBuffers implements TerrainResidentBuffers {
         private final int[] clearScratch = new int[1];
         private final Long2IntOpenHashMap pendingIndexByOffset = new Long2IntOpenHashMap();
         private long[] pendingOffsets = new long[64];
-        private MemoryBlock pendingBytes;
-        private int pendingCount;
         private final Long2IntOpenHashMap pendingClearFillByOffset = new Long2IntOpenHashMap();
         private final LongArrayList clearOffsets = new LongArrayList();
+        private MemoryBlock pendingBytes;
+        private int pendingCount;
 
         Mirror(long stride) {
             this.stride = stride;

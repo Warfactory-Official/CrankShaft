@@ -2,18 +2,9 @@
 // Copyright (C) 2026 movblock
 package me.mlbv.meshlet.mesh.gl;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.Locale;
-import java.util.function.Consumer;
-
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.OitConfig;
-import dev.engine_room.flywheel.backend.compile.FlwPrograms;
-import dev.engine_room.flywheel.backend.compile.OitInsertMode;
-import dev.engine_room.flywheel.backend.compile.OitMode;
-import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
-import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
+import dev.engine_room.flywheel.backend.compile.*;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
@@ -23,6 +14,11 @@ import net.minecraft.resources.Identifier;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL43C;
 import org.lwjgl.opengl.NVMeshShader;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+import java.util.function.Consumer;
 
 // Each program is assembled through flywheel's shared Compilation pipeline, then compiled/linked with the raw-GL
 // pattern that mirrors the working MeshHelloTriangle (driver log surfaced verbatim on failure), multi-stage NV.
@@ -46,6 +42,62 @@ public final class GlMeshPipelines {
     private int lastTranslucentMlabLinear = -1;
 
     public GlMeshPipelines() {
+    }
+
+    private static Consumer<Compilation> translucentMlabFragDefines(OitInsertMode mode, boolean linear) {
+        return ctx -> {
+            RenderPassShaders.mlabProducerDefines(ctx, mode);
+            if (linear) {
+                ctx.define(TerrainAtlasFilter.LINEAR_DEFINE);
+            }
+        };
+    }
+
+    private static int compileShader(int glType, String path) {
+        return compileShader(glType, path, ctx -> {
+        });
+    }
+
+    // Assemble via flywheel's Compilation pipeline: #version + config-global defines + this call's extras, then
+    // meshlet's include-resolved body (its own #version stripped -- Compilation emits it).
+    private static int compileShader(int glType, String path, Consumer<Compilation> extraDefines) {
+        String src = ShaderAssembly.assemble(ctx -> {
+            MeshShaderPrep.applyGlobalDefines(ctx);
+            extraDefines.accept(ctx);
+        }, List.of(FlwPrograms.SOURCES.get(meshletId(path))));
+        return MeshGlPrograms.compileShader("gl_mesh_shader", glType, path, src);
+    }
+
+    private static Identifier meshletId(String path) {
+        return Identifier.fromNamespaceAndPath("meshlet", path);
+    }
+
+    private static Consumer<Compilation> translucentFragDefines(OitMode mode, boolean linear) {
+        return ctx -> {
+            ctx.define(mode.define);
+            if (OitConfig.coefficientArray()) {
+                ctx.define("_FLW_COEFF_ARRAY");
+            }
+            if (linear) {
+                ctx.define(TerrainAtlasFilter.LINEAR_DEFINE);
+            }
+        };
+    }
+
+    private static void deleteIfPresent(int... shaders) {
+        for (int s : shaders) {
+            if (s != 0) {
+                GL20C.glDeleteShader(s);
+            }
+        }
+    }
+
+    private static void deleteProgramIfPresent(int... programs) {
+        for (int p : programs) {
+            if (p != 0) {
+                GL20C.glDeleteProgram(p);
+            }
+        }
     }
 
     public void warmUp() {
@@ -98,7 +150,8 @@ public final class GlMeshPipelines {
             terrainProgramCutout = 0;
         }
         Consumer<Compilation> features = ctx -> MeshFeatureConfig.applyFeatureDefines(ctx, configKey);
-        Consumer<Compilation> fragExtras = features.andThen(ctx -> MeshFeatureConfig.applyFragExtensions(ctx, configKey));
+        Consumer<Compilation> fragExtras = features.andThen(
+                ctx -> MeshFeatureConfig.applyFragExtensions(ctx, configKey));
         int task = compileShader(NVMeshShader.GL_TASK_SHADER_NV, "terrain/gl/task.task", features);
         int mesh = compileShader(NVMeshShader.GL_MESH_SHADER_NV, "terrain/gl/mesh.mesh", features);
         int fragSolid = compileShader(GL20C.GL_FRAGMENT_SHADER, "terrain/gl/frag.frag",
@@ -175,7 +228,8 @@ public final class GlMeshPipelines {
             return false;
         }
 
-        int progDepthRange = MeshGlPrograms.linkProgram("gl_mesh_shader", "translucent_depth_range", vert, fragDepthRange);
+        int progDepthRange = MeshGlPrograms.linkProgram("gl_mesh_shader", "translucent_depth_range", vert,
+                fragDepthRange);
         int progCoeffs = MeshGlPrograms.linkProgram("gl_mesh_shader", "translucent_coefficients", vert, fragCoeffs);
         int progEvaluate = MeshGlPrograms.linkProgram("gl_mesh_shader", "translucent_evaluate", vert, fragEvaluate);
         int builder = MeshGlPrograms.linkProgram("gl_mesh_shader", "translucent_command_builder", comp);
@@ -238,15 +292,6 @@ public final class GlMeshPipelines {
         return true;
     }
 
-    private static Consumer<Compilation> translucentMlabFragDefines(OitInsertMode mode, boolean linear) {
-        return ctx -> {
-            RenderPassShaders.mlabProducerDefines(ctx, mode);
-            if (linear) {
-                ctx.define(TerrainAtlasFilter.LINEAR_DEFINE);
-            }
-        };
-    }
-
     public void destroy() {
         if (terrainProgramSolid != 0) {
             GL20C.glDeleteProgram(terrainProgramSolid);
@@ -275,52 +320,5 @@ public final class GlMeshPipelines {
         lastOpaqueConfigKey = -1;
         translucentFailed = false;
         lastTranslucentLinear = -1;
-    }
-
-    private static int compileShader(int glType, String path) {
-        return compileShader(glType, path, ctx -> {
-        });
-    }
-
-    // Assemble via flywheel's Compilation pipeline: #version + config-global defines + this call's extras, then
-    // meshlet's include-resolved body (its own #version stripped -- Compilation emits it).
-    private static int compileShader(int glType, String path, Consumer<Compilation> extraDefines) {
-        String src = ShaderAssembly.assemble(ctx -> {
-            MeshShaderPrep.applyGlobalDefines(ctx);
-            extraDefines.accept(ctx);
-        }, List.of(FlwPrograms.SOURCES.get(meshletId(path))));
-        return MeshGlPrograms.compileShader("gl_mesh_shader", glType, path, src);
-    }
-
-    private static Identifier meshletId(String path) {
-        return Identifier.fromNamespaceAndPath("meshlet", path);
-    }
-
-    private static Consumer<Compilation> translucentFragDefines(OitMode mode, boolean linear) {
-        return ctx -> {
-            ctx.define(mode.define);
-            if (OitConfig.coefficientArray()) {
-                ctx.define("_FLW_COEFF_ARRAY");
-            }
-            if (linear) {
-                ctx.define(TerrainAtlasFilter.LINEAR_DEFINE);
-            }
-        };
-    }
-
-    private static void deleteIfPresent(int... shaders) {
-        for (int s : shaders) {
-            if (s != 0) {
-                GL20C.glDeleteShader(s);
-            }
-        }
-    }
-
-    private static void deleteProgramIfPresent(int... programs) {
-        for (int p : programs) {
-            if (p != 0) {
-                GL20C.glDeleteProgram(p);
-            }
-        }
     }
 }

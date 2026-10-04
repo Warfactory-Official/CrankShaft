@@ -1,16 +1,18 @@
 package dev.engine_room.flywheel.iris.mixin;
 
 import net.irisshaders.iris.gl.buffer.ShaderStorageBufferHolder;
+import net.irisshaders.iris.gl.image.GlImage;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.shaderpack.ShaderPack;
-import org.jspecify.annotations.Nullable;
 import net.irisshaders.iris.shaderpack.programs.ProgramFallbackResolver;
 import net.irisshaders.iris.shaderpack.properties.PackShadowDirectives;
 import net.irisshaders.iris.shadows.ShadowRenderTargets;
 import net.irisshaders.iris.targets.RenderTargets;
+import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
+import java.util.Set;
 import java.util.function.Supplier;
 
 @Mixin(IrisRenderingPipeline.class)
@@ -32,4 +34,7 @@ public interface IrisRenderingPipelineAccessor {
 
     @Accessor("shaderStorageBufferHolder")
     @Nullable ShaderStorageBufferHolder flywheel$shaderStorageBuffers();
+
+    @Accessor("customImages")
+    Set<GlImage> flywheel$customImages();
 }

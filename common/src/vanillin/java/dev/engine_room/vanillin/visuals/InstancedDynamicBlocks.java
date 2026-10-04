@@ -63,8 +63,6 @@ final class InstancedDynamicBlocks {
                 slot.state = want;
                 slot.shown = true;
             } else if (!slot.shown) {
-                // Reveal BEFORE the writes below: a hidden handle's setters go to the trash slot and the reveal
-                // seeds the fresh slot with an identity pose.
                 slot.instance.setVisible(true);
                 slot.shown = true;
             }

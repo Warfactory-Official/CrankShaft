@@ -205,6 +205,8 @@ final class GuestTerrainMeshShaders {
         List<SourceComponent> taskParts = new ArrayList<>();
         if (taskCull) {
             taskParts.add(resource("scene.glsl"));
+            if (vertex.regions.contains("u_CurrentTime"))
+                taskParts.add(raw("task region clock", GuestTerrainShaders.REGION_TIME_BLOCK));
             taskParts.add(raw("task vertex builtins", builtins));
             if (!vertex.globals) taskParts.add(raw("task globals", GuestTerrainShaders.GLOBALS_BLOCK));
             taskParts.add(raw("task position slice", vertexBody));
@@ -219,6 +221,8 @@ final class GuestTerrainMeshShaders {
                 raw("mesh layout", "layout(local_size_x = 32) in;\nlayout(triangles, max_vertices = " + maxVertices
                         + ", max_primitives = " + maxPrimitives + ") out;\n"));
         meshParts.add(resource("scene.glsl"));
+        if (vertex.regions.contains("u_CurrentTime"))
+            meshParts.add(raw("mesh region clock", GuestTerrainShaders.REGION_TIME_BLOCK));
         meshParts.add(raw("mesh interface", meshInterface.toString()));
         meshParts.add(raw("vertex builtins", builtins));
         if (!vertex.globals) meshParts.add(raw("globals", GuestTerrainShaders.GLOBALS_BLOCK));
@@ -421,7 +425,8 @@ final class GuestTerrainMeshShaders {
                                 interpolation(qualifiers), array);
                     }
                 }
-                if (vertex && uniform && (name.equals("u_RegionOffset") || name.equals("u_RegionID"))) {
+                if (vertex && uniform && (name.equals("u_RegionOffset") || name.equals("u_RegionID") || name.equals(
+                        "u_CurrentTime"))) {
                     stage.regions.add(name);
                     typed.getType().setTypeQualifier(null);
                 }
@@ -614,9 +619,13 @@ final class GuestTerrainMeshShaders {
         out.append("    uvec4 region = _flw_regionInput[_flw_regionSlot];\n")
            .append("    ivec3 origin = _flw_unpackRegionOrigin(region);\n");
         for (String region : vertex.regions) {
-            out.append(region.equals("u_RegionOffset")
-                    ? "    u_RegionOffset = vec3(origin * 16 - _flw_sodiumCameraInt) - _flw_sodiumCameraFrac;\n"
-                    : "    u_RegionID = region.z;\n");
+            out.append(switch (region) {
+                case "u_RegionOffset" ->
+                        "    u_RegionOffset = vec3(origin * 16 - _flw_sodiumCameraInt) - _flw_sodiumCameraFrac;\n";
+                case "u_RegionID" -> "    u_RegionID = region.z;\n";
+                case "u_CurrentTime" -> "    u_CurrentTime = _flw_regionTime[_flw_regionSlot];\n";
+                default -> throw new IllegalStateException(region);
+            });
         }
         for (String initializer : vertex.initializers) out.append("    ").append(initializer).append('\n');
         return out.append("}\n").toString();

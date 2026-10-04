@@ -1,15 +1,15 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
-import org.jetbrains.annotations.ApiStatus;
-
-import dev.engine_room.flywheel.lib.model.baked.PartialModel;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.client.resources.model.ModelManager;
 import net.neoforged.neoforge.client.event.ModelEvent;
 import net.neoforged.neoforge.client.model.standalone.SimpleUnbakedStandaloneModel;
 import net.neoforged.neoforge.client.model.standalone.StandaloneModelKey;
+import org.jetbrains.annotations.ApiStatus;
 
-/** Drives {@link PartialModel} population off NeoForge's standalone-model events. */
+/**
+ * Drives {@link PartialModel} population off NeoForge's standalone-model events.
+ */
 @ApiStatus.Internal
 public final class PartialModelEventHandler {
     private PartialModelEventHandler() {

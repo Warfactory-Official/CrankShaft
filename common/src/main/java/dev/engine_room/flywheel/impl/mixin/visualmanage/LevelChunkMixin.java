@@ -25,6 +25,6 @@ abstract class LevelChunkMixin {
             return;
         }
         manager.blockEntities()
-                .queueAdd(blockEntity);
+               .queueAdd(blockEntity);
     }
 }

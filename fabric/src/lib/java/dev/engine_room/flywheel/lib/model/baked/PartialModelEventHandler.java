@@ -1,12 +1,6 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
-
-import org.jetbrains.annotations.ApiStatus;
-
 import dev.engine_room.flywheel.api.Flywheel;
-import dev.engine_room.flywheel.lib.model.baked.PartialModel;
 import net.fabricmc.fabric.api.client.model.loading.v1.ExtraModelKey;
 import net.fabricmc.fabric.api.client.model.loading.v1.FabricModelManager;
 import net.fabricmc.fabric.api.client.model.loading.v1.ModelLoadingPlugin;
@@ -16,8 +10,14 @@ import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.resources.PreparableReloadListener;
 import net.minecraft.util.Unit;
+import org.jetbrains.annotations.ApiStatus;
 
-/** Drives {@link PartialModel} population off Fabric's model-loading API. */
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+
+/**
+ * Drives {@link PartialModel} population off Fabric's model-loading API.
+ */
 @ApiStatus.Internal
 public final class PartialModelEventHandler {
     private PartialModelEventHandler() {
@@ -50,10 +50,11 @@ public final class PartialModelEventHandler {
         }
 
         @Override
-        public CompletableFuture<Void> reload(SharedState sharedState, Executor backgroundExecutor, PreparationBarrier preparationBarrier, Executor gameExecutor) {
+        public CompletableFuture<Void> reload(SharedState sharedState, Executor backgroundExecutor,
+                                              PreparationBarrier preparationBarrier, Executor gameExecutor) {
             // No async prepare -- partials only fetch already-baked models on the game thread after MODELS applies.
             return preparationBarrier.wait(Unit.INSTANCE)
-                    .thenRunAsync(PartialModelEventHandler::populate, gameExecutor);
+                                     .thenRunAsync(PartialModelEventHandler::populate, gameExecutor);
         }
     }
 }

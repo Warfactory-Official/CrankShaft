@@ -48,9 +48,9 @@ public class ItemFrameVisual extends AbstractEntityVisual<ItemFrame> implements 
     private final TransformedInstance frame;
     private final NameTagComponent nameTag;
     private final Matrix4f base = new Matrix4f();
+    private final ItemStackSlot itemSlot = new ItemStackSlot();
     @Nullable
     private TransformedInstance item;
-    private final ItemStackSlot itemSlot = new ItemStackSlot();
     private boolean visualized;
     private ItemStack currentStack = ItemStack.EMPTY;
 

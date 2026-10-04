@@ -24,12 +24,11 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
     static final int SECTION_DATA_STRIDE = 48;
     static final int REGION_SIZE = RenderRegion.REGION_SIZE;
     static final int GEOMETRY_MASK_WORDS = REGION_SIZE / Integer.SIZE;
-    private static final int PENDING_WORDS = REGION_SIZE / Long.SIZE;
     static final int VISIBILITY_STRIDE = Integer.BYTES;
     static final int PASS_SOLID = 0;
     static final int PASS_CUTOUT = 1;
     static final int PASS_COUNT = 2;
-
+    private static final int PENDING_WORDS = REGION_SIZE / Long.SIZE;
     private static final int METADATA_REGION_ID_CAP = 65_536;
     private static final int FLOAT_ONE_BITS = Float.floatToRawIntBits(1.0f);
     private final TerrainResidentBuffers buffers;
@@ -107,6 +106,46 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
     private static int sectionIndexCount(long pMeshData) {
         long sumVertexCount = TerrainSectionMath.sumVertexCount(pMeshData);
         return (int) ((sumVertexCount >> 2) * 6L);
+    }
+
+    private static int gpuBufferHandle(@Nullable GpuBuffer buffer) {
+        if (buffer == null || buffer.isClosed()) {
+            return -1;
+        }
+        if (VkContext.isVulkanHost()) {
+            return buffer instanceof VulkanGpuBuffer vkBuffer ? (int) vkBuffer.vkBuffer() : -1;
+        }
+        return buffer instanceof GlBuffer glBuffer ? glBuffer.handle() : -1;
+    }
+
+    // Unused section records are zero (Sodium callocs + clearFull) == a cleared slot.
+    private static boolean isZeroRecord(long ptr) {
+        for (long o = 0; o < SECTION_DATA_STRIDE; o += Long.BYTES) {
+            if (MemoryUtil.memGetLong(ptr + o) != 0L) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Past the mirror's capacity (region table can outgrow it): never written.
+    private static boolean takeDirty(long[] dirty, int slot) {
+        int w = slot >>> 6;
+        if (w >= dirty.length) {
+            return false;
+        }
+        long bit = 1L << slot;
+        long word = dirty[w];
+        dirty[w] = word & ~bit;
+        return (word & bit) != 0;
+    }
+
+    // Grown storage content is undefined => new slots start dirty.
+    private static long[] growDirty(long[] dirty, int regionCap) {
+        int oldLength = dirty.length;
+        long[] grown = Arrays.copyOf(dirty, regionCap * REGION_SIZE / Long.SIZE);
+        Arrays.fill(grown, oldLength, grown.length, -1L);
+        return grown;
     }
 
     /**
@@ -241,16 +280,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
             }
         }
         pendingRegionIds.clear();
-    }
-
-    private static int gpuBufferHandle(@Nullable GpuBuffer buffer) {
-        if (buffer == null || buffer.isClosed()) {
-            return -1;
-        }
-        if (VkContext.isVulkanHost()) {
-            return buffer instanceof VulkanGpuBuffer vkBuffer ? (int) vkBuffer.vkBuffer() : -1;
-        }
-        return buffer instanceof GlBuffer glBuffer ? glBuffer.handle() : -1;
     }
 
     public void noteRegionIdentity(int regionId, int originX, int originY, int originZ, int geometryHandle) {
@@ -493,16 +522,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         buffers.flushPendingWrites();
     }
 
-    // Unused section records are zero (Sodium callocs + clearFull) == a cleared slot.
-    private static boolean isZeroRecord(long ptr) {
-        for (long o = 0; o < SECTION_DATA_STRIDE; o += Long.BYTES) {
-            if (MemoryUtil.memGetLong(ptr + o) != 0L) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private void copySlot(int pass, int regionId, int s, long srcPtr) {
         long dstOffset = ((long) regionId * REGION_SIZE + s) * SECTION_DATA_STRIDE;
         if (srcPtr == 0L || isZeroRecord(srcPtr)) {
@@ -529,18 +548,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         if (takeDirty(sectionDataDirty[pass], slot)) {
             sectionDataMirrors[pass].clearRange((long) slot * SECTION_DATA_STRIDE, SECTION_DATA_STRIDE, 0);
         }
-    }
-
-    // Past the mirror's capacity (region table can outgrow it): never written.
-    private static boolean takeDirty(long[] dirty, int slot) {
-        int w = slot >>> 6;
-        if (w >= dirty.length) {
-            return false;
-        }
-        long bit = 1L << slot;
-        long word = dirty[w];
-        dirty[w] = word & ~bit;
-        return (word & bit) != 0;
     }
 
     private void setPresentBit(int pass, int regionId, int s, boolean set) {
@@ -694,14 +701,6 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
             translucentSectionDataMirrorBytes = newBytes;
             translucentDataDirty = growDirty(translucentDataDirty, newCap);
         }
-    }
-
-    // Grown storage content is undefined => new slots start dirty.
-    private static long[] growDirty(long[] dirty, int regionCap) {
-        int oldLength = dirty.length;
-        long[] grown = Arrays.copyOf(dirty, regionCap * REGION_SIZE / Long.SIZE);
-        Arrays.fill(grown, oldLength, grown.length, -1L);
-        return grown;
     }
 
     private void ensurePresentMaskCapacity(int regionCap) {

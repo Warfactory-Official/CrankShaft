@@ -25,16 +25,17 @@ final class IrisMeshBackends {
                                              .engineFactory(MeshGuest::new)
                                              .priority(895)
                                              .gpuDriven(true)
-                                             .supported(() -> GuestTerrainGate.meshEnabled() && !VkContext.isVulkanHost()
-                                                     && GlCompat.SUPPORTS_TERRAIN_MESH && GL.getCapabilities().glMultiDrawMeshTasksIndirectCountNV != 0
-                                                     && GL.getCapabilities().GL_KHR_shader_subgroup && GlCompat.SUBGROUP_SIZE == 32
-                                                     && (GL11C.glGetInteger(
-                                                     KHRShaderSubgroup.GL_SUBGROUP_SUPPORTED_FEATURES_KHR)
-                                                     & KHRShaderSubgroup.GL_SUBGROUP_FEATURE_ARITHMETIC_BIT_KHR) != 0
-                                                     && (GL11C.glGetInteger(
-                                                     KHRShaderSubgroup.GL_SUBGROUP_SUPPORTED_STAGES_KHR)
-                                                     & NVMeshShader.GL_TASK_SHADER_BIT_NV) != 0
-                                                     && IndirectPrograms.allLoaded() && Iris.isPackInUseQuick())
+                                             .supported(
+                                                     () -> GuestTerrainGate.meshEnabled() && !VkContext.isVulkanHost()
+                                                             && GlCompat.SUPPORTS_TERRAIN_MESH && GL.getCapabilities().glMultiDrawMeshTasksIndirectCountNV != 0
+                                                             && GL.getCapabilities().GL_KHR_shader_subgroup && GlCompat.SUBGROUP_SIZE == 32
+                                                             && (GL11C.glGetInteger(
+                                                             KHRShaderSubgroup.GL_SUBGROUP_SUPPORTED_FEATURES_KHR)
+                                                             & KHRShaderSubgroup.GL_SUBGROUP_FEATURE_ARITHMETIC_BIT_KHR) != 0
+                                                             && (GL11C.glGetInteger(
+                                                             KHRShaderSubgroup.GL_SUBGROUP_SUPPORTED_STAGES_KHR)
+                                                             & NVMeshShader.GL_TASK_SHADER_BIT_NV) != 0
+                                                             && IndirectPrograms.allLoaded() && Iris.isPackInUseQuick())
                                              .register(
                                                      Identifier.fromNamespaceAndPath(Flywheel.ID, "iris_mesh_shader"));
 

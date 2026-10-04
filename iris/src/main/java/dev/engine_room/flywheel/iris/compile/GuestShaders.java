@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.iris.compile;
 
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.CutoutShader;
+import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.compile.component.BufferTextureInstanceComponent;
 import dev.engine_room.flywheel.backend.compile.component.InstanceStructComponent;
@@ -15,13 +16,17 @@ import dev.engine_room.flywheel.backend.glsl.SourceComponent;
 import dev.engine_room.flywheel.iris.compile.patches.ContractPatches;
 import dev.engine_room.flywheel.iris.compile.patches.SundialTranslucent;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
+import dev.engine_room.flywheel.lib.material.FogShaders;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import io.github.douira.glsl_transformer.ast.node.TranslationUnit;
 import io.github.douira.glsl_transformer.ast.node.Version;
 import io.github.douira.glsl_transformer.ast.node.declaration.DeclarationMember;
 import io.github.douira.glsl_transformer.ast.node.declaration.InterfaceBlockDeclaration;
 import io.github.douira.glsl_transformer.ast.node.declaration.TypeAndInitDeclaration;
+import io.github.douira.glsl_transformer.ast.node.expression.Expression;
 import io.github.douira.glsl_transformer.ast.node.expression.LiteralExpression;
+import io.github.douira.glsl_transformer.ast.node.expression.unary.GroupingExpression;
+import io.github.douira.glsl_transformer.ast.node.expression.unary.NegationExpression;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.DeclarationExternalDeclaration;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.ExternalDeclaration;
 import io.github.douira.glsl_transformer.ast.node.type.initializer.ExpressionInitializer;
@@ -70,7 +75,8 @@ public final class GuestShaders {
     private static final Identifier INSTANCING_LIGHT = ResourceUtil.rl("internal/instancing/light.glsl");
     private static final Identifier INDIRECT_LIGHT = ResourceUtil.rl("internal/indirect/light.glsl");
     private static final String CONTRACT_PROTOTYPE = "void clrwl_computeFragment(vec4 sampleColor, out vec4 fragColor, "
-            + "out vec2 fragLight, out float ao, out vec4 fragOverlay);\n";
+            + "out vec2 fragLight, out float ao, out vec4 fragOverlay);\nbool _flw_isUnlit();\n"
+            + "float _flw_unlitCardinalFactor();\nbool _flw_hasFog();\nfloat _flw_emissionCoverage();\nbool _flw_borrowedBlock();\n";
     // glsl-transformer prints a line comment ahead of the pack's directives.
     private static final Pattern LEADING_DIRECTIVE = Pattern.compile(
             "[ \\t]*(?:#(?:extension|pragma)[^\\n]*|//[^\\n]*)?\\n");
@@ -97,6 +103,8 @@ public final class GuestShaders {
             false, false, false, false);
 
     private static final Pattern VERSION_LINE = Pattern.compile("#version\\s+(\\d+)[^\\n]*\\n");
+    private static final Pattern ALPHA_DITHER_DISCARD = Pattern.compile(
+            "(?m)^[ \\t]*if\\s*\\(\\s*[A-Za-z_]\\w*\\.a\\s*<[^;\\r\\n]*\\bdither\\b[^;\\r\\n]*\\)\\s*discard\\s*;[ \\t]*$");
 
     private static final SingleASTTransformer<JobParameters> TRANSFORMER = versionedTransformer();
     private static final SingleASTTransformer<JobParameters> FRAGMENT_TRANSFORMER = versionedTransformer();
@@ -137,14 +145,18 @@ public final class GuestShaders {
     static Stages build(IrisRenderingPipeline pipeline, ProgramSource source, AlphaTest alpha,
                         GuestPipelines.ProgramKey key, boolean contract, @Nullable OitSpec oit) {
         String packFragment = source.getFragmentSource().orElseThrow();
+        // 26.2: the guest's additive blend owns opacity; a pack coverage discard fragments vertex fades.
+        if (key.role() == PackRole.ADDITIVE)
+            packFragment = ALPHA_DITHER_DISCARD.matcher(packFragment).replaceAll("");
         String packVertex = source.getVertexSource().orElseThrow();
         if (packFragment.contains(ContractPatches.NATIVE_TRANSLUCENT)
-                || packFragment.contains(ContractPatches.NATIVE_SHADOW_TRANSLUCENT)) contract = false;
+                || packFragment.contains(ContractPatches.NATIVE_SHADOW_TRANSLUCENT)
+                || packFragment.contains(ContractPatches.NATIVE_ADDITIVE)) contract = false;
         if (contract && packFragment.contains(SundialTranslucent.MARKER)) {
             packFragment = SundialTranslucent.adapt(source.getVertexSource().orElseThrow(), packFragment);
         }
         if (contract && packFragment.contains(SundialTranslucent.SHADOW_MARKER)) {
-            packVertex = SundialTranslucent.shadowVertex(packVertex);
+            packVertex = SundialTranslucent.shadowVertex(packVertex, packFragment);
         }
         Map<PatchShaderType, String> patched = TransformPatcher.patchVanilla(source.getName(),
                 packVertex, source.getGeometrySource().orElse(null),
@@ -167,7 +179,9 @@ public final class GuestShaders {
         body.add(FlwPrograms.SOURCES.get(key.materialVertex()));
         body.add(FlwPrograms.SOURCES.get(key.indirect() ? INDIRECT : INSTANCING));
 
-        String vertex = TRANSFORMER.transform(shiftBufferBindings(patched.get(PatchShaderType.VERTEX)));
+        boolean shadow = key.role().shadow;
+        String vertex = TRANSFORMER.transform(
+                shiftBufferBindings(modelChunkFade(patched.get(PatchShaderType.VERTEX), shadow)));
         VertexInterface inputs = Objects.requireNonNull(lastInterface);
         lastInterface = null;
         boolean proxy = contract || PROXY_INPUTS.stream()
@@ -180,7 +194,7 @@ public final class GuestShaders {
         String library = library(body, key, !contract && !key.crumbling() && !emissive
                         ? source.getParent().getPackDirectives() : null, contract, oit != null, proxy, emissive,
                 emissive && GuestPipelines.deferredEmissive(pipeline));
-        String fragment = shiftBufferBindings(patched.get(PatchShaderType.FRAGMENT));
+        String fragment = shiftBufferBindings(modelChunkFade(patched.get(PatchShaderType.FRAGMENT), shadow));
         if (contract) {
             String fragmentLibrary = contractLibrary(key, source.getParent().getPackDirectives(), oit != null);
             if (oit != null) {
@@ -196,15 +210,55 @@ public final class GuestShaders {
                     + FlwPrograms.SOURCES.get(GuestOitCodegen.LIBRARY).source() + '\n'
                     + GuestOitCodegen.producer(oit, demoted.outputs()), null);
         }
-        String geometry = shiftBufferBindings(patched.get(PatchShaderType.GEOMETRY));
+        String geometry = shiftBufferBindings(modelChunkFade(patched.get(PatchShaderType.GEOMETRY), shadow));
         if (contract && geometry != null) {
             Compilation ctx = new Compilation();
             ShaderCache.expand(List.of(FlwPrograms.SOURCES.get(CONTRACT_GEOMETRY)), ctx::appendComponent);
             geometry = afterLeadingDirectives(geometry, ctx.assembledSource());
         }
         return new Stages(vertex(vertex, inputs, library), geometry,
-                shiftBufferBindings(patched.get(PatchShaderType.TESS_CONTROL)),
-                shiftBufferBindings(patched.get(PatchShaderType.TESS_EVAL)), fragment);
+                shiftBufferBindings(modelChunkFade(patched.get(PatchShaderType.TESS_CONTROL), shadow)),
+                shiftBufferBindings(modelChunkFade(patched.get(PatchShaderType.TESS_EVAL), shadow)), fragment);
+    }
+
+    // Iris compat: model draws have no section-load fade; -1 erases them in borrowed terrain fog programs.
+    private static @Nullable String modelChunkFade(@Nullable String stage, boolean shadow) {
+        if (stage == null || shadow) return stage;
+        var parser = versionedTransformer();
+        parser.setTransformation((tree, root) -> {
+            int changed = 0;
+            for (ExternalDeclaration external : tree.getChildren()) {
+                if (!(external instanceof DeclarationExternalDeclaration declaration)
+                        || !(declaration.getDeclaration() instanceof TypeAndInitDeclaration typed)) continue;
+                for (DeclarationMember member : typed.getMembers()) {
+                    if (!member.getName().getName().equals("mc_chunkFade")) continue;
+                    if (typed.getMembers().size() != 1
+                            || !hasStorage(typed.getType().getTypeQualifier(), StorageQualifier.StorageType.CONST)
+                            || !ASTPrinter.printSimple(typed.getType().getTypeSpecifier()).strip().equals("float")
+                            || !(member.getInitializer() instanceof ExpressionInitializer initializer)
+                            || !missingChunkFade(initializer.getExpression())) {
+                        throw new IllegalStateException("Unexpected Iris model chunk-fade sentinel");
+                    }
+                    initializer.setExpression(parser.parseExpression(root, "1.0"));
+                    changed++;
+                }
+            }
+            if (changed != 1)
+                throw new IllegalStateException("Expected one Iris model chunk-fade sentinel: " + changed);
+        });
+        return parser.transform(stage);
+    }
+
+    private static boolean missingChunkFade(Expression expression) {
+        while (expression instanceof GroupingExpression grouping) expression = grouping.getOperand();
+        if (expression instanceof NegationExpression negation) {
+            expression = negation.getOperand();
+            while (expression instanceof GroupingExpression grouping) expression = grouping.getOperand();
+            return expression instanceof LiteralExpression literal && literal.isFloatingPoint()
+                    && literal.getFloating() == 1.0;
+        }
+        return expression instanceof LiteralExpression literal && literal.isFloatingPoint()
+                && literal.getFloating() == -1.0;
     }
 
     // Pack storage buffers move above the engine's (IndirectBuffers/LightBuffers/MatrixBuffer 0..7); GuestSsbos
@@ -323,6 +377,11 @@ public final class GuestShaders {
     // renamed out of the pack's global namespace.
     private static String contractLibrary(GuestPipelines.ProgramKey key, PackDirectives directives, boolean oit) {
         Compilation ctx = new Compilation();
+        if (key.role() == PackRole.TERRAIN_TRANSLUCENT) ctx.define("_FLW_GUEST_BORROWED_BLOCK");
+        if (key.role() == PackRole.ADDITIVE && key.transparency() == Transparency.ADDITIVE) {
+            ctx.define("_FLW_GUEST_ADDITIVE_ONE");
+        }
+        if (FogShaders.NONE.source().equals(key.fog())) ctx.define("_FLW_GUEST_FOG_NONE");
         ctx.define("_FLW_AO_STRENGTH", Float.toString(directives.getAmbientOcclusionLevel()));
         ctx.define("_FLW_AO_OPTION_ENABLED", "(_flw_renderOrigin.w != 0)");
         ctx.define("_FLW_CARDINAL_ENABLED", Boolean.toString(directives.isOldLighting()));
@@ -347,6 +406,7 @@ public final class GuestShaders {
         }
         if (oit) {
             ctx.define("_FLW_GUEST_OIT");
+            if (!key.role().shadow) ctx.define("_FLW_GUEST_MAIN_OIT");
         }
         CutoutShader cutout = Objects.requireNonNull(key.cutout());
 

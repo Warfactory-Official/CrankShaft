@@ -15,9 +15,13 @@ public enum ContractProgram {
     GBUFFERS_ENTITIES("clrwl_gbuffers_entities", GBUFFERS, false),
     GBUFFERS_BLOCK("clrwl_gbuffers_block", GBUFFERS, false),
     GBUFFERS_ADDITIVE("clrwl_gbuffers_additive", GBUFFERS, false),
+    // Textured SRC_ALPHA/ONE submissions without instances; emits premultiplied light into the pack's merge buffer.
+    GBUFFERS_NATIVE_ADDITIVE("crankshaft_gbuffers_additive", null, false),
+    GBUFFERS_NATIVE_ADDITIVE_COLOR("crankshaft_gbuffers_additive_color", null, false),
     GBUFFERS_GLINT("clrwl_gbuffers_glint", GBUFFERS, false),
     GBUFFERS_LIGHTNING("clrwl_gbuffers_lightning", GBUFFERS, false),
     GBUFFERS_TRANSLUCENT("clrwl_gbuffers_translucent", GBUFFERS, false),
+    GBUFFERS_UNLIT_TRANSLUCENT("clrwl_gbuffers_unlit_translucent", GBUFFERS_TRANSLUCENT, false),
     GBUFFERS_DAMAGEDBLOCK("clrwl_gbuffers_damagedblock", GBUFFERS, false),
     SHADOW("clrwl_shadow", null, true),
     SHADOW_ADDITIVE("clrwl_shadow_additive", SHADOW, true),

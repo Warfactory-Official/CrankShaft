@@ -33,5 +33,23 @@
   ],
   "wrappers": [],
   "blends": [],
-  "properties": ""
+  "patches": [
+    "complementary_translucent_ao.patch",
+    "complementary_translucent_coverage.patch"
+  ],
+  "properties": "blend.clrwl_gbuffers_additive=ONE ONE ZERO ONE\n",
+  "programs": [
+    {
+      "target": "clrwl_gbuffers_additive",
+      "fragment": "complementary_light.fsh",
+      "vertex": "gbuffers_beaconbeam"
+    },
+    {
+      "target": "crankshaft_gbuffers_additive",
+      "fragment": "complementary_light.fsh",
+      "vertex": "gbuffers_beaconbeam",
+      "nativeDraw": true
+    }
+  ],
+  "emissiveLight": true
 }

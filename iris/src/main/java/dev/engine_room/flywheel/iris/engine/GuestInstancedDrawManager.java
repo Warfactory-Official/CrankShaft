@@ -46,9 +46,15 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
     private int drawKind;
     private boolean passEntities = true;
     private boolean passBlockEntities = true;
+    private boolean shadowPass;
 
     public GuestInstancedDrawManager(InstancingPrograms programs) {
         super(programs);
+    }
+
+    private static int drawTag(InstancedDraw draw) {
+        DrawTags tags = draw.tags();
+        return tags == null ? 0 : tags.drawTag();
     }
 
     @Override
@@ -71,9 +77,11 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         GlCompat.pushDebugGroup("flywheel:iris/shadow");
         passEntities = entities;
         passBlockEntities = blockEntities;
+        shadowPass = true;
         if (!draws.isEmpty()) {
             submitPass("flywheel:iris/shadow", draws, shadowModelView, this::shadowPipeline);
         }
+        shadowPass = false;
         passEntities = passBlockEntities = true;
         GlCompat.popDebugGroup();
         return true;
@@ -85,7 +93,9 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         GlCompat.pushDebugGroup("flywheel:iris/shadow_translucent");
         passEntities = entities;
         passBlockEntities = blockEntities;
+        shadowPass = true;
         submitTranslucent(pipeline, true, shadowModelView, this::shadowPipeline);
+        shadowPass = false;
         passEntities = passBlockEntities = true;
         GlCompat.popDebugGroup();
     }
@@ -199,6 +209,7 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         blendedEntityScratch.clear();
         boolean dropBlobShadows = GuestEntityShadows.suppressed();
         for (InstancedDraw draw : list) {
+            if (shadowPass && GuestDrawManager.emissive(draw.material())) continue;
             if (dropBlobShadows && GuestEntityShadows.isBlobShadow(draw.material())) {
                 continue;
             }
@@ -220,7 +231,7 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
                 continue;
             }
             switch (TaggedEnvironment.kind(draw.groupKey.environment()
-                                                         .drawTag())) {
+                                                        .drawTag())) {
                 case TaggedEnvironment.KIND_ENTITY -> entityScratch.add(draw);
                 case TaggedEnvironment.KIND_BLOCK_ENTITY -> blockEntityScratch.add(draw);
                 default -> blockScratch.add(draw);
@@ -252,11 +263,6 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         drawKind = kind;
         super.submitPass(label, list, modelView, pipelineFor);
         drawKind = 0;
-    }
-
-    private static int drawTag(InstancedDraw draw) {
-        DrawTags tags = draw.tags();
-        return tags == null ? 0 : tags.drawTag();
     }
 
     private PackRole role(PackRole role) {

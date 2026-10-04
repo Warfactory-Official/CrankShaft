@@ -26,6 +26,8 @@ import java.util.function.Function;
 public abstract class DrawManager<N extends AbstractInstancer<?>> {
     public static final int CRUMBLING_STAGES = 10;
     private static final boolean MODEL_WARNINGS = Boolean.getBoolean("flywheel.modelWarnings");
+    // Empty instancers are retired during ordinary flush; hidden data outlives them until recreation or engine delete.
+    private final Set<InstanceHandleImpl.Hidden<?>> hiddenInstances = new HashSet<>();
     /**
      * A map of instancer keys to instancers.
      *
@@ -190,8 +192,26 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
     }
 
     public void delete() {
+        synchronized (hiddenInstances) {
+            for (var hidden : hiddenInstances) hidden.managerDeleted(this);
+            hiddenInstances.clear();
+        }
         instancers.clear();
         initializationQueue.clear();
+    }
+
+    final void retainHidden(InstanceHandleImpl.Hidden<?> hidden) {
+        synchronized (hiddenInstances) {
+            boolean added = hiddenInstances.add(hidden);
+            assert added;
+        }
+    }
+
+    final void releaseHidden(InstanceHandleImpl.Hidden<?> hidden) {
+        synchronized (hiddenInstances) {
+            boolean removed = hiddenInstances.remove(hidden);
+            assert removed;
+        }
     }
 
     public abstract void triggerFallback();

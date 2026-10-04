@@ -23,11 +23,17 @@ abstract class EmfBlockEntityRenderersMixin {
                                                 BiConsumer<BlockEntityType<?>, BlockEntityRendererProvider<?, ?>> create,
                                                 Operation<Void> original) {
         Set<BlockEntityType<?>> restyled = new HashSet<>();
-        original.call(providers, (BiConsumer<BlockEntityType<?>, BlockEntityRendererProvider<?, ?>>) (type, provider) -> {
-            if (EntityFeatureCompat.bakesEmfRoot(() -> create.accept(type, provider))) {
-                restyled.add(type);
-            }
-        });
+        original.call(providers,
+                (BiConsumer<BlockEntityType<?>, BlockEntityRendererProvider<?, ?>>) (type, provider) -> {
+                    EntityFeatureCompat.beginEmfRootCapture();
+                    boolean baked;
+                    try {
+                        create.accept(type, provider);
+                    } finally {
+                        baked = EntityFeatureCompat.endEmfRootCapture();
+                    }
+                    if (baked) restyled.add(type);
+                });
         EntityFeatureCompat.emfRestyledBlockEntities(restyled);
     }
 }

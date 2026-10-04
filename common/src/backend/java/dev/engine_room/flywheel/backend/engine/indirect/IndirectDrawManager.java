@@ -70,6 +70,10 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             .thenComparingInt((IndirectDraw d) -> InstanceTypeIds.id(d.instanceType()));
     private static final int UBO_INSTANCE_DRAW = 11;
     private static final int UBO_EMBED_DRAW = 12;
+    // Port: two-phase HiZ occlusion pays only past this instanced vertex workload; below it (on again above 2x) one
+    // frustum-culled pass: no copies, pyramid or pass 2. Re-entering two-phase with a stale pyramid is safe: pass 2
+    // re-tests what pass 1 culled.
+    private static final long OCCLUSION_VERTICES = 1L << 18;
     final MeshPool meshPool;
     final IndirectBuffers buffers = new IndirectBuffers();
     final List<MeshDrawRun> meshMultiDraws = new ArrayList<>();
@@ -97,10 +101,6 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     private boolean needsDrawBarrier;
     private boolean needsDrawSort;
     private boolean pass2Pending;
-    // Port: two-phase HiZ occlusion pays only past this instanced vertex workload; below it (on again above 2x) one
-    // frustum-culled pass: no copies, pyramid or pass 2. Re-entering two-phase with a stale pyramid is safe: pass 2
-    // re-tests what pass 1 culled.
-    private static final long OCCLUSION_VERTICES = 1L << 18;
     private boolean occlusion = true;
 
     public IndirectDrawManager(IndirectPrograms programs) {
@@ -473,6 +473,8 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     }
 
     void submitOitProducerGeometry(RenderPass pass, OitMode mode, OitFrame f, boolean additive) {
+        List<UberDraw> batches = additive ? uberOitAdditiveMultiDraws : uberOitMultiDraws;
+        if (batches.isEmpty()) return;
         pass.setUniform("_FlwRenderOrigin", renderPassUniforms.renderOriginSlice());
         if (mode != OitMode.DEPTH_RANGE) {
             lightBuffers.bind();
@@ -484,12 +486,13 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             GlBindlessTable.bind();
         }
         drawBarrier();
-        submitUberBatches(pass, additive ? uberOitAdditiveMultiDraws : uberOitMultiDraws,
+        submitUberBatches(pass, batches,
                 batch -> OitPipelines.uberProducer(batch.material(), mode, batch.embedded()),
                 mode != OitMode.DEPTH_RANGE, f.textureManager());
     }
 
     void submitOitInsertProducerGeometry(RenderPass pass, OitInsertMode mode, OitFrame f) {
+        if (uberOitMultiDraws.isEmpty() && uberOitAdditiveMultiDraws.isEmpty()) return;
         lightBuffers.bind();
         pass.setUniform("_FlwRenderOrigin", renderPassUniforms.renderOriginSlice());
         matrixBuffer.bind();
@@ -528,6 +531,18 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
     protected RenderPipeline uberPipelineFor(Material material, boolean embedded) {
         return IndirectPipeline.uberPipelineFor(material, embedded);
+    }
+
+    protected void warmUp(Material material, boolean embedded) {
+        if (OitTransparency.additive(material)) {
+            OitPipelines.uberProducer(material, OitMode.EVALUATE, embedded);
+        } else if (OitTransparency.orderIndependent(material)) {
+            OitPipelines.uberProducer(material, OitMode.DEPTH_RANGE, embedded);
+            OitPipelines.uberProducer(material, OitMode.GENERATE_COEFFICIENTS, embedded);
+            OitPipelines.uberProducer(material, OitMode.EVALUATE, embedded);
+        } else {
+            uberPipelineFor(material, embedded);
+        }
     }
 
     protected RenderPipeline crumblingPipelineFor(Material crumblingMaterial, InstanceType<?> type) {

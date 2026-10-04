@@ -177,21 +177,21 @@ public class Compilation {
 
             files.add(file);
 
-            components.append("\n#line 0 ")
-                      .append(fileId)
-                      .append(" // ")
+            components.append("\n// ")
                       .append(file.name())
+                      .append("\n#line 0 ")
+                      .append(fileId)
                       .append('\n');
         } else {
             // Add extra newline to keep line numbers consistent
             generatedSource.append(source)
                            .append('\n');
 
-            components.append("\n#line ")
-                      .append(generatedLines)
-                      .append(" 0 // (generated) ") // all generated code is put in file 0
+            components.append("\n// (generated) ")
                       .append(component.name())
-                      .append('\n');
+                      .append("\n#line ")
+                      .append(generatedLines)
+                      .append(" 0\n");
 
             generatedLines += StringUtil.countLines(source);
         }

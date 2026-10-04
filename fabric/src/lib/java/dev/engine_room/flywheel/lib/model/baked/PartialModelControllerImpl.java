@@ -1,13 +1,11 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
-import org.jspecify.annotations.Nullable;
-
-import dev.engine_room.flywheel.lib.model.baked.PartialModelController;
 import net.fabricmc.fabric.api.client.model.loading.v1.ExtraModelKey;
 import net.fabricmc.fabric.api.client.model.loading.v1.FabricModelManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.resources.Identifier;
+import org.jspecify.annotations.Nullable;
 
 public class PartialModelControllerImpl implements PartialModelController {
     @Override

@@ -5,6 +5,7 @@ uniform vec2 screenSize;
 uniform sampler2D colortex5;
 
 _FLW_LAYER_STORAGE
+_FLW_LAYER_LIGHT
 
 void main() {
     if (any(greaterThanEqual(gl_GlobalInvocationID.xy, uvec2(screenSize)))) return;

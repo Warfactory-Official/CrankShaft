@@ -92,7 +92,7 @@ public final class NameTagComponent implements EntityComponent {
         nameTag = entity::getDisplayName;
         shouldShow = () -> entity.shouldShowName()
                 || entity.hasCustomName() && entity == Minecraft.getInstance()
-                        .getEntityRenderDispatcher().crosshairPickEntity;
+                                                                .getEntityRenderDispatcher().crosshairPickEntity;
     }
 
     private static Model seeThroughModel(CapturedQuad quad) {
@@ -111,7 +111,7 @@ public final class NameTagComponent implements EntityComponent {
     // Compat with Iris: it draws name tags (text and background) through entities_translucent.
     private static Model fontModel(Material material) {
         return new PackTaggedModel(new SingleMeshModel(GlyphMesh.INSTANCE, material),
-                List.of(PackIdentity.ENTITIES_TRANSLUCENT));
+                List.of(PackIdentity.NAME_TAG));
     }
 
     private static Material fontMaterial(Identifier atlas, DepthTest depthTest, WriteMask writeMask,

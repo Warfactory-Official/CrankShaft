@@ -2,7 +2,8 @@
   "schema": 2,
   "name": "Sundial",
   "testedVersions": [
-    "Sundial Alpha Build 2026-08-28"
+    "Sundial Alpha Build 2026-08-28",
+    "Sundial Alpha Build 2026-09-25"
   ],
   "matches": [
     {
@@ -46,7 +47,7 @@
       "global": true
     }
   ],
-  "properties": "blend.clrwl_gbuffers_additive = ONE ONE ONE ONE\n",
+  "properties": "blend.clrwl_gbuffers_additive = ONE ONE ONE ONE\nblend.clrwl_gbuffers_unlit_translucent = SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ONE_MINUS_SRC_ALPHA\n",
   "deferred": {
     "profile": "SUNDIAL",
     "sources": {
@@ -66,7 +67,8 @@
         "shaders.properties"
       ],
       "fingerprints": [
-        "ed6d68e882aeaee647079ff68c1d7e82d843ef80e88556a3ab85c02e44c32dbf"
+        "ed6d68e882aeaee647079ff68c1d7e82d843ef80e88556a3ab85c02e44c32dbf",
+        "a5ae1d992205ac721277d059af665e88631c3871f21f42b766db5de26f59f80a"
       ]
     }
   },
@@ -77,8 +79,18 @@
   ],
   "programs": [
     {
+      "target": "clrwl_gbuffers_unlit_translucent",
+      "fragment": "sundial_unlit_translucent.fsh"
+    },
+    {
       "target": "clrwl_gbuffers_additive",
       "fragment": "sundial_light.fsh"
+    },
+    {
+      "target": "crankshaft_gbuffers_additive",
+      "fragment": "sundial_light.fsh",
+      "vertex": "gbuffers_beaconbeam",
+      "nativeDraw": true
     }
   ],
   "emissiveLight": true

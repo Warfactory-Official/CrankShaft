@@ -12,22 +12,18 @@ import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.vulkan.VulkanGpuBuffer;
 import com.mojang.blaze3d.vulkan.VulkanGpuSampler;
 import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
-
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher.VisibleRegionBatch;
-import dev.engine_room.flywheel.backend.vk.buffer.VkBuffer;
-import dev.engine_room.flywheel.backend.vk.shader.VkComputePipeline;
-import dev.engine_room.flywheel.backend.vk.VkContext;
-import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorWriter;
-import dev.engine_room.flywheel.backend.vk.shader.VkMeshPipeline;
 import dev.engine_room.flywheel.backend.engine.terrain.VkTerrainDrawManager;
 import dev.engine_room.flywheel.backend.engine.terrain.VkTerrainMeshDrawStrategy;
-import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
-
+import dev.engine_room.flywheel.backend.vk.VkContext;
+import dev.engine_room.flywheel.backend.vk.buffer.VkBuffer;
+import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorWriter;
+import dev.engine_room.flywheel.backend.vk.shader.VkComputePipeline;
+import dev.engine_room.flywheel.backend.vk.shader.VkMeshPipeline;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
-
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
-
 import org.lwjgl.vulkan.EXTMeshShader;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkCommandBuffer;
@@ -74,7 +70,8 @@ public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrate
         VkComputePipeline emit = pipelines.emitPipeline();
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, emit.handle());
         writer.storage(0, manager.regionInputVk(pass), 0L, manager.regionInputBytes(pass));
-        writer.storage(1, manager.registry.sectionDataVkBuffer(pass), 0L, manager.registry.sectionDataByteCapacity(pass));
+        writer.storage(1, manager.registry.sectionDataVkBuffer(pass), 0L,
+                manager.registry.sectionDataByteCapacity(pass));
         writer.storage(2, manager.regionVisVk(pass), 0L, manager.regionVisBytes(pass));
         writer.storage(3, manager.registry.sectionVisVkBuffer(pass), 0L, manager.registry.sectionVisByteSize());
         writer.storage(4, manager.registry.translucentVisVkBuffer(), 0L, manager.registry.translucentVisByteSize());
@@ -102,23 +99,27 @@ public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrate
         VkMeshPipeline draw = pipelines.drawPipeline(pass != 0, COLOR_FORMAT, DEPTH_FORMAT);
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, draw.handle());
 
-        long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView()).vkImageView();
+        long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS)
+                                                   .getTextureView()).vkImageView();
         long atlasSampler = ((VulkanGpuSampler) TerrainAtlasFilter.sampler()).vkSampler();
         long lightmapView = ((VulkanGpuTextureView) mc.gameRenderer.lightmap()).vkImageView();
-        long lightmapSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR)).vkSampler();
+        long lightmapSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache()
+                                                               .getClampToEdge(FilterMode.LINEAR)).vkSampler();
         GpuBufferSlice fog = RenderSystem.getShaderFog();
         GpuBufferSlice projection = RenderSystem.getProjectionMatrixBuffer();
         GpuBuffer globals = RenderSystem.getGlobalSettingsUniform();
 
         writer.storage(0, manager.regionInputVk(pass), 0L, manager.regionInputBytes(pass));
-        writer.storage(1, manager.registry.sectionDataVkBuffer(pass), 0L, manager.registry.sectionDataByteCapacity(pass));
+        writer.storage(1, manager.registry.sectionDataVkBuffer(pass), 0L,
+                manager.registry.sectionDataByteCapacity(pass));
         writer.storage(2, compactSections[pass][parity]);
         writer.storage(3, geoAddrTable[pass][parity]);
         writer.storage(4, manager.registry.translucentVisVkBuffer(), 0L, manager.registry.translucentVisByteSize());
         writer.uniform(5, manager.hizUboVk(), 0L, manager.hizUboBytes());
         writer.sampler(10, atlasView, atlasSampler);
         writer.sampler(12, lightmapView, lightmapSampler);
-        writer.uniform(16, ((VulkanGpuBuffer) projection.buffer()).vkBuffer(), projection.offset(), projection.length());
+        writer.uniform(16, ((VulkanGpuBuffer) projection.buffer()).vkBuffer(), projection.offset(),
+                projection.length());
         writer.uniform(18, ((VulkanGpuBuffer) fog.buffer()).vkBuffer(), fog.offset(), fog.length());
         writer.uniform(20, ((VulkanGpuBuffer) globals).vkBuffer(), 0L, globals.size());
         writer.uniform(21, manager.chunkSectionUboVk(), 0L, manager.chunkSectionUboSize());

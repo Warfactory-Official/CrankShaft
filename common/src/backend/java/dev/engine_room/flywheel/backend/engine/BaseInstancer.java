@@ -123,15 +123,16 @@ public abstract class BaseInstancer<I extends Instance> extends AbstractInstance
             return this;
         }
 
-        notifyRemoval(index);
-
         I instance;
+        InstanceHandleImpl.Hidden<I> hidden;
         synchronized (lock) {
             // I think we need to lock to prevent wacky stuff from happening if the array gets resized.
             instance = instances.get(index);
+            hidden = new InstanceHandleImpl.Hidden<>(recreate, instance, handle, slabPtrAt(index));
+            notifyRemoval(index);
         }
 
-        return new InstanceHandleImpl.Hidden<>(recreate, instance);
+        return hidden;
     }
 
 
@@ -141,17 +142,15 @@ public abstract class BaseInstancer<I extends Instance> extends AbstractInstance
         I instance = type.create(handle);
 
         synchronized (lock) {
-            handle.index = instances.size();
-            addLocked(instance, handle);
+            addLocked(instance, handle, 0);
             return instance;
         }
     }
 
     @Override
-    public InstanceHandleImpl.State<I> revealInstance(InstanceHandleImpl<I> handle, I instance) {
+    public InstanceHandleImpl.State<I> revealInstance(InstanceHandleImpl<I> handle, I instance, long source) {
         synchronized (lock) {
-            handle.index = instances.size();
-            addLocked(instance, handle);
+            addLocked(instance, handle, source);
         }
         return this;
     }
@@ -171,6 +170,7 @@ public abstract class BaseInstancer<I extends Instance> extends AbstractInstance
 
         // Should InstanceType have an isInstance method?
         @SuppressWarnings("unchecked") var handle = (InstanceHandleImpl<I>) instanceHandle;
+        if (instance.type() != type) throw new IllegalArgumentException("Instance type migration");
 
         // No need to steal if this instance is already owned by this instancer.
         if (handle.state == this) {
@@ -191,34 +191,35 @@ public abstract class BaseInstancer<I extends Instance> extends AbstractInstance
 
         // Add the instance to this instancer.
         if (handle.state instanceof BaseInstancer<I> other) {
-            // Remove the instance from its old instancer.
-            // This won't have any unwanted effect when the old instancer
-            // is filtering deleted instances later, so is safe.
-            other.notifyRemoval(handle.index);
-
-            handle.state = this;
-            // Only lock now that we'll be mutating our state.
+            int previousIndex = handle.index;
+            long source = other.slabPtrAt(previousIndex);
             synchronized (lock) {
-                handle.index = instances.size();
-                addLocked(instance, handle);
+                addLocked(instance, handle, source);
+                handle.state = this;
             }
-        } else if (handle.state instanceof InstanceHandleImpl.Hidden<I>) {
-            handle.state = new InstanceHandleImpl.Hidden<>(recreate, instance);
+            other.notifyRemoval(previousIndex);
+        } else if (handle.state instanceof InstanceHandleImpl.Hidden<I> hidden) {
+            hidden.retarget(recreate);
         }
     }
 
     /**
      * Calls must be synchronized on {@link #lock}.
      */
-    private void addLocked(I instance, InstanceHandleImpl<I> handle) {
-        instances.add(instance);
-        handles.add(handle);
-        ensureSlabBlock(handle.index);
+    private void addLocked(I instance, InstanceHandleImpl<I> handle, long source) {
+        int index = instances.size();
+        instances.ensureCapacity(index + 1);
+        handles.ensureCapacity(index + 1);
+        ensureSlabBlock(index);
         // ensureSlabBlock zero-fills a page only on FIRST touch, not per allocation -- a recycled slot keeps the
         // previous occupant's bytes. seed() implementors MUST NOT assume zeroed memory: write every field the
         // instance depends on (an empty seed is safe only if the geometry stays degenerate until posed).
-        type.seed().accept(slabPtrAt(handle.index));
-        setIndexChanged(handle.index);
+        if (source == 0) type.seed().accept(slabPtrAt(index));
+        else MemoryUtil.memCopy(source, slabPtrAt(index), type.layout().byteSize());
+        instances.add(instance);
+        handles.add(handle);
+        handle.index = index;
+        setIndexChanged(index);
     }
 
     @Override

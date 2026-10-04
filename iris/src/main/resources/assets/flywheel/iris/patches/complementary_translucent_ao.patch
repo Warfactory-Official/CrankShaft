@@ -1,0 +1,32 @@
+diff --git a/program/gbuffers_water.glsl b/program/gbuffers_water.glsl
+--- a/program/gbuffers_water.glsl
++++ b/program/gbuffers_water.glsl
+@@ -239,3 +239,11 @@
++    #ifdef GBUFFERS_COLORWHEEL_TRANSLUCENT
++    if (_flw_isUnlit()) {
++        color.rgb *= _flw_unlitCardinalFactor();
++    } else {
++    #endif
+     DoLighting(color, shadowMult, playerPos, viewPos, lViewPos, geoNormal, normalM, dither,
+                worldGeoNormal, lmCoordM, noSmoothLighting, noDirectionalShading, false,
+                false, subsurfaceMode, smoothnessG, highlightMult, emission);
++    #ifdef GBUFFERS_COLORWHEEL_TRANSLUCENT
++    }
++    #endif
+@@ -273,1 +281,4 @@
++    #ifdef GBUFFERS_COLORWHEEL_TRANSLUCENT
++    if (_flw_hasFog())
++    #endif
+     DoFog(color, skyFade, lViewPos, playerPos, VdotU, VdotS, dither, false, 0.0);
+diff --git a/lib/lighting/mainLighting.glsl b/lib/lighting/mainLighting.glsl
+--- a/lib/lighting/mainLighting.glsl
++++ b/lib/lighting/mainLighting.glsl
+@@ -555,4 +555,8 @@
+     float vanillaAO = 1.0;
+     #if VANILLAAO_I > 0
++        #ifdef GBUFFERS_COLORWHEEL_TRANSLUCENT
++        vanillaAO = 1.0;
++        #else
+         vanillaAO = glColor.a;
++        #endif
+ 

@@ -41,27 +41,8 @@ public final class RenderPassShaders {
     // Every stage of an embedded variant (readsEmbedded): the uber/mesh vertex keeps its runtime matrixIndex branch.
     public static final Consumer<Compilation> EMBEDDED = ctx -> ctx.define("FLW_EMBEDDED");
     private static final Pattern EMBEDDED_TOKEN = Pattern.compile("\\bFLW_EMBEDDED\\b");
-    // Render-thread only; keyed per loaded ShaderSources.
+    // Keyed per loaded ShaderSources; populated on the render thread before Vulkan workers read this generation.
     private static final Map<Identifier, Boolean> READS_EMBEDDED = new HashMap<>();
-    private static @Nullable ShaderSources readsEmbeddedSources;
-    private static long registeredReadsEmbeddedGen = -1;
-    private static boolean registeredReadsEmbedded;
-    static final Identifier MLAB = ResourceUtil.rl("internal/mlab.glsl");
-    private static final Identifier HEADER = ResourceUtil.rl("renderpass/header.vert");
-    private static final Identifier INDIRECT_MAIN = ResourceUtil.rl("renderpass/indirect_main.vert");
-    private static final Identifier INSTANCING_MAIN = ResourceUtil.rl("renderpass/instancing_main.vert");
-    private static final Identifier FRAGMENT = ResourceUtil.rl("renderpass/flw_indirect.frag");
-    private static final Identifier DRAW_COMMAND = ResourceUtil.rl("internal/indirect/draw_command.glsl");
-    private static final Identifier MATRICES = ResourceUtil.rl("internal/indirect/matrices.glsl");
-    private static final Identifier MATERIAL = ResourceUtil.rl("internal/material.glsl");
-    static final Identifier RENDER_ORIGIN = ResourceUtil.rl("internal/render_origin.glsl");
-    private static final Identifier PACKED_MATERIAL = ResourceUtil.rl("internal/packed_material.glsl");
-    private static final Identifier DIFFUSE = ResourceUtil.rl("internal/diffuse.glsl");
-    private static final Identifier INSTANCING_LIGHT = ResourceUtil.rl("internal/instancing/light.glsl");
-    private static final Identifier INDIRECT_LIGHT = ResourceUtil.rl("internal/indirect/light.glsl");
-    // Vanilla terrain.fsh atlas filtering (texel-snap + RGSS via flw_sampleAtlas), TERRAIN-ONLY: instance
-    // fragments plain-sample (the texel-snap collapses UVs on the NEAREST entity samplers at grazing angles).
-    private static final Identifier TEXEL_FILTER = ResourceUtil.rl("internal/texel_filter.glsl");
     // Fragment globals the spliced light stack reads; hand-declared (not api_impl.glsl) so the fragment stays self-contained.
     private static final String FRAG_LIGHTING_PRELUDE = """
             struct FlwLightAo { vec2 light; float ao; };
@@ -93,6 +74,24 @@ public final class RenderPassShaders {
     private static final String FRAG_CLIP_VARYINGS = """
             in vec2 _flw_clipData;
             """;
+    private static @Nullable ShaderSources readsEmbeddedSources;
+    private static long registeredReadsEmbeddedGen = -1;
+    static final Identifier MLAB = ResourceUtil.rl("internal/mlab.glsl");
+    private static final Identifier HEADER = ResourceUtil.rl("renderpass/header.vert");
+    private static final Identifier INDIRECT_MAIN = ResourceUtil.rl("renderpass/indirect_main.vert");
+    private static final Identifier INSTANCING_MAIN = ResourceUtil.rl("renderpass/instancing_main.vert");
+    private static final Identifier FRAGMENT = ResourceUtil.rl("renderpass/flw_indirect.frag");
+    private static final Identifier DRAW_COMMAND = ResourceUtil.rl("internal/indirect/draw_command.glsl");
+    private static final Identifier MATRICES = ResourceUtil.rl("internal/indirect/matrices.glsl");
+    private static final Identifier MATERIAL = ResourceUtil.rl("internal/material.glsl");
+    static final Identifier RENDER_ORIGIN = ResourceUtil.rl("internal/render_origin.glsl");
+    private static final Identifier PACKED_MATERIAL = ResourceUtil.rl("internal/packed_material.glsl");
+    private static final Identifier DIFFUSE = ResourceUtil.rl("internal/diffuse.glsl");
+    private static final Identifier INSTANCING_LIGHT = ResourceUtil.rl("internal/instancing/light.glsl");
+    private static final Identifier INDIRECT_LIGHT = ResourceUtil.rl("internal/indirect/light.glsl");
+    // Vanilla terrain.fsh atlas filtering (texel-snap + RGSS via flw_sampleAtlas), TERRAIN-ONLY: instance
+    // fragments plain-sample (the texel-snap collapses UVs on the NEAREST entity samplers at grazing angles).
+    private static final Identifier TEXEL_FILTER = ResourceUtil.rl("internal/texel_filter.glsl");
     private static final Identifier WAVELET = ResourceUtil.rl("internal/wavelet.glsl");
     private static final Identifier OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_oit.frag");
     private static final Identifier OIT_COMPOSITE = ResourceUtil.rl("internal/oit_composite.frag");
@@ -128,6 +127,7 @@ public final class RenderPassShaders {
     private static final Consumer<Compilation> INSTANCING_EMBEDDED_PREAMBLE = ctx -> ctx.define("FLW_EMBEDDED");
     private static final Consumer<Compilation> INDIRECT_EMBEDDED_PREAMBLE = INDIRECT_PREAMBLE.andThen(
             ctx -> ctx.define("FLW_EMBEDDED"));
+    private static boolean registeredReadsEmbedded;
 
     private RenderPassShaders() {
     }
@@ -760,13 +760,17 @@ public final class RenderPassShaders {
         if (!Compilation.DUMP_SHADER_SOURCE) {
             return;
         }
-        File file = new File(new File(Minecraft.getInstance().gameDirectory, "flywheel_sources/renderpass"), fileName);
-        file.getParentFile()
-            .mkdirs();
-        try (FileWriter writer = new FileWriter(file)) {
-            writer.write(source);
-        } catch (Exception e) {
-            FlwPrograms.LOGGER.error("Could not dump RenderPass source {}", fileName, e);
+        // Compiler jobs may dump different variants to the same diagnostic filename.
+        synchronized (RenderPassShaders.class) {
+            File file = new File(new File(Minecraft.getInstance().gameDirectory, "flywheel_sources/renderpass"),
+                    fileName);
+            file.getParentFile()
+                .mkdirs();
+            try (FileWriter writer = new FileWriter(file)) {
+                writer.write(source);
+            } catch (Exception e) {
+                FlwPrograms.LOGGER.error("Could not dump RenderPass source {}", fileName, e);
+            }
         }
     }
 }

@@ -108,8 +108,8 @@ public class BlockDisplayVisual extends AbstractEntityVisual<Display.BlockDispla
         shadowComponent.radius(renderState.shadowRadius()
                                           .get(f));
         shadowComponent.strength(EntityFeatureCompat.shadowStrength((float) (1.0 - entity.distanceToSqr(ctx.camera()
-                                                                        .position()) / 256.0) * renderState.shadowStrength()
-                                                                                                           .get(f)));
+                                                                                                           .position()) / 256.0) * renderState.shadowStrength()
+                                                                                                                                              .get(f)));
         shadowComponent.beginFrame(ctx);
 
         int i = renderState.brightnessOverride();

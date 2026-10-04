@@ -100,7 +100,8 @@ public final class PaintingVisual extends AbstractEntityVisual<Painting> impleme
         variant = current;
         direction = facing;
         Identifier asset = current.assetId();
-        EntityFeatureCompat.observeTexture(entity.getType(), asset.withPath(path -> "textures/painting/" + path + ".png"));
+        EntityFeatureCompat.observeTexture(entity.getType(),
+                asset.withPath(path -> "textures/painting/" + path + ".png"));
         int width = current.width();
         int height = current.height();
         fronts = new UvTransformedInstance[width * height];
@@ -116,7 +117,7 @@ public final class PaintingVisual extends AbstractEntityVisual<Painting> impleme
         var origin = renderOrigin();
         Vec3 pos = entity.position();
         Matrix4f root = new Matrix4f().translation((float) (pos.x - origin.getX()), (float) (pos.y - origin.getY()),
-                                                   (float) (pos.z - origin.getZ()))
+                                              (float) (pos.z - origin.getZ()))
                                       .rotateY((180 - facing.get2DDataValue() * 90) * Mth.DEG_TO_RAD);
         Matrix4f cell = new Matrix4f();
         for (int segmentY = 0; segmentY < height; segmentY++) {
@@ -203,6 +204,24 @@ public final class PaintingVisual extends AbstractEntityVisual<Painting> impleme
             this.sides = sides;
         }
 
+        private static void vertex(MutableVertexList v, int i, float x, float y, float z, float u, float w, float nx,
+                                   float ny, float nz) {
+            v.x(i, x);
+            v.y(i, y);
+            v.z(i, z);
+            v.r(i, 1);
+            v.g(i, 1);
+            v.b(i, 1);
+            v.a(i, 1);
+            v.u(i, u);
+            v.v(i, w);
+            v.light(i, 0);
+            v.overlay(i, OverlayTexture.NO_OVERLAY);
+            v.normalX(i, nx);
+            v.normalY(i, ny);
+            v.normalZ(i, nz);
+        }
+
         @Override
         public int vertexCount() {
             return sides < 0 ? 4 : 4 * (1 + Integer.bitCount(sides));
@@ -246,24 +265,6 @@ public final class PaintingVisual extends AbstractEntityVisual<Painting> impleme
                 vertex(v, i++, 0, 0, EDGE, 0, 1, 1, 0, 0);
                 vertex(v, i, 0, 1, EDGE, 0, 0, 1, 0, 0);
             }
-        }
-
-        private static void vertex(MutableVertexList v, int i, float x, float y, float z, float u, float w, float nx,
-                                   float ny, float nz) {
-            v.x(i, x);
-            v.y(i, y);
-            v.z(i, z);
-            v.r(i, 1);
-            v.g(i, 1);
-            v.b(i, 1);
-            v.a(i, 1);
-            v.u(i, u);
-            v.v(i, w);
-            v.light(i, 0);
-            v.overlay(i, OverlayTexture.NO_OVERLAY);
-            v.normalX(i, nx);
-            v.normalY(i, ny);
-            v.normalZ(i, nz);
         }
 
         @Override

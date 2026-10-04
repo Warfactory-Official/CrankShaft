@@ -17,7 +17,8 @@ import net.minecraft.client.renderer.entity.EntityRenderer;
  * <p>
  * Other mods' mixins on a supported renderer's extraction or on {@code EntityRenderDispatcher.extractEntity}, and
  * hooks reading the state past HEAD of {@code LevelExtractor.extractEntity} or {@code tryExtractRenderState}, are
- * assumed to keep this contract. Otherwise behaviour is undefined; the user disables concurrent extraction.
+ * assumed to keep this contract. EMF's shared entity-state stack is a known exception and disables entity-side
+ * concurrency automatically; for other unsafe hooks the user disables concurrent extraction.
  */
 public interface ConcurrentRenderStateExtraction {
     /**

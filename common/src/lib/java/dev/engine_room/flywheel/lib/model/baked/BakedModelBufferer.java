@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.lib.model.baked;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import dev.engine_room.flywheel.api.internal.DependencyInjection;
+import net.minecraft.client.renderer.block.MovingBlockRenderState;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.client.renderer.block.model.BlockDisplayContext;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
@@ -26,6 +27,11 @@ public interface BakedModelBufferer {
     EnumMap<ChunkSectionLayer, BakedMesh> bufferBlock(BlockState state, int cullMask, long seed);
 
     /**
+     * Bakes the same model context and layer choice used by Minecraft's moving-block feature renderer.
+     */
+    EnumMap<ChunkSectionLayer, BakedMesh> bufferMovingBlock(MovingBlockRenderState renderState);
+
+    /**
      * Bakes a standalone {@link BlockStateModel} into immutable meshes, one per non-empty layer.
      */
     EnumMap<ChunkSectionLayer, BakedMesh> bufferModel(BlockStateModel model, @Nullable PoseStack poseStack);
@@ -36,9 +42,6 @@ public interface BakedModelBufferer {
      */
     @Nullable
     List<DisplayMesh> bufferDisplayBlock(BlockState state, BlockDisplayContext context, boolean zOffset);
-
-    record DisplayMesh(RenderType renderType, BakedMesh mesh) {
-    }
 
     /**
      * Bakes an item stack's resolved geometry into immutable meshes in the item's display space.
@@ -82,6 +85,9 @@ public interface BakedModelBufferer {
         public boolean blocksAtlas() {
             return blocksAtlas;
         }
+    }
+
+    record DisplayMesh(RenderType renderType, BakedMesh mesh) {
     }
 
     /**

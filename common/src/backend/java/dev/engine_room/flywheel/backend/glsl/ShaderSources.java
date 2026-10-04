@@ -31,7 +31,8 @@ public class ShaderSources {
         FlwPrograms.LOGGER.info("Loaded {} shader sources in {}", sourceFinder.results.size(),
                 StringUtil.formatTime(loadEnd - loadStart));
 
-        this.cache = sourceFinder.results;
+        // Port: resource apply finishes parsing before parallel Vulkan compilation reads these sources.
+        this.cache = Map.copyOf(sourceFinder.results);
     }
 
     private static Identifier locationWithoutFlywheelPrefix(Identifier loc) {
@@ -46,7 +47,8 @@ public class ShaderSources {
     }
 
     public LoadResult find(Identifier location) {
-        return cache.computeIfAbsent(location, loc -> new LoadResult.Failure(new LoadError.ResourceError(loc)));
+        LoadResult result = cache.get(location);
+        return result != null ? result : new LoadResult.Failure(new LoadError.ResourceError(location));
     }
 
     public SourceFile get(Identifier location) {

@@ -100,7 +100,8 @@ abstract class LevelExtractorMixin {
         if (VisualizationManager.supportsVisualization(entity.level()) && VisualizationHelper.skipVanillaRender(
                 entity)) {
             boolean glowing = minecraft.shouldEntityAppearGlowing(entity);
-            boolean visible = (glowing || EntityCullingCompat.ACTIVE) && original.call(self, entity, frustum, camX, camY, camZ);
+            boolean visible = (glowing || EntityCullingCompat.ACTIVE) && original.call(self, entity, frustum, camX,
+                    camY, camZ);
             if (visible) {
                 EntityCullingCompat.markVisible(entity);
             }

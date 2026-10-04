@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.backend.NoiseTextures;
 import dev.engine_room.flywheel.backend.glsl.ShaderSources;
 import dev.engine_room.flywheel.backend.vk.VkContext;
+import dev.engine_room.flywheel.backend.vk.VkPipelineCaches;
 import dev.engine_room.flywheel.lib.model.Models;
 import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import dev.engine_room.flywheel.lib.util.ResourceReloadHolder;
@@ -27,6 +28,7 @@ public final class FlwPrograms {
         SOURCES = sources;
 
         if (VkContext.isVulkanHost()) {
+            VkPipelineCaches.initialize();
             // Vulkan host: publish the VK program set. GlCompat MUST NOT be referenced -- no GL context on a Vulkan host.
             VkPrograms.reload(sources);
         } else {
@@ -37,6 +39,5 @@ public final class FlwPrograms {
         }
 
         NoiseTextures.reload(manager);
-        ShaderWarmup.warm();
     }
 }

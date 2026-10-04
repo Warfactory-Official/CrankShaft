@@ -292,14 +292,14 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
         var handle = new InstanceHandleImpl<I>(null);
         I instance = type.create(handle);
 
-        addInner(instance, handle);
+        addInner(instance, handle, 0);
 
         return instance;
     }
 
     @Override
-    public InstanceHandleImpl.State<I> revealInstance(InstanceHandleImpl<I> handle, I instance) {
-        addInner(instance, handle);
+    public InstanceHandleImpl.State<I> revealInstance(InstanceHandleImpl<I> handle, I instance, long source) {
+        addInner(instance, handle, source);
         return handle.state;
     }
 
@@ -318,6 +318,7 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
 
         // Should InstanceType have an isInstance method?
         @SuppressWarnings("unchecked") var handle = (InstanceHandleImpl<I>) instanceHandle;
+        if (instance.type() != type) throw new IllegalArgumentException("Instance type migration");
 
         // Not allowed to steal deleted instances.
         if (handle.state instanceof InstanceHandleImpl.Deleted) {
@@ -338,19 +339,17 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
                 return;
             }
 
-            // Remove the instance from its old instancer.
-            // This won't have any unwanted effect when the old instancer
-            // is filtering deleted instances later, so is safe.
-            other.setDeleted(handle.index);
+            int previousIndex = handle.index;
+            long source = other.slabPtrAt(previousIndex);
 
-            // Only lock now that we'll be mutating our state.
-            addInner(instance, handle);
-        } else if (handle.state instanceof InstanceHandleImpl.Hidden<I>) {
-            handle.state = new InstanceHandleImpl.Hidden<>(recreate, instance);
+            addInner(instance, handle, source);
+            other.setDeleted(previousIndex);
+        } else if (handle.state instanceof InstanceHandleImpl.Hidden<I> hidden) {
+            hidden.retarget(recreate);
         }
     }
 
-    private void addInner(I instance, InstanceHandleImpl<I> handle) {
+    private void addInner(I instance, InstanceHandleImpl<I> handle, long source) {
         // Outer loop:
         // - try to find an empty space
         // - or grow the page array if we can't
@@ -361,7 +360,7 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
             // First, try to find a page with space.
             for (int i = fullPages.nextClearBit(0); i < pages.length; i = fullPages.nextClearBit(i + 1)) {
                 // It may have been filled in while we were searching, but hopefully not.
-                if (pages[i].add(instance, handle)) {
+                if (pages[i].add(instance, handle, source)) {
                     return;
                 }
             }
@@ -396,7 +395,7 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
             // Shortcut: try to add the instance to the last page.
             // Technically we could just let the outer loop go again, but that
             // involves a good bit of work just to likely get back here.
-            if (pages[pages.length - 1].add(instance, handle)) {
+            if (pages[pages.length - 1].add(instance, handle, source)) {
                 return;
             }
             // It may be the case that many other instances were added in the same instant.
@@ -472,7 +471,7 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
          * @param handle   The instance's handle
          * @return true if the instance was added, false if the page is full
          */
-        public boolean add(I instance, InstanceHandleImpl<I> handle) {
+        public boolean add(I instance, InstanceHandleImpl<I> handle, long source) {
             // Thread safety: we loop until we either win the race and add the given instance, or we
             // run out of space because other threads trying to add at the same time.
             while (true) {
@@ -491,11 +490,13 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
                 if (valid.compareAndSet(currentValue, newValue)) {
                     instances[index] = instance;
                     handles[index] = handle;
+                    long destination = slabPtr + (long) index * parent.instanceStride;
+                    if (source == 0) parent.type.seed().accept(destination);
+                    else MemoryUtil.memCopy(source, destination, parent.type.layout().byteSize());
+
                     handle.state = this;
                     // Handle index is unique amongst all pages of this instancer.
                     handle.index = local2HandleIndex(index);
-
-                    parent.type.seed().accept(slabPtr + (long) index * parent.instanceStride);
 
                     parent.contentsChanged.set(pageNo);
                     parent.validityChanged.set(pageNo);
@@ -547,10 +548,11 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
             int localIndex = index % PAGE_SIZE;
 
             var out = instances[localIndex];
+            var hidden = new InstanceHandleImpl.Hidden<>(parent.recreate, out, handle, slabPtrAt(index));
 
             clear(localIndex);
 
-            return new InstanceHandleImpl.Hidden<>(parent.recreate, out);
+            return hidden;
         }
 
         private void clear(int localIndex) {

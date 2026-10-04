@@ -2,12 +2,12 @@
 // Copyright (C) 2026 movblock
 package me.mlbv.meshlet.mesh.gl;
 
-import java.nio.ByteBuffer;
-
 import org.lwjgl.opengl.GL15C;
 import org.lwjgl.opengl.GL30C;
 import org.lwjgl.opengl.GL43C;
 import org.lwjgl.system.MemoryUtil;
+
+import java.nio.ByteBuffer;
 
 final class GlGeometryPtrBuffer {
     private int buffer = 0;

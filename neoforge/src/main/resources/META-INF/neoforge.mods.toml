@@ -41,3 +41,9 @@ modId = "sodium"
 type = "optional"
 versionRange = "[0.9.2+mc26.2,0.10.0)"
 side = "CLIENT"
+
+[[dependencies.crankshaft]]
+modId = "entityculling"
+type = "optional"
+versionRange = "[1.11.2,)"
+side = "CLIENT"

@@ -6,6 +6,7 @@ import dev.engine_room.flywheel.api.visual.Effect;
 import dev.engine_room.flywheel.api.visual.EffectVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.impl.mixin.LivingEntityRendererInvoker;
 import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import dev.engine_room.flywheel.lib.visual.AbstractVisual;
@@ -38,9 +39,10 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Held stacks whose item has an {@code ItemStackVisualizer}, on entities vanilla renders (players; every entity
  * without a visual): vanilla's extraction poses the hands, the stack's visual draws them, vanilla's hand items are
- * cleared. A host joins the effects on first sight and takes over once its visual exists: no frame draws both or
- * neither. Only the level's own entity extraction feeds hosts; any other extraction (inventory doll, foreign mods)
- * keeps vanilla's hand items, since nothing guarantees its state reaches the level's submit.
+ * cleared. EMF-owned models stay with vanilla's hand layer because their visible hand can change after extraction.
+ * A host joins the effects on first sight and takes over once its visual exists: no frame draws both or neither.
+ * Only the level's own entity extraction feeds hosts; any other extraction (inventory doll, foreign mods) keeps
+ * vanilla's hand items, since nothing guarantees its state reaches the level's submit.
  */
 public final class HeldItemHosts {
     private static final RendererReloadCache<Boolean, Map<LivingEntity, Host>> HOSTS = new RendererReloadCache<>(
@@ -59,6 +61,10 @@ public final class HeldItemHosts {
         boolean right = ItemStackSlot.isVisualized(state.rightHandItemStack);
         boolean left = ItemStackSlot.isVisualized(state.leftHandItemStack);
         if (!right && !left) {
+            return;
+        }
+        // Compat with EMF: its rendered hand can differ from the pose captured during extraction.
+        if (EntityFeatureCompat.emfOwns(entity.getType())) {
             return;
         }
         VisualizationManager manager = VisualizationManager.get(entity.level());

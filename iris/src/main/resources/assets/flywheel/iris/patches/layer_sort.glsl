@@ -2,18 +2,9 @@ if (flw_oitActive) {
         uvec2 flw_coord = _FLW_SORT_PIXEL;
         uint flw_pixel = flw_coord.y * uint(screenSize.x) + flw_coord.x;
         uint flw_node = flw_heads[flw_pixel];
-        uint flw_order[64];
-        int flw_length = 0;
-        while (flw_node != 0xffffffffu && flw_length < 64) {
+        uint flw_length = 0u;
+        while (flw_node != 0xffffffffu) {
             uint flw_next = flw_nodes[flw_node * 2u].x;
-            int flw_at = flw_length;
-            while (flw_at > 0) {
-                uint flw_other = flw_order[flw_at - 1];
-                if (flw_layerBefore(flw_other, flw_node)) break;
-                flw_order[flw_at] = flw_other;
-                --flw_at;
-            }
-            flw_order[flw_at] = flw_node;
             ++flw_length;
             {
                 _FLW_VISIBILITY_BODY
@@ -21,13 +12,42 @@ if (flw_oitActive) {
             }
             flw_node = flw_next;
         }
-        if (flw_node != 0xffffffffu) atomicOr(flw_overflow, 1u);
-        if (flw_length > 0) {
-            flw_heads[flw_pixel] = flw_order[0];
-            for (int flw_i = 0; flw_i < flw_length; ++flw_i)
-                flw_nodes[flw_order[flw_i] * 2u].x = flw_i + 1 < flw_length ? flw_order[flw_i + 1] : 0xffffffffu;
-            atomicMax(flw_maxLayers, uint(flw_length));
-            uint flw_tile = (flw_coord.y >> 4u) * ((uint(screenSize.x) + 15u) >> 4u) + (flw_coord.x >> 4u);
-            if (flw_tiles[flw_tile] < uint(flw_length)) atomicMax(flw_tiles[flw_tile], uint(flw_length));
+        if (flw_length > 0u) {
+            uint flw_head = flw_heads[flw_pixel];
+            for (uint flw_run = 1u; flw_run < flw_length; flw_run *= 2u) {
+                uint flw_left = flw_head;
+                uint flw_tail = 0xffffffffu;
+                flw_head = 0xffffffffu;
+                while (flw_left != 0xffffffffu) {
+                    uint flw_right = flw_left;
+                    uint flw_leftCount = 0u;
+                    for (uint i = 0u; i < flw_run && flw_right != 0xffffffffu; ++i) {
+                        ++flw_leftCount;
+                        flw_right = flw_nodes[flw_right * 2u].x;
+                    }
+                    uint flw_rightCount = flw_run;
+                    while (flw_leftCount > 0u || (flw_rightCount > 0u && flw_right != 0xffffffffu)) {
+                        uint flw_selected;
+                        if (flw_leftCount > 0u && (flw_rightCount == 0u || flw_right == 0xffffffffu
+                                || flw_layerBefore(flw_left, flw_right))) {
+                            flw_selected = flw_left;
+                            flw_left = flw_nodes[flw_left * 2u].x;
+                            --flw_leftCount;
+                        } else {
+                            flw_selected = flw_right;
+                            flw_right = flw_nodes[flw_right * 2u].x;
+                            --flw_rightCount;
+                        }
+                        if (flw_tail == 0xffffffffu) flw_head = flw_selected;
+                        else flw_nodes[flw_tail * 2u].x = flw_selected;
+                        flw_tail = flw_selected;
+                    }
+                    flw_left = flw_right;
+                }
+                flw_nodes[flw_tail * 2u].x = 0xffffffffu;
+            }
+            flw_heads[flw_pixel] = flw_head;
+            if (_FLW_SORT_COUNTS_LAYERS && flw_maxLayers < flw_length + _FLW_SORT_LAYER_BIAS)
+                atomicMax(flw_maxLayers, flw_length + _FLW_SORT_LAYER_BIAS);
         }
     }

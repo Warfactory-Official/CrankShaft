@@ -15,6 +15,7 @@ import java.util.function.IntSupplier;
  * baseline, since terrain stops being Iris's own draw.
  */
 public final class GuestTerrainGate {
+    public static final int REGION_TIME_BINDING = 9;
     private static final boolean MESH_PROPERTY = Boolean.getBoolean("crankshaft.iris.mesh");
     private static final boolean SHADOW_OFF = Boolean.getBoolean("crankshaft.iris.terrainShadow.off");
     /**
@@ -22,22 +23,22 @@ public final class GuestTerrainGate {
      */
     public static final boolean CACHE_RECOVERY = MESH_PROPERTY && Boolean.getBoolean(
             "crankshaft.iris.mesh.cacheRecovery");
-
-    public static boolean enabled() {
-        BackendConfig config = FlwBackend.config();
-        return config != null && config.terrainMode() != TerrainMode.OFF;
-    }
-
-    public static boolean meshEnabled() {
-        return enabled() && MESH_PROPERTY;
-    }
-
     /**
-     * Independently disable shadow takeover while keeping the main terrain guest.
+     * Iris re-enters Sodium's terrain draw for its shadow pass, which needs the pack's shadow programs and its own
+     * frustum. Installed by the {@code :iris} module; always false without it.
      */
-    public static boolean shadowEnabled() {
-        return enabled() && !SHADOW_OFF;
-    }
+    private static BooleanSupplier shadowPass = () -> false;
+    /**
+     * Shadow-map edge length. The cull's sub-pixel rejection is resolution-dependent, so the camera view's size
+     * would drop small casters the shadow map does resolve.
+     */
+    private static IntSupplier shadowResolution = () -> 0;
+    /**
+     * Sodium's live per-frame terrain uniforms, republished by the seam that cancels Sodium's own draw. A pack's
+     * Sodium-patched terrain program reads both; the slice is ring-allocated, so it is only valid for this frame.
+     */
+    private static @Nullable GpuBufferSlice globals;
+    private static @Nullable GpuBuffer sectionTimeInfo;
     /**
      * Set with the mesh draw strategy by the guest engine on the render thread, cleared on deletion. The terrain
      * dispatcher still builds its canonical commands; the mesh guest consumes them without CPU geometry repacking.
@@ -60,26 +61,24 @@ public final class GuestTerrainGate {
      */
     public static int cameraIntX, cameraIntY, cameraIntZ;
     public static float cameraFracX, cameraFracY, cameraFracZ;
-    /**
-     * Iris re-enters Sodium's terrain draw for its shadow pass, which needs the pack's shadow programs and its own
-     * frustum. Installed by the {@code :iris} module; always false without it.
-     */
-    private static BooleanSupplier shadowPass = () -> false;
-
-    /**
-     * Shadow-map edge length. The cull's sub-pixel rejection is resolution-dependent, so the camera view's size
-     * would drop small casters the shadow map does resolve.
-     */
-    private static IntSupplier shadowResolution = () -> 0;
-
-    /**
-     * Sodium's live per-frame terrain uniforms, republished by the seam that cancels Sodium's own draw. A pack's
-     * Sodium-patched terrain program reads both; the slice is ring-allocated, so it is only valid for this frame.
-     */
-    private static @Nullable GpuBufferSlice globals;
-    private static @Nullable GpuBuffer sectionTimeInfo;
 
     private GuestTerrainGate() {
+    }
+
+    public static boolean enabled() {
+        BackendConfig config = FlwBackend.config();
+        return config != null && config.terrainMode() != TerrainMode.OFF;
+    }
+
+    public static boolean meshEnabled() {
+        return enabled() && MESH_PROPERTY;
+    }
+
+    /**
+     * Independently disable shadow takeover while keeping the main terrain guest.
+     */
+    public static boolean shadowEnabled() {
+        return enabled() && !SHADOW_OFF;
     }
 
     public static void setShadowPass(BooleanSupplier predicate) {

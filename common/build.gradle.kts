@@ -83,8 +83,10 @@ dependencies {
     // behavior API, SpruceUI and Yumi supertypes.
     compileOnly(files(provider { nestedJars("maven.modrinth:polytone:${polytoneVersion}", "codecui") }))
     compileOnly(files(provider {
-        nestedJars("maven.modrinth:lambdynamiclights:${lambDynLightsVersion}", "lambdynamiclights-api", "spruceui",
-                "yumi-mc-foundation")
+        nestedJars(
+            "maven.modrinth:lambdynamiclights:${lambDynLightsVersion}", "lambdynamiclights-api", "spruceui",
+            "yumi-mc-foundation"
+        )
     }))
 
     compileOnly("io.github.llamalad7:mixinextras-common:0.5.4")

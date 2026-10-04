@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.impl.visualization;
 import dev.engine_room.flywheel.api.visualization.BlockEntityVisualizer;
 import dev.engine_room.flywheel.api.visualization.EntityVisualizer;
 import dev.engine_room.flywheel.api.visualization.ItemStackVisualizer;
+import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.impl.extension.BlockEntityTypeExtension;
 import dev.engine_room.flywheel.impl.extension.EntityTypeExtension;
 import dev.engine_room.flywheel.impl.extension.ItemExtension;
@@ -25,6 +26,10 @@ public final class VisualizerRegistryImpl {
 
     @Nullable
     public static <T extends Entity> EntityVisualizer<? super T> getVisualizer(EntityType<T> type) {
+        // Compat with EMF: even a hidden third-party visual may bake its replaced model root in the constructor.
+        if (EntityFeatureCompat.emfOwns(type)) {
+            return null;
+        }
         return ((EntityTypeExtension<T>) type).flw$getVisualizer();
     }
 

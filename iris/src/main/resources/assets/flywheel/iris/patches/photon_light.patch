@@ -1,0 +1,17 @@
+diff --git a/program/c1_blend_layers.fsh b/program/c1_blend_layers.fsh
+--- a/program/c1_blend_layers.fsh
++++ b/program/c1_blend_layers.fsh
+@@ -54,1 +54,7 @@
+ uniform sampler2D colortex13; // rendered translucent layer
++uniform sampler2D colortex17;
++/*
++const int colortex17Format = RGBA16F;
++const bool colortex17Clear = true;
++const vec4 colortex17ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
++*/
+@@ -510,4 +516,5 @@
+     bloomy_fog = bloomy_fog * 0.5 + 0.5;
+ #endif
+ #endif
++    fragment_color += texelFetch(colortex17, texel, 0).rgb;
+ }

@@ -20,7 +20,8 @@ abstract class BetterBlockEntitiesMixin {
     @Inject(method = "bbe$isSupportedBlockEntity", at = @At("HEAD"), cancellable = true, require = 1)
     private void flw$yieldToVisual(CallbackInfoReturnable<Boolean> cir) {
         BlockEntity self = (BlockEntity) (Object) this;
-        if (VisualizationManager.supportsVisualization(self.getLevel()) && VisualizationHelper.skipVanillaRender(self)) {
+        if (VisualizationManager.supportsVisualization(self.getLevel()) && VisualizationHelper.skipVanillaRender(
+                self)) {
             cir.setReturnValue(false);
         }
     }

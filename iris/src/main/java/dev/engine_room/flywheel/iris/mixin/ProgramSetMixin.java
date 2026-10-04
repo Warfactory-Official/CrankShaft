@@ -9,9 +9,7 @@ import dev.engine_room.flywheel.iris.compile.patches.ContractPatches;
 import dev.engine_room.flywheel.iris.compile.patches.DeferredOitProfile;
 import net.irisshaders.iris.shaderpack.ShaderPack;
 import net.irisshaders.iris.shaderpack.include.AbsolutePackPath;
-import net.irisshaders.iris.shaderpack.loading.ProgramArrayId;
 import net.irisshaders.iris.shaderpack.loading.ProgramId;
-import net.irisshaders.iris.shaderpack.programs.ComputeSource;
 import net.irisshaders.iris.shaderpack.programs.ProgramSet;
 import net.irisshaders.iris.shaderpack.programs.ProgramSource;
 import net.irisshaders.iris.shaderpack.properties.ShaderProperties;
@@ -78,7 +76,7 @@ abstract class ProgramSetMixin implements ContractProgramSet {
                 flywheel$deferredOit = deferred;
                 FlwBackend.LOGGER.info("Deferred OIT adapter ready: {} {}", deferred, directory);
             } catch (UnsupportedOperationException e) {
-                self.getCompute(ProgramArrayId.Deferred)[98] = new ComputeSource[0];
+                deferred.rejected(self);
                 FlwBackend.LOGGER.warn("Deferred OIT adapter rejected; retaining native translucency: {}",
                         e.getMessage());
             }

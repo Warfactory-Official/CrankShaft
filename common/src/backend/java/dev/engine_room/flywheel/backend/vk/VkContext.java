@@ -9,9 +9,11 @@ import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vulkan.*;
 import com.mojang.blaze3d.vulkan.checkpoints.CheckpointExtension;
 import dev.engine_room.flywheel.backend.NoiseTextures;
+import dev.engine_room.flywheel.backend.compile.VkCompilationTasks;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkBindlessTable;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorHeap;
+import dev.engine_room.flywheel.backend.vk.shader.VkShaderCompiler;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
@@ -58,6 +60,7 @@ public final class VkContext {
     }
 
     public static void deferDestroy(Destroyable destroyable) {
+        if (VkCompilationTasks.deferCleanup(destroyable)) return;
         encoder().queueForDestroy(destroyable);
     }
 
@@ -73,6 +76,8 @@ public final class VkContext {
     public static void shutdown() {
         VK12.vkDeviceWaitIdle(vkDevice());
         VkPrograms.kill();
+        VkShaderCompiler.shutdown();
+        VkPipelineCaches.shutdown();
         VkBindlessTable.destroy();
         VkDescriptorHeap.destroy();
         VkGpuTimer.setEnabled(false);

@@ -9,6 +9,7 @@ import io.github.douira.glsl_transformer.ast.node.external_declaration.FunctionD
 import io.github.douira.glsl_transformer.ast.node.statement.terminal.ExpressionStatement;
 import io.github.douira.glsl_transformer.ast.node.type.initializer.ExpressionInitializer;
 import io.github.douira.glsl_transformer.ast.print.ASTPrinter;
+import io.github.douira.glsl_transformer.ast.transform.ASTInjectionPoint;
 
 public final class SundialTranslucent {
     public static final String MARKER = "_flw_sundialTranslucent";
@@ -17,7 +18,15 @@ public final class SundialTranslucent {
     private SundialTranslucent() {
     }
 
-    public static String shadowVertex(String vertex) {
+    public static String shadowVertex(String vertex, String fragment) {
+        var fragmentParser = GuestShaders.versionedTransformer();
+        boolean[] discarded = {false};
+        fragmentParser.setTransformation(
+                (tree, root) -> discarded[0] = ASTPrinter.printSimple(tree.getOneMainDefinitionBody())
+                                                         .replaceAll("\\s+", "").equals("{discard;}"));
+        fragmentParser.transform(fragment);
+        // Sundial removes shadow classification in dimensions whose shadow fragment unconditionally discards.
+        if (discarded[0]) return vertex;
         var parser = GuestShaders.versionedTransformer();
         int[] changed = {0};
         parser.setTransformation((tree, root) -> {
@@ -32,6 +41,7 @@ public final class SundialTranslucent {
                 initializer.setExpression(parser.parseExpression(root, ASTPrinter.printSimple(expression.getRight())));
                 changed[0]++;
             }
+
         });
         String adapted = parser.transform(vertex);
         if (changed[0] != 1)
@@ -83,12 +93,25 @@ public final class SundialTranslucent {
                             vec2 _flw_contractLight;
                             clrwl_computeFragment(albedoData, rawData.albedo, _flw_contractLight,
                                     _flw_contractAo, _flw_contractOverlay);
+                            if (rawData.albedo.a <= 0.0) discard;
                             rawData.albedo.rgb = mix(rawData.albedo.rgb, _flw_contractOverlay.rgb, _flw_contractOverlay.a);
                             rawData.lightmap = %s;
                         }
                         """.formatted(remap[0])));
                 changed[0]++;
             }
+            boolean captured = root.identifierIndex.has("flw_captureUnlit");
+            if (captured) tree.parseAndInjectNode(parser, ASTInjectionPoint.BEFORE_DECLARATIONS,
+                    "void flw_setCaptureUnlit(bool unlit);");
+            int packed = 0;
+            for (var statement : root.nodeIndex.getStream(ExpressionStatement.class).toList()) {
+                String call = ASTPrinter.printSimple(statement).strip();
+                if (!call.startsWith("packUpGbufferDataSolid(")) continue;
+                if (captured) statement.replaceByAndDelete(parser.parseStatement(root,
+                        "{ flw_setCaptureUnlit(_flw_isUnlit()); " + call + " }"));
+                packed++;
+            }
+            if (packed != 1) throw new IllegalStateException("Sundial translucent material packing changed");
         });
         String adapted = parser.transform(fragment);
         if (changed[0] != 1)

@@ -25,7 +25,8 @@ import org.joml.Vector4fc;
  * The bobber quad of {@code FishingHookRenderer}; vanilla keeps the line. Unaffected by frustum culling like vanilla.
  */
 public final class FishingBobberVisual extends AbstractEntityVisual<FishingHook> implements SimpleDynamicVisual {
-    private static final Identifier TEXTURE = Identifier.withDefaultNamespace("textures/entity/fishing/fishing_hook.png");
+    private static final Identifier TEXTURE = Identifier.withDefaultNamespace(
+            "textures/entity/fishing/fishing_hook.png");
     private static final Material MATERIAL = SimpleMaterial.builder()
                                                            .texture(TEXTURE)
                                                            .cutout(CutoutShaders.ONE_TENTH)

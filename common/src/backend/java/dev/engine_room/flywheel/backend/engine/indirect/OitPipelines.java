@@ -8,7 +8,6 @@ import com.mojang.blaze3d.platform.BlendOp;
 import com.mojang.blaze3d.platform.CompareOp;
 import com.mojang.blaze3d.shaders.ShaderSource;
 import com.mojang.blaze3d.shaders.UniformType;
-import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import dev.engine_room.flywheel.api.instance.InstanceType;
@@ -220,6 +219,8 @@ public final class OitPipelines {
     private static RenderPipeline mlabNearestDepthPipeline;
     private static RenderPipeline emissionPipeline;
     private static RenderPipeline depthPipeline;
+    // Sodium-arena producers read the live chunk vertex layout; Iris swaps it, invalidating every cached pipeline.
+    private static @Nullable VertexFormat sodiumBuiltFor;
 
     static {
         for (BerFamily family : BerFamily.VALUES) {
@@ -244,8 +245,6 @@ public final class OitPipelines {
             WEATHER_FRAGMENT_MODE.put(weatherId, mode);
         }
     }
-    // Sodium-arena producers read the live chunk vertex layout; Iris swaps it, invalidating every cached pipeline.
-    private static @Nullable VertexFormat sodiumBuiltFor;
 
     private OitPipelines() {
     }
@@ -288,8 +287,7 @@ public final class OitPipelines {
                 material.depthTest(),
                 material.backfaceCulling(), material.polygonOffset(), embedded, embeddedFragment, emission);
         RenderPipeline pipeline = PRODUCER_CACHE.computeIfAbsent(key, OitPipelines::buildProducer);
-        RenderSystem.getDevice()
-                    .precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -315,8 +313,7 @@ public final class OitPipelines {
                 MaterialShaderIndices.cutoutSources().all().size(),
                 MaterialShaderIndices.fogSources().all().size(), emission, embedded);
         RenderPipeline pipeline = UBER_PRODUCER_CACHE.computeIfAbsent(key, OitPipelines::buildUberProducer);
-        RenderSystem.getDevice()
-                    .precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -403,8 +400,7 @@ public final class OitPipelines {
             }
             pipeline = compositePipeline;
         }
-        RenderSystem.getDevice()
-                    .precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -412,16 +408,14 @@ public final class OitPipelines {
         if (emissionPipeline == null) {
             emissionPipeline = buildEmission();
         }
-        RenderSystem.getDevice()
-                    .precompilePipeline(emissionPipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(emissionPipeline, SHADER_SOURCE);
         return emissionPipeline;
     }
 
     public static RenderPipeline chunkProducer(OitMode mode) {
         ChunkFragmentKey key = new ChunkFragmentKey(mode, TerrainAtlasFilter.linear());
         RenderPipeline pipeline = CHUNK_CACHE.computeIfAbsent(key, OitPipelines::buildChunkProducer);
-        RenderSystem.getDevice()
-                    .precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -467,8 +461,7 @@ public final class OitPipelines {
         ChunkFragmentKey key = new ChunkFragmentKey(mode, TerrainAtlasFilter.linear());
         RenderPipeline pipeline = CHUNK_SODIUM_CACHE.computeIfAbsent(key,
                 k -> buildChunkSodiumProducer(k, CHUNK_SODIUM_VERTEX, "chunk_sodium"));
-        RenderSystem.getDevice()
-                    .precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -479,8 +472,7 @@ public final class OitPipelines {
         Identifier vsh = fading ? CHUNK_SODIUM_VERTEX_MDI_FADE : CHUNK_SODIUM_VERTEX_MDI;
         String nameSuffix = fading ? "chunk_sodium_mdi_fade" : "chunk_sodium_mdi";
         RenderPipeline pipeline = cache.computeIfAbsent(key, k -> buildChunkSodiumProducer(k, vsh, nameSuffix));
-        RenderSystem.getDevice()
-                    .precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -542,8 +534,7 @@ public final class OitPipelines {
 
     public static RenderPipeline berProducer(BerFamily family, OitMode mode) {
         RenderPipeline pipeline = BER_CACHE.computeIfAbsent(new BerKey(family, mode), OitPipelines::buildBerProducer);
-        RenderSystem.getDevice()
-                    .precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -567,8 +558,7 @@ public final class OitPipelines {
 
     public static RenderPipeline layerProducer(OitMode mode) {
         RenderPipeline pipeline = LAYER_CACHE.computeIfAbsent(mode, OitPipelines::buildLayerProducer);
-        RenderSystem.getDevice()
-                    .precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -593,8 +583,7 @@ public final class OitPipelines {
 
     public static RenderPipeline weatherProducer(OitMode mode) {
         RenderPipeline pipeline = WEATHER_CACHE.computeIfAbsent(mode, OitPipelines::buildWeatherProducer);
-        RenderSystem.getDevice()
-                    .precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -805,7 +794,7 @@ public final class OitPipelines {
                 MaterialShaderIndices.fogSources().all().size(), emission, embedded);
         MLAB_UBER_KEY.put(uberMlabFragmentId(mode, light, shaders, smoothness, debug, emission, embedded), key);
         RenderPipeline pipeline = UBER_MLAB_CACHE.computeIfAbsent(key, OitPipelines::buildUberMlab);
-        RenderSystem.getDevice().precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -854,7 +843,7 @@ public final class OitPipelines {
     public static RenderPipeline chunkMlab(OitInsertMode mode) {
         ChunkMlabKey key = new ChunkMlabKey(mode, TerrainAtlasFilter.linear());
         RenderPipeline pipeline = CHUNK_MLAB_CACHE.computeIfAbsent(key, OitPipelines::buildChunkMlab);
-        RenderSystem.getDevice().precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -879,7 +868,7 @@ public final class OitPipelines {
 
     public static RenderPipeline mlabResolve(OitInsertMode mode) {
         RenderPipeline pipeline = MLAB_RESOLVE_CACHE.computeIfAbsent(mode, OitPipelines::buildMlabResolve);
-        RenderSystem.getDevice().precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -900,7 +889,7 @@ public final class OitPipelines {
                                                   GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_NONE))
                                           .build();
         }
-        RenderSystem.getDevice().precompilePipeline(depthPipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(depthPipeline, SHADER_SOURCE);
         return depthPipeline;
     }
 
@@ -920,7 +909,7 @@ public final class OitPipelines {
                                                              GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_NONE))
                                                      .build();
         }
-        RenderSystem.getDevice().precompilePipeline(mlabNearestDepthPipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(mlabNearestDepthPipeline, SHADER_SOURCE);
         return mlabNearestDepthPipeline;
     }
 
@@ -973,7 +962,7 @@ public final class OitPipelines {
     public static RenderPipeline berMlab(BerFamily family, OitInsertMode mode) {
         RenderPipeline pipeline = BER_MLAB_CACHE.computeIfAbsent(new BerMlabKey(family, mode),
                 OitPipelines::buildBerMlab);
-        RenderSystem.getDevice().precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -1010,7 +999,7 @@ public final class OitPipelines {
 
     public static RenderPipeline weatherMlab(OitInsertMode mode) {
         RenderPipeline pipeline = WEATHER_MLAB_CACHE.computeIfAbsent(mode, OitPipelines::buildWeatherMlab);
-        RenderSystem.getDevice().precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 
@@ -1036,7 +1025,7 @@ public final class OitPipelines {
         dropSodiumOnFormatChange();
         ChunkSodiumMlabKey key = new ChunkSodiumMlabKey(mode, fading, TerrainAtlasFilter.linear());
         RenderPipeline pipeline = CHUNK_SODIUM_MLAB_CACHE.computeIfAbsent(key, OitPipelines::buildChunkSodiumMlab);
-        RenderSystem.getDevice().precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 

@@ -69,8 +69,9 @@ public final class ItemModels {
         ItemMeshes result = BakedModelBufferer.INSTANCE.bufferItem(stack, displayContext, owner, seed);
         if (result == null || !result.stackDetermined()) {
             // Special-renderer/time-varying resolutions render via vanilla (the visual must draw nothing on top). Also DEMOTE the gate verdict: the support key is coarser than the resolution (e.g. custom_model_data selecting a special-renderer branch), so a sibling stack may have seeded TRUE -- the whole key goes vanilla and the visuals re-check the gate per frame.
-            SUPPORT_CACHE.get(true).put(new SupportKey(stack.getItem(), stack.get(DataComponents.ITEM_MODEL), displayContext),
-                    false);
+            SUPPORT_CACHE.get(true)
+                         .put(new SupportKey(stack.getItem(), stack.get(DataComponents.ITEM_MODEL), displayContext),
+                                 false);
             return EMPTY_BAKED;
         }
         return MODEL_CACHE.get(true).computeIfAbsent(new ModelKey(displayContext, result.identity(), stack.getItem(),

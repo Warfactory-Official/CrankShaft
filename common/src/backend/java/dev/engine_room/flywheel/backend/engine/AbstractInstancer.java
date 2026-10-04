@@ -14,7 +14,7 @@ public abstract class AbstractInstancer<I extends Instance> implements Instancer
         this.type = key.type();
         this.environment = key.environment();
         this.recreate = recreate;
-        // Port: hidden/deleted handles write into the fixed-size slab trash slot, so an oversized
+        // Port: deleted handles write into the fixed-size slab trash slot, so an oversized
         // layout would be a silent native-heap overflow -- reject it up front.
         int byteSize = type.layout().byteSize();
         if (byteSize > InstanceHandleImpl.SLAB_TRASH_BYTES) {
@@ -23,7 +23,7 @@ public abstract class AbstractInstancer<I extends Instance> implements Instancer
         }
     }
 
-    public abstract InstanceHandleImpl.State<I> revealInstance(InstanceHandleImpl<I> handle, I instance);
+    public abstract InstanceHandleImpl.State<I> revealInstance(InstanceHandleImpl<I> handle, I instance, long source);
 
     public abstract int instanceCount();
 

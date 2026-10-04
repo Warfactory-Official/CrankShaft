@@ -146,7 +146,11 @@ public final class SpscArrayQueue<E> extends SpscArrayQueuePad3<E> {
 
     private static int nextPow2(int v) {
         v--;
-        v |= v >> 1; v |= v >> 2; v |= v >> 4; v |= v >> 8; v |= v >> 16;
+        v |= v >> 1;
+        v |= v >> 2;
+        v |= v >> 4;
+        v |= v >> 8;
+        v |= v >> 16;
         return v + 1;
     }
 

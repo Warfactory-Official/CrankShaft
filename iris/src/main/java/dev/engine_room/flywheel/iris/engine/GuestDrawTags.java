@@ -83,13 +83,19 @@ final class GuestDrawTags {
                     int id = ids == null ? 0 : ids.applyAsInt(new NamespacedId("minecraft", irisName));
                     if (id != 0) return TaggedEnvironment.tag(TaggedEnvironment.KIND_ENTITY, id);
                 }
-                case PackIdentity.OfProgram(String irisProgram) -> {
+                case PackIdentity.OfProgram(String irisProgram, String irisEntity) -> {
                     int kind = switch (irisProgram) {
                         case "spidereyes" -> TaggedEnvironment.KIND_ENTITY_EYES;
                         case "entities_translucent" -> TaggedEnvironment.KIND_ENTITY_TRANSLUCENT;
                         case "entities" -> TaggedEnvironment.KIND_ENTITY_BLENDED;
                         default -> throw new IllegalArgumentException("No guest route to Iris program " + irisProgram);
                     };
+                    if (irisEntity != null) {
+                        Object2IntFunction<NamespacedId> ids = WorldRenderingSettings.INSTANCE.getEntityIds();
+                        int id = TaggedEnvironment.isEntity(drawTag) ? TaggedEnvironment.id(drawTag) : 0;
+                        if (ids != null) id = ids.applyAsInt(new NamespacedId("minecraft", irisEntity));
+                        return TaggedEnvironment.tag(kind, id);
+                    }
                     if (TaggedEnvironment.isEntity(drawTag)) {
                         return TaggedEnvironment.tag(kind, TaggedEnvironment.id(drawTag));
                     }

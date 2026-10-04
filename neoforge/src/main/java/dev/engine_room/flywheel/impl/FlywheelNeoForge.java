@@ -121,7 +121,8 @@ public final class FlywheelNeoForge {
                 return;
             }
             manager.renderDispatcher().afterEntities(ctx);
-            manager.renderDispatcher().beforeCrumbling(ctx, (Long2ObjectOpenHashMap<SortedSet<BlockDestructionProgress>>) mc.level.destructionProgress());
+            manager.renderDispatcher().beforeCrumbling(ctx,
+                    (Long2ObjectOpenHashMap<SortedSet<BlockDestructionProgress>>) mc.level.destructionProgress());
         });
     }
 

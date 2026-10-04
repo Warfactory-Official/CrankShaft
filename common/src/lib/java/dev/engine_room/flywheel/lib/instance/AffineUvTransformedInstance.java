@@ -15,7 +15,8 @@ import org.lwjgl.system.MemoryUtil;
  * Affine pose with a full two-dimensional UV transform. Both loaders use the same layout; owning visual
  * tasks mutate instances before the render barrier. Geometry buffers stay immutable as triangles deform.
  */
-public final class AffineUvTransformedInstance extends UvTransformedInstance {    private static final int OFF_UV_SHEAR = 92;
+public final class AffineUvTransformedInstance extends UvTransformedInstance {
+    private static final int OFF_UV_SHEAR = 92;
     private static final Matrix4f IDENTITY = new Matrix4f();
 
     public static final InstanceType<AffineUvTransformedInstance> TYPE = SimpleInstanceType

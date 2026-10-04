@@ -1,0 +1,17 @@
+#version 430 core
+layout(local_size_x=8,local_size_y=8) in;
+uniform sampler2D depth;
+uniform int width;
+uniform int height;
+uniform int layer;
+uniform int loadHistory;
+layout(r32f,binding=0) uniform writeonly image2D destination;
+void main() {
+    ivec2 p=ivec2(gl_GlobalInvocationID.xy);
+    if (p.x>=width||p.y>=height) return;
+    if(loadHistory!=0 && uint(layer)>=flw_maxLayers) return;
+    bool valid=flw_overflow==0u && flw_maxLayers>1u;
+    if (loadHistory!=0) valid=valid && loadHistory==1 && (flw_pad&0x00ffffffu)==flw_maxLayers;
+    else valid=valid && (uint(layer)==flw_maxLayers-1u || flw_materialAt(uint(p.y*width+p.x),layer)!=0xffffffffu);
+    imageStore(destination,p,vec4(valid?texelFetch(depth,p,0).r:1.0));
+}

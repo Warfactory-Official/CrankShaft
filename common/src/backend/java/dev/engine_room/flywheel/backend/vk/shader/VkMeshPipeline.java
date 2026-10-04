@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.backend.vk.shader;
 
 import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
+import dev.engine_room.flywheel.backend.vk.VkPipelineCaches;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
@@ -40,7 +41,8 @@ public final class VkMeshPipeline {
     // Material-keyed producers (no depth write): depth test, cull and polygon offset from the material.
     public VkMeshPipeline(VkDescriptorLayout layout, long taskModule, long meshModule, long fragModule,
                           int[] colorFormats, VkGraphicsPipeline.Blend[] blends, int depthCompareOp, int cullMode,
-                          int depthFormat, int @Nullable [] attachmentLocations, int @Nullable [] inputAttachmentIndices,
+                          int depthFormat, int @Nullable [] attachmentLocations,
+                          int @Nullable [] inputAttachmentIndices,
                           float depthBiasConstant, float depthBiasSlope) {
         this(layout, taskModule, meshModule, fragModule, colorFormats, blends, false, depthCompareOp, cullMode,
                 depthFormat, attachmentLocations, inputAttachmentIndices, depthBiasConstant, depthBiasSlope);
@@ -176,7 +178,8 @@ public final class VkMeshPipeline {
                 .layout(layout.pipelineLayout());
 
             LongBuffer pPipeline = stack.callocLong(1);
-            int result = VK12.vkCreateGraphicsPipelines(VkContext.vkDevice(), 0L, info, null, pPipeline);
+            int result = VK12.vkCreateGraphicsPipelines(VkContext.vkDevice(), VkPipelineCaches.handle(), info, null,
+                    pPipeline);
             if (result != VK12.VK_SUCCESS) {
                 throw new IllegalStateException("Vulkan error " + result + " creating mesh-shader pipeline");
             }

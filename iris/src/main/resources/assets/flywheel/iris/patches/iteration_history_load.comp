@@ -1,0 +1,27 @@
+#version 430 core
+layout(local_size_x=8,local_size_y=8) in;
+uniform sampler2D history[8];
+uniform int width;
+uniform int height;
+uniform int layer;
+uniform int clearHistory;
+uniform int historyMask;
+layout(rgba16f,binding=0) uniform writeonly image2D colors[6];
+layout(rg16,binding=6) uniform writeonly image2D normals[2];
+void main() {
+    ivec2 p=ivec2(gl_GlobalInvocationID.xy);
+    if (p.x>=width||p.y>=height||flw_overflow!=0u||flw_maxLayers<=1u||uint(layer)>=flw_maxLayers) return;
+    bool clear = clearHistory>=0 && (clearHistory!=0 || (flw_pad&0x00ffffffu)!=flw_maxLayers);
+    bool full = uint(layer)==flw_maxLayers-1u || (flw_tiles[layer]&1u)!=0u;
+    for (int i=0;i<6;i++) {
+        bool present=(historyMask&(1<<i))!=0;
+        if(i>=2 && !full) continue;
+        if(clearHistory<0 && !present) continue;
+        imageStore(colors[i],p,clear||!present?vec4(0.0):texelFetch(history[i],p,0));
+    }
+    if(full) for (int i=0;i<2;i++) {
+        bool present=(historyMask&(1<<(i+6)))!=0;
+        if(clearHistory<0 && !present) continue;
+        imageStore(normals[i],p,clear||!present?vec4(0.0):texelFetch(history[i+6],p,0));
+    }
+}

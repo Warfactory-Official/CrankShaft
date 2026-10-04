@@ -1,0 +1,17 @@
+#version 430 compatibility
+layout(local_size_x = 8, local_size_y = 8) in;
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+uniform vec2 screenSize;
+uniform int frameCounter;
+_FLW_ITERATION_LAYERS
+_FLW_ITERATION_MATERIALS
+void main() {
+    if (!flw_oitActive) return;
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(pixel, uvec2(screenSize)))) return;
+    uint offset = pixel.y * uint(screenSize.x) + pixel.x;
+    flw_heads[offset] = 0xffffffffu;
+    flw_materialHeads[offset] = 0xffffffffu;
+    if (offset == 0u) { flw_pad = frameCounter > 0 ? flw_maxLayers : 0u; flw_count = 0u; flw_overflow = 0u; flw_maxLayers = 0u; }
+    if (offset < uint(flw_tiles.length())) flw_tiles[offset] = 0u;
+}

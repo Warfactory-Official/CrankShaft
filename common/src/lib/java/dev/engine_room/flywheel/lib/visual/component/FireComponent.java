@@ -34,7 +34,7 @@ import org.joml.Vector4fc;
 public final class FireComponent implements EntityComponent {
     // Port: public for shaderpack guests (Iris entity_flame id).
     public static final Material FIRE_MATERIAL = SimpleMaterial.builderOf(Materials.CUTOUT_UNSHADED_BLOCK)
-                                                                .build();
+                                                               .build();
 
     // Parameterize by the sprite id rather than the sprite itself: sprites are re-stitched (and the old
     // references invalidated) on every resource reload, so the cache is cleared then.
@@ -55,6 +55,13 @@ public final class FireComponent implements EntityComponent {
         this.entity = entity;
 
         recycler = new SmartRecycler<>(this::createInstance);
+    }
+
+    private static Model model(SpriteId id, boolean flipped) {
+        TextureAtlasSprite sprite = Minecraft.getInstance()
+                                             .getAtlasManager()
+                                             .get(id);
+        return new SingleMeshModel(new FireMesh(sprite, flipped), FIRE_MATERIAL);
     }
 
     private TransformedInstance createInstance(Model model) {
@@ -138,13 +145,6 @@ public final class FireComponent implements EntityComponent {
     @Override
     public void delete() {
         recycler.delete();
-    }
-
-    private static Model model(SpriteId id, boolean flipped) {
-        TextureAtlasSprite sprite = Minecraft.getInstance()
-                                             .getAtlasManager()
-                                             .get(id);
-        return new SingleMeshModel(new FireMesh(sprite, flipped), FIRE_MATERIAL);
     }
 
     private record FireMesh(TextureAtlasSprite sprite, boolean flipped) implements QuadMesh {

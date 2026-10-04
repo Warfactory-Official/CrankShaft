@@ -67,12 +67,17 @@ public final class InstanceTypes {
                                                                                                            3)
                                                                                                    .build())
                                                                               .seed(ptr -> {
-                                                                                  MemoryUtil.memPutInt(ptr + ColoredLitInstance.OFF_RGBA, 0xFFFFFFFF);
-                                                                                  ExtraMemoryOps.put2x16(ptr + ColoredLitOverlayInstance.OFF_OVERLAY,
+                                                                                  MemoryUtil.memPutInt(
+                                                                                          ptr + ColoredLitInstance.OFF_RGBA,
+                                                                                          0xFFFFFFFF);
+                                                                                  ExtraMemoryOps.put2x16(
+                                                                                          ptr + ColoredLitOverlayInstance.OFF_OVERLAY,
                                                                                           OverlayTexture.NO_OVERLAY);
-                                                                                  ExtraMemoryOps.putMatrix4f(ptr + PosedInstance.OFF_POSE,
+                                                                                  ExtraMemoryOps.putMatrix4f(
+                                                                                          ptr + PosedInstance.OFF_POSE,
                                                                                           IDENTITY_M4);
-                                                                                  ExtraMemoryOps.putMatrix3f(ptr + PosedInstance.OFF_NORMAL,
+                                                                                  ExtraMemoryOps.putMatrix3f(
+                                                                                          ptr + PosedInstance.OFF_NORMAL,
                                                                                           IDENTITY_M3);
                                                                               })
                                                                               .vertexShader(ResourceUtil.rl(

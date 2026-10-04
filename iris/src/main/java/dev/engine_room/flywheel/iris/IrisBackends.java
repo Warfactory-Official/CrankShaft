@@ -5,6 +5,7 @@ import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
 import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
+import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.backend.gl.Driver;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
@@ -60,9 +61,13 @@ public final class IrisBackends {
     static {
         // Iris re-enters Sodium's terrain draw for the shadow pass; the engine must leave that one alone.
         if (CompatMod.IRIS.isLoaded) {
+            ShaderWarmup.register(IrisWarmup::warm);
             GuestTerrainGate.setShadowPass(IrisShadow::active);
             GuestTerrainGate.setShadowResolution(IrisShadow::resolution);
         }
+    }
+
+    private IrisBackends() {
     }
 
     // Separate class: this one must load without Iris, so the Iris reference resolves only once IRIS.isLoaded
@@ -77,6 +82,9 @@ public final class IrisBackends {
         }
     }
 
-    private IrisBackends() {
+    private static final class IrisWarmup {
+        static void warm() {
+            if (IrisGate.isPackInUse()) dev.engine_room.flywheel.iris.compile.GuestPipelines.warmCurrent();
+        }
     }
 }

@@ -3,7 +3,10 @@ package dev.engine_room.flywheel.iris.mixin;
 import com.google.common.collect.ImmutableSet;
 import dev.engine_room.flywheel.iris.engine.DeferredCompositePass;
 import net.irisshaders.iris.gl.framebuffer.GlFramebuffer;
+import net.irisshaders.iris.gl.framebuffer.ViewportData;
+import net.irisshaders.iris.gl.program.ComputeProgram;
 import net.irisshaders.iris.gl.program.Program;
+import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
@@ -13,7 +16,19 @@ public interface CompositePassAccessor extends DeferredCompositePass {
     String flywheel$name();
 
     @Accessor("program")
-    Program flywheel$program();
+    @Nullable Program flywheel$program();
+
+    @Accessor("computes")
+    ComputeProgram[] flywheel$computes();
+
+    @Accessor("viewWidth")
+    int flywheel$viewWidth();
+
+    @Accessor("viewHeight")
+    int flywheel$viewHeight();
+
+    @Accessor("viewportScale")
+    ViewportData flywheel$viewportScale();
 
     @Accessor("stageReadsFromAlt")
     ImmutableSet<Integer> flywheel$readAlt();

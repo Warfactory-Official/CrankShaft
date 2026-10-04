@@ -2,9 +2,9 @@ package dev.engine_room.flywheel.lib.model.baked;
 
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.lib.model.ModelUtil;
+import net.minecraft.client.renderer.block.MovingBlockRenderState;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.EnumMap;
@@ -35,5 +35,9 @@ public final class BlockModelBuilder {
     public static Model build(BlockState state, int cullMask, long seed, BlockMaterialFunction materialFunc) {
         EnumMap<ChunkSectionLayer, BakedMesh> meshes = BakedModelBufferer.INSTANCE.bufferBlock(state, cullMask, seed);
         return ModelUtil.buildModel(meshes, materialFunc);
+    }
+
+    public static Model buildMovingBlock(MovingBlockRenderState renderState) {
+        return ModelUtil.buildModel(BakedModelBufferer.INSTANCE.bufferMovingBlock(renderState), ModelUtil::getMaterial);
     }
 }

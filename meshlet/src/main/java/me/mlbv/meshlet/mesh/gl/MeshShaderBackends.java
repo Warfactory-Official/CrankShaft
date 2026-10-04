@@ -27,9 +27,8 @@ import org.lwjgl.system.MemoryUtil;
 // Self-registers GL_MESH_SHADER via its static field initializer; BackendManagerImpl.init() force-loads it by FQN
 // within the registry-freeze window (the :meshlet->:common dependency is one-way). Visuals reuse the INDIRECT engine.
 public final class MeshShaderBackends {
-    private static final int PRIORITY = 900;
-
     public static final Backend GL_MESH_SHADER = register();
+    private static final int PRIORITY = 900;
 
     private MeshShaderBackends() {
     }

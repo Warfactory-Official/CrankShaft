@@ -57,6 +57,7 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
     private int drawKind;
     private boolean passEntities = true;
     private boolean passBlockEntities = true;
+    private boolean shadowPass;
     private boolean hasDraws;
     // Set for the duration of the main-pass translucent submit: the terrain stream joins the OIT producer passes.
     private @Nullable SodiumTerrainOitReplay guestTerrain;
@@ -98,7 +99,9 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         cullIntoPass2(cull);
         passEntities = entities;
         passBlockEntities = blockEntities;
+        shadowPass = true;
         submitUberPass("flywheel:iris/shadow", uberMultiDraws, shadowModelView, true, shadowPipeline());
+        shadowPass = false;
         passEntities = passBlockEntities = true;
         GlCompat.popDebugGroup();
         return true;
@@ -111,7 +114,9 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         GlCompat.pushDebugGroup("flywheel:iris/shadow_translucent");
         passEntities = entities;
         passBlockEntities = blockEntities;
+        shadowPass = true;
         submitTranslucent(pipeline, true, shadowModelView, true, shadowPipeline());
+        shadowPass = false;
         passEntities = passBlockEntities = true;
         GlCompat.popDebugGroup();
     }
@@ -277,6 +282,7 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         blendedEntityScratch.clear();
         boolean dropBlobShadows = GuestEntityShadows.suppressed();
         for (UberDraw batch : batches) {
+            if (shadowPass && GuestDrawManager.emissive(batch.material())) continue;
             if (dropBlobShadows && GuestEntityShadows.isBlobShadow(batch.material())) {
                 continue;
             }
@@ -362,6 +368,11 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
     @Override
     protected RenderPipeline uberPipelineFor(Material material, boolean embedded) {
         return GuestPipelines.indirect(role(PackRole.SOLID), material, embedded);
+    }
+
+    @Override
+    protected void warmUp(Material material, boolean embedded) {
+        // Iris: guest programs are warmed with their pack; native programs do not participate in these draws.
     }
 
     @Override

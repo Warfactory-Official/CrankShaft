@@ -19,8 +19,8 @@ import java.util.regex.Pattern;
  * Family manifests select candidates; diff context and capability checks establish applicability.
  * {@code deferredEmissive}: the pack's emissive program writes G-buffers its deferred lighting consumes.
  * {@code deferredTranslucent}: its translucent program writes G-buffers that composite finds by
- * {@code depthtex0 != depthtex1}. {@code emissiveLight}: its emissive contract adds light into a buffer that a
- * {@code patches} diff merges into the lit scene; {@code programs} builds that contract.
+ * {@code depthtex0 != depthtex1}. {@code emissiveLight}: its emissive contract adds light to the lit colour target
+ * directly or through a buffer merged by a {@code patches} diff; {@code programs} builds that contract.
  */
 record PackPatch(int schema, String name, List<String> testedVersions, List<SourceMatch> matches, List<FileEdit> files,
                  List<Wrapper> wrappers, List<BlendCopy> blends, String properties, @Nullable SourceGuard forwardOit,
@@ -28,7 +28,8 @@ record PackPatch(int schema, String name, List<String> testedVersions, List<Sour
                  List<String> patches, List<Program> programs, boolean emissiveLight) {
     private static final String RESOURCE_ROOT = "/assets/flywheel/iris/patches/";
     private static final Pattern INCLUDE = Pattern.compile("(?m)^\\h*#\\h*include\\h+\"([^\"]+)\"");
-    private static final List<PackPatch> PATCHES = List.of("complementary", "euphoria", "solas", "iteration", "sundial", "bsl",
+    private static final List<PackPatch> PATCHES = List.of("complementary", "euphoria", "solas", "iteration", "sundial",
+                                                               "bsl",
                                                                "makeup", "photon", "bliss", "sildur")
                                                        .stream().map(PackPatch::load).toList();
 
@@ -160,9 +161,10 @@ record PackPatch(int schema, String name, List<String> testedVersions, List<Sour
     }
 
     /**
-     * A contract program from the pack's {@code clrwl_gbuffers} vertex stage and a bundled fragment stage.
+     * A bundled fragment with the pack's named vertex program, defaulting to {@code clrwl_gbuffers}.
+     * {@code nativeDraw} selects the fragment's straight vertex-colour input instead of its material hook.
      */
-    record Program(String target, String fragment) {
+    record Program(String target, String fragment, @Nullable String vertex, boolean nativeDraw) {
     }
 
     record FileEdit(String target, String patch) {

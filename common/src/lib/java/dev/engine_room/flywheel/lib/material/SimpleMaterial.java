@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.lib.material;
 
 import dev.engine_room.flywheel.api.material.*;
+import dev.engine_room.flywheel.lib.util.ShaderWarmupRegistry;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.resources.Identifier;
 
@@ -359,7 +360,10 @@ public class SimpleMaterial implements Material {
         }
 
         public SimpleMaterial build() {
-            return new SimpleMaterial(this);
+            SimpleMaterial material = new SimpleMaterial(this);
+            // Port: collect downstream shader variants without retaining temporary materials.
+            ShaderWarmupRegistry.register(material);
+            return material;
         }
     }
 }

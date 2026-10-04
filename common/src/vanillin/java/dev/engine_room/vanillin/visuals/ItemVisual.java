@@ -143,8 +143,9 @@ public class ItemVisual extends AbstractEntityVisual<ItemEntity> implements Simp
         }
         animate(context.partialTick());
         shadowComponent.radius(0.15f);
-        shadowComponent.strength(EntityFeatureCompat.shadowStrength((float) ((1.0 - entity.distanceToSqr(context.camera()
-                                                                             .position()) / 256.0) * 0.75)));
+        shadowComponent.strength(
+                EntityFeatureCompat.shadowStrength((float) ((1.0 - entity.distanceToSqr(context.camera()
+                                                                                               .position()) / 256.0) * 0.75)));
         shadowComponent.beginFrame(context);
         fireComponent.beginFrame(context);
         nameTagComponent.beginFrame(context);

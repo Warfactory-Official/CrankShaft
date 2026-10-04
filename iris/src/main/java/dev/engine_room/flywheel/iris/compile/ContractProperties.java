@@ -62,7 +62,8 @@ public final class ContractProperties {
         if (buffers.length == 0 || buffers.length > 8) return null;
         boolean spec = authored.enabled();
         if (spec && !certifiedAlpha) {
-            FlwBackend.LOGGER.info("Shared OIT rejected: {} adapter OIT spec without a checked source", source.getName());
+            FlwBackend.LOGGER.info("Shared OIT rejected: {} adapter OIT spec without a checked source",
+                    source.getName());
             return null;
         }
         int accumulated = 0;

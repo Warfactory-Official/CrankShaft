@@ -73,6 +73,7 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
     @Nullable
     private final ShadowComponent shadow;
     private final AtomicBoolean capturePending = new AtomicBoolean(false);
+    protected float partialTick;
     @Nullable
     private InstanceTree instances;
     @Nullable
@@ -91,7 +92,6 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
     private volatile @Nullable Snapshot published;
     private volatile boolean deleted;
     private boolean hiddenBody;
-    protected float partialTick;
 
     @SuppressWarnings("unchecked")
     protected EntityModelVisual(VisualizationContext ctx, T entity, float partialTick,
@@ -167,8 +167,8 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
 
     static EntityModel<?> sharedModel(ModelLayerLocation layer, Function<ModelPart, ? extends EntityModel<?>> factory) {
         return SHARED_MODELS.get(true).computeIfAbsent(layer, l -> factory.apply(Minecraft.getInstance()
-                                                                                .getEntityModels()
-                                                                                .bakeLayer(l)));
+                                                                                          .getEntityModels()
+                                                                                          .bakeLayer(l)));
     }
 
     static Rigs rigs(ModelLayerLocation layer, Function<ModelPart, ? extends EntityModel<?>> factory) {
@@ -192,58 +192,6 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
                 throw new IllegalStateException("Could not rebuild " + prototype.getClass(), t);
             }
         };
-    }
-
-    /**
-     * Capture-side copies of one layer's vanilla model, one per thread: {@code setupAnim} writes into the model, and
-     * vanilla poses its own instances on the render thread. Cube-less: capture reads transforms only.
-     */
-    static final class Rigs {
-        // The layer's bake (models may root below it).
-        private final ModelPart template;
-        // The prototype's visibility: model constructors set some, renderer constructors override them.
-        private final ModelPart visibility;
-        private final ThreadLocal<Rig> perThread;
-
-        Rigs(ModelLayerLocation layer, EntityModel<?> prototype, Function<ModelPart, ? extends EntityModel<?>> factory) {
-            template = skeleton(Minecraft.getInstance()
-                                         .getEntityModels()
-                                         .bakeLayer(layer));
-            visibility = factory.apply(skeleton(template))
-                                .root();
-            copyVisibility(prototype.root(), visibility);
-            perThread = ThreadLocal.withInitial(() -> {
-                EntityModel<?> model = factory.apply(skeleton(template));
-                copyVisibility(visibility, model.root());
-                List<ModelPart> parts = new ArrayList<>();
-                flattenModel(model.root(), "", -1, parts, new ArrayList<>(), new ArrayList<>());
-                return new Rig(model, parts.toArray(new ModelPart[0]));
-            });
-        }
-
-        Rig get() {
-            return perThread.get();
-        }
-
-        private static void copyVisibility(ModelPart from, ModelPart to) {
-            to.visible = from.visible;
-            to.skipDraw = from.skipDraw;
-            from.children.forEach((name, child) -> copyVisibility(child, to.getChild(name)));
-        }
-
-        private static ModelPart skeleton(ModelPart source) {
-            Map<String, ModelPart> children = new LinkedHashMap<>();
-            source.children.forEach((name, child) -> children.put(name, skeleton(child)));
-            ModelPart copy = new ModelPart(List.of(), children);
-            copy.setInitialPose(source.getInitialPose());
-            copy.loadPose(source.getInitialPose());
-            copy.visible = source.visible;
-            copy.skipDraw = source.skipDraw;
-            return copy;
-        }
-    }
-
-    record Rig(EntityModel<?> model, ModelPart[] parts) {
     }
 
     // Sorted-child DFS over the vanilla model, matching InstanceTree (which sorts child names), so transforms captured by index apply to the matching instanced bone.
@@ -313,6 +261,19 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
         });
     }
 
+    // Compat with Iris: it draws a blended vanilla entity render type after its deferred passes, through the program
+    // the pipeline maps to.
+    static ModelTree irisRouted(ModelTree tree, RenderType renderType) {
+        RenderPipeline pipeline = renderType.pipeline();
+        if (pipeline == RenderPipelines.ENTITY_TRANSLUCENT || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_CULL) {
+            return PackTaggedModel.tag(tree, List.of(PackIdentity.ENTITIES_TRANSLUCENT));
+        }
+        if (pipeline == RenderPipelines.EYES || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE) {
+            return PackTaggedModel.tag(tree, List.of(PackIdentity.SPIDER_EYES));
+        }
+        return tree;
+    }
+
     protected abstract Identifier texture(S state);
 
     /**
@@ -365,19 +326,6 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
     @Nullable
     protected Material foilMaterial(S state) {
         return null;
-    }
-
-    // Compat with Iris: it draws a blended vanilla entity render type after its deferred passes, through the program
-    // the pipeline maps to.
-    static ModelTree irisRouted(ModelTree tree, RenderType renderType) {
-        RenderPipeline pipeline = renderType.pipeline();
-        if (pipeline == RenderPipelines.ENTITY_TRANSLUCENT || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_CULL) {
-            return PackTaggedModel.tag(tree, List.of(PackIdentity.ENTITIES_TRANSLUCENT));
-        }
-        if (pipeline == RenderPipelines.EYES || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE) {
-            return PackTaggedModel.tag(tree, List.of(PackIdentity.SPIDER_EYES));
-        }
-        return tree;
     }
 
     protected final EntityModel<S> model(int variant) {
@@ -627,6 +575,59 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
         if (shadow != null) {
             shadow.delete();
         }
+    }
+
+    /**
+     * Capture-side copies of one layer's vanilla model, one per thread: {@code setupAnim} writes into the model, and
+     * vanilla poses its own instances on the render thread. Cube-less: capture reads transforms only.
+     */
+    static final class Rigs {
+        // The layer's bake (models may root below it).
+        private final ModelPart template;
+        // The prototype's visibility: model constructors set some, renderer constructors override them.
+        private final ModelPart visibility;
+        private final ThreadLocal<Rig> perThread;
+
+        Rigs(ModelLayerLocation layer, EntityModel<?> prototype,
+             Function<ModelPart, ? extends EntityModel<?>> factory) {
+            template = skeleton(Minecraft.getInstance()
+                                         .getEntityModels()
+                                         .bakeLayer(layer));
+            visibility = factory.apply(skeleton(template))
+                                .root();
+            copyVisibility(prototype.root(), visibility);
+            perThread = ThreadLocal.withInitial(() -> {
+                EntityModel<?> model = factory.apply(skeleton(template));
+                copyVisibility(visibility, model.root());
+                List<ModelPart> parts = new ArrayList<>();
+                flattenModel(model.root(), "", -1, parts, new ArrayList<>(), new ArrayList<>());
+                return new Rig(model, parts.toArray(new ModelPart[0]));
+            });
+        }
+
+        private static void copyVisibility(ModelPart from, ModelPart to) {
+            to.visible = from.visible;
+            to.skipDraw = from.skipDraw;
+            from.children.forEach((name, child) -> copyVisibility(child, to.getChild(name)));
+        }
+
+        private static ModelPart skeleton(ModelPart source) {
+            Map<String, ModelPart> children = new LinkedHashMap<>();
+            source.children.forEach((name, child) -> children.put(name, skeleton(child)));
+            ModelPart copy = new ModelPart(List.of(), children);
+            copy.setInitialPose(source.getInitialPose());
+            copy.loadPose(source.getInitialPose());
+            copy.visible = source.visible;
+            copy.skipDraw = source.skipDraw;
+            return copy;
+        }
+
+        Rig get() {
+            return perThread.get();
+        }
+    }
+
+    record Rig(EntityModel<?> model, ModelPart[] parts) {
     }
 
     private record Snapshot(@Nullable Matrix4f local, double x, double y, double z,

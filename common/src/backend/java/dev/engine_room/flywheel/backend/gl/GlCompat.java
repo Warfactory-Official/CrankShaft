@@ -12,6 +12,11 @@ public final class GlCompat {
 
     @Nullable
     public static final GLCapabilities CAPABILITIES;
+    public static final boolean ALLOW_DSA = true;
+    // Debugger opt-out (flip to true + rebuild): Nsight C++ capture cannot record bindless residency,
+    // so this forces the classic per-batch bind path.
+    private static final boolean DISABLE_BINDLESS = false;
+
     static {
         GLCapabilities caps;
         try {
@@ -30,7 +35,6 @@ public final class GlCompat {
     public static final String GL_SHADING_LANGUAGE_VERSION_STRING = safeGetString(GL20C.GL_SHADING_LANGUAGE_VERSION);
     public static final Driver DRIVER = readVendorString();
     public static final int SUBGROUP_SIZE = subgroupSize();
-    public static final boolean ALLOW_DSA = true;
     public static final GlslVersion MAX_GLSL_VERSION = maxGlslVersion();
     public static final boolean SUPPORTS_INSTANCING = isInstancingSupported();
     public static final boolean SUPPORTS_INDIRECT = isIndirectSupported();
@@ -47,9 +51,6 @@ public final class GlCompat {
             && CAPABILITIES.glTexStorage3D != MemoryUtil.NULL;
     private static final boolean PARAMETER_BUFFER_CORE = CAPABILITIES != null
             && CAPABILITIES.glMultiDrawElementsIndirectCount != MemoryUtil.NULL;
-    // Debugger opt-out (flip to true + rebuild): Nsight C++ capture cannot record bindless residency,
-    // so this forces the classic per-batch bind path.
-    private static final boolean DISABLE_BINDLESS = false;
 
     private GlCompat() {
     }

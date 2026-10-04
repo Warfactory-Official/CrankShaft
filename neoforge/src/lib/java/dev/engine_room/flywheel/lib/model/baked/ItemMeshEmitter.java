@@ -63,7 +63,8 @@ final class ItemMeshEmitter {
                 normals.add(fny);
                 normals.add(fnz);
             } else {
-                scratchNormal.set(BakedNormals.unpackX(packedNormal), BakedNormals.unpackY(packedNormal), BakedNormals.unpackZ(packedNormal));
+                scratchNormal.set(BakedNormals.unpackX(packedNormal), BakedNormals.unpackY(packedNormal),
+                        BakedNormals.unpackZ(packedNormal));
                 normalMatrix.transform(scratchNormal).normalize();
                 normals.add(scratchNormal.x);
                 normals.add(scratchNormal.y);

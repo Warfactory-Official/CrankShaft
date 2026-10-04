@@ -42,19 +42,37 @@ final class GuestShadowCull {
     private static final Compile<InstanceTypeIds.Snapshot> COMPILE = new Compile<>();
 
     private final CompilationHarness<InstanceTypeIds.Snapshot> programs = COMPILE.program()
-            .link(COMPILE.shader(GlCompat.MAX_GLSL_VERSION, ShaderType.COMPUTE)
-                         .nameMapper(snapshot -> "iris/shadow_cull_uber" + snapshot.types().size())
-                         .requireExtensions(List.of())
-                         .withResource(ResourceUtil.rl("internal/indirect/cull_api_impl.glsl"))
-                         .with((snapshot, sources) -> new UberCullComponent(snapshot.types(), sources))
-                         .withResource(ResourceUtil.rl("iris/shadow_cull.glsl")))
-            .postLink((key, program) -> {
-                Uniforms.setUniformBlockBindings(program);
-                program.setUniformBlockBinding("_FlwShadowCull", BINDING);
-            })
-            .harness("iris_shadow_cull", FlwPrograms.SOURCES);
+                                                                                 .link(COMPILE.shader(
+                                                                                                      GlCompat.MAX_GLSL_VERSION,
+                                                                                                      ShaderType.COMPUTE)
+                                                                                              .nameMapper(
+                                                                                                      snapshot -> "iris/shadow_cull_uber" + snapshot.types()
+                                                                                                                                                    .size())
+                                                                                              .requireExtensions(
+                                                                                                      List.of())
+                                                                                              .withResource(
+                                                                                                      ResourceUtil.rl(
+                                                                                                              "internal/indirect/cull_api_impl.glsl"))
+                                                                                              .with((snapshot, sources) -> new UberCullComponent(
+                                                                                                      snapshot.types(),
+                                                                                                      sources))
+                                                                                              .withResource(
+                                                                                                      ResourceUtil.rl(
+                                                                                                              "iris/shadow_cull.glsl")))
+                                                                                 .postLink((key, program) -> {
+                                                                                     Uniforms.setUniformBlockBindings(
+                                                                                             program);
+                                                                                     program.setUniformBlockBinding(
+                                                                                             "_FlwShadowCull", BINDING);
+                                                                                 })
+                                                                                 .harness("iris_shadow_cull",
+                                                                                         FlwPrograms.SOURCES);
     private final GlBuffer uniform = new GlBuffer(GlBufferUsage.DYNAMIC_DRAW);
     private final MemoryBlock block = MemoryBlock.calloc(SIZE, 1);
+
+    private static double maxDistance(@Nullable BoxCuller culler) {
+        return culler == null ? 0 : ((ShadowFrustumAccessors.Culler) culler).flywheel$maxDistance();
+    }
 
     /**
      * Uploads this frame's frustum and returns the cull program, or {@code null} when Iris culls everything.
@@ -100,10 +118,6 @@ final class GuestShadowCull {
         GL30C.glBindBufferBase(GL31C.GL_UNIFORM_BUFFER, BINDING, uniform.handle());
 
         return programs.get(InstanceTypeIds.snapshot());
-    }
-
-    private static double maxDistance(@Nullable BoxCuller culler) {
-        return culler == null ? 0 : ((ShadowFrustumAccessors.Culler) culler).flywheel$maxDistance();
     }
 
     void delete() {

@@ -23,10 +23,12 @@ abstract class IrisRenderingPipelineMixin {
     private Int2ObjectArrayMap<BuiltShaderStorageInfo> flywheel$acceptedBuffers(ShaderPack pack,
                                                                                 Operation<Int2ObjectArrayMap<BuiltShaderStorageInfo>> original,
                                                                                 @Local(argsOnly = true) ProgramSet programs) {
-        if (((ContractShaderPack) pack).flywheel$deferredOit() != null
-                && ((ContractProgramSet) programs).flywheel$deferredOit() == null) {
-            // This profile's three buffers have no native pack owner.
-            return new Int2ObjectArrayMap<>();
+        var profile = ((ContractShaderPack) pack).flywheel$deferredOit();
+        if (profile != null && ((ContractProgramSet) programs).flywheel$deferredOit() == null) {
+            // A rejected adapter must leave the pack's own storage bindings intact.
+            var nativeBuffers = new Int2ObjectArrayMap<>(original.call(pack));
+            for (int binding : profile.storageBindings()) nativeBuffers.remove(binding);
+            return nativeBuffers;
         }
         return original.call(pack);
     }

@@ -27,6 +27,25 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
         OitConfig.setSaver(this::saveOit);
     }
 
+    private static @Nullable Backend parseBackend(String value) {
+        if (value.equalsIgnoreCase(DEFAULT_BACKEND_STR)) {
+            return BackendManager.defaultBackend();
+        }
+        Identifier backendId;
+        try {
+            backendId = Identifier.parse(value);
+        } catch (IdentifierException e) {
+            FlwImpl.CONFIG_LOGGER.warn("'backend' value '{}' is not a valid resource location", value);
+            return null;
+        }
+        Backend backend = Backend.REGISTRY.get(backendId);
+        if (backend == null) {
+            FlwImpl.CONFIG_LOGGER.warn("Backend with ID '{}' is not registered", backendId);
+            return null;
+        }
+        return backend;
+    }
+
     @Override
     public Backend backend() {
         Backend backend = parseBackend(client.backend.get());
@@ -50,7 +69,8 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
     public int workerThreadCount() {
         int workerThreads = client.workerThreads.get();
         int processors = Runtime.getRuntime().availableProcessors();
-        int workers = workerThreads <= 0 ? Math.max(1, processors + workerThreads) : Math.min(workerThreads, processors);
+        int workers = workerThreads <= 0 ? Math.max(1, processors + workerThreads) : Math.min(workerThreads,
+                processors);
         return Math.max(1, workers);
     }
 
@@ -117,25 +137,6 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
         context.registerConfig(ModConfig.Type.CLIENT, clientSpec);
     }
 
-    private static @Nullable Backend parseBackend(String value) {
-        if (value.equalsIgnoreCase(DEFAULT_BACKEND_STR)) {
-            return BackendManager.defaultBackend();
-        }
-        Identifier backendId;
-        try {
-            backendId = Identifier.parse(value);
-        } catch (IdentifierException e) {
-            FlwImpl.CONFIG_LOGGER.warn("'backend' value '{}' is not a valid resource location", value);
-            return null;
-        }
-        Backend backend = Backend.REGISTRY.get(backendId);
-        if (backend == null) {
-            FlwImpl.CONFIG_LOGGER.warn("Backend with ID '{}' is not registered", backendId);
-            return null;
-        }
-        return backend;
-    }
-
     public static final class ClientConfig {
         public final ModConfigSpec.ConfigValue<String> backend;
         public final ModConfigSpec.BooleanValue limitUpdates;
@@ -152,51 +153,54 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
 
         private ClientConfig(ModConfigSpec.Builder builder) {
             backend = builder.comment("Select the backend to use. Set to \"DEFAULT\" to let Flywheel decide.")
-                    .define("backend", DEFAULT_BACKEND_STR);
+                             .define("backend", DEFAULT_BACKEND_STR);
 
             limitUpdates = builder.comment("Enable or disable instance update limiting with distance.")
-                    .define("limitUpdates", true);
+                                  .define("limitUpdates", true);
 
             workerThreads = builder.comment("Number of worker threads for the Flywheel ForkJoinPool. "
-                            + "Positive: absolute count, clamped to availableProcessors. Zero or negative: relative to "
-                            + "availableProcessors (0 = all cores, -1 = leaves one for the render thread, -N = leaves N). "
-                            + "Result is always at least 1; a result of 1 routes to the serial executor. "
-                            + "Requires a game restart to take effect.")
-                    .defineInRange("workerThreads", -1, -Runtime.getRuntime()
-                            .availableProcessors(), Runtime.getRuntime()
-                            .availableProcessors());
+                                           + "Positive: absolute count, clamped to availableProcessors. Zero or negative: relative to "
+                                           + "availableProcessors (0 = all cores, -1 = leaves one for the render thread, -N = leaves N). "
+                                           + "Result is always at least 1; a result of 1 routes to the serial executor. "
+                                           + "Requires a game restart to take effect.")
+                                   .defineInRange("workerThreads", -1, -Runtime.getRuntime()
+                                                                               .availableProcessors(),
+                                           Runtime.getRuntime()
+                                                  .availableProcessors());
 
-            useCommonPool = builder.comment("If true, use the JVM-wide ForkJoinPool.commonPool() instead of a dedicated "
-                            + "Flywheel pool. Saves threads but other code submitting to the common pool (incl. "
-                            + "misbehaving mods) can stall Flywheel sync points. Requires a game restart to take effect.")
-                    .define("useCommonPool", false);
+            useCommonPool = builder.comment(
+                                           "If true, use the JVM-wide ForkJoinPool.commonPool() instead of a dedicated "
+                                                   + "Flywheel pool. Saves threads but other code submitting to the common pool (incl. "
+                                                   + "misbehaving mods) can stall Flywheel sync points. Requires a game restart to take effect.")
+                                   .define("useCommonPool", false);
 
             concurrentExtraction = builder.comment("Extract entity render states on Flywheel's worker threads for "
-                            + "renderers known to allow it (vanilla's, and mods' implementing "
-                            + "ConcurrentRenderStateExtraction). Disable if a mod hooks entity extraction unsafely.")
-                    .define("concurrentExtraction", true);
+                                                  + "renderers known to allow it (vanilla's, and mods' implementing "
+                                                  + "ConcurrentRenderStateExtraction). Disable if a mod hooks entity extraction unsafely.")
+                                          .define("concurrentExtraction", true);
 
             builder.comment("Config options for Flywheel's built-in backends.")
-                    .push("flw_backends");
+                   .push("flw_backends");
 
-            lightSmoothness = builder.comment("How smooth Flywheel's shader-based lighting should be. May have a large performance impact.")
-                    .defineEnum("lightSmoothness", LightSmoothness.SMOOTH);
+            lightSmoothness = builder.comment(
+                                             "How smooth Flywheel's shader-based lighting should be. May have a large performance impact.")
+                                     .defineEnum("lightSmoothness", LightSmoothness.SMOOTH);
 
             terrainMode = builder.comment("How much chunk terrain Flywheel takes over. OFF: vanilla/Sodium draws "
-                            + "everything. TRANSLUCENT_OIT: composite only the translucent layer through Flywheel's "
-                            + "order-independent transparency so translucent instances sort against translucent terrain "
-                            + "(any backend, Sodium or vanilla). OPAQUE: take over only OPAQUE terrain (solid + cutout) "
-                            + "via GPU-driven MDI, leaving translucent to Sodium with no terrain OIT -- the "
-                            + "culling-benchmark mode; requires Sodium and a gpu-driven backend, else it falls back to "
-                            + "OFF. FULL: take over OPAQUE terrain plus translucent OIT -- requires Sodium and a "
-                            + "gpu-driven backend, else it falls back to TRANSLUCENT_OIT.")
-                    .defineEnum("terrain", TerrainMode.TRANSLUCENT_OIT);
+                                         + "everything. TRANSLUCENT_OIT: composite only the translucent layer through Flywheel's "
+                                         + "order-independent transparency so translucent instances sort against translucent terrain "
+                                         + "(any backend, Sodium or vanilla). OPAQUE: take over only OPAQUE terrain (solid + cutout) "
+                                         + "via GPU-driven MDI, leaving translucent to Sodium with no terrain OIT -- the "
+                                         + "culling-benchmark mode; requires Sodium and a gpu-driven backend, else it falls back to "
+                                         + "OFF. FULL: take over OPAQUE terrain plus translucent OIT -- requires Sodium and a "
+                                         + "gpu-driven backend, else it falls back to TRANSLUCENT_OIT.")
+                                 .defineEnum("terrain", TerrainMode.TRANSLUCENT_OIT);
 
             oitPath = builder.comment("Order-independent transparency path. AUTO: best available (MLAB on interlock "
-                            + "hardware, else the wavelet chain). WAVELET: the multi-pass moment/wavelet chain. "
-                            + "KBUFFER/MLAB/ABUFFER: single-geometry-pass insert strategies (MLAB/ABUFFER require "
-                            + "fragment-shader interlock / atomics; fall back to wavelet otherwise).")
-                    .defineEnum("oitPath", OitConfig.Path.AUTO);
+                                     + "hardware, else the wavelet chain). WAVELET: the multi-pass moment/wavelet chain. "
+                                     + "KBUFFER/MLAB/ABUFFER: single-geometry-pass insert strategies (MLAB/ABUFFER require "
+                                     + "fragment-shader interlock / atomics; fall back to wavelet otherwise).")
+                             .defineEnum("oitPath", OitConfig.Path.AUTO);
 
             builder.comment("Translucent-layer budget per insert path (0 = the mode's preset: k-buffer 4, MLAB 8, "
                     + "A-buffer 16). For k-buffer/MLAB the sample count; for the A-buffer the resolve's nearest-N cap.");
@@ -205,9 +209,9 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
             oitLayersAbuffer = builder.defineInRange("oitLayersAbuffer", 0, 0, OitConfig.MAX_LAYERS);
 
             oitExactWeather = builder.comment("Weather accuracy under OIT, all paths. false: rain/snow render once "
-                            + "into a resolved layer (vanilla-fabulous semantics; far cheaper in rain). true: rain/snow "
-                            + "are per-fragment OIT producers that depth-sort exactly against other translucents.")
-                    .define("oitExactWeather", false);
+                                             + "into a resolved layer (vanilla-fabulous semantics; far cheaper in rain). true: rain/snow "
+                                             + "are per-fragment OIT producers that depth-sort exactly against other translucents.")
+                                     .define("oitExactWeather", false);
 
             builder.pop();
         }

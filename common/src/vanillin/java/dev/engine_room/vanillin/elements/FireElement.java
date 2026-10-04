@@ -48,6 +48,14 @@ public final class FireElement extends AbstractVisual implements SimpleDynamicVi
         recycler = new SmartRecycler<>(this::createInstance);
     }
 
+    // Port: FireComponent's material, which shaderpack guests tag as the Iris entity_flame.
+    private static Model model(SpriteId id, boolean flipped) {
+        TextureAtlasSprite sprite = Minecraft.getInstance()
+                                             .getAtlasManager()
+                                             .get(id);
+        return new SingleMeshModel(new FireMesh(sprite, flipped), FireComponent.FIRE_MATERIAL);
+    }
+
     private TransformedInstance createInstance(Model model) {
         TransformedInstance instance = visualizationContext.instancerProvider()
                                                            .instancer(InstanceTypes.TRANSFORMED, model)
@@ -119,14 +127,6 @@ public final class FireElement extends AbstractVisual implements SimpleDynamicVi
     @Override
     public void _delete() {
         recycler.delete();
-    }
-
-    // Port: FireComponent's material, which shaderpack guests tag as the Iris entity_flame.
-    private static Model model(SpriteId id, boolean flipped) {
-        TextureAtlasSprite sprite = Minecraft.getInstance()
-                                             .getAtlasManager()
-                                             .get(id);
-        return new SingleMeshModel(new FireMesh(sprite, flipped), FireComponent.FIRE_MATERIAL);
     }
 
     private record FireMesh(TextureAtlasSprite sprite, boolean flipped) implements QuadMesh {

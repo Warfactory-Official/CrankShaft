@@ -178,6 +178,7 @@ abstract class MpUnboundedXaddArrayQueue<R extends MpUnboundedXaddChunk<R, E>, E
     final int chunkShift;
     final SpscArrayQueue<R> freeChunksPool;
     private final int maxPooledChunks;
+
     MpUnboundedXaddArrayQueue(int chunkSize, int maxPooledChunks) {
         if (chunkSize < 1 || chunkSize > (1 << 30)) {
             throw new IllegalArgumentException("chunkSize: " + chunkSize + " (expected: 1.." + (1 << 30) + ")");
@@ -212,7 +213,11 @@ abstract class MpUnboundedXaddArrayQueue<R extends MpUnboundedXaddChunk<R, E>, E
 
     private static int nextPow2(int v) {
         v--;
-        v |= v >> 1; v |= v >> 2; v |= v >> 4; v |= v >> 8; v |= v >> 16;
+        v |= v >> 1;
+        v |= v >> 2;
+        v |= v >> 4;
+        v |= v >> 8;
+        v |= v >> 16;
         return v + 1;
     }
 

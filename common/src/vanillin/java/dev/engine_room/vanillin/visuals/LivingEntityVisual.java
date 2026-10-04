@@ -662,7 +662,8 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
             CustomHeldCapture[] caps = snapshot.customHeld();
             for (int i = 0; i < customSlots.length; i++) {
                 CustomHeldItem chi = config.customHeldItems.get(i);
-                applyHand(customSlots[i], chi.context(), caps[i].local(), caps[i].stack(), caps[i].stack(), root, light);
+                applyHand(customSlots[i], chi.context(), caps[i].local(), caps[i].stack(), caps[i].stack(), root,
+                        light);
             }
         }
 
@@ -787,8 +788,6 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
             return;
         }
         hideSpecial(slot);
-        // Reveal BEFORE writing: a hidden handle's slab pointer is the write-only trash slot; the reveal re-seeds an
-        // identity pose, so writing first loses the pose (re-revealed held items flashed at the render origin).
         if (!slot.visible) {
             inst.setVisible(true);
             slot.visible = true;
@@ -975,7 +974,8 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
 
     // context: the vanilla renderer's BLOCK_DISPLAY_CONTEXT (Models.displayBlock).
     public record BlockDecoration(BlockDisplayContext context, Function<LivingEntity, BlockState> state,
-                                  List<BlockPlacement> placements, @Nullable Predicate<LivingEntityRenderState> visible) {
+                                  List<BlockPlacement> placements,
+                                  @Nullable Predicate<LivingEntityRenderState> visible) {
     }
 
     public record BlockPlacement(@Nullable String bone, Matrix4fc offset) {
@@ -1028,7 +1028,8 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
     private record LivingExtra(@Nullable HandItems hands, @Nullable Equipment equipment,
                                long conditionMask, boolean heldItemsShown, BlockState @Nullable [] dynamicBlocks,
                                int @Nullable [] overlayColors, Identifier @Nullable [] overlayTextures,
-                               float ageInTicks, CustomHeldCapture @Nullable [] customHeld, ItemStack @Nullable [] bodyEquipItems,
+                               float ageInTicks, CustomHeldCapture @Nullable [] customHeld,
+                               ItemStack @Nullable [] bodyEquipItems,
                                boolean @Nullable [] bodyEquipRidden, boolean @Nullable [] bodyEquipFallback,
                                float @Nullable [] @Nullable [] bodyEquipSelfPose, @Nullable HeadCapture head) {
     }
@@ -1113,6 +1114,12 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
             return new Builder(layer);
         }
 
+        private static boolean drawable(ItemStack stack, ItemDisplayContext context, LivingEntity owner) {
+            return stack.isEmpty() || ItemStackSlot.isVisualized(stack)
+                    || ItemModels.isSupported(stack, context, owner, owner.getId())
+                    || SpecialItemModels.isSupported(stack, context, owner, owner.getId());
+        }
+
         /**
          * True on frames vanilla must draw this entity whole: babies unless {@link Builder#handlesBaby}, invisible
          * entities, leashed entities (the rope is part of the leashed entity's render), the per-mob fallback, and a
@@ -1148,12 +1155,6 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
             }
             return !HumanoidArmorLayer.shouldRender(head, EquipmentSlot.HEAD)
                     && !drawable(head, ItemDisplayContext.HEAD, entity);
-        }
-
-        private static boolean drawable(ItemStack stack, ItemDisplayContext context, LivingEntity owner) {
-            return stack.isEmpty() || ItemStackSlot.isVisualized(stack)
-                    || ItemModels.isSupported(stack, context, owner, owner.getId())
-                    || SpecialItemModels.isSupported(stack, context, owner, owner.getId());
         }
 
         private boolean specialDynamicBlock(LivingEntity entity) {

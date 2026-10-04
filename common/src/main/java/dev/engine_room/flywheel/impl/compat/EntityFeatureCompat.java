@@ -11,6 +11,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import org.jspecify.annotations.Nullable;
 import traben.entity_texture_features.ETFApi;
@@ -19,9 +20,11 @@ import traben.entity_texture_features.features.ETFManager;
 import traben.entity_texture_features.features.texture_handlers.ETFTexture;
 import traben.entity_texture_features.utils.ETFUtils2;
 
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
@@ -29,8 +32,8 @@ import java.util.function.Predicate;
  * visual reproduces goes back to vanilla until the next renderer reload. Their per-entity state is mounted only
  * inside vanilla submission, which visuals skip. ETF, Polytone: visuals report what they draw, from any thread; the
  * checks read render-thread-only state, so they run between frames and a type flips for visual and vanilla alike.
- * EMF: entity and block entity types whose renderer construction baked one of its roots, recorded in EMF's own naming
- * context (per-type thread-local names, construction order) before any visual exists.
+ * EMF: entity and block entity types, plus avatar renderers, whose construction baked one of its roots, recorded in
+ * EMF's own naming context before any visual exists.
  */
 public final class EntityFeatureCompat {
     private static final boolean ETF = CompatMod.ENTITY_TEXTURE_FEATURES.isLoaded;
@@ -38,15 +41,44 @@ public final class EntityFeatureCompat {
     private static final boolean POLYTONE = CompatMod.POLYTONE.isLoaded;
     public static final boolean ACTIVE = ETF || EMF || POLYTONE;
     private static final RendererReloadCache<Boolean, State> STATE = new RendererReloadCache<>($ -> new State());
-    private static final ThreadLocal<boolean @Nullable []> EMF_ROOT = new ThreadLocal<>();
+    private static final Function<Object, Boolean> MANAGES = key -> key instanceof EntityType<?> type
+            ? restyles(type) : Etf.manages((Identifier) key);
+    private static final ThreadLocal<EmfRoots> EMF_ROOT = ThreadLocal.withInitial(EmfRoots::new);
     private static volatile Set<EntityType<?>> emfEntities = Set.of();
+    private static volatile boolean emfAvatars;
     private static volatile Set<BlockEntityType<?>> emfBlockEntities = Set.of();
+    private static volatile @Nullable Predicate<LivingEntity> emfHeldUse;
 
     private EntityFeatureCompat() {
     }
 
     public static boolean vanillaOwns(EntityType<?> type) {
-        return ACTIVE && (emfEntities.contains(type) || STATE.get(true).vanilla.contains(type));
+        return ACTIVE && (emfOwns(type) || STATE.get(true).vanilla.contains(type));
+    }
+
+    public static boolean emfOwns(EntityType<?> type) {
+        return EMF && (emfEntities.contains(type) || type == EntityTypes.PLAYER && emfAvatars);
+    }
+
+    /**
+     * Register a render-only held-item use condition before entity rendering begins.
+     */
+    public static void registerEmfHeldUse(Predicate<LivingEntity> condition) {
+        Predicate<LivingEntity> previous = emfHeldUse;
+        emfHeldUse = previous == null ? condition : previous.or(condition);
+    }
+
+    public static @Nullable Predicate<LivingEntity> emfHeldUseCondition() {
+        return emfHeldUse;
+    }
+
+    /**
+     * Let EMF recognize an item's custom dual-arm aim as a bow action.
+     */
+    public static void registerEmfBowRecognition(Predicate<LivingEntity> condition) {
+        if (EMF) {
+            EmfArmPoseCompat.register(condition);
+        }
     }
 
     public static boolean vanillaOwns(BlockEntityType<?> type) {
@@ -59,7 +91,7 @@ public final class EntityFeatureCompat {
      */
     public static void observe(EntityType<?> type) {
         if (ACTIVE) {
-            resolve(type, type, EntityFeatureCompat::restyles);
+            resolve(type, type);
         }
     }
 
@@ -68,34 +100,35 @@ public final class EntityFeatureCompat {
      */
     public static void observeTexture(EntityType<?> type, @Nullable Identifier texture) {
         if (ETF && texture != null) {
-            resolve(type, texture, Etf::manages);
+            resolve(type, texture);
         }
     }
 
     /**
-     * Whether {@code create}, one renderer's construction, baked an EMF root. Render thread, renderer reload.
+     * Starts a renderer-construction scope during render-thread reload. Scopes may nest; pair each call with
+     * {@link #endEmfRootCapture()} in a finally block.
      */
-    public static boolean bakesEmfRoot(Runnable create) {
-        boolean[] outer = EMF_ROOT.get();
-        boolean[] baked = {false};
-        EMF_ROOT.set(baked);
-        try {
-            create.run();
-        } finally {
-            EMF_ROOT.set(outer);
-        }
-        return baked[0];
+    public static void beginEmfRootCapture() {
+        if (EMF) EMF_ROOT.get().begin();
+    }
+
+    /**
+     * Ends the current scope and reports whether it baked an EMF root.
+     */
+    public static boolean endEmfRootCapture() {
+        return EMF && EMF_ROOT.get().end();
     }
 
     public static void emfRootBaked() {
-        boolean[] baked = EMF_ROOT.get();
-        if (baked != null) {
-            baked[0] = true;
-        }
+        if (EMF) EMF_ROOT.get().baked();
     }
 
     public static void emfRestyled(Set<EntityType<?>> types) {
         emfEntities = Set.copyOf(types);
+    }
+
+    public static void emfRestyledAvatars(boolean restyled) {
+        emfAvatars = restyled;
     }
 
     public static void emfRestyledBlockEntities(Set<BlockEntityType<?>> types) {
@@ -120,17 +153,13 @@ public final class EntityFeatureCompat {
         return entityShadowsOff() ? 0.0F : strength;
     }
 
-    private static <K> void resolve(EntityType<?> type, K key, Predicate<K> test) {
+    private static void resolve(EntityType<?> type, Object key) {
         State state = STATE.get(true);
-        if (state.vanilla.contains(type) || state.results.get(key) == Boolean.FALSE
-                || !state.pending.add(new Observation(type, key))) {
+        if (state.vanilla.contains(type) || state.results.get(key) == Boolean.FALSE) {
             return;
         }
-        Minecraft.getInstance().execute(() -> {
-            if (state.results.computeIfAbsent(key, $ -> test.test(key))) {
-                state.vanilla.add(type);
-            }
-        });
+        Observation observation = new Observation(state, type, key);
+        if (state.pending.add(observation)) Minecraft.getInstance().execute(observation);
     }
 
     private static boolean restyles(EntityType<?> type) {
@@ -143,7 +172,30 @@ public final class EntityFeatureCompat {
         final Set<Observation> pending = ConcurrentHashMap.newKeySet();
     }
 
-    private record Observation(EntityType<?> type, Object key) {
+    private record Observation(State state, EntityType<?> type, Object key) implements Runnable {
+        @Override
+        public void run() {
+            if (state.results.computeIfAbsent(key, MANAGES)) state.vanilla.add(type);
+        }
+    }
+
+    private static final class EmfRoots {
+        private boolean[] baked = new boolean[4];
+        private int depth;
+
+        void begin() {
+            if (depth == baked.length) baked = Arrays.copyOf(baked, depth * 2);
+            baked[depth++] = false;
+        }
+
+        boolean end() {
+            assert depth > 0;
+            return baked[--depth];
+        }
+
+        void baked() {
+            if (depth > 0) baked[depth - 1] = true;
+        }
     }
 
     private static final class Etf {

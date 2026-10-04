@@ -6,13 +6,13 @@ import com.mojang.blaze3d.pipeline.*;
 import com.mojang.blaze3d.platform.BlendFactor;
 import com.mojang.blaze3d.shaders.ShaderSource;
 import com.mojang.blaze3d.shaders.UniformType;
-import com.mojang.blaze3d.systems.RenderSystem;
 import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.InternalVertex;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
+import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
@@ -69,8 +69,7 @@ public final class IndirectPipeline {
                 MaterialShaderIndices.cutoutSources().all().size(),
                 MaterialShaderIndices.fogSources().all().size(), embedded);
         RenderPipeline pipeline = UBER_CACHE.computeIfAbsent(key, IndirectPipeline::buildUber);
-        RenderSystem.getDevice()
-                    .precompilePipeline(pipeline, SHADER_SOURCE);
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
     }
 

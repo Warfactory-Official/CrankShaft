@@ -61,6 +61,16 @@ public final class GlPrimaryTerrainRasterizer {
         this.pipelines = pipelines;
     }
 
+    // An earlier pass may leave a partial color mask.
+    private static void setupOpaqueState() {
+        GlStateManager._colorMask(ColorTargetState.WRITE_ALL);
+        GlStateManager._disableBlend(0);
+        GlStateManager._enableDepthTest();
+        GlStateManager._depthFunc(GL11C.GL_GEQUAL);
+        GlStateManager._depthMask(true);
+        GlStateManager._enableCull();
+    }
+
     // Read everything synchronously off the dispatcher's public fields -- do not cache the instance (its fields mutate per pass).
     public void draw(TerrainDrawDispatcher d, int passIndex) {
         int regionCount = d.boundBatch.count;
@@ -101,16 +111,6 @@ public final class GlPrimaryTerrainRasterizer {
             GL33C.glBindSampler(UNIT_LIGHTMAP, 0);
             GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
         }
-    }
-
-    // An earlier pass may leave a partial color mask.
-    private static void setupOpaqueState() {
-        GlStateManager._colorMask(ColorTargetState.WRITE_ALL);
-        GlStateManager._disableBlend(0);
-        GlStateManager._enableDepthTest();
-        GlStateManager._depthFunc(GL11C.GL_GEQUAL);
-        GlStateManager._depthMask(true);
-        GlStateManager._enableCull();
     }
 
     private void ensureSamplers() {
@@ -154,7 +154,8 @@ public final class GlPrimaryTerrainRasterizer {
         GL15C.glBufferSubData(GL31C.GL_UNIFORM_BUFFER, 0L, s);
         GL15C.glBindBuffer(GL31C.GL_UNIFORM_BUFFER, 0);
         s.clear();
-        GL30C.glBindBufferRange(GL31C.GL_UNIFORM_BUFFER, BINDING_TERRAIN_SCENE_UBO, sceneUbo, 0L, TERRAIN_SCENE_UBO_BYTES);
+        GL30C.glBindBufferRange(GL31C.GL_UNIFORM_BUFFER, BINDING_TERRAIN_SCENE_UBO, sceneUbo, 0L,
+                TERRAIN_SCENE_UBO_BYTES);
     }
 
     private void drawRegions(TerrainDrawDispatcher d, int passIndex, int regionCount) {

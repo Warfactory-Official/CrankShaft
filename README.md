@@ -9,7 +9,8 @@
 
 CrankShaft is an **unofficial port** of [Flywheel](https://github.com/Engine-Room/Flywheel) to Minecraft 26.2,
 carrying forward the work of Jozufozu and the Engine-Room team as well as CrankShaft's own 1.12.2 backport. It runs on
-NeoForge and Fabric. Its Iris shaderpack support is an adaptation of [Colorwheel](https://github.com/djefrey/Colorwheel):
+NeoForge and Fabric. Its Iris shaderpack support is an adaptation
+of [Colorwheel](https://github.com/djefrey/Colorwheel):
 Colorwheel's shaderpack contract and wavelet OIT, rebuilt on CrankShaft's renderer. It is not affiliated with, endorsed
 by, or supported by Flywheel, Colorwheel, or their maintainers. Bugs in CrankShaft are CrankShaft's, not theirs — please
 file them here.
@@ -82,35 +83,45 @@ pack's own programs, shadows included. Nothing needs configuring.
 
 Tested shaderpacks:
 
-| Shaderpack               | Version                  | Colorwheel contract | Bundled adapter | OIT                                                 |
-|--------------------------|--------------------------|---------------------|-----------------|-----------------------------------------------------|
-| Complementary Reimagined | r5.9.3                   | Yes                 | Yes             | Yes                                                 |
-| Complementary Unbound    | r5.9.3                   | Yes                 | Yes             | Yes                                                 |
-| Solas                    | V3.7b                    | Yes                 | Yes             | Yes                                                 |
-| BSL                      | v10.1.5                  | No                  | Yes             | Yes                                                 |
-| MakeUp UltraFast         | 9.5e                     | No                  | Yes             | Yes                                                 |
-| Sundial                  | Alpha Build 2026-08-28   | Yes                 | Yes             | Yes, multi-layer (see below)                        |
-| IterationRP              | Alpha 0.8.28             | Yes                 | Yes             | No (the pack disables it)                           |
-| Bliss                    | v2.1.2 (Chocapic13 edit) | No                  | Yes             | Yes                                                 |
-| Sildur's Vibrant Shaders | v2.01 Extreme            | No                  | Yes             | Yes                                                 |
-| Photon                   | v1.3b                    | No                  | Yes             | Yes                                                 |
+| Shaderpack               | Version                  | Colorwheel contract | Bundled adapter | OIT                          |
+|--------------------------|--------------------------|---------------------|-----------------|------------------------------|
+| Complementary Reimagined | r5.9.3                   | Yes                 | Yes             | Yes                          |
+| Complementary Unbound    | r5.9.3                   | Yes                 | Yes             | Yes                          |
+| Complementary Euphoria   | r5.9.3 + Patches 1.10.5  | Yes                 | Yes             | Yes                          |
+| Solas                    | V3.7b                    | Yes                 | Yes             | Yes                          |
+| BSL                      | v10.1.8                  | No                  | Yes             | Yes                          |
+| MakeUp UltraFast         | 9.5f                     | No                  | Yes             | Yes                          |
+| Sundial                  | Alpha Build 2026-09-25   | Yes                 | Yes             | Yes, multi-layer (see below) |
+| IterationRP              | Alpha 0.8.29             | Yes                 | Yes             | Yes, multi-layer (see below) |
+| Bliss                    | v2.1.2 (Chocapic13 edit) | No                  | Yes             | Yes                          |
+| Sildur's Vibrant Shaders | v2.02 Extreme            | No                  | Yes             | Yes                          |
+| Photon                   | v1.3b                    | No                  | Yes             | Yes                          |
 
 Instances drawn through a pack can differ slightly from what the pack's own renderer would produce.
 
-Sundial's multi-layer OIT replays the pack's deferred lighting once per translucent layer. Its GPU cost and memory
-follow the translucency on screen and drop to near zero without it. `-Dcrankshaft.iris.oit.deferred=false` turns it
-off. Under Sildur's underwater fog, translucents seen through water are tinted slightly differently from the pack's
-own sorted rendering.
+Sundial and IterationRP use multi-layer deferred OIT. Captured material, unlit-opacity and emission fragments are
+sorted by depth and composited in their depth intervals. Each material layer retains the pack's lighting, reflection
+and refraction; IterationRP also keeps separate temporal histories. Overlapping material surfaces can add substantial
+GPU time and memory. IterationRP skips material replay for a single smooth water/glass surface and resolves clouds
+and emission separately. Unsupported shader variants and temporary capture overflow retain the pack's native frame.
+The node pool is limited by hardware storage capacity and a global budget of 16 slots per screen pixel (one slot
+for light/opacity, two for Sundial materials, three for IterationRP materials). Individual pixel lists can be longer
+than 16 layers; a frame with more than 64 layers at any pixel keeps the pack's native frame. Sudden layer growth, pool
+replacement and IterationRP opaque-backup warm-up can also retain native
+ordering temporarily; capture fallback and recovery transitions are logged. These frames do not guarantee OIT.
+`-Dcrankshaft.iris.oit.deferred=false` disables deferred OIT; `-Dcrankshaft.iris.oit.iteration=false` disables only the
+IterationRP integration. Under Sildur's underwater fog, translucents seen through water are tinted slightly differently
+from the pack's own sorted rendering.
 
 Under a shaderpack, any [terrain mode](#terrain-modes) but `off` also draws chunk terrain through the pack's own
 terrain programs with GPU culling.
 
 Experimental options, **off by default**, are enabled with Java arguments in your launcher:
 
-| Argument                              | Effect                                                                                                                               |
-|---------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
-| `-Dcrankshaft.iris.mesh=true`         | With a terrain mode other than `off`: mesh-shader terrain. `flywheel:iris_mesh_shader` is then selected on supported NVIDIA GPUs.    |
-| `-Dcrankshaft.iris.mesh.direct=true`  | With both of the above: opaque terrain skips task-shader culling, lowering its overhead.                                             |
+| Argument                             | Effect                                                                                                                            |
+|--------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| `-Dcrankshaft.iris.mesh=true`        | With a terrain mode other than `off`: mesh-shader terrain. `flywheel:iris_mesh_shader` is then selected on supported NVIDIA GPUs. |
+| `-Dcrankshaft.iris.mesh.direct=true` | With both of the above: opaque terrain skips task-shader culling, lowering its overhead.                                          |
 
 ### Commands
 
@@ -171,7 +182,8 @@ Commands write the same files you can edit by hand: `config/crankshaft.json` on 
 on NeoForge. Settings: `backend`, `limitUpdates`, `workerThreads`, `useCommonPool`, `concurrentExtraction`, and under
 `flw_backends`: `lightSmoothness`, `terrain` and the OIT settings.
 
-`concurrentExtraction` (default on) extracts entity and block entity render states on Flywheel's worker threads, for vanilla's renderers
+`concurrentExtraction` (default on) extracts entity and block entity render states on Flywheel's worker threads, for
+vanilla's renderers
 and mod renderers implementing `ConcurrentRenderStateExtraction`, with or without a backend. Turn it off if a mod that
 hooks entity rendering misbehaves.
 
@@ -201,9 +213,9 @@ repositories {
 
 dependencies {
     // NeoForge
-    implementation("dev.engine_room:crankshaft-neoforge:1.5.0+mc26.2")
+    implementation("dev.engine_room:crankshaft-neoforge:1.5.4+mc26.2")
     // Fabric
-    implementation("dev.engine_room:crankshaft-fabric:1.5.0+mc26.2")
+    implementation("dev.engine_room:crankshaft-fabric:1.5.4+mc26.2")
 }
 ```
 
@@ -218,7 +230,7 @@ repositories {
     maven("https://repo.warfactory.co/snapshots")
 }
 
-implementation("dev.engine_room:crankshaft-fabric:1.5.0+mc26.2-SNAPSHOT")
+implementation("dev.engine_room:crankshaft-fabric:1.5.4+mc26.2-SNAPSHOT")
 ```
 
 ### License

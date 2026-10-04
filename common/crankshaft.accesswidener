@@ -1,4 +1,7 @@
 accessWidener v1 official
+accessible class com/mojang/blaze3d/opengl/GlDevice$ShaderCompilationKey
+accessible method com/mojang/blaze3d/opengl/GlDevice$ShaderCompilationKey <init> (Lnet/minecraft/resources/Identifier;Lcom/mojang/blaze3d/shaders/ShaderType;Lnet/minecraft/client/renderer/ShaderDefines;)V
+accessible method com/mojang/blaze3d/opengl/GlProgram <init> (ILjava/lang/String;)V
 accessible field net/minecraft/client/renderer/chunk/RenderSectionRegion level Lnet/minecraft/client/multiplayer/ClientLevel;
 
 accessible field net/minecraft/client/renderer/RenderPipelines MATRICES_FOG_LIGHT_DIR_SNIPPET Lcom/mojang/blaze3d/pipeline/RenderPipeline$Snippet;
@@ -58,6 +61,9 @@ accessible field com/mojang/blaze3d/vulkan/VulkanCommandEncoder checkpointStorag
 accessible method com/mojang/blaze3d/vulkan/VulkanCommandEncoder commandBuffer ()Lorg/lwjgl/vulkan/VkCommandBuffer;
 accessible field com/mojang/blaze3d/vulkan/VulkanCommandEncoder currentRenderPass Lcom/mojang/blaze3d/vulkan/VulkanRenderPass;
 accessible class com/mojang/blaze3d/opengl/GlDevice
+accessible field com/mojang/blaze3d/opengl/GlDevice debugLabels Lcom/mojang/blaze3d/opengl/GlDebugLabel;
+accessible field com/mojang/blaze3d/opengl/GlDevice pipelineCache Ljava/util/Map;
+accessible field com/mojang/blaze3d/opengl/GlDevice shaderCache Ljava/util/Map;
 accessible class com/mojang/blaze3d/opengl/GlCommandEncoder
 accessible field com/mojang/blaze3d/opengl/GlCommandEncoder lastProgram Lcom/mojang/blaze3d/opengl/GlProgram;
 mutable field com/mojang/blaze3d/opengl/GlCommandEncoder lastProgram Lcom/mojang/blaze3d/opengl/GlProgram;

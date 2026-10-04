@@ -1,10 +1,7 @@
 package dev.engine_room.flywheel.iris.compile;
 
 import com.google.common.collect.ImmutableSet;
-import com.mojang.blaze3d.opengl.GlProgram;
-import com.mojang.blaze3d.opengl.GlRenderPass;
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.Uniform;
+import com.mojang.blaze3d.opengl.*;
 import com.mojang.blaze3d.pipeline.BindGroupLayout;
 import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.textures.GpuTextureView;
@@ -46,6 +43,7 @@ import java.util.function.Supplier;
 public final class GuestProgram extends GlProgram implements IrisProgram {
     // Iris binds its external samplers (albedo/overlay/lightmap) to these units by name.
     private static final String[] FIXED_SAMPLERS = {"Sampler0", "Sampler1", "Sampler2"};
+    private static final int[] GRAYSCALE_SWIZZLE = {GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_RED};
     private static final Map<String, String> IRIS_BLOCKS = Map.of(
             "DynamicTransforms", "iris_DynamicTransforms",
             "Projection", "iris_Projection",
@@ -73,6 +71,7 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
     private final float[] floats16 = new float[16];
     private final float[] floats9 = new float[9];
     private boolean rawSamplersAssigned;
+    private boolean grayscaleAlbedo;
     // Bindings a guest draw owns that Iris knows nothing about (terrain's Sodium u_Globals block).
     private boolean terrain;
     private int meshQuads;
@@ -140,6 +139,14 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
      */
     public static void setModelView(Matrix4fc modelView) {
         MODEL_VIEW.set(modelView);
+    }
+
+    static void grayscaleAlbedo(GpuTextureView albedo) {
+        int texture = ((GlTexture) albedo.texture()).glId();
+        // Native font materials keep tint RGB independent of R coverage; Iris owns swizzle retirement.
+        IrisRenderSystem.addUnswizzle(texture);
+        IrisRenderSystem.texParameteriv(texture, GL11C.GL_TEXTURE_2D, ARBTextureSwizzle.GL_TEXTURE_SWIZZLE_RGBA,
+                GRAYSCALE_SWIZZLE);
     }
 
     /**
@@ -237,6 +244,11 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
         bufferBlendOverrides.forEach(BufferBlendOverride::apply);
 
         target.bind(parent.isBeforeTranslucent);
+        if (grayscaleAlbedo) grayscaleAlbedo(albedoTex);
+    }
+
+    void useGrayscaleAlbedo() {
+        grayscaleAlbedo = true;
     }
 
     private void bindRawTextures() {
@@ -338,6 +350,7 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
 
     @Override
     public void iris$clearState() {
+        if (grayscaleAlbedo) IrisRenderSystem.onProgramUse();
         ProgramUniforms.clearActiveUniforms();
         ProgramSamplers.clearActiveSamplers();
         BlendModeOverride.restore();

@@ -231,7 +231,8 @@ public final class VkTerrainResidentBuffers implements TerrainResidentBuffers {
             long[] pages = dirtyPages[parity];
             int pageCount = (int) ((shadowBytes + PAGE_SIZE - 1) >>> PAGE_SHIFT);
             int runs = 0;
-            for (int page = nextSet(pages, 0, pageCount); page < pageCount; page = nextSet(pages, nextClear(pages, page, pageCount), pageCount)) {
+            for (int page = nextSet(pages, 0, pageCount); page < pageCount; page = nextSet(pages,
+                    nextClear(pages, page, pageCount), pageCount)) {
                 runs++;
             }
             VkBuffer stage = staging[parity];

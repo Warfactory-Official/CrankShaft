@@ -45,7 +45,8 @@ public final class ShadowComponent implements EntityComponent {
     private static final Material SHADOW_MATERIAL = SimpleMaterial.builder()
                                                                   .texture(SHADOW_TEXTURE)
                                                                   .mipmap(false)
-                                                                  .polygonOffset(true) // vanilla shadows use "view offset" but this seems to work fine
+                                                                  .polygonOffset(
+                                                                          true) // vanilla shadows use "view offset" but this seems to work fine
                                                                   .transparency(Transparency.TRANSLUCENT)
                                                                   .writeMask(WriteMask.COLOR)
                                                                   .build();

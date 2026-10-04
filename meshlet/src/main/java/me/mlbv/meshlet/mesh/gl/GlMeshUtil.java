@@ -2,19 +2,15 @@
 // Copyright (C) 2026 movblock
 package me.mlbv.meshlet.mesh.gl;
 
-import java.nio.ByteBuffer;
-
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.opengl.GlBuffer;
 import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import dev.engine_room.flywheel.backend.gl.GlTextureLevelState;
-import org.lwjgl.opengl.GL13C;
-import org.lwjgl.opengl.GL15C;
-import org.lwjgl.opengl.GL31C;
-import org.lwjgl.opengl.GL33C;
-import org.lwjgl.opengl.NVShaderBufferLoad;
+import org.lwjgl.opengl.*;
+
+import java.nio.ByteBuffer;
 
 final class GlMeshUtil {
     private GlMeshUtil() {
@@ -50,7 +46,7 @@ final class GlMeshUtil {
     }
 
     static void uploadGeometryPointers(GpuBuffer[] geometryBuffers, int regionCount, GlGeometryPtrBuffer ptrs,
-            GlResidentAddressCache residentAddresses) {
+                                       GlResidentAddressCache residentAddresses) {
         ByteBuffer scratch = ptrs.ensureCapacity(regionCount);
         for (int slot = 0; slot < regionCount; slot++) {
             scratch.putLong(slot * Long.BYTES, residentAddresses.address(geometryBuffers[slot]));

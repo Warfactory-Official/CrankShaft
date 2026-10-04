@@ -33,75 +33,78 @@ import java.util.List;
 import java.util.Map;
 
 public final class FlywheelFabric implements ClientModInitializer {
-	@Override
-	public void onInitializeClient() {
-		BackendManagerImpl.init();
-		LambDynLightsCompat.init();
-		InstanceTypes.TRANSFORMED.hashCode();
-		Materials.SOLID_BLOCK.hashCode();
-		FlwImpl.freezeRegistries();
-		FabricFlwConfig.INSTANCE.load();
+    private static void registerF3DebugEntry() {
+        Identifier debugId = Identifier.fromNamespaceAndPath(Flywheel.ID, "debug_info");
+        DebugScreenEntries.register(debugId, (displayer, serverOrClientLevel, clientChunk, serverChunk) -> {
+            List<String> lines = new ArrayList<>();
+            FlwDebugInfo.addDebugInfo(Minecraft.getInstance(), lines);
+            displayer.addToGroup(debugId, lines);
+        });
+        Map<DebugScreenProfile, Map<Identifier, DebugScreenEntryStatus>> rebuilt = new HashMap<>();
+        DebugScreenEntries.PROFILES.forEach((profile, statuses) -> rebuilt.put(profile, new HashMap<>(statuses)));
+        rebuilt.computeIfAbsent(DebugScreenProfile.DEFAULT, profile -> new HashMap<>())
+               .put(debugId, DebugScreenEntryStatus.IN_OVERLAY);
+        DebugScreenEntries.PROFILES = rebuilt;
+    }
 
-		registerReloadListener();
-		registerPartialModels();
-		registerLifecycleEvents();
-		registerDebugFeatures();
-		registerF3DebugEntry();
-	}
+    private static void registerDebugFeatures() {
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) ->
+                FlwCommands.registerClientCommands(dispatcher, buildContext));
 
-	private static void registerF3DebugEntry() {
-		Identifier debugId = Identifier.fromNamespaceAndPath(Flywheel.ID, "debug_info");
-		DebugScreenEntries.register(debugId, (displayer, serverOrClientLevel, clientChunk, serverChunk) -> {
-			List<String> lines = new ArrayList<>();
-			FlwDebugInfo.addDebugInfo(Minecraft.getInstance(), lines);
-			displayer.addToGroup(debugId, lines);
-		});
-		Map<DebugScreenProfile, Map<Identifier, DebugScreenEntryStatus>> rebuilt = new HashMap<>();
-		DebugScreenEntries.PROFILES.forEach((profile, statuses) -> rebuilt.put(profile, new HashMap<>(statuses)));
-		rebuilt.computeIfAbsent(DebugScreenProfile.DEFAULT, profile -> new HashMap<>())
-				.put(debugId, DebugScreenEntryStatus.IN_OVERLAY);
-		DebugScreenEntries.PROFILES = rebuilt;
-	}
+        ArgumentTypeInfos.BY_CLASS.put(BackendArgument.class, BackendArgument.INFO);
+        ArgumentTypeInfos.BY_CLASS.put(DebugModeArgument.class, DebugModeArgument.INFO);
+        ArgumentTypeInfos.BY_CLASS.put(LightSmoothnessArgument.class, LightSmoothnessArgument.INFO);
 
-	private static void registerDebugFeatures() {
-		ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) ->
-				FlwCommands.registerClientCommands(dispatcher, buildContext));
+        if (FabricLoader.getInstance().isDevelopmentEnvironment()) {
+            SimpleBlockEntityVisualizer.builder(OitDemoContent.OIT_DEMO_BE)
+                                       .factory(OitDemoVisual::new)
+                                       .apply();
+        }
+    }
 
-		ArgumentTypeInfos.BY_CLASS.put(BackendArgument.class, BackendArgument.INFO);
-		ArgumentTypeInfos.BY_CLASS.put(DebugModeArgument.class, DebugModeArgument.INFO);
-		ArgumentTypeInfos.BY_CLASS.put(LightSmoothnessArgument.class, LightSmoothnessArgument.INFO);
+    private static void registerReloadListener() {
+        ResourceLoader.get(PackType.CLIENT_RESOURCES)
+                      .registerReloadListener(FlwProgramsReloader.ID, FlwProgramsReloader.INSTANCE);
+    }
 
-		if (FabricLoader.getInstance().isDevelopmentEnvironment()) {
-			SimpleBlockEntityVisualizer.builder(OitDemoContent.OIT_DEMO_BE)
-					.factory(OitDemoVisual::new)
-					.apply();
-		}
-	}
+    private static void registerPartialModels() {
+        ModelLoadingPlugin.register(PartialModelEventHandler::onDefineModels);
+        ResourceLoader loader = ResourceLoader.get(PackType.CLIENT_RESOURCES);
+        loader.registerReloadListener(PartialModelEventHandler.ReloadListener.ID,
+                PartialModelEventHandler.ReloadListener.INSTANCE);
+        loader.addListenerOrdering(ResourceReloaderKeys.Client.MODELS, PartialModelEventHandler.ReloadListener.ID);
+    }
 
-	private static void registerReloadListener() {
-		ResourceLoader.get(PackType.CLIENT_RESOURCES)
-				.registerReloadListener(FlwProgramsReloader.ID, FlwProgramsReloader.INSTANCE);
-	}
+    private static void registerLifecycleEvents() {
+        // This Fabric event runs slightly later than the Forge event Flywheel uses, but it shouldn't make a difference.
+        ClientTickEvents.END_CLIENT_TICK.register(minecraft -> {
+            if (minecraft.isPaused()) {
+                return;
+            }
+            Level level = minecraft.level;
+            if (level != null) {
+                VisualizationEventHandler.onClientTick(minecraft, level);
+            }
+        });
+        ClientEntityEvents.ENTITY_LOAD.register(
+                (entity, level) -> VisualizationEventHandler.onEntityJoinLevel(level, entity));
+        ClientEntityEvents.ENTITY_UNLOAD.register(
+                (entity, level) -> VisualizationEventHandler.onEntityLeaveLevel(level, entity));
+    }
 
-	private static void registerPartialModels() {
-		ModelLoadingPlugin.register(PartialModelEventHandler::onDefineModels);
-		ResourceLoader loader = ResourceLoader.get(PackType.CLIENT_RESOURCES);
-		loader.registerReloadListener(PartialModelEventHandler.ReloadListener.ID, PartialModelEventHandler.ReloadListener.INSTANCE);
-		loader.addListenerOrdering(ResourceReloaderKeys.Client.MODELS, PartialModelEventHandler.ReloadListener.ID);
-	}
+    @Override
+    public void onInitializeClient() {
+        BackendManagerImpl.init();
+        LambDynLightsCompat.init();
+        InstanceTypes.TRANSFORMED.hashCode();
+        Materials.SOLID_BLOCK.hashCode();
+        FlwImpl.freezeRegistries();
+        FabricFlwConfig.INSTANCE.load();
 
-	private static void registerLifecycleEvents() {
-		// This Fabric event runs slightly later than the Forge event Flywheel uses, but it shouldn't make a difference.
-		ClientTickEvents.END_CLIENT_TICK.register(minecraft -> {
-			if (minecraft.isPaused()) {
-				return;
-			}
-			Level level = minecraft.level;
-			if (level != null) {
-				VisualizationEventHandler.onClientTick(minecraft, level);
-			}
-		});
-		ClientEntityEvents.ENTITY_LOAD.register((entity, level) -> VisualizationEventHandler.onEntityJoinLevel(level, entity));
-		ClientEntityEvents.ENTITY_UNLOAD.register((entity, level) -> VisualizationEventHandler.onEntityLeaveLevel(level, entity));
-	}
+        registerReloadListener();
+        registerPartialModels();
+        registerLifecycleEvents();
+        registerDebugFeatures();
+        registerF3DebugEntry();
+    }
 }

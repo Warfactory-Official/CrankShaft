@@ -13,8 +13,9 @@ public interface InstanceHandle {
     void setVisible(boolean visible);
 
     /**
-     * Off-heap address of this instance's std140-packed slot, stable for its lifetime;
-     * hidden/deleted handles return a shared trash slot (writes there are harmless).
+     * Current off-heap address of this instance's packed data. Query again after a storage transition or
+     * frame barrier; compaction and upload migration can change the address. Hidden data remains writable
+     * and is restored on reveal; deleted handles return a shared write-only trash slot.
      */
     long slabPtr();
 }

@@ -2,12 +2,9 @@ package dev.engine_room.flywheel.backend.engine.indirect;
 
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
-import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.model.Model;
-import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.engine.InstancerKey;
 import dev.engine_room.flywheel.backend.engine.MeshPool;
-import dev.engine_room.flywheel.backend.engine.OitTransparency;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -64,22 +61,10 @@ public class IndirectCullingGroup<I extends Instance> {
                     drawManager.drawTags(key.environment(), key.model(), entry.material(), entry.mesh()));
             indirectDraws.add(draw);
             instancer.addDraw(draw);
-            warmUp(entry.material(), draw.embeddedVariant());
+            drawManager.warmUp(entry.material(), draw.embeddedVariant());
         }
 
         drawsDirty = true;
-    }
-
-    private void warmUp(Material material, boolean embedded) {
-        if (OitTransparency.additive(material)) {
-            OitPipelines.uberProducer(material, OitMode.EVALUATE, embedded);
-        } else if (OitTransparency.orderIndependent(material)) {
-            OitPipelines.uberProducer(material, OitMode.DEPTH_RANGE, embedded);
-            OitPipelines.uberProducer(material, OitMode.GENERATE_COEFFICIENTS, embedded);
-            OitPipelines.uberProducer(material, OitMode.EVALUATE, embedded);
-        } else {
-            IndirectPipeline.uberPipelineFor(material, embedded);
-        }
     }
 
     long writeModels(long writePtr) {

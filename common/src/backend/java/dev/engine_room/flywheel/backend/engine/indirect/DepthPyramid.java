@@ -51,6 +51,17 @@ public class DepthPyramid {
         return result;
     }
 
+    // DSA-created => uncounted by _genTexture, so _deleteTexture would skew numTextures. bindForCull binds through
+    // GlStateManager => its T10 cache keeps a raw-deleted id.
+    private static void deleteTexture(int id) {
+        GL11.glDeleteTextures(id);
+        for (GlStateManager.TextureState state : GlStateManager.TEXTURES) {
+            if (state.binding == id) {
+                state.binding = -1;
+            }
+        }
+    }
+
     public void generate() {
         RenderTarget mcFb = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         GpuTexture depthTexture = mcFb.getDepthTexture();
@@ -88,7 +99,8 @@ public class DepthPyramid {
             downsampleSecondProgram.setUInt("base_mip_level", baseMipLevel);
 
             for (int i = 0; i < Math.min(7, mipLevels - baseMipLevel); i++) {
-                GL42.glBindImageTexture(i, pyramidTextureId, baseMipLevel + i, false, 0, GL15.GL_WRITE_ONLY,
+                GL42.glBindImageTexture(i, pyramidTextureId, baseMipLevel + i, false, 0,
+                        i == 0 ? GL15.GL_READ_ONLY : GL15.GL_WRITE_ONLY,
                         GL30.GL_R32F);
             }
 
@@ -139,17 +151,6 @@ public class DepthPyramid {
         }
         lastWidth = -1;
         lastHeight = -1;
-    }
-
-    // DSA-created => uncounted by _genTexture, so _deleteTexture would skew numTextures. bindForCull binds through
-    // GlStateManager => its T10 cache keeps a raw-deleted id.
-    private static void deleteTexture(int id) {
-        GL11.glDeleteTextures(id);
-        for (GlStateManager.TextureState state : GlStateManager.TEXTURES) {
-            if (state.binding == id) {
-                state.binding = -1;
-            }
-        }
     }
 
     private void createPyramidMips(int mipLevels, int width, int height) {

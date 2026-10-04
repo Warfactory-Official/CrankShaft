@@ -2,7 +2,8 @@
   "schema": 2,
   "name": "MakeUp UltraFast",
   "testedVersions": [
-    "MakeUp UltraFast 9.5e"
+    "MakeUp UltraFast 9.5e",
+    "MakeUp UltraFast 9.5f"
   ],
   "matches": [
     {

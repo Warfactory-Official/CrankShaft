@@ -10,6 +10,14 @@ diff --git a/Lib/Programs/Gbuffers/Entities_FS.glsl b/Lib/Programs/Gbuffers/Enti
 diff --git a/Lib/Programs/Gbuffers/Water_FS.glsl b/Lib/Programs/Gbuffers/Water_FS.glsl
 --- a/Lib/Programs/Gbuffers/Water_FS.glsl
 +++ b/Lib/Programs/Gbuffers/Water_FS.glsl
+@@ -33,5 +33,6 @@
+-	/* RENDERTARGETS: 0,3,4 */
++	/* RENDERTARGETS: 0,3,4,5 */
+ 	layout(location = 0) out vec4 framebuffer_albedo;
+ 	layout(location = 1) out vec4 framebuffer_gtransData;
+ 	layout(location = 2) out vec4 framebuffer_gtransNormal;
++	layout(location = 3) out vec4 framebuffer_gwater;
+ #else
 @@ -138,4 +138,12 @@
  		vec3 dp1perp = cross(N, dp1);
 -		vec3 T = normalize(dp2perp * duv1.x + dp1perp * duv2.x);
@@ -30,4 +38,97 @@ diff --git a/Lib/Programs/Gbuffers/Water_FS.glsl b/Lib/Programs/Gbuffers/Water_F
  
 -		albedo.rgb *= fragColor.rgb;
 +		albedo.rgb = mix(albedo.rgb, fragColor.rgb, fragColor.a);
- 		blockLight = vec2(0.0, saturate(blockLight.y * 1.0666667 - 0.03333334));
+-		blockLight = vec2(0.0, saturate(blockLight.y * 1.0666667 - 0.03333334));
++		blockLight = saturate(blockLight * 1.0666667 - 0.03333334);
+@@ -280,1 +288,5 @@
+-	if (!isWater && albedoAlpha == 1.0){
++	#ifdef PROGRAM_COLORWHEEL
++	if (!isWater && (!_flw_borrowedBlock() || albedoAlpha == 1.0)){
++	#else
++	if (!isWater && albedoAlpha == 1.0){
++	#endif
+@@ -300,1 +312,4 @@
++		#ifdef PROGRAM_COLORWHEEL
++		if (_flw_isUnlit()) specularTex.a = 0.2;
++		#endif
+ 		albedoEnc = vec2(Pack2xU8_to_U16(specularTex.rg), Pack2xU8_to_U16(specularTex.ba));
+@@ -313,1 +328,4 @@
+ 	materialEnc.y /= 255.0;
++	#ifdef PROGRAM_COLORWHEEL
++	if (_flw_isUnlit()) blockLight.x = 1.0;
++	#endif
+@@ -321,3 +322,1 @@
+-	#ifndef PROGRAM_COLORWHEEL
+ 		framebuffer_gwater = vec4(normalEnc, Pack2xU8_to_U16(vec2(dist * 0.02, blockLight.y + 1e-6)), float(isWater));
+-	#endif
+diff --git a/Lib/PathTracing/Voxelizer/Shadow.glsl b/Lib/PathTracing/Voxelizer/Shadow.glsl
+--- a/Lib/PathTracing/Voxelizer/Shadow.glsl
++++ b/Lib/PathTracing/Voxelizer/Shadow.glsl
+@@ -34,7 +34,7 @@
+ 	in vec4 at_midBlock;
+ 	in vec2 mc_midTexCoord;
+ 
+-	out vec3 g_color;
++	out vec4 g_color;
+ 	out vec3 g_texcoord_isWater;
+ 	out vec3 g_worldPos;
+ 
+@@ -132,7 +132,7 @@
+ 
+ 		gl_Position.xy += rtwWarp * 2.0;
+ 		
+-		g_color = gl_Color.rgb;
++		g_color = gl_Color;
+ 
+ 		#ifdef PROGRAM_VOXEL
+ 			float isWater = float(mc_Entity.x == 6000.0);
+@@ -210,7 +210,7 @@
+ 	uniform int renderStage;
+ 
+ 
+-	in vec3 g_color[];
++	in vec4 g_color[];
+ 	in vec3 g_texcoord_isWater[];
+ 	in vec3 g_worldPos[];
+ 
+@@ -229,7 +229,7 @@
+ 		#endif
+ 	#endif
+ 
+-	out vec3 v_color;
++	out vec4 v_color;
+ 	out vec3 v_texcoord_isWater;
+ 	out vec3 v_worldPos;
+ 
+@@ -431,8 +431,8 @@
+ 			//uint uBlocklight = uint(round(saturate(blockLight.x) * 255.0));
+ 			//uint uBlocklight = ((g_voxel[0] >> 20u) & 128u) | uint(round(saturate(blockLight.x) * 127.0));
+ 			//uint packVoxelColor = uBlocklight << 24u | uColor.z << 16u | uColor.y << 8u | uColor.x;
+-			uint packVoxelColor = packUnorm4x8(vec4((g_color[0], blockLight.x)));
+-			imageAtomicMax(img_voxelColor3D, voxelTexel, packUnorm4x8(vec4(g_color[0], blockLight.x)));
++			uint packVoxelColor = packUnorm4x8(vec4((g_color[0].rgb, blockLight.x)));
++			imageAtomicMax(img_voxelColor3D, voxelTexel, packUnorm4x8(vec4(g_color[0].rgb, blockLight.x)));
+ 			
+ 		}}}
+ 
+@@ -471,7 +471,7 @@
+ 	#include "/Lib/RTWSM/SampleWarp.glsl"
+ 
+ 
+-	in vec3 v_color;
++	in vec4 v_color;
+ 	in vec3 v_texcoord_isWater;
+ 	in vec3 v_worldPos;
+ 	
+@@ -533,9 +533,10 @@
+ 
+ 			vec4 albedoTex = textureLod(tex, v_texcoord_isWater.xy, 0.0);
+ 			
++			albedoTex.a *= v_color.a;
+ 			if (albedoTex.a < 0.004) discard;
+ 
+-			albedoTex.rgb *= v_color;
++			albedoTex.rgb *= v_color.rgb;
+ 
+ 			if (v_texcoord_isWater.z > 0.5){
+ 				vec3 mcPos = v_worldPos.xyz + cameraPosition;
