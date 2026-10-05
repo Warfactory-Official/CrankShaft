@@ -215,7 +215,7 @@ dependencies {
     // NeoForge
     implementation("dev.engine_room:crankshaft-neoforge:1.5.5+mc26.2")
     // Fabric
-    implementation("dev.engine_room:crankshaft-fabric:1.5.5+mc26.2")
+    implementation("dev.engine_room:crankshaft-fabric:1.5.6+mc26.2")
 }
 ```
 
@@ -230,7 +230,7 @@ repositories {
     maven("https://repo.warfactory.co/snapshots")
 }
 
-implementation("dev.engine_room:crankshaft-fabric:1.5.5+mc26.2-SNAPSHOT")
+implementation("dev.engine_room:crankshaft-fabric:1.5.6+mc26.2-SNAPSHOT")
 ```
 
 ### License
