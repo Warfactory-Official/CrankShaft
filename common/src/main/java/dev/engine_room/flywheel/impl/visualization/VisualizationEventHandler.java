@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.impl.visualization;
 
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
+import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
@@ -10,6 +11,7 @@ public final class VisualizationEventHandler {
     }
 
     public static void onClientTick(Minecraft minecraft, Level level) {
+        FrameUniforms.tick();
         // The game won't be paused in the tick event, but let's make sure there's a player.
         if (minecraft.player == null) {
             return;

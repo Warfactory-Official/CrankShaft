@@ -29,7 +29,7 @@ import java.util.Map;
 public final class RenderPassUniforms {
     // DynamicUniformStorage rounds the block to the device's min uniform-offset alignment,
     // so the small declared sizes are just the written-byte counts.
-    private final DynamicUniformStorage<MaterialUniform> material = new DynamicUniformStorage<>("flywheel:material", 32,
+    private final DynamicUniformStorage<MaterialUniform> material = new DynamicUniformStorage<>("flywheel:material", 48,
             64);
     private final DynamicUniformStorage<RenderOriginUniform> renderOrigin = new DynamicUniformStorage<>(
             "flywheel:render_origin", DynamicLights.UNIFORM_SIZE, 2);
@@ -48,12 +48,14 @@ public final class RenderPassUniforms {
     private final Map<DrawTags, Int2ObjectOpenHashMap<GpuBufferSlice>> taggedMaterialSlices = new HashMap<>();
     private GpuBufferSlice renderOriginSlice;
     private GpuBufferSlice lineFrameSlice;
-    // Frame-constant glint inputs the per-material vertex shaders read; written into every _FlwInstanceDraw
-    // slice (the RenderPass port has no flywheel frame/options UBO -- see header.vsh).
+    // Frame-constant glint/time inputs the material and instance vertex shaders read; written into every
+    // _FlwInstanceDraw slice (the RenderPass port has no flywheel frame/options UBO -- see header.vsh).
     private float frameSystemSeconds;
     private float frameGlintSpeedOption;
     private float frameGlintStrengthOption;
     private float framePartialTick;
+    private float frameRenderTicks;
+    private float frameRenderSeconds;
 
     /**
      * Rotate the rings for a new frame and write this frame's render origin and dynamic lights (constant across
@@ -80,6 +82,8 @@ public final class RenderPassUniforms {
         frameGlintSpeedOption = Minecraft.getInstance().options.glintSpeed().get().floatValue();
         frameGlintStrengthOption = Minecraft.getInstance().options.glintStrength().get().floatValue();
         framePartialTick = FrameUniforms.partialTick();
+        frameRenderTicks = FrameUniforms.renderTicks();
+        frameRenderSeconds = FrameUniforms.renderSeconds();
     }
 
     public GpuBufferSlice renderOriginSlice() {
@@ -93,8 +97,7 @@ public final class RenderPassUniforms {
 
     /**
      * A UBO slice carrying {@code packedProperties} as {@code _flw_drawPackedMaterial.y}, plus this frame's
-     * {@code flw_systemSeconds}/{@code flw_glintSpeedOption}/{@code flw_glintStrengthOption} (read by the
-     * per-material glint vertex shaders).
+     * glint/time inputs (read by the material and instance vertex shaders).
      */
     public GpuBufferSlice material(int packedProperties) {
         return material(packedProperties, null);
@@ -110,7 +113,7 @@ public final class RenderPassUniforms {
         if (slice == null) {
             slice = material.writeUniform(new MaterialUniform(tags == null ? 0 : tags.drawTag(), packedProperties,
                     frameSystemSeconds, frameGlintSpeedOption, frameGlintStrengthOption,
-                    tags == null ? 0 : tags.itemTag(), framePartialTick));
+                    tags == null ? 0 : tags.itemTag(), framePartialTick, frameRenderTicks, frameRenderSeconds));
             slices.put(packedProperties, slice);
         }
         return slice;
@@ -140,7 +143,8 @@ public final class RenderPassUniforms {
 
     private record MaterialUniform(int drawTag, int packedProperties, float systemSeconds, float glintSpeedOption,
                                    float glintStrengthOption, int itemTag,
-                                   float partialTick) implements DynamicUniformStorage.DynamicUniform {
+                                   float partialTick, float renderTicks,
+                                   float renderSeconds) implements DynamicUniformStorage.DynamicUniform {
         @Override
         public void write(ByteBuffer buf) {
             buf.putInt(drawTag);               // _flw_drawPackedMaterial.x
@@ -150,7 +154,9 @@ public final class RenderPassUniforms {
             buf.putFloat(glintStrengthOption); // flw_glintStrengthOption
             buf.putInt(itemTag);               // _flw_drawItemTag (shaderpack guests)
             buf.putFloat(partialTick);          // flw_partialTick
-            buf.putInt(0);                      // std140 block padding
+            buf.putFloat(renderTicks);          // flw_renderTicks
+            buf.putFloat(renderSeconds);        // flw_renderSeconds
+            buf.putInt(0).putLong(0L);          // std140 block padding
         }
     }
 

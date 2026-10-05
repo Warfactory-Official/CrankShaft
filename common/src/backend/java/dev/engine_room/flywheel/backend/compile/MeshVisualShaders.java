@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 public final class MeshVisualShaders {
-    public static final long FRAME_UBO_BYTES = 80L;
+    public static final long FRAME_UBO_BYTES = 96L;
     // GL mesh-visual f16 varying trim: color/light/normal ride the mesh->frag interface as float16 (better
     // occupancy, the confirmed limiter); GL_NV_gpu_shader5 is always present on the GL tier (NVIDIA-only).
     public static final Consumer<Compilation> GL_MESH_F16 = ctx -> {
@@ -75,6 +75,8 @@ public final class MeshVisualShaders {
                 float _flw_mvGlintSpeed;
                 float _flw_mvGlintStrength;
                 float _flw_mvPartialTick;
+                float _flw_mvRenderTicks;
+                float _flw_mvRenderSeconds;
             };
             // RenderPassShaders.FRAG_LIGHTING_PRELUDE parity; main sets them from the mesh-stage varyings.
             vec4 flw_vertexPos;
@@ -167,6 +169,8 @@ public final class MeshVisualShaders {
 
     private static void instanceTimeDefine(Compilation ctx) {
         ctx.define("flw_partialTick", "_flw_mvPartialTick");
+        ctx.define("flw_renderTicks", "_flw_mvRenderTicks");
+        ctx.define("flw_renderSeconds", "_flw_mvRenderSeconds");
     }
 
     // Optional NV task stage: per-meshlet frustum cull ahead of the mesh stage (large/unwelded models).

@@ -13,8 +13,6 @@ import org.joml.*;
 import org.joml.Math;
 import org.lwjgl.system.MemoryUtil;
 
-import java.util.function.IntSupplier;
-
 public final class FrameUniforms extends UniformWriter {
     private static final int SIZE = 96 + 64 * 9 + 16 * 5 + 8 * 2 + 8 + 4 * 21;
     static final UniformBuffer BUFFER = new UniformBuffer(Uniforms.FRAME_INDEX, SIZE);
@@ -40,8 +38,11 @@ public final class FrameUniforms extends UniformWriter {
     private static DebugMode debugMode = DebugMode.OFF;
     private static boolean frustumPaused = false;
     private static boolean frustumCapture = false;
-    private static IntSupplier tickProvider = () -> 0;
+    // 26.2: no LevelRenderer.ticks; counted per unpaused client tick.
+    private static int ticks;
     private static float partialTick;
+    private static float renderTicks;
+    private static float renderSeconds;
 
     private FrameUniforms() {
     }
@@ -67,8 +68,8 @@ public final class FrameUniforms extends UniformWriter {
         frustumPaused = false;
     }
 
-    public static void setTickProvider(IntSupplier supplier) {
-        tickProvider = supplier;
+    public static void tick() {
+        ticks++;
     }
 
     public static float getDepthFar() {
@@ -87,6 +88,14 @@ public final class FrameUniforms extends UniformWriter {
 
     public static float partialTick() {
         return partialTick;
+    }
+
+    public static float renderTicks() {
+        return renderTicks;
+    }
+
+    public static float renderSeconds() {
+        return renderSeconds;
     }
 
     public static void bind() {
@@ -193,10 +202,9 @@ public final class FrameUniforms extends UniformWriter {
     }
 
     private static long writeTime(long ptr, RenderContext context) {
-        int ticks = tickProvider.getAsInt();
         float partialTick = context.partialTick();
-        float renderTicks = ticks + partialTick;
-        float renderSeconds = renderTicks / 20.0f;
+        renderTicks = ticks + partialTick;
+        renderSeconds = renderTicks / 20.0f;
         long utilMillis = System.nanoTime() / 1000000L;
         float systemSeconds = (float) ((double) utilMillis / 1000.0);
         int systemMillis = (int) (utilMillis % Integer.MAX_VALUE);

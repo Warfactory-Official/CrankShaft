@@ -27,13 +27,15 @@ layout(std430, binding = _FLW_MATRIX_BUFFER_BINDING) restrict readonly buffer _F
 
 uniform uint _flw_baseDraw;
 
-// Render-origin-space modelview (no bob; 26.2 bobs PROJECTION) + systemSeconds/glint* mirrors (#defined by assembly).
+// Render-origin-space modelview (no bob; 26.2 bobs PROJECTION) + flw_* mirrors (#defined by assembly).
 layout(std140, binding = 9) uniform _FlwMeshVisualFrame {
     mat4 _flw_mvModelView;
     float _flw_mvSystemSeconds;
     float _flw_mvGlintSpeed;
     float _flw_mvGlintStrength;
     float _flw_mvPartialTick;
+    float _flw_mvRenderTicks;
+    float _flw_mvRenderSeconds;
 };
 
 // Live bob-included ProjMat (26.2 bobs the projection, not the camera): clip with this to bob exactly like MDI.

@@ -778,6 +778,8 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                                                                 .get()
                                                                 .floatValue());
             scratch.putFloat(76, FrameUniforms.partialTick());
+            scratch.putFloat(80, FrameUniforms.renderTicks());
+            scratch.putFloat(84, FrameUniforms.renderSeconds());
             GL45C.glNamedBufferSubData(matrixUbo, 0L, scratch);
         }
     }

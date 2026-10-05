@@ -61,6 +61,8 @@ layout(std140) uniform _FlwInstanceDraw {
     float flw_glintStrengthOption;
     uint _flw_drawItemTag;
     float flw_partialTick;
+    float flw_renderTicks;
+    float flw_renderSeconds;
 };
 
 #ifdef FLW_EMBEDDED

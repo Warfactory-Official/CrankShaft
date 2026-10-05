@@ -88,6 +88,8 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
                                                                               .get()
                                                                               .floatValue());
         MemoryUtil.memPutFloat(framePtr + 76L, FrameUniforms.partialTick());
+        MemoryUtil.memPutFloat(framePtr + 80L, FrameUniforms.renderTicks());
+        MemoryUtil.memPutFloat(framePtr + 84L, FrameUniforms.renderSeconds());
 
         int n = frameDrawCount;
         if (n == 0) {

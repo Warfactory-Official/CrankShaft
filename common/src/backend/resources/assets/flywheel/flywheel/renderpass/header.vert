@@ -38,6 +38,8 @@ layout(std140, binding = 11) uniform _FlwInstanceDraw {
     float flw_glintStrengthOption;
     uint _flw_drawItemTag;
     float flw_partialTick;
+    float flw_renderTicks;
+    float flw_renderSeconds;
 };
 
 out vec2 _flw_clipData;
