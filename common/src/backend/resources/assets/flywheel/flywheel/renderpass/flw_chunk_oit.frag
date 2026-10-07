@@ -3,7 +3,7 @@
 #include "flywheel:internal/oit_producer.glsl"
 
 // Perf: discard-only, no depth write -- force the early depth test (inserts: mlab.glsl).
-#ifndef _FLW_OIT_INSERT
+#if !defined(_FLW_OIT_INSERT) && __VERSION__ >= 420
 layout(early_fragment_tests) in;
 #endif
 

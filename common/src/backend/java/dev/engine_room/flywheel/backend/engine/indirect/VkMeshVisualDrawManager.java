@@ -147,7 +147,6 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
               .uniform(9, in.modelViewUbo());
     }
 
-    // ONE EXT mesh pipeline per instance type (material state via the command's packedMaterialProperties); per run only the pipeline/atlas + baseDraw push change.
     @Override
     void drawSolid(VkCommandBuffer cmd, GpuBufferSlice projection, GpuBufferSlice dynamicTransforms,
                    GpuBufferSlice fog, GpuBufferSlice lights, GpuBuffer globals, GpuBufferSlice renderOriginSlice,
@@ -168,7 +167,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         FrameSet fs = frame();
         long pyramidSampler = VkContext.sampler(RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
 
-        boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+        boolean bindless = VkPrograms.bindlessTexturesEnabled();
         VkMeshPipeline lastPipeline = null;
 
         for (MeshDrawRun multiDraw : meshMultiDraws) {
@@ -211,7 +210,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         FrameSet fs = frame();
         long pyramidSampler = VkContext.sampler(RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
         boolean needsColor = mode != OitMode.DEPTH_RANGE;
-        boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+        boolean bindless = VkPrograms.bindlessTexturesEnabled();
         VkMeshPipeline lastPipeline = null;
 
         for (MeshDrawRun multiDraw : draws) {
@@ -260,7 +259,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         }
         FrameSet fs = frame();
         long pyramidSampler = VkContext.sampler(RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
-        boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+        boolean bindless = VkPrograms.bindlessTexturesEnabled();
         VkMeshPipeline lastPipeline = null;
 
         for (MeshDrawRun multiDraw : draws) {
@@ -322,8 +321,8 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
             long pc = stack.nmalloc(VkMeshVisualPipelines.PUSH_BYTES);
             MemoryUtil.memPutLong(pc, VkMeshVisualPipelines.deviceAddress(cf.vertexVk()));
             MemoryUtil.memPutLong(pc + 8L, VkMeshVisualPipelines.deviceAddress(cf.indexVk()));
-            MemoryUtil.memPutLong(pc + 16L, 0L); // boundsAddr: unused by the crumbling variant
-            MemoryUtil.memPutInt(pc + 24L, 0);   // baseDraw: unused
+            MemoryUtil.memPutLong(pc + 16L, 0L);
+            MemoryUtil.memPutInt(pc + 24L, 0);
             MemoryUtil.memPutInt(pc + 28L, objectSlot);
             MemoryUtil.memPutInt(pc + 32L, mesh.firstIndex());
             MemoryUtil.memPutInt(pc + 36L, mesh.baseVertex());

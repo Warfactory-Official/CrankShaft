@@ -50,7 +50,7 @@ void _flw_unpackMaterialProperties(uint p, out FlwMaterial m) {
     m.useOverlay = (p & _FLW_USE_OVERLAY_MASK) != 0u;
     m.useLight = (p & _FLW_USE_LIGHT_MASK) != 0u;
     m.cardinalLightingMode = (p & _FLW_CARDINAL_LIGHTING_MODE_MASK) >> _FLW_CARDINAL_LIGHTING_MODE_OFFSET;
-    m.ambientOcclusion = (p & _FLW_AMBIENT_OCCLUSION_MASK) != 0;
+    m.ambientOcclusion = (p & _FLW_AMBIENT_OCCLUSION_MASK) != 0u;
 }
 
 void _flw_unpackUint2x16(uint s, out uint hi, out uint lo) {

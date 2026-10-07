@@ -22,11 +22,15 @@ import dev.engine_room.flywheel.api.material.DepthTest;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.backend.BackendConfig;
+import dev.engine_room.flywheel.backend.BackendRecovery;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.NoiseTextures;
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.compile.GlCompilationBatch;
+import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
+import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
 import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
@@ -39,6 +43,8 @@ import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainPipelines;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainVertexFormat;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
+import dev.engine_room.flywheel.backend.glsl.GlslVersion;
+import dev.engine_room.flywheel.impl.BackendManagerImpl;
 import dev.engine_room.flywheel.impl.FlwConfig;
 import dev.engine_room.flywheel.iris.IrisBackends;
 import dev.engine_room.flywheel.iris.compile.patches.ContractPatches;
@@ -50,6 +56,7 @@ import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.FogShaders;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import dev.engine_room.flywheel.lib.util.ShaderWarmupRegistry;
+import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.gl.blending.*;
 import net.irisshaders.iris.gl.framebuffer.GlFramebuffer;
@@ -69,13 +76,11 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
 import java.util.regex.Pattern;
 
-/**
- * Guest {@link RenderPipeline}s (pack-independent state + bind group) and their programs, compiled against the
- * current {@link IrisRenderingPipeline}. Render thread only.
- */
+/** Render-thread only; guest caches scoped to Iris pipeline ownership. */
 public final class GuestPipelines {
     private static final Identifier GUEST_SHADER = ResourceUtil.rl("iris/guest");
     private static final Identifier GRAYSCALE_FONT = ResourceUtil.rl("material/nametag.frag");
@@ -91,7 +96,6 @@ public final class GuestPipelines {
     private static final BlendFunction MAX_BLEND = new BlendFunction(BlendFactor.ONE, BlendFactor.ONE, BlendOp.MAX,
             BlendFactor.ONE, BlendFactor.ONE, BlendOp.MAX);
     private static final BlendFunction ADD_BLEND = new BlendFunction(BlendFactor.ONE, BlendFactor.ONE);
-    // RenderPipelines.ENTITY_TRANSLUCENT's; Iris keeps it for entities_translucent.
     private static final BlendModeOverride ENTITY_TRANSLUCENT_BLEND = new BlendModeOverride(new BlendMode(
             BlendModeFunction.SRC_ALPHA.getGlId(), BlendModeFunction.ONE_MINUS_SRC_ALPHA.getGlId(),
             BlendModeFunction.ONE.getGlId(), BlendModeFunction.ONE_MINUS_SRC_ALPHA.getGlId()));
@@ -115,10 +119,7 @@ public final class GuestPipelines {
                         k.colorWrite(), k.cull(), k.polygonOffset(), embedded), k));
     }
 
-    /**
-     * Type-erased, like {@code IndirectPipeline.uberPipelineFor}; guests never sample bindless. {@code embedded}: the
-     * embedded fragment variant (the vertex branches on the draw's matrix index).
-     */
+    /** Type-erased; {@code embedded} selects fragment variant. */
     public static RenderPipeline indirect(PackRole role, Material material, boolean embedded) {
         PackRole routed = role.forMaterial(material);
         ProgramKey program = ProgramKey.of(routed, true, null, material, embedded, false, InstanceTypeIds.snapshot()
@@ -129,9 +130,7 @@ public final class GuestPipelines {
                         k.colorWrite(), k.cull(), k.polygonOffset(), false), k));
     }
 
-    /**
-     * Depth-only redraw of a colour-only draw through {@code role}'s program, so positions match the colour pass.
-     */
+    /** Colour-program positions; depth-only redraw. */
     public static RenderPipeline instancingDepthFill(PackRole role, Material material, InstanceType<?> type,
                                                      boolean embedded) {
         ProgramKey program = ProgramKey.of(role, false, type, material, embedded, false, 0);
@@ -149,9 +148,7 @@ public final class GuestPipelines {
                         k.cull(), k.polygonOffset(), false), k));
     }
 
-    /**
-     * {@link #instancing} as an OIT producer pass; {@code role}: {@code TRANSLUCENT} or {@code SHADOW}.
-     */
+    /** OIT producer; {@code role} = TRANSLUCENT/SHADOW. */
     public static RenderPipeline instancingOit(PackRole role, OitPass pass, Material material, InstanceType<?> type,
                                                boolean embedded) {
         ProgramKey program = ProgramKey.of(role, false, type, material, embedded, false, 0)
@@ -171,9 +168,7 @@ public final class GuestPipelines {
                         k.colorWrite(), k.cull(), k.polygonOffset(), false), k));
     }
 
-    /**
-     * Fullscreen resolve of the OIT targets into the contract translucent program's framebuffer.
-     */
+    /** Contract translucent framebuffer; after OIT producer passes. */
     public static RenderPipeline oitComposite(boolean shadow) {
         int index = shadow ? 1 : 0;
         if (COMPOSITES[index] == null) {
@@ -194,9 +189,7 @@ public final class GuestPipelines {
         return COMPOSITES[index];
     }
 
-    /**
-     * {@link #oitComposite}'s depth: nearer-or-equal only, main reversed-Z, shadow forward-Z.
-     */
+    /** After composite; main reversed-Z, shadow forward-Z. */
     public static RenderPipeline oitDepth(boolean shadow) {
         int index = shadow ? 1 : 0;
         if (DEPTHS[index] == null) {
@@ -220,15 +213,12 @@ public final class GuestPipelines {
 
     private static PipelineKey materialKey(ProgramKey program, Material material) {
         boolean shadow = program.role().shadow;
-        // A G-buffer surface without depth is lit at, and hidden by translucents behind, whatever lies beyond it; a
-        // translucent one is never found by its composite at all.
         PackRole role = program.role();
         boolean gbuffer = (role == PackRole.ADDITIVE || role.blockRole() == PackRole.TRANSLUCENT)
                 && Iris.getPipelineManager()
                        .getPipelineNullable() instanceof IrisRenderingPipeline pipeline
                 && (role == PackRole.ADDITIVE ? deferredEmissive(pipeline) : deferredTranslucent(pipeline)
                 && !forwardUnlit(contractSet((IrisRenderingPipelineAccessor) pipeline), program));
-        // Vanilla's blended layers routed through entities write depth.
         return new PipelineKey(program, material.transparency(), material.depthTest(), shadow || gbuffer
                 || role == PackRole.ENTITIES || material.writeMask()
                                                         .depth(),
@@ -265,7 +255,6 @@ public final class GuestPipelines {
 
     private static RenderPipeline register(PackRole role, RenderPipeline.Builder builder, PipelineKey key) {
         if (role.shadow) {
-            // Shadow depth is forward-Z (cleared to 1); Iris flips compares only for its own pipelines.
             builder.withDepthStencilState(new DepthStencilState(forwardZ(key.depthTest()), true, 0.0f, 0.0f))
                    .withCull(false);
         }
@@ -288,9 +277,7 @@ public final class GuestPipelines {
         return pipeline;
     }
 
-    /**
-     * The compiled guest for {@code pipeline}, or {@code null} for any other pipeline.
-     */
+    /** Guest pipeline or {@code null}; current Iris pipeline ownership. */
     public static @Nullable GlRenderPipeline compiled(RenderPipeline pipeline) {
         return compiled(pipeline, null);
     }
@@ -300,8 +287,6 @@ public final class GuestPipelines {
         ProgramKey key = PROGRAM_KEYS.get(pipeline);
         Boolean compositeShadow = COMPOSITE_SHADOW.get(pipeline);
         Boolean depthShadow = DEPTH_SHADOW.get(pipeline);
-        // The engine's own terrain pipelines, claimed by identity so no guest-specific pipeline object is needed.
-        // Only while a pack is live: these pipelines are also warmed up with no pack, where there is no guest.
         TerrainPipelines.Kind terrainKind = GuestTerrainGate.enabled() && Iris.isPackInUseQuick()
                 ? TerrainPipelines.terrainKind(pipeline) : null;
         if (key == null && compositeShadow == null && depthShadow == null && terrainKind == null) {
@@ -323,18 +308,43 @@ public final class GuestPipelines {
         return compiled;
     }
 
-    /**
-     * Warm an installed pack after resource apply, or while entering its dimension, before any visual draw.
-     */
+    /** Resource apply/dimension entry; before visual draws. */
     public static void warmUp(IrisRenderingPipeline pipeline) {
         if (warmed == pipeline) return;
         if (FlwConfig.INSTANCE.backend() == BackendManager.offBackend()) return;
-        // Iris may construct a pack pipeline before the engine's resource listener has published shader sources.
-        if (FlwPrograms.SOURCES == null) return;
+        if (FlwPrograms.SOURCES == null || !GlCompat.SUPPORTS_INSTANCING) return;
+        GuestShaders.clearTransformMemos();
         ShaderWarmup.seedRegistrations();
-        boolean indirect = FlwConfig.INSTANCE.backend() != Backends.INSTANCING
-                && FlwConfig.INSTANCE.backend() != IrisBackends.IRIS_INSTANCING
-                && GlCompat.SUPPORTS_INDIRECT;
+        try {
+            boolean indirect = FlwConfig.INSTANCE.backend() != Backends.INSTANCING
+                    && FlwConfig.INSTANCE.backend() != IrisBackends.IRIS_INSTANCING
+                    && GlCompat.SUPPORTS_INDIRECT && IndirectPrograms.allLoaded()
+                    && !BackendRecovery.isRejected(IrisBackends.IRIS_INDIRECT);
+            if (indirect) {
+                try {
+                    warmUpTier(pipeline, true);
+                    return;
+                } catch (BackendUnavailableException failure) {
+                    if (Boolean.getBoolean("crankshaft.shader.strict")) throw failure;
+                    BackendRecovery.reject(IrisBackends.IRIS_INDIRECT, failure);
+                    track(null);
+                }
+            }
+            if (!InstancingPrograms.allLoaded()
+                    || BackendRecovery.isRejected(IrisBackends.IRIS_INSTANCING)) return;
+            try {
+                warmUpTier(pipeline, false);
+            } catch (BackendUnavailableException failure) {
+                if (Boolean.getBoolean("crankshaft.shader.strict")) throw failure;
+                BackendRecovery.reject(IrisBackends.IRIS_INSTANCING, failure);
+                track(null);
+            }
+        } finally {
+            if (BackendRecovery.isRejected(BackendManager.currentBackend())) BackendManagerImpl.reselect();
+        }
+    }
+
+    private static void warmUpTier(IrisRenderingPipeline pipeline, boolean indirect) {
         List<InstanceType<?>> types = indirect ? Collections.singletonList(null) : ShaderWarmupRegistry.types();
         List<Material> materials = ShaderWarmupRegistry.materials();
         IrisRenderingPipelineAccessor accessor = (IrisRenderingPipelineAccessor) pipeline;
@@ -343,7 +353,7 @@ public final class GuestPipelines {
         track(pipeline);
         int before = PROGRAMS.size();
         Map<LinkKey, List<RenderPipeline>> pending = new HashMap<>();
-        Set<RenderPipeline> requested = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<RenderPipeline> requested = new ReferenceOpenHashSet<>();
         try (GlCompilationBatch batch = new GlCompilationBatch()) {
             for (InstanceType<?> type : types) {
                 for (Material material : materials) {
@@ -354,7 +364,6 @@ public final class GuestPipelines {
                             RenderPipeline draw = indirect ? indirect(role, material, embedded)
                                     : instancing(role, material, type, embedded);
                             ProgramKey key = PROGRAM_KEYS.get(draw);
-                            // A partial pack need not provide every role. Only a real draw requires a missing program.
                             if (contractSource(accessor, key) == null
                                     && accessor.flywheel$resolver().resolveNullable(key.role().programId) == null)
                                 continue;
@@ -412,7 +421,6 @@ public final class GuestPipelines {
 
     public static void warmCurrent() {
         if (Iris.getPipelineManager().getPipelineNullable() instanceof IrisRenderingPipeline pipeline) {
-            // Resource apply can replace engine GLSL while Iris keeps the same pipeline object.
             track(null);
             warmUp(pipeline);
         }
@@ -425,10 +433,6 @@ public final class GuestPipelines {
                 || material.transparency() == Transparency.GLINT;
     }
 
-    /**
-     * The engine's MDI terrain draw through the pack's {@code gbuffers_terrain}; alpha mirrors Iris's own
-     * {@code SODIUM_TERRAIN_*} keys.
-     */
     private static GuestProgram terrain(IrisRenderingPipeline pipeline, RenderPipeline renderPipeline,
                                         TerrainPipelines.Kind kind, boolean mesh) {
         IrisRenderingPipelineAccessor accessor = (IrisRenderingPipelineAccessor) pipeline;
@@ -441,7 +445,7 @@ public final class GuestPipelines {
         ProgramSource source = accessor.flywheel$resolver()
                                        .resolveNullable(programId);
         if (source == null) {
-            throw new IllegalStateException("Shaderpack has no program for " + programId);
+            throw new BackendUnavailableException("Shaderpack has no program for " + programId);
         }
         AlphaTest alpha = source.getDirectives()
                                 .getAlphaTestOverride()
@@ -473,29 +477,24 @@ public final class GuestPipelines {
                     terrainAttributes());
         }
 
-        GuestProgram program = new GuestProgram(programId2, label, renderPipeline.getBindGroupLayouts(), false,
-                pipeline, shadow,
+        GuestProgram program = publishDirect(programId2, id -> new GuestProgram(id, label,
+                renderPipeline.getBindGroupLayouts(), false, pipeline, shadow,
                 packTarget(accessor, pipeline, drawBuffers, shadow), source.getDirectives()
                                                                            .getBlendModeOverride()
                                                                            .orElse(programId.getBlendModeOverride()),
                 bufferBlends(source.getDirectives()
-                                   .getBufferBlendOverrides(), drawBuffers), alpha, meshTextures(mesh, List.of()));
+                                   .getBufferBlendOverrides(), drawBuffers), alpha, meshTextures(mesh, List.of())));
         program.useTerrainState();
         if (mesh) program.useMesh(meshQuads, taskQuads, taskRecovery, compactSafe);
         return program;
     }
 
-    /**
-     * The engine's translucent terrain stream as an OIT producer: the pack's own {@code gbuffers_water} shading,
-     * accumulated into the guest OIT targets the instance producers already write, so one composite resolves both.
-     */
     private static GuestProgram terrainOit(IrisRenderingPipeline pipeline, RenderPipeline renderPipeline,
                                            ProgramSource source, AlphaTest alpha, int[] drawBuffers, int oitPass,
                                            boolean mesh) {
         IrisRenderingPipelineAccessor accessor = (IrisRenderingPipelineAccessor) pipeline;
         ContractProperties properties = Objects.requireNonNull(oitProperties(pipeline, false));
         OitPass pass = OitPass.values()[oitPass];
-        // The shared targets use the contract's layout; terrain outputs are matched by colortex identity.
         int[] oitBuffers = drawBuffers(Objects.requireNonNull(oitSource(accessor, false)), false);
         GuestShaders.OitSpec spec = new GuestShaders.OitSpec(pass, properties.oit(false), oitBuffers, false);
         String label = "flywheel:iris/" + source.getName() + "/terrain_oit_" + pass.name().toLowerCase(Locale.ROOT);
@@ -519,12 +518,12 @@ public final class GuestPipelines {
         }
 
         GuestOitTargets targets = oitTargets(accessor, false);
-        GuestProgram program = new GuestProgram(programId, label, renderPipeline.getBindGroupLayouts(), false,
-                pipeline, false,
+        GuestProgram program = publishDirect(programId, id -> new GuestProgram(id, label,
+                renderPipeline.getBindGroupLayouts(), false, pipeline, false,
                 before -> GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER,
                         oitPass == 0 ? targets.depthRangeFbo()
                                 : oitPass == 1 ? targets.coefficientsFbo() : targets.accumulateFbo()),
-                null, List.of(), alpha, meshTextures(mesh, producerTextures(targets, pass)));
+                null, List.of(), alpha, meshTextures(mesh, producerTextures(targets, pass))));
         program.useTerrainState();
         if (mesh) program.useMesh(meshQuads, taskQuads, taskRecovery, false);
         return program;
@@ -538,10 +537,6 @@ public final class GuestPipelines {
         return List.copyOf(result);
     }
 
-    /**
-     * Sodium's attribute names, in the live layout's element order: a guest program links itself, so nothing else
-     * binds them.
-     */
     private static String[] terrainAttributes() {
         return TerrainVertexFormat.current()
                                   .getElements()
@@ -550,9 +545,7 @@ public final class GuestPipelines {
                                   .toArray(String[]::new);
     }
 
-    /**
-     * Called on the render thread when Iris destroys a pipeline; releases the guest programs and OIT targets it owns.
-     */
+    /** Iris pipeline destruction, render thread; releases owned guest resources. */
     public static void release(IrisRenderingPipeline pipeline) {
         if (owner == pipeline) {
             track(null);
@@ -584,9 +577,7 @@ public final class GuestPipelines {
         warmed = null;
     }
 
-    /**
-     * Colorwheel OIT ({@code colorwheel.properties oit}) applies to the group's order-independent draws.
-     */
+    /** Order-independent draws admitted to contract OIT. */
     public static boolean oitActive(IrisRenderingPipeline pipeline, boolean shadow) {
         if (!GuestOitTargets.SUPPORTED) {
             return false;
@@ -605,9 +596,7 @@ public final class GuestPipelines {
         return profile != null && profile.capturesTerrain();
     }
 
-    /**
-     * Resizes, attaches and clears the group's OIT targets; returns whether it has coefficient sets.
-     */
+    /** Before producers; prepare targets. Returns coefficient-set presence. */
     public static boolean prepareOit(IrisRenderingPipeline pipeline, boolean shadow) {
         track(pipeline);
         IrisRenderingPipelineAccessor accessor = (IrisRenderingPipelineAccessor) pipeline;
@@ -634,7 +623,6 @@ public final class GuestPipelines {
             int[] formats = new int[drawBuffers.length];
             for (int slot = 0; slot < drawBuffers.length; slot++) {
                 var buffer = oit.accumulate(drawBuffers[slot]);
-                // Compat with Colorwheel: weighted colour and opacity sums exceed normalized attachment ranges.
                 formats[slot] = buffer.coefficient() == ContractProperties.Accumulate.FRONTMOST
                         ? buffer.format().getGlFormat() : GL30C.GL_RGBA32F;
             }
@@ -661,33 +649,25 @@ public final class GuestPipelines {
                                                                                   .getDrawBuffers();
     }
 
-    /**
-     * Whether emissive guests draw before {@code pipeline}'s deferred passes, as opaque G-buffer surfaces.
-     */
+    /** Emissive guests: opaque G-buffer before deferred passes. */
     public static boolean deferredEmissive(IrisRenderingPipeline pipeline) {
         return ((ContractShaderPack) ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack())
                 .flywheel$deferredEmissive();
     }
 
-    /**
-     * Whether emissive guests add light into a buffer {@code pipeline}'s composite merges: no depth of their own.
-     */
+    /** Emissive guests: composite light buffer, no own depth. */
     public static boolean emissiveLight(IrisRenderingPipeline pipeline) {
         return ((ContractShaderPack) ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack())
                 .flywheel$emissiveLight();
     }
 
-    /**
-     * Whether translucent guests must write depth for {@code pipeline}'s composite to find them.
-     */
+    /** Translucent guests: depth required by pack composite. */
     public static boolean deferredTranslucent(IrisRenderingPipeline pipeline) {
         return ((ContractShaderPack) ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack())
                 .flywheel$deferredTranslucent();
     }
 
-    /**
-     * {@code colorwheel.properties} of a pack that ships the Colorwheel contract, else {@code null}.
-     */
+    /** Authored Colorwheel contract properties; absent = {@code null}. */
     public static @Nullable ContractProperties contractProperties(IrisRenderingPipeline pipeline) {
         IrisRenderingPipelineAccessor accessor = (IrisRenderingPipelineAccessor) pipeline;
         return contractSet(accessor).flywheel$contractSource(ContractProgram.GBUFFERS) == null ? null
@@ -742,13 +722,10 @@ public final class GuestPipelines {
         ContractProgram wanted = forwardUnlit(contractSet, key) ? ContractProgram.GBUFFERS_UNLIT_TRANSLUCENT
                 : ContractProgram.of(key.role(), Objects.requireNonNull(key.transparency()),
                 contractSet::flywheel$hasContract);
-        // Port: an emissive or glint contract the pack lacks resolves natively; Colorwheel's base is the opaque
-        // clrwl_gbuffers.
         ProgramSource contract = key.role() == PackRole.EYES || key.role() == PackRole.ENTITIES_TRANSLUCENT
                 || key.role() == PackRole.ENTITIES
                 || (key.role() == PackRole.ADDITIVE || key.role() == PackRole.GLINT)
                 && !contractSet.flywheel$hasContract(wanted) ? null : contractSet.flywheel$contractSource(wanted);
-        // Colorwheel defines no tessellation contract.
         if (contract != null && (contract.getTessControlSource()
                                          .isPresent() || contract.getTessEvalSource()
                                                                  .isPresent())) {
@@ -756,8 +733,6 @@ public final class GuestPipelines {
                     contract.getName());
             contract = null;
         }
-        // Port: IterationRP builds clrwl_gbuffers from its entity program, which never reads mc_Entity: a borrowed
-        // block id would be dropped there, so the draw takes the pack's terrain program.
         if (contract != null && key.role() == PackRole.TERRAIN && !readsMcEntity(contract)) {
             FlwBackend.LOGGER.info("{} ignores mc_Entity; borrowed block draws take the pack's terrain program",
                     contract.getName());
@@ -797,7 +772,7 @@ public final class GuestPipelines {
         ProgramSource source = accessor.flywheel$resolver()
                                        .resolveNullable(role.programId);
         if (source == null) {
-            throw new IllegalStateException("Shaderpack has no program for " + role.programId);
+            throw new BackendUnavailableException("Shaderpack has no program for " + role.programId);
         }
         return source;
     }
@@ -822,14 +797,22 @@ public final class GuestPipelines {
     private static GuestProgram link(IrisRenderingPipeline pipeline, RenderPipeline renderPipeline, ProgramKey key,
                                      @Nullable ContractProgram contract, ProgramSource source) {
         PreparedProgram prepared = prepareLink(pipeline, renderPipeline, key, contract, source);
-        return prepared.publish().apply(linkProgram(prepared.label(), prepared.stages()));
+        return publishDirect(linkProgram(prepared.label(), prepared.stages()), prepared.publish());
+    }
+
+    private static GuestProgram publishDirect(int handle, IntFunction<GuestProgram> publish) {
+        try {
+            return publish.apply(handle);
+        } catch (BackendUnavailableException failure) {
+            GlStateManager.glDeleteProgram(handle);
+            throw failure;
+        }
     }
 
     private static PreparedProgram prepareLink(IrisRenderingPipeline pipeline, RenderPipeline renderPipeline,
                                                ProgramKey key,
                                                @Nullable ContractProgram contract, ProgramSource source) {
         IrisRenderingPipelineAccessor accessor = (IrisRenderingPipelineAccessor) pipeline;
-        // Authored Colorwheel contracts discard through their material cutout.
         AlphaTest alpha = contract != null ? AlphaTests.OFF : source.getDirectives()
                                                                     .getAlphaTestOverride()
                                                                     .orElse(key.alphaTest());
@@ -840,7 +823,6 @@ public final class GuestPipelines {
             alpha = AlphaTests.OFF;
         }
         if (contract != null && nativeAdapter) {
-            // Native-adapter uniforms use the same alpha reference as their source program.
             alpha = accessor.flywheel$resolver().resolveNullable(ProgramId.Water).getDirectives().getAlphaTestOverride()
                             .orElse(ShaderKey.SODIUM_TERRAIN_TRANSLUCENT.getAlphaTest());
         }
@@ -894,7 +876,6 @@ public final class GuestPipelines {
                           .orElse(key.role() == PackRole.ENTITIES_TRANSLUCENT ? ENTITY_TRANSLUCENT_BLEND
                                   : key.role().programId.getBlendModeOverride());
         }
-        // Blending packed G-buffer words corrupts them.
         if (blend == null && key.role() == PackRole.ADDITIVE && deferredEmissive(pipeline)) {
             blend = BlendModeOverride.OFF;
         }
@@ -941,9 +922,10 @@ public final class GuestPipelines {
         if (blend == null && shadow) {
             blend = BlendModeOverride.OFF;
         }
-        return new GuestProgram(programId, label, renderPipeline.getBindGroupLayouts(), false, pipeline, shadow,
-                packTarget(accessor, pipeline, drawBuffers, shadow), blend,
-                bufferBlends(properties.bufferBlend(program), drawBuffers), AlphaTests.OFF, textures);
+        BlendModeOverride finalBlend = blend;
+        return publishDirect(programId, id -> new GuestProgram(id, label, renderPipeline.getBindGroupLayouts(), false,
+                pipeline, shadow, packTarget(accessor, pipeline, drawBuffers, shadow), finalBlend,
+                bufferBlends(properties.bufferBlend(program), drawBuffers), AlphaTests.OFF, textures));
     }
 
     private static GuestProgram compositeDepth(IrisRenderingPipeline pipeline, RenderPipeline renderPipeline,
@@ -954,9 +936,10 @@ public final class GuestPipelines {
         int programId = linkProgram(label, new GuestShaders.Stages(GuestOitCodegen.COMPOSITE_VERTEX, null, null, null,
                 GuestOitCodegen.depthFragment(shadow)));
         GuestOitTargets targets = oitTargets(accessor, shadow);
-        return new GuestProgram(programId, label, renderPipeline.getBindGroupLayouts(), false, pipeline, shadow,
-                packTarget(accessor, pipeline, drawBuffers(source, shadow), shadow), null, List.of(), AlphaTests.OFF,
-                List.of(new GuestProgram.RawTexture("_flw_depthRange", GL11C.GL_TEXTURE_2D, targets::depthRange)));
+        return publishDirect(programId, id -> new GuestProgram(id, label, renderPipeline.getBindGroupLayouts(), false,
+                pipeline, shadow, packTarget(accessor, pipeline, drawBuffers(source, shadow), shadow), null, List.of(),
+                AlphaTests.OFF,
+                List.of(new GuestProgram.RawTexture("_flw_depthRange", GL11C.GL_TEXTURE_2D, targets::depthRange))));
     }
 
     private static List<GuestProgram.RawTexture> producerTextures(GuestOitTargets targets, OitPass pass) {
@@ -1020,7 +1003,7 @@ public final class GuestPipelines {
     }
 
     private static int linkBatch(GlCompilationBatch batch, String label, GuestShaders.Stages stages,
-                                 String[] attributes, java.util.function.IntConsumer publish) {
+                                 String[] attributes, IntConsumer publish) {
         if (Compilation.DUMP_SHADER_SOURCE) {
             dump(label, stages);
         }
@@ -1030,7 +1013,10 @@ public final class GuestPipelines {
         int[] shaders = new int[5];
         int count = 0;
         for (int index = 0; index < types.length; index++) {
-            if (sources[index] != null) shaders[count++] = batch.sharedShader(types[index], sources[index], label);
+            if (sources[index] != null) {
+                GuestShaders.requireSupportedStage(label, sources[index]);
+                shaders[count++] = batch.sharedShader(types[index], sources[index], label);
+            }
         }
         return batch.link(label, Arrays.copyOf(shaders, count), attributes, publish);
     }
@@ -1056,6 +1042,7 @@ public final class GuestPipelines {
 
     private static int linkStages(String label, int[] types, String[] sources, String[] attributes) {
         int programId = GlStateManager.glCreateProgram();
+        if (programId == 0) throw gpuFailure("Could not create program " + label, true);
         List<Integer> shaders = new ArrayList<>(5);
         boolean linked = false;
         try {
@@ -1065,7 +1052,7 @@ public final class GuestPipelines {
             }
             GlStateManager.glLinkProgram(programId);
             if (GlStateManager.glGetProgrami(programId, GL20C.GL_LINK_STATUS) == 0) {
-                throw new IllegalStateException("Failed to link " + label + ": "
+                throw gpuFailure("Failed to link " + label + ": "
                         + GlStateManager.glGetProgramInfoLog(programId, 32768));
             }
             linked = true;
@@ -1075,7 +1062,6 @@ public final class GuestPipelines {
                 GL20C.glDetachShader(programId, shader);
                 GlStateManager.glDeleteShader(shader);
             }
-            // A stage can fail before the program reaches any cache owner.
             if (!linked) {
                 GlStateManager.glDeleteProgram(programId);
             }
@@ -1104,16 +1090,30 @@ public final class GuestPipelines {
         if (source == null) {
             return;
         }
+        GuestShaders.requireSupportedStage(label, source);
         int shader = GlStateManager.glCreateShader(glType);
+        if (shader == 0) throw gpuFailure("Could not create shader " + label, true);
         GlStateManager.glShaderSource(shader, source);
         GlStateManager.glCompileShader(shader);
         if (GlStateManager.glGetShaderi(shader, GL20C.GL_COMPILE_STATUS) == 0) {
             String log = GlStateManager.glGetShaderInfoLog(shader, 32768);
             GlStateManager.glDeleteShader(shader);
-            throw new IllegalStateException("Failed to compile " + label + " (" + glType + "): " + log);
+            throw gpuFailure("Failed to compile " + label + " (" + glType + "): " + log);
         }
         GlStateManager.glAttachShader(programId, shader);
         shaders.add(shader);
+    }
+
+    private static BackendUnavailableException gpuFailure(String message) {
+        return gpuFailure(message, false);
+    }
+
+    private static BackendUnavailableException gpuFailure(String message, boolean creation) {
+        int error = GlStateManager._getError();
+        if (error == GL11C.GL_OUT_OF_MEMORY) throw new OutOfMemoryError(message);
+        if (error == GL45C.GL_CONTEXT_LOST) throw new IllegalStateException("OpenGL context lost: " + message);
+        if (creation) throw new IllegalStateException(message + ": GL error 0x" + Integer.toHexString(error));
+        return new BackendUnavailableException(message);
     }
 
     private static AlphaTest cutoutAlphaTest(CutoutShader cutout) {
@@ -1128,16 +1128,12 @@ public final class GuestPipelines {
         return AlphaTests.OFF;
     }
 
-    /**
-     * {@code type}: {@code null} for the type-erased indirect vertex, whose {@code typeGen} is the registered type
-     * count. Nullable tail: contract inputs; native grayscale fonts retain their material fragment identity.
-     */
     record ProgramKey(PackRole role, boolean indirect, @Nullable InstanceType<?> type, Identifier materialVertex,
                       AlphaTest alphaTest, boolean embedded, boolean crumbling, int typeGen,
                       @Nullable Transparency transparency, @Nullable CutoutShader cutout,
                       @Nullable Identifier materialFragment, @Nullable Identifier light,
                       @Nullable LightSmoothness smoothness, @Nullable OitPass oit, @Nullable Identifier fog,
-                      boolean unlit) {
+                      boolean unlit, GlslVersion glsl, boolean selector) {
         static ProgramKey of(PackRole role, boolean indirect, @Nullable InstanceType<?> type, Material material,
                              boolean embedded, boolean crumbling, int typeGen) {
             return new ProgramKey(role, indirect, type, material.shaders()
@@ -1146,32 +1142,30 @@ public final class GuestPipelines {
                     material.transparency(), material.cutout(), material.shaders()
                                                                         .fragmentSource(), material.light()
                                                                                                    .source(),
-                    BackendConfig.INSTANCE.lightSmoothness(), null, material.fog().source(), !material.useLight());
+                    BackendConfig.INSTANCE.lightSmoothness(), null, material.fog().source(), !material.useLight(),
+                    GuestShaders.glslVersion(), !indirect && GlCompat.USE_INSTANCING_SELECTOR);
         }
 
         ProgramKey withOit(OitPass pass) {
             return new ProgramKey(role, indirect, type, materialVertex, alphaTest, embedded, crumbling, typeGen,
-                    transparency, cutout, materialFragment, light, smoothness, pass, fog, unlit);
+                    transparency, cutout, materialFragment, light, smoothness, pass, fog, unlit, glsl, selector);
         }
 
-        // Indirect native vertex stages branch on the matrix index at runtime: an embedded variant only for the light
-        // shader, which runs per vertex (GuestShaders#library).
         ProgramKey forNative() {
             boolean vertexLight = !crumbling && role != PackRole.ADDITIVE;
             return new ProgramKey(role == PackRole.BLOCK_ENTITY ? PackRole.SOLID : role, indirect, type, materialVertex,
                     alphaTest,
                     embedded && (!indirect || vertexLight), crumbling, typeGen, null, null,
                     GRAYSCALE_FONT.equals(materialFragment) ? materialFragment : null, light, smoothness, null, null,
-                    false);
+                    false, glsl, selector);
         }
 
-        // Colorwheel programs serve entities and block entities alike.
         ProgramKey forContract() {
             return new ProgramKey(role == PackRole.TERRAIN_TRANSLUCENT ? role : role.blockRole(), indirect, type,
                     materialVertex, AlphaTests.OFF, embedded, crumbling,
                     typeGen,
                     role == PackRole.ADDITIVE ? transparency : null, cutout, materialFragment, light, smoothness, oit,
-                    fog, unlit);
+                    fog, unlit, glsl, selector);
         }
 
         String cacheName() {
@@ -1185,14 +1179,13 @@ public final class GuestPipelines {
                     + (smoothness == null ? "" : "_" + smoothness.getSerializedName())
                     + (fog == null ? "" : "_" + ResourceUtil.toDebugFileNameNoExtension(fog))
                     + (unlit ? "_unlit" : "")
-                    + (oit == null ? "" : "_oit_" + oit.name()))
+                    + (oit == null ? "" : "_oit_" + oit.name())
+                    + (glsl == GlslVersion.V460 ? "" : "_glsl" + glsl.version)
+                    + (selector ? "_selector" : ""))
                     .toLowerCase(Locale.ROOT);
         }
     }
 
-    /**
-     * {@code contract}: the resolved Colorwheel program, {@code null} for the pack's own program.
-     */
     private record LinkKey(ProgramKey program, @Nullable ContractProgram contract) {
     }
 

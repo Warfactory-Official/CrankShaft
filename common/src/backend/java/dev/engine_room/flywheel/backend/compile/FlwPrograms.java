@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.backend.compile;
 
 import dev.engine_room.flywheel.api.Flywheel;
+import dev.engine_room.flywheel.backend.BackendRecovery;
 import dev.engine_room.flywheel.backend.NoiseTextures;
 import dev.engine_room.flywheel.backend.glsl.ShaderSources;
 import dev.engine_room.flywheel.backend.vk.VkContext;
@@ -22,10 +23,13 @@ public final class FlwPrograms {
     }
 
     public static void reload(ResourceManager manager) {
+        BackendRecovery.beginReload();
+        ProgramAvailability.beginReload();
         Models.invalidate();
         RendererReloadCache.onReloadLevelRenderer();
         AnimatedSprites.clear();
         ResourceReloadHolder.onEndClientResourceReload();
+        MojImportPreprocessor.clearImportContents();
         var sources = new ShaderSources(manager);
         SOURCES = sources;
 

@@ -47,6 +47,7 @@ import org.lwjgl.vulkan.VkBufferDeviceAddressInfo;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
 import java.util.Collection;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalDouble;
 
@@ -70,11 +71,10 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     private static final int COMMAND_STRIDE = 20;
     private static final int REGION_INPUT_STRIDE = TerrainRegionInput.STRIDE;
     private static final long CMD_BYTES_PER_REGION = ((long) MAX_COMMANDS_PER_REGION + MAX_TEMPORAL_COMMANDS_PER_REGION) * COMMAND_STRIDE;
-    private static final long REGION_GEO_STRIDE = 8;  // uvec2 arena device address per visible-region slot
-    private static final long DRAW_DATA_STRIDE = 32;  // 8 uints: origin xyz, visBase, geoAddr lo/hi, pad, pad
+    private static final long REGION_GEO_STRIDE = 8;
+    private static final long DRAW_DATA_STRIDE = 32;
     private static final int PHASE_1 = 1;
     private static final int PHASE_2 = 2;
-    // DIAG bisect: force the opaque / translucent mesh tier OFF (fall back to the proven MDI opaque / CPU translucent
     private static final boolean DISABLE_OPAQUE_MESH = false;
     private static final boolean DISABLE_TRANSLUCENT_MESH = false;
     @Nullable
@@ -83,9 +83,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     private static boolean initFailed;
     @Nullable
     private static VkTerrainMeshDrawStrategy meshDrawStrategy;
-    // Last frame's post-visuals pyramid view, handed to VkIndirectDrawManager.generatePyramid (consume-once).
     private static long carriedPyramidView;
-    // The stashed rebuild + phase 2 of THIS frame's drawTwoPhase; consumed once per frame at the engine's opaque
     @Nullable
     private static Runnable deferredPhase2;
     public final TerrainSectionRegistry registry;
@@ -96,9 +94,11 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     private final VkTerrainResidentBuffers residentBuffers;
     private final Long2LongOpenHashMap geoAddrCache = new Long2LongOpenHashMap();
     private final VkTerrainTranslucent translucent;
+    @Nullable
+    private VkTerrainClassicDrawManager classicTranslucent;
     private final VisibleRegionBatch solidBatch = new VisibleRegionBatch(PASS_SOLID);
     private final VisibleRegionBatch cutoutBatch = new VisibleRegionBatch(PASS_CUTOUT);
-    private final CullBuffers[][] cull; // [pass][parity]
+    private final CullBuffers[][] cull;
     private final VkBuffer[] chunkSectionUbo;
     /**
      * The (batch, parity) cursor the registered mesh strategy reads during a drawOpaque call; null between passes.
@@ -125,6 +125,10 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
             }
             chunkSectionUbo[0] = new VkBuffer(UNIFORM, 256);
             chunkSectionUbo[1] = new VkBuffer(UNIFORM, 256);
+            VkPrograms programs = Objects.requireNonNull(VkPrograms.get());
+            if (!programs.usesGpuTranslucentTerrain()) {
+                classicTranslucent = new VkTerrainClassicDrawManager(programs);
+            }
         } catch (Throwable t) {
             deleteConstructed();
             throw t;
@@ -144,8 +148,9 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     }
 
     public static boolean isSupported() {
-        return VkContext.isVulkanHost() && VkCaps.DRAW_INDIRECT_COUNT_NEGOTIATED
-                && VkCaps.BUFFER_DEVICE_ADDRESS_NEGOTIATED && VkPrograms.allLoaded() && !initFailed;
+        VkPrograms programs = VkPrograms.get();
+        return VkContext.isVulkanHost() && programs != null
+                && (programs.usesGpuTerrain() || programs.usesGpuTranslucentTerrain()) && !initFailed;
     }
 
     public static void logUnsupportedOnce() {
@@ -217,7 +222,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         metadataSyncedThisFrame = true;
     }
 
-    // Shared by delete() and the constructor's rollback, where any suffix of the resource chain may be null.
     private void deleteConstructed() {
         if (registry != null) {
             registry.delete();
@@ -240,6 +244,9 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         if (hiz != null) {
             hiz.delete();
         }
+        if (classicTranslucent != null) {
+            classicTranslucent.delete();
+        }
     }
 
     @Override
@@ -247,6 +254,12 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
                                    @Nullable Collection<RenderRegion> selfEnum) {
         VkPrograms programs = VkPrograms.get();
         if (programs == null) {
+            return false;
+        }
+        if (!programs.usesGpuTerrain()) {
+            if (BackendConfig.INSTANCE.terrainMode().compositesTranslucent()) {
+                prepareResidentTranslucent(matrices, manager);
+            }
             return false;
         }
         Minecraft mc = Minecraft.getInstance();
@@ -260,28 +273,33 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         geoAddrCache.clear();
         registry.flushPendingUploads();
         collect(manager);
-        // Size the resident vis/section buffers for the opaque region-id range BEFORE capturing translucent.
         int maxRegionId = Math.max(maxRegionId(solidBatch), maxRegionId(cutoutBatch));
         if (maxRegionId >= 0) {
             registry.ensureSectionVisCapacity(maxRegionId + 1);
         }
         if (BackendConfig.INSTANCE.terrainMode().compositesTranslucent()) {
-            translucent.capture(matrices, manager);
+            if (classicTranslucent != null) {
+                classicTranslucent.captureTranslucentArena(matrices, manager);
+            } else {
+                translucent.capture(matrices, manager);
+            }
         } else {
             translucent.rampFadesOnly();
         }
         if (solidBatch.count == 0 && cutoutBatch.count == 0) {
             return true;
         }
+        long maxCommands = (long) Math.max(solidBatch.count, cutoutBatch.count) * MAX_COMMANDS_PER_REGION;
+        if (meshDrawStrategy == null && maxCommands > VkCaps.MAX_DRAW_INDIRECT_COUNT) {
+            programs.rejectGpuTerrain();
+            FlwBackend.LOGGER.warn("Vulkan opaque terrain uses Sodium: indirect draw count {} exceeds {}",
+                    maxCommands, VkCaps.MAX_DRAW_INDIRECT_COUNT);
+            return false;
+        }
 
         hiz.pyramid.resize(mc.gameRenderer.mainRenderTarget().width, mc.gameRenderer.mainRenderTarget().height);
         int parity = (frameParity ^= 1);
-        // Write the HiZ UBO into THIS frame's parity slot -- the one the mesh draw + cull read via boundParity/parity --
-        // AFTER the flip. Writing it pre-flip landed this frame's camera + viewProjection in the OTHER slot, so the
-        // mesh-tier opaque transform read LAST frame's matrices: a one-frame lag behind the translucent tier (which
         hiz.writeFrame(matrices, mc, parity);
-        // All of this frame's registry writes are done (collect/primeRegion, ensureSectionVisCapacity, fade ramp);
-        // fold them into this frame's parity copy + publish it before the cull/mesh/draw read the registry buffers.
         syncResidentMetadata();
         GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         long pyramidSampler = ((VulkanGpuSampler) nearest).vkSampler();
@@ -304,12 +322,11 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         drawPhase(f, strategy, colorView, depthView, parity, mc, PHASE_1);
 
         deferredPhase2 = () -> {
-            // Rebuild the pyramid from the main depth as it stands NOW (post-visuals): seeds phase 2 AND carries to
-            // next frame's phase 1. The regen's internal depth-write -> compute-read barrier waits for the prior
             VkCommandBuffer regen = VkContext.beginCommands();
             VkContext.pushLabel(regen, "flywheel:vk/terrain/hiz_pyramid");
             hiz.pyramid.regenerate(regen, ((VulkanGpuTextureView) depthView).vkImageView(), pyramidSampler,
-                    programs.downsampleFirstPipeline(), programs.downsampleSecondPipeline(), writer);
+                    programs.downsampleFirstPipeline(), programs.downsampleSecondPipeline(), writer,
+                    programs.hiZRoute() == VkPrograms.HiZRoute.SINGLE_MIP);
             VkContext.popLabel(regen);
             VkContext.submitCommands(regen);
 
@@ -352,8 +369,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         int oz = region.getChunkZ();
         var resources = region.getResources();
         GpuBuffer geo = resources == null ? null : resources.getGeometryBuffer();
-        // Re-prime on cold start OR arena realloc. When Sodium swaps a region's geometry buffer (grow/replace), the
-        // baseVertex offsets cached at the last prime describe the OLD arena layout while the draw binds the LIVE
         int liveHandle = geo instanceof VulkanGpuBuffer vk && !geo.isClosed() ? (int) vk.vkBuffer() : -1;
         if (!registry.isLive(regionId) || registry.cachedGeometryHandle(regionId) != liveHandle) {
             primeRegion(region, regionId, ox, oy, oz);
@@ -428,7 +443,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         b.drawData.ensureCapacity((long) n * MAX_COMMANDS_PER_REGION * 2L * DRAW_DATA_STRIDE);
         MemoryUtil.memPutLong(b.count.mappedAddress(), 0L);
 
-        // Both phases read this manager's own pyramid: phase 1 the CARRIED copy (last frame's post-visuals
         long pyramidView = hiz.pyramid.sampledView();
 
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/cull/" + (pass == PASS_SOLID ? "solid" : "cutout"));
@@ -447,7 +461,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         writer.sampler(10, pyramidView, pyramidSampler);
         writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, cull.layout());
         VK12.vkCmdDispatch(cmd, n, 1, 1);
-        // dst COMPUTE_SHADER too: the mesh tier's emit (a SEPARATE compute dispatch, later submit) reads this cull
         VkCmd.memoryBarrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 VK12.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK12.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 VK12.VK_ACCESS_SHADER_WRITE_BIT,
@@ -482,7 +495,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         }
         long indexVk = ((VulkanGpuBuffer) sharedIndexGpu).vkBuffer();
 
-        // ChunkSection UBO: only ModelViewMat (offset 0) is read by terrain_solid.vsh; the rest is unused.
         MemoryUtil.memSet(chunkSectionUbo[frameParity].mappedAddress(), 0, chunkSectionUbo[frameParity].sizeBytes());
         new Matrix4f(matrices.modelView()).get(0,
                 MemoryUtil.memByteBuffer(chunkSectionUbo[frameParity].mappedAddress(), 64));
@@ -507,7 +519,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         int width = mc.gameRenderer.mainRenderTarget().width;
         int height = mc.gameRenderer.mainRenderTarget().height;
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-        // MDI opaque terrain: vanilla entities depth-test + blend into the same target next -> framebuffer-producer
         boolean temporal = phase == PHASE_2;
         FlwPassBarrier.expectFramebufferProducer();
         try (RenderPass pass = encoder.createRenderPass(() -> "flywheel:vk/terrain", colorView, Optional.empty(),
@@ -527,7 +538,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
                                   GpuTextureView depthView, int parity, Minecraft mc, int phase) {
         boundParity = parity;
         boundPhase = phase;
-        // Emit-half (compute) runs BEFORE the pass opens -- compute is illegal inside dynamic rendering. Each pass'
         if (solidBatch.count > 0) {
             boundBatch = solidBatch;
             strategy.prepareEmit(this, PASS_SOLID);
@@ -560,8 +570,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         }
     }
 
-    // ---- Mesh-tier state accessors: valid during a strategy.drawOpaque call; the cull buffers are per-pass + indexed
-    // by the bound parity, so the tier passes the strategy's passIndex and reads the live slot for this frame. ----
     public long regionInputVk(int pass) {
         return cull[pass][boundParity].regionInput.vkBuffer();
     }
@@ -622,7 +630,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         translucent.fillLiveMask(ptr);
     }
 
-    // Global MDI: ONE vkCmdDrawIndexedIndirectCount + ONE descriptor push for the whole pass x phase. The builder
     private void drawCommandStream(VkCommandBuffer cmd, Frame f, VisibleRegionBatch visible, boolean temporal,
                                    int commandParity) {
         int pass = visible.passIndex;
@@ -666,9 +673,23 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         return addr;
     }
 
+    void useClassicTranslucent(ChunkRenderMatrices matrices, RenderSectionManager manager, int count) {
+        VkPrograms programs = Objects.requireNonNull(VkPrograms.get());
+        programs.rejectGpuTranslucentTerrain();
+        if (classicTranslucent == null) {
+            classicTranslucent = new VkTerrainClassicDrawManager(programs);
+        }
+        classicTranslucent.captureTranslucentArena(matrices, manager);
+        FlwBackend.LOGGER.warn("Vulkan translucent terrain uses classic replay: indirect draw count {} exceeds {}",
+                count, VkCaps.MAX_DRAW_INDIRECT_COUNT);
+    }
+
     @Override
     public void prepareResidentTranslucent(ChunkRenderMatrices matrices, RenderSectionManager manager) {
-        // terrainMode TRANSLUCENT: Sodium draws opaque, the engine owns only the translucent layer. The full HiZ
+        if (classicTranslucent != null) {
+            classicTranslucent.captureTranslucentArena(matrices, manager);
+            return;
+        }
         geoAddrCache.clear();
         registry.flushPendingUploads();
         translucent.capture(matrices, manager);
@@ -677,6 +698,10 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
 
     @Override
     public void captureTranslucentArena(ChunkRenderMatrices matrices, RenderSectionManager manager) {
+        if (classicTranslucent != null) {
+            classicTranslucent.captureTranslucentArena(matrices, manager);
+            return;
+        }
         geoAddrCache.clear();
         translucent.capture(matrices, manager);
     }
@@ -684,8 +709,9 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     @Override
     @Nullable
     public SodiumTerrainOitReplay translucentOitReplay() {
-        // Non-null is the engine's translucent-ownership predicate (the seam cancels Sodium's translucent draw on it):
-        // the captured CPU per-section batch, OR a registered mesh tier (which culls/draws its own translucent terrain).
+        if (classicTranslucent != null) {
+            return classicTranslucent.translucentOitReplay();
+        }
         return translucent.owns() ? translucent : null;
     }
 
@@ -703,6 +729,9 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     public void endFrame() {
         translucent.lastModelViewValid = false;
         metadataSyncedThisFrame = false;
+        if (classicTranslucent != null) {
+            classicTranslucent.endFrame();
+        }
     }
 
     @Override
@@ -713,21 +742,16 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         deleteConstructed();
     }
 
-    // Every per-frame host-mapped buffer is double-buffered by parity: Mojang runs 2 frames in flight, and both the
-    // transient cull (async submit -- VkContext.submitCommands does not fence) and the frame-cmd draws read frame N's
     static final class CullBuffers {
         final VkBuffer regionInput;
         final VkBuffer regionVis;
         final VkBuffer command;
         final VkBuffer count;
-        // Global MDI per-draw plumbing: regionGeo carries each visible slot's arena device address into the command
         final VkBuffer regionGeo;
         final VkBuffer drawData;
-        // Per-PHASE-SLOT 16-byte {regionCount, phase} UBOs. Two-phase HiZ writes a distinct `phase` value for phase 1
         final VkBuffer[] regionCountUbo;
 
         CullBuffers() {
-            // 8 sequential native allocations; a mid-chain VMA OOM must free the earlier ones before propagating.
             VkBuffer[] built = new VkBuffer[8];
             try {
                 regionInput = built[0] = new VkBuffer(STORAGE, MAX_VISIBLE_REGIONS * REGION_INPUT_STRIDE);

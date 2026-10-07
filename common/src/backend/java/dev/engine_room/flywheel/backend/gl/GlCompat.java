@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.backend.gl;
 
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.glsl.GlslVersion;
 import org.jspecify.annotations.Nullable;
@@ -13,8 +14,7 @@ public final class GlCompat {
     @Nullable
     public static final GLCapabilities CAPABILITIES;
     public static final boolean ALLOW_DSA = true;
-    // Debugger opt-out (flip to true + rebuild): Nsight C++ capture cannot record bindless residency,
-    // so this forces the classic per-batch bind path.
+    // Port: Nsight C++ capture: bindless residency unsupported.
     private static final boolean DISABLE_BINDLESS = false;
 
     static {
@@ -37,6 +37,12 @@ public final class GlCompat {
     public static final int SUBGROUP_SIZE = subgroupSize();
     public static final GlslVersion MAX_GLSL_VERSION = maxGlslVersion();
     public static final boolean SUPPORTS_INSTANCING = isInstancingSupported();
+    public static final boolean SUPPORTS_SHADER_DRAW_PARAMETERS = CAPABILITIES != null
+            && (MAX_GLSL_VERSION.compareTo(GlslVersion.V460) >= 0 || CAPABILITIES.GL_ARB_shader_draw_parameters);
+    public static final boolean SUPPORTS_BASE_INSTANCE = CAPABILITIES != null
+            && CAPABILITIES.glDrawElementsInstancedBaseVertexBaseInstance != MemoryUtil.NULL;
+    public static final boolean USE_INSTANCING_SELECTOR = !SUPPORTS_SHADER_DRAW_PARAMETERS || !SUPPORTS_BASE_INSTANCE;
+    public static final int MAX_TEXTURE_BUFFER_SIZE = maxTextureBufferSize();
     public static final boolean SUPPORTS_INDIRECT = isIndirectSupported();
     public static final int MAX_SHADER_STORAGE_BUFFER_BINDINGS = maxShaderStorageBufferBindings();
     @Nullable
@@ -58,6 +64,13 @@ public final class GlCompat {
     }
 
     public static void init() {
+    }
+
+    public static void requireTextureBufferSize(long bytes, int texelBytes, String label) {
+        long limit = (long) MAX_TEXTURE_BUFFER_SIZE * texelBytes;
+        if (bytes > limit) {
+            throw new BackendUnavailableException(label + " needs " + bytes + " bytes; texture-buffer limit is " + limit);
+        }
     }
 
     public static void pushDebugGroup(String name) {
@@ -143,10 +156,10 @@ public final class GlCompat {
         if (CAPABILITIES == null) {
             return false;
         }
-        if (CAPABILITIES.OpenGL33) {
-            return true;
-        }
-        return CAPABILITIES.GL_ARB_shader_bit_encoding;
+        return MAX_GLSL_VERSION.compareTo(GlslVersion.V330) >= 0
+                && CAPABILITIES.glDrawElementsInstancedBaseVertex != MemoryUtil.NULL
+                && CAPABILITIES.glTexBuffer != MemoryUtil.NULL
+                && CAPABILITIES.glBindBufferRange != MemoryUtil.NULL;
     }
 
     private static boolean isIndirectSupported() {
@@ -179,11 +192,14 @@ public final class GlCompat {
         return result;
     }
 
+    private static int maxTextureBufferSize() {
+        return SUPPORTS_INSTANCING ? GL11C.glGetInteger(GL31C.GL_MAX_TEXTURE_BUFFER_SIZE) : 0;
+    }
+
     private static int maxShaderStorageBufferBindings() {
         return SUPPORTS_INDIRECT ? GL11C.glGetInteger(GL43C.GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS) : 0;
     }
 
-    // Fn-pointer gate, as isMeshShaderSupported.
     private static boolean isNvBufferLoadSupported() {
         return CAPABILITIES != null && CAPABILITIES.glMakeNamedBufferResidentNV != MemoryUtil.NULL
                 && CAPABILITIES.glGetNamedBufferParameterui64vNV != MemoryUtil.NULL;
@@ -193,9 +209,7 @@ public final class GlCompat {
         if (CAPABILITIES == null || DRIVER != Driver.NVIDIA) {
             return false;
         }
-        // Fn-pointer gate, never the extension flag -- the 26.2 forward-compat context hides it.
-        // NV_shader_buffer_load predates NV_mesh_shader, so every mesh-capable GPU has the
-        // resident-buffer fn-pointers too.
+        // 26.2: Forward-compatible context can hide extension flag.
         boolean supported = CAPABILITIES.glDrawMeshTasksNV != MemoryUtil.NULL
                 && CAPABILITIES.glMakeBufferResidentNV != MemoryUtil.NULL
                 && CAPABILITIES.glGetBufferParameterui64vNV != MemoryUtil.NULL;
@@ -269,21 +283,28 @@ public final class GlCompat {
 
     private static boolean canCompileVersion(GlslVersion version) {
         int handle = GL20.glCreateShader(GL20.GL_VERTEX_SHADER);
-
-        // Compile the simplest possible shader.
-        var source = """
-                #version %d
-                void main() {}
-                """.formatted(version.version);
-
-        safeShaderSource(handle, source);
-        GL20.glCompileShader(handle);
-
-        boolean success = GL20.glGetShaderi(handle, GL20.GL_COMPILE_STATUS) == GL11.GL_TRUE;
-
-        GL20.glDeleteShader(handle);
-
-        return success;
+        if (handle == 0) {
+            int error = GL11C.glGetError();
+            if (error == GL11C.GL_OUT_OF_MEMORY) throw new OutOfMemoryError("Allocating GLSL version probe");
+            throw new IllegalStateException("Could not allocate GLSL version probe: GL error 0x" + Integer.toHexString(error));
+        }
+        try {
+            var source = """
+                    #version %d
+                    void main() {}
+                    """.formatted(version.version);
+            safeShaderSource(handle, source);
+            GL20.glCompileShader(handle);
+            boolean success = GL20.glGetShaderi(handle, GL20.GL_COMPILE_STATUS) == GL11.GL_TRUE;
+            if (!success) {
+                int error = GL11C.glGetError();
+                if (error == GL11C.GL_OUT_OF_MEMORY) throw new OutOfMemoryError("Compiling GLSL version probe " + version.version);
+                if (error == GL45C.GL_CONTEXT_LOST) throw new IllegalStateException("OpenGL context lost while compiling GLSL version probe " + version.version);
+            }
+            return success;
+        } finally {
+            GL20.glDeleteShader(handle);
+        }
     }
 
     /**

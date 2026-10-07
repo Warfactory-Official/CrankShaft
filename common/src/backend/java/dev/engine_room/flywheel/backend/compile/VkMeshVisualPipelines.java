@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.backend.compile;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.OitTransparency;
@@ -47,7 +48,7 @@ public final class VkMeshVisualPipelines {
 
     private static List<VkDescriptorLayout.Binding> drawBindings(boolean oit, boolean localRead, LightShader light,
                                                                  MaterialShaders shaders) {
-        boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+        boolean bindless = VkPrograms.bindlessTexturesEnabled();
         int frameStages = shaders.vertexSource().equals(StandardMaterialShaders.LINE.vertexSource())
                 ? TASK | MESH : TASK;
         List<VkDescriptorLayout.Binding> b = new ArrayList<>(List.of(
@@ -81,11 +82,10 @@ public final class VkMeshVisualPipelines {
         return b;
     }
 
-    // The mesh stage carries the same _FLW_DEBUG as its fragment (the MeshVertexOut block must match member-for-member).
     private static long compileMesh(MeshKey key, DebugMode debug) {
         String src = MeshVisualShaders.assembleVkMesh(key.type(), key.shaders()
                                                                      .vertexSource(),
-                (VkCaps.BINDLESS_TEXTURES_NEGOTIATED ? VkPrograms.BINDLESS : ShaderAssembly.NO_EXTRA)
+                (VkPrograms.bindlessTexturesEnabled() ? VkPrograms.BINDLESS : ShaderAssembly.NO_EXTRA)
                         .andThen(MeshVisualShaders.clipExtra(key.type()))
                         .andThen(RenderPassShaders.debugExtra(debug))
                         .andThen(embeddedExtra(key.embedded()))
@@ -100,7 +100,7 @@ public final class VkMeshVisualPipelines {
     }
 
     private static Consumer<Compilation> fragmentExtra(MeshKey mesh, DebugMode debug, boolean emission) {
-        return (VkCaps.BINDLESS_TEXTURES_NEGOTIATED ? VkPrograms.BINDLESS : ShaderAssembly.NO_EXTRA)
+        return (VkPrograms.bindlessTexturesEnabled() ? VkPrograms.BINDLESS : ShaderAssembly.NO_EXTRA)
                 .andThen(MeshVisualShaders.VK_MESH_F16)
                 .andThen(MeshVisualShaders.clipExtra(mesh.type()))
                 .andThen(RenderPassShaders.debugExtra(debug))
@@ -109,8 +109,9 @@ public final class VkMeshVisualPipelines {
     }
 
     private static long compileTask(InstanceType<?> type) {
-        return VkShaderCompiler.compileModule("meshvisual_vk_task", MeshVisualShaders.assembleVkTask(type),
-                Shaderc.shaderc_task_shader);
+        return VkPrograms.optional(ProgramAvailability.Feature.MESH,
+                () -> VkShaderCompiler.compileModule("meshvisual_vk_task", MeshVisualShaders.assembleVkTask(type),
+                        Shaderc.shaderc_task_shader));
     }
 
     private static long compileFragment(String glSource, String name) {
@@ -172,6 +173,9 @@ public final class VkMeshVisualPipelines {
                     layout.delete();
                 }
                 destroyModules(mesh, frag);
+                if (ex instanceof BackendUnavailableException failure) {
+                    throw VkPrograms.tagged(ProgramAvailability.Feature.MESH, failure);
+                }
                 throw ex;
             }
         });
@@ -183,7 +187,7 @@ public final class VkMeshVisualPipelines {
     public VkMeshPipeline solidPipeline(InstanceType<?> type, Material material, boolean embedded, int colorFormat,
                                         int depthFormat) {
         return solid.computeIfAbsent(SolidKey.of(type, material, embedded, colorFormat, depthFormat), key -> {
-            boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+            boolean bindless = VkPrograms.bindlessTexturesEnabled();
             long task = 0;
             long mesh = 0;
             long frag = 0;
@@ -208,6 +212,10 @@ public final class VkMeshVisualPipelines {
                     layout.delete();
                 }
                 destroyModules(task, mesh, frag);
+                if (ex instanceof BackendUnavailableException failure) {
+                    throw VkPrograms.tagged(bindless ? ProgramAvailability.Feature.BINDLESS
+                            : ProgramAvailability.Feature.MESH, failure);
+                }
                 throw ex;
             }
         });
@@ -221,7 +229,7 @@ public final class VkMeshVisualPipelines {
         boolean emission = mode == OitMode.EVALUATE && OitTransparency.additive(material);
         int idx = emission ? OitMode.values().length : mode.ordinal();
         if (arr[idx] == null) {
-            boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+            boolean bindless = VkPrograms.bindlessTexturesEnabled();
             long task = 0;
             long mesh = 0;
             long frag = 0;
@@ -264,6 +272,11 @@ public final class VkMeshVisualPipelines {
                     layout.delete();
                 }
                 destroyModules(task, mesh, frag);
+                if (t instanceof BackendUnavailableException failure) {
+                    throw VkPrograms.tagged(folded ? ProgramAvailability.Feature.LOCAL_READ
+                            : bindless ? ProgramAvailability.Feature.BINDLESS : ProgramAvailability.Feature.MESH,
+                            failure);
+                }
                 throw t;
             }
         }
@@ -277,7 +290,7 @@ public final class VkMeshVisualPipelines {
         boolean emission = OitTransparency.additive(material);
         int idx = oitMode.ordinal() + (emission ? OitInsertMode.values().length : 0);
         if (arr[idx] == null) {
-            boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+            boolean bindless = VkPrograms.bindlessTexturesEnabled();
             long task = 0;
             long mesh = 0;
             long frag = 0;
@@ -302,6 +315,9 @@ public final class VkMeshVisualPipelines {
                     layout.delete();
                 }
                 destroyModules(task, mesh, frag);
+                if (t instanceof BackendUnavailableException failure) {
+                    throw VkPrograms.tagged(ProgramAvailability.insert(oitMode), failure);
+                }
                 throw t;
             }
         }
@@ -322,6 +338,9 @@ public final class VkMeshVisualPipelines {
                     layout.delete();
                 }
                 destroyModules(module);
+                if (t instanceof BackendUnavailableException failure) {
+                    throw VkPrograms.tagged(ProgramAvailability.Feature.MESH, failure);
+                }
                 throw t;
             }
         }
@@ -373,7 +392,6 @@ public final class VkMeshVisualPipelines {
         }
     }
 
-    // Fixed-function state as VkUberPipelines' OIT/insert producer keys (offset keeps the slope term).
     private record OitKey(MeshKey mesh, LightShader light, DepthTest depthTest, boolean cull, boolean polygonOffset,
                           int cutoutGen, int fogGen, DebugMode debug, LightSmoothness smoothness) {
         static OitKey of(InstanceType<?> type, Material material, boolean embedded) {
@@ -406,10 +424,6 @@ public final class VkMeshVisualPipelines {
         }
     }
 
-    /**
-     * Solid pipeline key: the mesh key + the material's fixed-function state (mirrors VkUberPipelines' draw key);
-     * registry generations key fresh compiles covering later-registered sources.
-     */
     private record SolidKey(MeshKey mesh, LightShader light, int colorFormat, int depthFormat,
                             Transparency transparency, DepthTest depthTest, boolean depthWrite, boolean colorWrite,
                             boolean cull, boolean polygonOffset, int cutoutGen, int fogGen, DebugMode debug,
@@ -428,8 +442,6 @@ public final class VkMeshVisualPipelines {
                     MaterialShaderIndices.fogSources()
                                          .all()
                                          .size(),
-                    // Read per request like the registry generations: debug/smoothness changes key a fresh
-                    // pipeline next frame (callers resolve per multiDraw per frame).
                     FrameUniforms.debugMode(), BackendConfig.INSTANCE.lightSmoothness());
         }
     }

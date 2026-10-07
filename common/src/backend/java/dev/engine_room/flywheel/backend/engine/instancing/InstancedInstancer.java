@@ -5,8 +5,10 @@ import com.mojang.blaze3d.opengl.GlBuffer;
 import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.engine_room.flywheel.api.instance.Instance;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.engine.BaseInstancer;
 import dev.engine_room.flywheel.backend.engine.InstancerKey;
+import dev.engine_room.flywheel.backend.gl.GlCompat;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL30C;
@@ -26,8 +28,8 @@ public class InstancedInstancer<I extends Instance> extends BaseInstancer<I> {
     private GpuBuffer instanceTexels;
     private int texelTexture;
     private int texelCapacity;
-    private boolean texelsReady;
-    private boolean texelsValid;
+    protected boolean texelsReady;
+    protected boolean texelsValid;
 
     public InstancedInstancer(InstancerKey<I> key, Recreate<I> recreate) {
         super(key, recreate);
@@ -62,6 +64,12 @@ public class InstancedInstancer<I extends Instance> extends BaseInstancer<I> {
         }
 
         long needBytes = (long) count * instanceStride;
+        if (needsGrow) {
+            GlCompat.requireTextureBufferSize(needBytes, 16, "flywheel instances");
+            if (needBytes > Integer.MAX_VALUE) {
+                throw new BackendUnavailableException("flywheel instances exceed the upload buffer limit");
+            }
+        }
         // updateBuffer migrated every page into the slab: contiguous.
         ByteBuffer instances = MemoryUtil.memByteBuffer(slabBlocks[0], (int) needBytes);
 

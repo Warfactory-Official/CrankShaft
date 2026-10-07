@@ -11,7 +11,9 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vulkan.VulkanRenderPass;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.OitConfig;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.vk.FlwPassBarrier;
@@ -69,7 +71,14 @@ abstract class VkInsertOitChain extends VkOitChain {
                 @Nullable FabulousCaptures fabulous, GpuTextureView lightmapView, GpuSampler clampLinear,
                 long vertexVk, long indexVk, int width, int height, boolean hasInstanceOit,
                 GpuTextureView colorView, GpuTextureView depthView, RenderPassDescriptor compositeDescriptor) {
-        VkMlabBuffers mlab = ensureStorage(width, height, fabulous);
+        VkMlabBuffers mlab;
+        try {
+            mlab = ensureStorage(width, height, fabulous);
+        } catch (ProgramAvailability.Failure failure) {
+            throw failure;
+        } catch (BackendUnavailableException failure) {
+            throw new ProgramAvailability.Failure(ProgramAvailability.insert(mode), failure);
+        }
         producers(frame, chunks, ber, terrain, fabulous, lightmapView, clampLinear, vertexVk, indexVk,
                 width, height, hasInstanceOit, depthView, mlab);
         framebuffer.prepareNearestDepth();
@@ -91,10 +100,10 @@ abstract class VkInsertOitChain extends VkOitChain {
     private VkMlabBuffers ensureStorage(int width, int height, @Nullable FabulousCaptures fabulous) {
         long pixels = (long) width * height;
         int nodes = maxNodes(pixels);
-        int layers = OitConfig.layersFor(mode); // runtime K (sample budget / A-buffer resolve cap)
+        int layers = OitConfig.layersFor(mode);
         int storage = VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK12.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         if (ubo == null) {
-            ubo = new VkBuffer(VK12.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 32L); // std140 _FlwMlabUniforms (20B used)
+            ubo = new VkBuffer(VK12.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 32L);
         }
         if (countOrHead == null) {
             countOrHead = new VkBuffer(storage, pixels * Integer.BYTES, true);
@@ -122,9 +131,6 @@ abstract class VkInsertOitChain extends VkOitChain {
 
         VkCommandBuffer cmd = VkContext.beginCommands();
         VkContext.pushLabel(cmd, "flywheel:vk/oit/" + mode);
-        // srcAccess MUST carry SHADER_WRITE (70caa187): last frame's producer SSBO atomics are fragment-stage
-        // writes the transfer clear below overwrites (WAW) -- without it stale heads survive the clear and the
-        // resolve walk goes unbounded.
         VkContext.pushLabel(cmd, "flywheel:vk/oit/mlab/barrier");
         memoryBarrier(cmd,
                 VK12.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK12.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK12.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
@@ -274,7 +280,6 @@ abstract class VkInsertOitChain extends VkOitChain {
             VkContext.pushLabel(cmd, "flywheel:vk/oit/composite");
             VkGraphicsPipeline pipeline = m.programs.oit().mlabResolvePipeline(mode);
             VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
-            // Layer-merge inputs; absent layers get a mask-guarded placeholder -- never the pass's own depth attachment (descriptor-level feedback loop).
             long placeholder = frame.lightmapView();
             boolean clouds = fab != null && fab.hasClouds();
             boolean item = fab != null && fab.hasItemLayer();
@@ -310,7 +315,7 @@ abstract class VkInsertOitChain extends VkOitChain {
             VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
             setViewportScissor(cmd, width, height);
             VkContext.pushLabel(cmd, "flywheel:vk/oit/nearest_depth");
-            VkGraphicsPipeline pipeline = m.programs.oit().mlabNearestDepthPipeline();
+            VkGraphicsPipeline pipeline = m.programs.oit().mlabNearestDepthPipeline(mode);
             VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
             m.writer.sampler(39, VkContext.imageView(framebuffer.nearestDepthView()), frame.oitSampler());
             m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());

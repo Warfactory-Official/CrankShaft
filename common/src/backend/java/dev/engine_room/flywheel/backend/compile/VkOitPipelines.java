@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.backend.compile;
 
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.engine.BerFamily;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.vk.VkContext;
@@ -36,7 +37,6 @@ public final class VkOitPipelines {
     private final VkGraphicsPipeline[] weatherFolded = new VkGraphicsPipeline[OitMode.values().length];
     private final VkGraphicsPipeline[][] berFolded = new VkGraphicsPipeline[BerFamily.VALUES.length][OitMode.values().length];
     private final VkGraphicsPipeline[][] chunkFolded = new VkGraphicsPipeline[2][OitMode.values().length];
-    // Exact-weather insert-OIT (OitConfig.exactFabulous); unused on the layered default.
     private final VkGraphicsPipeline[] weatherMlab = new VkGraphicsPipeline[OitInsertMode.values().length];
     private final VkGraphicsPipeline[][] berMlab = new VkGraphicsPipeline[BerFamily.VALUES.length][OitInsertMode.values().length];
     private final VkGraphicsPipeline[][] chunkMlab = new VkGraphicsPipeline[2][OitInsertMode.values().length];
@@ -52,9 +52,6 @@ public final class VkOitPipelines {
     @Nullable
     private VkGraphicsPipeline depth;
 
-    // ---- Folded OIT (VK_KHR_dynamic_rendering_local_read): the stages share ONE 6-attachment rendering instance
-    // ([0]=depthBounds RGBA32F, [1-4]=coefficients RGBA16F, [5]=accumulate RGBA16F); each stage's pipeline
-    // statically remaps fragment-output locations to its written attachments and reads the earlier stages' as input. ----
 
     VkOitPipelines() {
     }
@@ -223,7 +220,6 @@ public final class VkOitPipelines {
         return b;
     }
 
-    // The pipeline constructors don't clean up on failure; every factory's catch destroys what it already compiled before rethrowing.
     private static void destroyModules(long... modules) {
         VkDevice device = VkContext.vkDevice();
         for (long module : modules) {
@@ -233,7 +229,6 @@ public final class VkOitPipelines {
         }
     }
 
-    // Composite/resolve depth writeback: never farther than the scene, which a depth-test-off fragment can be.
     private static VkGraphicsPipeline.Config writebackConfig() {
         return new VkGraphicsPipeline.Config(new int[]{FMT_RGBA8},
                 new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.noColorWrite()}, true, true,
@@ -344,6 +339,13 @@ public final class VkOitPipelines {
         return depth;
     }
 
+    public VkGraphicsPipeline mlabNearestDepthPipeline(OitInsertMode mode) {
+        if (mlabNearestDepth == null) {
+            return VkPrograms.optional(ProgramAvailability.insert(mode), this::mlabNearestDepthPipeline);
+        }
+        return mlabNearestDepth;
+    }
+
     public VkGraphicsPipeline mlabNearestDepthPipeline() {
         if (mlabNearestDepth == null) {
             long vs = 0;
@@ -397,6 +399,9 @@ public final class VkOitPipelines {
                     layout.delete();
                 }
                 destroyModules(vs, fs);
+                if (t instanceof BackendUnavailableException failure) {
+                    throw VkPrograms.tagged(ProgramAvailability.Feature.LOCAL_READ, failure);
+                }
                 throw t;
             }
             layerFolded[mode.ordinal()] = p;
@@ -430,6 +435,9 @@ public final class VkOitPipelines {
                     layout.delete();
                 }
                 destroyModules(vs, fs);
+                if (t instanceof BackendUnavailableException failure) {
+                    throw VkPrograms.tagged(ProgramAvailability.Feature.LOCAL_READ, failure);
+                }
                 throw t;
             }
             weatherFolded[mode.ordinal()] = p;
@@ -451,7 +459,6 @@ public final class VkOitPipelines {
                 fs = VkShaderCompiler.compileModule("ber_oit" + family.suffix + mode.name,
                         VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT),
                         VkShaderCompiler.KIND_FRAGMENT);
-                // The family's vanilla fixed function; reversed-Z LEQUAL -> GREATER_OR_EQUAL.
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(mode),
                         true, false,
                         VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, berVertex(family), berCullMode(family), FMT_D32)
@@ -463,6 +470,9 @@ public final class VkOitPipelines {
                     layout.delete();
                 }
                 destroyModules(vs, fs);
+                if (t instanceof BackendUnavailableException failure) {
+                    throw VkPrograms.tagged(ProgramAvailability.Feature.LOCAL_READ, failure);
+                }
                 throw t;
             }
             berFolded[family.ordinal()][mode.ordinal()] = p;
@@ -497,6 +507,9 @@ public final class VkOitPipelines {
                     layout.delete();
                 }
                 destroyModules(vs, fs);
+                if (t instanceof BackendUnavailableException failure) {
+                    throw VkPrograms.tagged(ProgramAvailability.Feature.LOCAL_READ, failure);
+                }
                 throw t;
             }
             chunkFolded[lin][mode.ordinal()] = p;
@@ -529,6 +542,9 @@ public final class VkOitPipelines {
                     layout.delete();
                 }
                 destroyModules(vs, fs);
+                if (t instanceof BackendUnavailableException failure) {
+                    throw VkPrograms.tagged(ProgramAvailability.insert(oitMode), failure);
+                }
                 throw t;
             }
         }
@@ -559,6 +575,9 @@ public final class VkOitPipelines {
                     layout.delete();
                 }
                 destroyModules(vs, fs);
+                if (t instanceof BackendUnavailableException failure) {
+                    throw VkPrograms.tagged(ProgramAvailability.insert(oitMode), failure);
+                }
                 throw t;
             }
         }
@@ -592,6 +611,9 @@ public final class VkOitPipelines {
                     layout.delete();
                 }
                 destroyModules(vs, fs);
+                if (t instanceof BackendUnavailableException failure) {
+                    throw VkPrograms.tagged(ProgramAvailability.insert(oitMode), failure);
+                }
                 throw t;
             }
             chunkMlab[lin][oitMode.ordinal()] = p;
@@ -601,7 +623,8 @@ public final class VkOitPipelines {
 
     public VkGraphicsPipeline mlabResolvePipeline(OitInsertMode oitMode) {
         if (mlabResolve[oitMode.ordinal()] == null) {
-            mlabResolve[oitMode.ordinal()] = buildMlabResolve(oitMode);
+            mlabResolve[oitMode.ordinal()] = VkPrograms.optional(ProgramAvailability.insert(oitMode),
+                    () -> buildMlabResolve(oitMode));
         }
         return mlabResolve[oitMode.ordinal()];
     }

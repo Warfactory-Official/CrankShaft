@@ -1,7 +1,8 @@
 if (flw_oitActive) {
         uvec2 flw_coord = _FLW_SORT_PIXEL;
         uint flw_pixel = flw_coord.y * uint(screenSize.x) + flw_coord.x;
-        uint flw_node = flw_heads[flw_pixel];
+        // helper lanes past an odd framebuffer edge own no list; an out-of-range head reads as node 0
+        uint flw_node = all(lessThan(flw_coord, uvec2(screenSize))) ? flw_heads[flw_pixel] : 0xffffffffu;
         uint flw_length = 0u;
         while (flw_node != 0xffffffffu) {
             uint flw_next = flw_nodes[flw_node * 2u].x;

@@ -28,6 +28,12 @@ flat out uint _flw_texIndex;
 flat out uvec2 _flw_ids;
 #endif
 
+#ifdef _FLW_VK_SINGLE_DRAW
+#define _FLW_DRAW_ID 0u
+#else
+#define _FLW_DRAW_ID uint(gl_DrawIDARB)
+#endif
+
 void _flw_layoutVertex() {
     flw_vertexPos = vec4(Position, 1.0);
     flw_vertexColor = Color;
@@ -35,6 +41,8 @@ void _flw_layoutVertex() {
     flw_vertexOverlay = ivec2(0, 10);
     flw_vertexLight = vec2(UV2) / 256.0;
     flw_vertexNormal = Normal;
+    // Apple GL: FS read of an unwritten output => link error.
+    _flw_clipData = vec2(0.0);
 }
 
 void main() {
@@ -46,7 +54,7 @@ void main() {
 
     #ifdef _FLW_UBER_VERTEX
     // Type-erased path: fetch the command FIRST (the typeId switch needs it before the instance transform).
-    MeshDrawCommand _flw_draw = _flw_drawCommands[_flw_baseDraw + uint(gl_DrawIDARB)];
+    MeshDrawCommand _flw_draw = _flw_drawCommands[_flw_baseDraw + _FLW_DRAW_ID];
     _flw_layoutVertex();
     _flw_instanceVertexUber(_flw_draw.packedTexIndices >> 16u, instanceIndex);
     #else
@@ -58,7 +66,7 @@ void main() {
     flw_materialVertex();
 
     #if !defined(_FLW_UBER_VERTEX) && (defined(FLW_EMBEDDED) || defined(_FLW_BINDLESS_DRAW))
-    MeshDrawCommand _flw_draw = _flw_drawCommands[_flw_baseDraw + uint(gl_DrawIDARB)];
+    MeshDrawCommand _flw_draw = _flw_drawCommands[_flw_baseDraw + _FLW_DRAW_ID];
     #endif
     #ifdef _FLW_UBER_VERTEX
     // Runtime embedded (mesh-tier-proven; matrixIndex 0 is the reserved identity).

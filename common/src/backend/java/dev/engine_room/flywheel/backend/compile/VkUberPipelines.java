@@ -3,12 +3,12 @@ package dev.engine_room.flywheel.backend.compile;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.OitTransparency;
 import dev.engine_room.flywheel.backend.engine.indirect.InstanceTypeIds;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
-import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout;
 import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline;
@@ -72,7 +72,6 @@ public final class VkUberPipelines {
         b.add(new Binding(21, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
         b.add(new Binding(22, TYPE_UNIFORM_BUFFER, vsfs));
         if (!bindless) {
-            // Bindless: all three ride the global table (Sampler0 by draw slot, overlay/lightmap at reserved slots).
             b.add(new Binding(10, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
             b.add(new Binding(11, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
             b.add(new Binding(12, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
@@ -108,7 +107,6 @@ public final class VkUberPipelines {
                 b.add(new Binding(15, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
             }
             if (folded || !bindless) {
-                // Bindless unfolded: reserved slot -- the read rides the global table.
                 b.add(new Binding(14, oitRead, STAGE_FRAGMENT));
             }
         }
@@ -174,7 +172,26 @@ public final class VkUberPipelines {
 
     private static Consumer<Compilation> baseExtra(boolean bindless, boolean embedded) {
         return (bindless ? VkPrograms.BINDLESS : ShaderAssembly.NO_EXTRA)
-                .andThen(embedded ? RenderPassShaders.EMBEDDED : ShaderAssembly.NO_EXTRA);
+                .andThen(embedded ? RenderPassShaders.EMBEDDED : ShaderAssembly.NO_EXTRA)
+                .andThen(ctx -> {
+                    if (!VkPrograms.get().drawIndex()) {
+                        ctx.define("_FLW_VK_SINGLE_DRAW");
+                    }
+                });
+    }
+
+    private static VkGraphicsPipeline graphicsPipeline(VkDescriptorLayout layout, long vertex, long fragment,
+                                                       VkGraphicsPipeline.Config config) {
+        try {
+            return new VkGraphicsPipeline(layout, vertex, fragment, config);
+        } catch (ProgramAvailability.Failure failure) {
+            throw failure;
+        } catch (BackendUnavailableException failure) {
+            if (VkPrograms.get().drawIndex()) {
+                throw new ProgramAvailability.Failure(ProgramAvailability.Feature.DRAW_INDEX, failure);
+            }
+            throw failure;
+        }
     }
 
     public VkGraphicsPipeline drawPipeline(Material material, boolean embedded, LightSmoothness smoothness,
@@ -188,7 +205,11 @@ public final class VkUberPipelines {
     }
 
     private VkGraphicsPipeline buildDraw(UberDrawKey key) {
-        boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+        return VkPrograms.bindless(() -> buildDrawPipeline(key));
+    }
+
+    private VkGraphicsPipeline buildDrawPipeline(UberDrawKey key) {
+        boolean bindless = VkPrograms.bindlessTexturesEnabled();
         Consumer<Compilation> extra = baseExtra(bindless, key.embedded());
         String vsGl = RenderPassShaders.assembleUberIndirectVertex(key.materialShaders(), key.debug() != DebugMode.OFF,
                 extra);
@@ -209,7 +230,7 @@ public final class VkUberPipelines {
                     key.depthWrite(), key.colorWrite(), key.cull(), key.polygonOffset());
             layout = new VkDescriptorLayout(withLineFrame(drawBindings(true, bindless, key.light()),
                     key.materialShaders()), 0, 0, bindless);
-            return new VkGraphicsPipeline(layout, vs, fs, config);
+            return graphicsPipeline(layout, vs, fs, config);
         } catch (Throwable t) {
             if (layout != null) {
                 layout.delete();
@@ -229,7 +250,13 @@ public final class VkUberPipelines {
     }
 
     private VkGraphicsPipeline buildOitProducer(UberOitKey key) {
-        boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+        return VkPrograms.bindless(() -> key.folded()
+                ? VkPrograms.optional(ProgramAvailability.Feature.LOCAL_READ, () -> buildOitProducerPipeline(key))
+                : buildOitProducerPipeline(key));
+    }
+
+    private VkGraphicsPipeline buildOitProducerPipeline(UberOitKey key) {
+        boolean bindless = VkPrograms.bindlessTexturesEnabled();
         Consumer<Compilation> extra = baseExtra(bindless, key.embedded());
         String vsGl = RenderPassShaders.assembleUberIndirectVertex(key.materialShaders(), key.debug() != DebugMode.OFF,
                 extra);
@@ -248,8 +275,6 @@ public final class VkUberPipelines {
                             + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug()
                                                                                   .getSerializedName()),
                     VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
-            // GL OitPipelines.uberProducer parity: producer offsets keep the slope term (constant 10, slope 1);
-            // the entity-shadow decal z-fights at grazing without it.
             VkGraphicsPipeline.Config base = key.folded() ? VkOitPipelines.foldedProducerConfig(
                     key.mode()) : VkOitPipelines.oitProducerConfig(key.mode());
             var config = new VkGraphicsPipeline.Config(base.colorFormats(), base.blends(), base.depthTest(),
@@ -260,7 +285,7 @@ public final class VkUberPipelines {
                     base.attachmentLocations(), base.inputAttachmentIndices());
             layout = new VkDescriptorLayout(withLineFrame(oitProducerBindings(key.mode(), true, key.folded(), bindless,
                     key.light()), key.materialShaders()), 0, 0, bindless);
-            return new VkGraphicsPipeline(layout, vs, fs, config);
+            return graphicsPipeline(layout, vs, fs, config);
         } catch (Throwable t) {
             if (layout != null) {
                 layout.delete();
@@ -279,7 +304,12 @@ public final class VkUberPipelines {
     }
 
     private VkGraphicsPipeline buildMlabProducer(UberMlabKey key) {
-        boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+        return VkPrograms.bindless(() -> VkPrograms.optional(ProgramAvailability.insert(key.oitMode()),
+                () -> buildMlabProducerPipeline(key)));
+    }
+
+    private VkGraphicsPipeline buildMlabProducerPipeline(UberMlabKey key) {
+        boolean bindless = VkPrograms.bindlessTexturesEnabled();
         Consumer<Compilation> extra = baseExtra(bindless, key.embedded());
         String vsGl = RenderPassShaders.assembleUberIndirectVertex(key.materialShaders(), key.debug() != DebugMode.OFF,
                 extra);
@@ -304,7 +334,7 @@ public final class VkUberPipelines {
                     key.polygonOffset() ? 10.0F : 0.0F, key.polygonOffset() ? 1.0F : 0.0F);
             layout = new VkDescriptorLayout(withLineFrame(mlabProducerBindings(bindless, key.oitMode(), key.light()),
                     key.materialShaders()), 0, 0, bindless);
-            return new VkGraphicsPipeline(layout, vs, fs, config);
+            return graphicsPipeline(layout, vs, fs, config);
         } catch (Throwable t) {
             if (layout != null) {
                 layout.delete();
@@ -323,7 +353,6 @@ public final class VkUberPipelines {
     }
 
     private VkGraphicsPipeline buildCrumbling(CrumblingKey key) {
-        // _FLW_CRUMBLING drops the cull index table (binding 2) and reads the object id from gl_InstanceIndex; material shaders are DEFAULT.
         String vsGl = RenderPassShaders.assembleIndirectCrumblingVertex(key.instanceType(),
                 key.debug() != DebugMode.OFF);
         String fsGl = RenderPassShaders.crumblingFragment(true, key.smoothness(), key.debug());
@@ -335,7 +364,6 @@ public final class VkUberPipelines {
                     VkShaderTransform.toVulkan(vsGl, VkShaderTransform.Stage.VERTEX), VkShaderCompiler.KIND_VERTEX);
             fs = VkShaderCompiler.compileModule("crumbling_frag",
                     VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
-            // Offset constant 10, slope 1 (GL parity): the overlay wins the depth test.
             var config = new VkGraphicsPipeline.Config(new int[]{key.colorFormat()},
                     new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.crumbling()},
                     true, false, VkGraphicsPipeline.compareOp(key.depthTest()), VkGraphicsPipeline.Vertex.INTERNAL,

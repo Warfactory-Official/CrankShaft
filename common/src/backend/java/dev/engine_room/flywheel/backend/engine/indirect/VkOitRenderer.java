@@ -10,13 +10,15 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.NoiseTextures;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
+import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
-import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkBindlessTable;
 import net.minecraft.client.Minecraft;
@@ -145,13 +147,12 @@ final class VkOitRenderer {
 
         long vertexVk = useOit ? VkContext.buffer(vertexBuffer) : 0L;
         long indexVk = useOit ? VkContext.buffer(indexBuffer) : 0L;
-        // Size per-pixel OIT storage from the TARGET, never the window: on a resize frame a composite area past _flw_mlabSize walks the pixel-indexed buffers off the end.
         int width = target.width;
         int height = target.height;
         float far = FrameUniforms.getDepthFar();
 
         m.warmTextures(mc.getTextureManager());
-        if (VkCaps.BINDLESS_TEXTURES_NEGOTIATED) {
+        if (VkPrograms.bindlessTexturesEnabled()) {
             VkBindlessTable.refresh(mc.getTextureManager());
             VkBindlessTable.setReserved(VkBindlessTable.SLOT_OVERLAY, frame.overlayView(), frame.overlaySampler());
             VkBindlessTable.setReserved(VkBindlessTable.SLOT_LIGHTMAP, frame.lightmapView(), frame.overlaySampler());
@@ -183,10 +184,16 @@ final class VkOitRenderer {
                                                                                target.width, target.height));
 
         if (insert) {
-            insertChain.render(encoder, frame, chunks, ber, terrain, fabulous, lightmapView, loSampler,
-                    vertexVk, indexVk, width, height, useOit, colorView, depthView, compositeDescriptor);
+            try {
+                insertChain.render(encoder, frame, chunks, ber, terrain, fabulous, lightmapView, loSampler,
+                        vertexVk, indexVk, width, height, useOit, colorView, depthView, compositeDescriptor);
+            } catch (ProgramAvailability.Failure failure) {
+                throw failure;
+            } catch (BackendUnavailableException failure) {
+                throw new ProgramAvailability.Failure(ProgramAvailability.insert(insertMode), failure);
+            }
         } else {
-            boolean folded = VkCaps.DYNAMIC_RENDERING_LOCAL_READ_NEGOTIATED
+            boolean folded = m.programs.localRead()
                     && (terrain == null || terrain instanceof VkFoldedOitReplay);
             waveletChain.render(encoder, frame, replay, vertexVk, indexVk, width, height, useOit, hasAdditive,
                     depthView, far, compositeDescriptor, folded);
@@ -210,7 +217,6 @@ final class VkOitRenderer {
                     long oitSampler, long[] coefficientViews, long accumulateView) {
     }
 
-    // Backend-neutral Mojang-RHI handles for the replays (distinct from OitFrame's raw-VK handles).
     record OitReplay(GpuBufferSlice dynamicTransforms, GpuTextureView lightmapView, GpuTextureView overlayView,
                      GpuTextureView blueNoiseView, GpuSampler loSampler, GpuSampler oitSampler,
                      GpuSampler noiseSampler, @Nullable ChunkSectionsToRender chunks,

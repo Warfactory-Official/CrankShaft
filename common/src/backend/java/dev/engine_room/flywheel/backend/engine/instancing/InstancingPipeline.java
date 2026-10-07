@@ -56,12 +56,16 @@ public final class InstancingPipeline {
     }
 
     public static RenderPipeline pipelineFor(Material material, InstanceType<?> instanceType, boolean embedded) {
+        return pipelineFor(material, instanceType, embedded, FrameUniforms.debugMode());
+    }
+
+    public static RenderPipeline pipelineFor(Material material, InstanceType<?> instanceType, boolean embedded,
+                                              DebugMode debug) {
         MaterialShaders shaders = material.shaders();
         LightShader light = material.light();
         CutoutShader cutout = material.cutout();
         FogShader fog = material.fog();
         LightSmoothness smoothness = BackendConfig.INSTANCE.lightSmoothness();
-        DebugMode debug = FrameUniforms.debugMode();
 
         boolean embeddedFragment = embedded && RenderPassShaders.readsEmbedded(material);
 
@@ -133,6 +137,7 @@ public final class InstancingPipeline {
                                                                    GpuFormat.R32_UINT)
                                                            .withUniform("_FlwInstanceDraw", UniformType.UNIFORM_BUFFER)
                                                            .withUniform("_FlwRenderOrigin", UniformType.UNIFORM_BUFFER);
+        InstancingDrawSelector.addTo(bindGroup);
         if (embedded) {
             bindGroup.withUniform("_FlwEmbed", UniformType.UNIFORM_BUFFER);
         }

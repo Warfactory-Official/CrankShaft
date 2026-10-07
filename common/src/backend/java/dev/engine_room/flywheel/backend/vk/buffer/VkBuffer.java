@@ -1,5 +1,7 @@
 package dev.engine_room.flywheel.backend.vk.buffer;
 
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.lib.memory.FlwMemoryTracker;
@@ -8,6 +10,7 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.vma.Vma;
 import org.lwjgl.util.vma.VmaAllocationCreateInfo;
+import org.lwjgl.vulkan.EXTDescriptorBuffer;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkBufferCreateInfo;
 import org.lwjgl.vulkan.VkBufferDeviceAddressInfo;
@@ -37,7 +40,6 @@ public final class VkBuffer {
 
     public VkBuffer(int usage, long sizeBytes, boolean deviceLocal) {
         this.vma = VkContext.vma();
-        // BDA usage on every engine buffer (mirrors VulkanGpuBufferMixin's device-wide policy): descriptor-buffer set writes build descriptors from device addresses.
         this.usage = VkCaps.BUFFER_DEVICE_ADDRESS_NEGOTIATED ? usage | VK12.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : usage;
         this.deviceLocal = deviceLocal;
         allocate(sizeBytes);
@@ -51,6 +53,9 @@ public final class VkBuffer {
 
     public long deviceAddress() {
         if (deviceAddress == 0L) {
+            if (!VkCaps.BUFFER_DEVICE_ADDRESS_NEGOTIATED) {
+                throw new BackendUnavailableException("Buffer device address is not enabled");
+            }
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VkBufferDeviceAddressInfo info = VkBufferDeviceAddressInfo.calloc(stack).sType$Default().buffer(buffer);
                 deviceAddress = VK12.vkGetBufferDeviceAddress(VkContext.vkDevice(), info);
@@ -72,7 +77,7 @@ public final class VkBuffer {
     }
 
     /**
-     * No-op: the allocation is host-coherent, so CPU writes need no explicit flush.
+     * Host-coherent; no explicit flush.
      */
     public void flush(long byteOffset, long byteSize) {
     }
@@ -81,7 +86,9 @@ public final class VkBuffer {
         if (minBytes <= sizeBytes) {
             return false;
         }
-        long newSize = Math.max(minBytes, sizeBytes * 2);
+        long limit = VkCaps.bufferSizeLimit(usage);
+        long grownSize = sizeBytes > limit / 2L ? limit : sizeBytes * 2L;
+        long newSize = Math.max(minBytes, grownSize);
         long oldBuffer = buffer;
         long oldAllocation = allocation;
         long oldMapped = mappedAddress;
@@ -120,6 +127,16 @@ public final class VkBuffer {
     }
 
     private void allocate(long bytes) {
+        try {
+            VkCaps.requireBufferSize(usage, bytes);
+        } catch (BackendUnavailableException e) {
+            int descriptors = EXTDescriptorBuffer.VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT
+                    | EXTDescriptorBuffer.VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT;
+            if ((usage & descriptors) != 0) {
+                throw new ProgramAvailability.Failure(ProgramAvailability.Feature.DESCRIPTOR_BUFFER, e);
+            }
+            throw e;
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkBufferCreateInfo info = VkBufferCreateInfo.calloc(stack)
                                                         .sType$Default()
@@ -128,7 +145,6 @@ public final class VkBuffer {
                                                         .sharingMode(VK12.VK_SHARING_MODE_EXCLUSIVE);
             VmaAllocationCreateInfo allocInfo = VmaAllocationCreateInfo.calloc(stack).usage(VMA_MEMORY_USAGE_AUTO);
             if (deviceLocal) {
-                // Pure-VRAM: no host access, no mapping; the GPU reads it at full bandwidth on all hardware.
                 allocInfo.requiredFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             } else {
                 allocInfo.flags(
@@ -147,7 +163,6 @@ public final class VkBuffer {
                 PointerBuffer pMapped = stack.callocPointer(1);
                 int mapResult = Vma.vmaMapMemory(vma, newAllocation, pMapped);
                 if (mapResult != VK12.VK_SUCCESS) {
-                    // The buffer was created but never handed off; free it before surfacing the map failure.
                     Vma.vmaDestroyBuffer(vma, newBuffer, newAllocation);
                     check(mapResult, "map");
                 }

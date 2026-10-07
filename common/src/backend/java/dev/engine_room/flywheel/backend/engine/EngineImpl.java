@@ -1,5 +1,7 @@
 package dev.engine_room.flywheel.backend.engine;
 
+import com.mojang.blaze3d.systems.RenderSystem;
+import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.backend.RenderContext;
 import dev.engine_room.flywheel.api.instance.Instance;
@@ -10,12 +12,19 @@ import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.api.task.Plan;
 import dev.engine_room.flywheel.api.visualization.VisualEmbedding;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.backend.BackendRecovery;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.GpuTimer;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
+import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.embed.*;
 import dev.engine_room.flywheel.backend.engine.uniform.Uniforms;
+import dev.engine_room.flywheel.backend.vk.VkContext;
+import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Vec3i;
@@ -46,8 +55,6 @@ public class EngineImpl implements Engine {
         sqrMaxOriginDistance = maxOriginDistance * maxOriginDistance;
         environmentStorage = new EnvironmentStorage();
         lightStorage = new LightStorage(level);
-        // 26.2 replaced DimensionSpecialEffects.constantAmbientLight() with the per-dimension CardinalLighting
-        // type; NETHER is the old "constant ambient" (non-directional sky) case -> diffuseNether in the shader.
         constantAmbientLight = level.dimensionType()
                                     .cardinalLightType() == CardinalLighting.Type.NETHER;
     }
@@ -102,18 +109,15 @@ public class EngineImpl implements Engine {
 
     @Override
     public void render(RenderContext context) {
-        // 26.2: no GlStateTracker save/restore -- Mojang RHI leaves GL caches consistent; raw restore() would desync them.
+        // 26.2: raw restore desynchronizes Mojang RHI caches.
         try {
             Uniforms.update(context);
-            // Rotate the GL GPU-timer's per-frame query ring here, before the frame's labeled visual GL work
-            // (no-op on a Vulkan host, which self-rotates on its submit index).
             GpuTimer.beginFrame();
             environmentStorage.flush();
             drawManager.render(lightStorage, environmentStorage, renderOriginModelView(context), renderOrigin,
                     constantAmbientLight);
-        } catch (Exception e) {
-            FlwBackend.LOGGER.error("Falling back", e);
-            triggerFallback();
+        } catch (BackendUnavailableException e) {
+            recoverFailure(e);
         }
     }
 
@@ -136,22 +140,18 @@ public class EngineImpl implements Engine {
                              @Nullable FabulousCaptures fabulous) {
         try {
             return drawManager.renderOit(lightStorage, environmentStorage, chunks, ber, terrain, fabulous);
-        } catch (Exception e) {
-            FlwBackend.LOGGER.error("Falling back", e);
-            triggerFallback();
+        } catch (BackendUnavailableException e) {
+            recoverFailure(e);
             return false;
         }
     }
 
     @Override
     public void renderCrumbling(RenderContext context, List<CrumblingBlock> crumblingBlocks) {
-        // No GlStateTracker save/restore -- see renderOit(). (the crumbling raw-GL body must reconcile
-        // the encoder rather than raw-restore.)
         try {
             drawManager.renderCrumbling(crumblingBlocks);
-        } catch (Exception e) {
-            FlwBackend.LOGGER.error("Falling back", e);
-            triggerFallback();
+        } catch (BackendUnavailableException e) {
+            recoverFailure(e);
         }
     }
 
@@ -160,6 +160,24 @@ public class EngineImpl implements Engine {
         drawManager.delete();
         lightStorage.delete();
         environmentStorage.delete();
+    }
+
+    private void recoverFailure(BackendUnavailableException failure) {
+        if (Boolean.getBoolean("crankshaft.shader.strict")) throw failure;
+        if (failure instanceof ProgramAvailability.Failure featureFailure
+                && ProgramAvailability.allows(featureFailure.feature())) {
+            ProgramAvailability.reject(featureFailure.feature(), featureFailure);
+            if (VkContext.isVulkanHost()) {
+                VkPrograms.rejectFeature(featureFailure.feature());
+            } else {
+                RendererReloadCache.onReloadLevelRenderer();
+                RenderSystem.getDevice().clearPipelineCache();
+            }
+            Minecraft.getInstance().levelExtractor.allChanged();
+            return;
+        }
+        BackendRecovery.reject(BackendManager.currentBackend(), failure);
+        triggerFallback();
     }
 
     private void triggerFallback() {
@@ -184,8 +202,7 @@ public class EngineImpl implements Engine {
     }
 
     /**
-     * Shaderpack guest draw tag ({@link TaggedEnvironment#tag}) of a visual's block entity; {@code 0} = shared
-     * context. Called on visual-creation worker threads.
+     * Guest tag; {@code 0} = shared context. Visual-creation worker threads.
      */
     public int drawTag(BlockEntity blockEntity) {
         return 0;
@@ -198,7 +215,6 @@ public class EngineImpl implements Engine {
     private class VisualizationContextImpl implements VisualizationContext, TaggedVisualizationContexts {
         private final InstancerProviderImpl instancerProvider;
         private final int drawTag;
-        // Base context only.
         private final @Nullable ConcurrentHashMap<Integer, VisualizationContextImpl> tagged;
 
         public VisualizationContextImpl() {

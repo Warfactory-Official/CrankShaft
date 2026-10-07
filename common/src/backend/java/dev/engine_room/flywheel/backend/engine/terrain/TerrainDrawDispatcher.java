@@ -18,6 +18,7 @@ import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.engine.SodiumTerrainOitReplay;
 import dev.engine_room.flywheel.backend.engine.indirect.DepthPyramid;
 import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
@@ -34,6 +35,7 @@ import dev.engine_room.flywheel.lib.memory.MemoryBlock;
 import it.unimi.dsi.fastutil.longs.Long2LongMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import net.caffeinemc.mods.sodium.api.texture.SpriteUtil;
+import net.caffeinemc.mods.sodium.client.SodiumClientMod;
 import net.caffeinemc.mods.sodium.client.model.quad.properties.ModelQuadFacing;
 import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionManager;
@@ -56,6 +58,7 @@ import net.minecraft.util.Util;
 import net.minecraft.world.phys.Vec3;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
+import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.*;
 import org.lwjgl.system.MemoryUtil;
@@ -80,11 +83,10 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
     private static final int MAX_VISIBLE_REGIONS = 4096;
     private static final int PASS_CUTOUT = 1;
     private static final int PASS_COUNT = 2;
-    // SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV; an unknown bit fails glMemoryBarrier with GL_INVALID_VALUE.
+    // 26.2: Unknown memory-barrier bits => GL_INVALID_VALUE.
     private static final int GLOBAL_ACCESS_BARRIER = GlCompat.SUPPORTS_NV_BUFFER_LOAD ? 0x10 : 0;
     private static final int PHASE_1 = 1;
     private static final int PHASE_2 = 2;
-    // Shadow lists own visibility: use their section mask without camera-facing or projected-AABB rejection.
     private static final int PHASE_SHADOW = 4;
     private static final int PHASE_NATIVE_LIST = 8;
     private static final int PHASE_TASK_REPLAY = 16;
@@ -101,7 +103,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
             2L * MAX_TRANSLUCENT_COMMANDS_PER_STREAM * COMMAND_STRIDE;
     private static final int BINDING_SECTION_FADE_VIS = 11;
     private static final int BINDING_DRAW_REGION_INPUT = 10;
-    // Cull comps without NV pointers (_FLW_TERRAIN_SSBO); the translucent build reads its fade visibility at 12.
     private static final int BINDING_CULL_REGION_INPUT = 9;
     private static final int BINDING_CULL_SECTION_DATA = 10;
     private static final int BINDING_CULL_REGION_VIS = 11;
@@ -109,23 +110,16 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
     private static final int BINDING_CULL_COMMANDS = 13;
     private static final int BINDING_CULL_COMMAND_COUNT = 14;
     private static final int BINDING_CULL_GEOMETRY_MASK = 15;
-    /**
-     * Per-region {@code u_RegionChunkOrigin} UBO binding (UBO namespace, distinct from the SSBO binds above).
-     */
     private static final int BINDING_REGION_CHUNK_ORIGIN = 10;
     private static final int TRANSLUCENT_COMMAND_REGION_CAP_INIT = 256;
     private static final int LIVE_MASK_WORDS_PER_SLOT = REGION_SIZE / Integer.SIZE;
     private static final int COMMAND_REGION_CAP = 256;
-    /**
-     * Optional mesh-shader opaque draw strategy; {@code null} = the MDI path.
-     */
     @Nullable
     private static ObjIntConsumer<TerrainDrawDispatcher> meshDrawStrategy;
     @Nullable
     private static TerrainTranslucentMeshDrawStrategy translucentMeshDrawStrategy;
     private static boolean terrainUnsupportedLogged = false;
     private static boolean terrainInitFailed = false;
-    // THIS frame's pyramid rebuild (+ MDI phase 2); consumed once at the engine's post-draw point.
     @Nullable
     private static Runnable deferredPostVisuals;
     private static boolean regionCapWarned = false;
@@ -140,9 +134,7 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
     public final GlResidentBuffer regionVisBuffer = new GlResidentBuffer();
     public final GlResidentBuffer[] commandBuffers = {new GlResidentBuffer(), new GlResidentBuffer()};
     public final GlResidentBuffer[] regionCommandCounts = {new GlResidentBuffer(), new GlResidentBuffer()};
-    /**
-     * Translucent region-input (regionId + origin per region); resident so the cull scene UBO can address it.
-     */
+    /** Per-region origin + regionId; GPU-resident. */
     public final GlResidentBuffer translucentRegionInputBuffer = new GlResidentBuffer();
     public final GlResidentBuffer translucentRegionVisBuffer = new GlResidentBuffer();
     public final GlResidentBuffer translucentCommandBuffer = new GlResidentBuffer();
@@ -152,13 +144,7 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
     public final TranslucentRegionBatch translucentRegionBatch = new TranslucentRegionBatch();
     private final SharedQuadIndexBuffer sharedIndexBuffer = new SharedQuadIndexBuffer(
             SharedQuadIndexBuffer.IndexFormat.INTEGER);
-    /**
-     * Terrain-owned staging buffer (the instance path's isn't flushed at the cancel position).
-     */
     private final StagingBuffer stagingBuffer;
-    /**
-     * Terrain-owned HiZ pyramid (separate from the instance-occlusion pyramid to avoid racy contention).
-     */
     private final DepthPyramid terrainDepthPyramid;
     private final GlProgram regionTestProgram;
     private final GlProgram cullProgram;
@@ -233,7 +219,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
 
         @Override
         public boolean supportsInsert() {
-            // Both the GPU-driven MDI stream and the mesh-shader strategy have an insert (mlab) twin.
             return translucentGpuDriven;
         }
 
@@ -249,12 +234,9 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
     private long regionTimeMillis;
     private int translucentCommandRegionCap = 0;
     private boolean translucentGpuDriven = false;
-    // The mesh strategy's gather caches decoded quads for the wavelet chain's per-mode replays; a single insert pass
-    // draws the MDI stream directly (RD 32: producers 0.49 -> 0.09 ms).
     private boolean translucentMesh = false;
     private boolean captureTranslucent = true;
     private boolean terrainSceneUboAllocated = false;
-    // Set by the post-visuals rebuild, cleared at the next seam: a skipped rebuild must not leave a stale pyramid.
     private boolean pyramidFresh = false;
     private boolean hizCarried = false;
     private int pyramidWidth = -1;
@@ -300,16 +282,14 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         meshDrawStrategy = strategy;
     }
 
-    /**
-     * Register (or clear, with {@code null}) the mesh-shader translucent-terrain draw strategy; called once by the
-     * mesh tier at init.
-     */
+    /** Mesh-tier init registration; {@code null} clears strategy. */
     public static void setTranslucentMeshDrawStrategy(@Nullable TerrainTranslucentMeshDrawStrategy strategy) {
         translucentMeshDrawStrategy = strategy;
     }
 
     public static boolean isSupported() {
-        return GlCompat.SUPPORTS_TERRAIN && IndirectPrograms.allLoaded() && !terrainInitFailed;
+        return GlCompat.SUPPORTS_TERRAIN && IndirectPrograms.allLoaded() && !terrainInitFailed
+                && ProgramAvailability.allows(ProgramAvailability.Feature.OPAQUE_TERRAIN);
     }
 
     public static void logUnsupportedOnce() {
@@ -381,9 +361,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
     }
 
-    /**
-     * Single-cull animated-sprite tick: no render list exists, so scan all 256 sections of each frustum-passed region.
-     */
     private static void markAnimatedSpritesResident(RenderRegion region) {
         for (int s = 0; s < 256; s++) {
             TextureAtlasSprite[] sprites = region.getAnimatedSprites(s);
@@ -412,8 +389,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
     }
 
-    // One ring write per frame: each writeUniform flushes its mapped range separately, a GPU copy per call on NV.
-    // End of the run of consecutive slots sharing run's geometry arena: one command window + MDI per run.
     static int runEnd(GpuBuffer[] geometryBuffers, int count, int run) {
         int end = run + 1;
         while (end < count && geometryBuffers[end] == geometryBuffers[run]) {
@@ -434,11 +409,8 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         MemoryUtil.memPutInt(ptr + 56L, count);
     }
 
-    /**
-     * The registered guest terrain strategy calls this inside its RenderPass on the render thread. Uniform
-     * storage remains dispatcher-owned; the supplied matrix is the current main or shadow terrain view.
-     */
-    public void bindGuestUniforms(RenderPass pass, org.joml.Matrix4fc modelView) {
+    /** Guest strategy: render thread, inside RenderPass; dispatcher-owned storage; current main/shadow view. */
+    public void bindGuestUniforms(RenderPass pass, Matrix4fc modelView) {
         RenderSystem.bindDefaultUniforms(pass);
         pass.setUniform("ChunkSection", chunkSectionUniforms.writeUniform(new ChunkSectionUniform(modelView)));
         bindSodiumTerrainUniforms(pass);
@@ -456,16 +428,12 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         commandRegionCap = newCap;
     }
 
-    /**
-     * Rotate the per-frame UBO rings; driven from the translucent seam tail, not beginFrame: the OIT replay reads
-     * the rings at the seam, so they must stay valid until after it.
-     */
+    /** Translucent-seam tail; OIT replay must finish before ring rotation. */
     public void endFrame() {
         regionOriginUniforms.endFrame();
         chunkSectionUniforms.endFrame();
         translucentChunkSectionUniforms.endFrame();
         lastModelViewValid = false;
-        // Clear the GPU region batch's geometry/origin-slice refs so a frame with no opaque seam can't replay stale
         translucentRegionBatch.reset();
     }
 
@@ -485,7 +453,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         GpuTextureView colorView = target.getColorTextureView();
         GpuTextureView depthView = target.getDepthTextureView();
         if (colorView == null || depthView == null) {
-            // Transient: no render target this frame -> drew nothing, leave Sodium to draw opaque (don't cancel).
             return false;
         }
 
@@ -493,10 +460,8 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         lastProjection.set(matrices.projection());
         lastModelViewValid = true;
         translucentGpuDriven = true;
-        // terrainMode OPAQUE: skip the translucent half of the walk -- the batch stays empty, translucentOitReplay()
         captureTranslucent = BackendConfig.INSTANCE.terrainMode().compositesTranslucent();
 
-        // flush() dispatches the scatter compute => draw window, once/frame; never in the extract-phase hooks.
         registry.flushPendingUploads();
 
         boolean guest = GuestTerrainGate.packActive;
@@ -506,7 +471,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         if (maxRegionId >= 0) {
             registry.ensureSectionVisCapacity(maxRegionId + 1);
         }
-        // Ramp the section-wide chunk-load fades ONCE per frame, here at the opaque seam (which fires before the OIT
         registry.updateTranslucentFades(Util.getMillis());
 
         boolean carried = pyramidFresh && target.width == pyramidWidth && target.height == pyramidHeight;
@@ -529,14 +493,12 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         ObjIntConsumer<TerrainDrawDispatcher> strategy = meshDrawStrategy;
         GlCompat.pushDebugGroup("flywheel:gl/terrain/opaque");
         int guestFlags = guest ? PHASE_NATIVE_LIST | (GuestTerrainGate.meshActive ? PHASE_TASK_REPLAY : 0)
-                | (net.caffeinemc.mods.sodium.client.SodiumClientMod.options().performance.useBlockFaceCulling
+                | (SodiumClientMod.options().performance.useBlockFaceCulling
                 ? 0 : PHASE_SHADOW) : 0;
         runComputeTail(visible, PHASE_1 | guestFlags);
         drawOpaque(strategy, matrices, colorView, depthView, atlasView, lightmapView, visible, PHASE_1);
         GlCompat.popDebugGroup();
 
-        // Native recovery can use visual occluders. A pack needs both terrain phases before entity MRT writes and
-        // before Iris leaves its terrain renderStage; otherwise unwritten entity attachments change behind it.
         if (TerrainDebug.HIZ_ENABLED && (!guest || GuestTerrainGate.meshActive && GuestTerrainGate.meshNeedsRecovery)) {
             Runnable recover = () -> {
                 if (!regeneratePyramid(target)) {
@@ -556,11 +518,7 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         return true;
     }
 
-    /**
-     * Iris's shadow pass re-enters Sodium's opaque terrain draw with the shadow view. Sodium has already run its own
-     * {@code setupTerrain} for that view, so its render lists ARE the shadow lists here and no extra culling stage is
-     * needed. The compute tail uses their section mask, including Iris's no-frustum mode for voxelizing packs.
-     */
+    /** Iris shadow-view lists; call after Sodium setupTerrain. */
     @Override
     public boolean drawShadowTerrain(ChunkRenderMatrices matrices, RenderSectionManager manager) {
         Minecraft mc = Minecraft.getInstance();
@@ -572,7 +530,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
         registry.flushPendingUploads();
 
-        // The main pass re-collects for the camera view, so the shared batches may be reused freely here.
         boolean captured = captureTranslucent;
         captureTranslucent = false;
         OpaqueTerrainBatch visible = collectVisibleRegions(manager, null, true);
@@ -632,7 +589,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
     }
 
     public void captureTranslucentArena(ChunkRenderMatrices matrices, RenderSectionManager manager) {
-        // Instancing (CPU per-section replay) path: GPU cull is off. lastProjection is captured for uniformity only.
         lastModelView.set(matrices.modelView());
         lastProjection.set(matrices.projection());
         lastModelViewValid = true;
@@ -648,7 +604,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
 
             markAnimatedSpritesActive(region, renderList);
 
-            // Translucent capture is id-INDEPENDENT: the OIT replay keys each section off origin + the live geometry
             int regionId = region.getId();
 
             int originChunkX = region.getChunkX();
@@ -669,10 +624,7 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
     }
 
-    /**
-     * chunk-OIT-only resident path (terrainMode TRANSLUCENT_OIT, INDIRECT): prep the GPU-driven translucent layer WITHOUT the
-     * opaque MDI takeover. Runs the same registry maintenance + region collection + fade ramp as {@link #drawOpaqueSolid}
-     */
+    /** Translucent-only resident preparation; no opaque takeover. */
     public void prepareResidentTranslucent(ChunkRenderMatrices matrices, RenderSectionManager manager) {
         lastModelView.set(matrices.modelView());
         lastProjection.set(matrices.projection());
@@ -682,7 +634,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
 
         registry.flushPendingUploads();
 
-        // Region-level walk: populates translucentRegionBatch (the opaque solid/cutout batches it also fills go unused).
         OpaqueTerrainBatch visible = collectVisibleRegions(manager, null, GuestTerrainGate.packActive);
         int maxRegionId = Math.max(visible.maxRegionId, translucentRegionBatch.maxRegionId);
         if (maxRegionId >= 0) {
@@ -702,7 +653,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
         GL30.glBindBufferRange(GL31.GL_UNIFORM_BUFFER, BINDING_TERRAIN_HIZ_UBO,
                 hizUniformBuffer.handle(), 0, hizUniformScratch.size());
-        // Prior shader stores must also complete before API clears, not merely before another shader reads them.
         GL42.glMemoryBarrier(GLOBAL_ACCESS_BARRIER | GL43.GL_SHADER_STORAGE_BARRIER_BIT
                 | GL42.GL_BUFFER_UPDATE_BARRIER_BIT);
 
@@ -723,7 +673,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         clearCommandCounts(PASS_SOLID, solid.count);
         clearCommandCounts(PASS_CUTOUT, cutout.count);
 
-        // The mesh tier emits its own task commands into the same buffers.
         boolean cullOnly = meshDrawStrategy != null && !GuestTerrainGate.meshActive;
         int cullPhase = cullOnly ? phase | PHASE_CULL_ONLY : phase;
         if (GlCompat.SUPPORTS_NV_BUFFER_LOAD) {
@@ -769,7 +718,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, binding, buffer);
     }
 
-    // TerrainScenePass (std140): regionCount, phase, groupBase.
     private void uploadAndBindScenePass(int regionCount, int phase, int groupBase) {
         long ptr = terrainSceneUboScratch.ptr();
         MemoryUtil.memPutInt(ptr, regionCount);
@@ -778,7 +726,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         uploadAndBindSceneUbo();
     }
 
-    // Cutout's regionVis follows solid's slots in the shared buffer.
     private void putOpaqueScenePass(long ptr, VisibleRegionBatch visible, long regionVis) {
         int pass = visible.passIndex;
         putScenePass(ptr, regionInputBuffers[pass].deviceAddress(), registry.sectionDataAddress(pass), regionVis,
@@ -786,9 +733,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
                 regionCommandCounts[pass].deviceAddress(), registry.presentMaskAddress(pass), visible.count);
     }
 
-    /**
-     * Pack the 7 resident device pointers + region count into the cull scene UBO at {@link #BINDING_TERRAIN_SCENE_UBO}.
-     */
     private void packAndBindSceneUbo(long addr0, long addr8, long addr16, long addr24, long addr32, long addr40,
                                      long addr48, int count, int phase) {
         long ptr = terrainSceneUboScratch.ptr();
@@ -797,7 +741,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         uploadAndBindSceneUbo();
     }
 
-    // Re-uploaded every call: a grown buffer is recreated = a new address.
     private void uploadAndBindSceneUbo() {
         if (!terrainSceneUboAllocated) {
             terrainSceneUbo.upload(terrainSceneUboScratch);
@@ -817,9 +760,7 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
     }
 
-    /**
-     * The mesh guest records its own per-quad temporal visibility; the opaque phase distinguishes both pyramids.
-     */
+    /** Mesh guest main-view HiZ; unavailable = {@code 0}. */
     public int guestTaskPyramid(boolean translucent) {
         if (!TerrainDebug.HIZ_ENABLED || GuestTerrainGate.ownsShadowTerrain()) return 0;
         if (!translucent && !hizCarried) return 0;
@@ -877,7 +818,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
     private void drawMeshStrategy(ObjIntConsumer<TerrainDrawDispatcher> strategy, OpaqueTerrainBatch opaque) {
         if (opaque.solid.count > 0) {
             boundBatch = opaque.solid;
-            // No re-pack: regionInputBuffers[PASS_SOLID] still holds the solid cull's slot->regionId map (per-pass
             strategy.accept(this, PASS_SOLID);
         }
         if (opaque.cutout.count > 0) {
@@ -905,7 +845,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         GL30.glBindBufferRange(GL43.GL_SHADER_STORAGE_BUFFER, BINDING_SECTION_FADE_VIS,
                 registry.translucentVisHandle(), 0L, registry.translucentVisByteSize());
 
-        // M5-hybrid hoist: Mojang's encoder re-applies every sampler/draw-buffer/scissor per drawIndexed, so prime
         boolean primed = false;
         int runEnd;
         for (int run = 0; run < visible.count; run = runEnd) {
@@ -922,7 +861,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
                 primed = true;
             }
 
-            // One raw call vs a full per-region encoder trySetup.
             GL43.glBindVertexBuffer(0, gpuBufferHandle(geometryGpuBuffer), 0L, TerrainVertexFormat.strideBytes());
             GlCompat.multiDrawElementsIndirectCount(GL11.GL_TRIANGLES, GL11.GL_UNSIGNED_INT,
                     run * COMMAND_BYTES_PER_REGION, (long) run * 8L, (runEnd - run) * MAX_COMMANDS_PER_REGION,
@@ -938,7 +876,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         translucentRegionBatch.reset();
 
         if (selfEnum != null) {
-            // CPU region-frustum prefilter built from the SAME viewProjection the GPU region test uses (lastProjection
             Camera camera = Minecraft.getInstance().gameRenderer.mainCamera();
             Vec3 camPos = camera.isInitialized() ? camera.position() : Vec3.ZERO;
             selfEnumFrustum.set(selfEnumViewProj.set(lastProjection).mul(lastModelView));
@@ -960,8 +897,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
                 int translucentSlot = translucentRegionBatch.count;
                 collectRegion(region);
                 if (shadow) {
-                    // Iris's shadow lists include distance/frustum restrictions finer than a whole region.
-                    // Copy Sodium's four packed words; do not re-enumerate its sections on the CPU.
                     long[] mask = ((ChunkRenderListAccessor) renderList).flywheel$sectionsWithGeometryMap();
                     if (solidBatch.count != solidSlot) {
                         System.arraycopy(mask, 0, shadowSectionMasks, solidSlot * SHADOW_MASK_LONGS,
@@ -984,10 +919,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         return opaqueBatch;
     }
 
-    /**
-     * Region-AABB (8x4x8 chunks = 128x64x128 blocks) frustum test, camera-relative, matching the GPU region test: the
-     * HiZ applies {@code viewProjection x (regionWorld - cameraWorld)}, so the CPU tests the camera-relative AABB
-     */
     private boolean regionInFrustum(RenderRegion region, double camX, double camY, double camZ) {
         float minX = (float) ((region.getChunkX() << 4) - camX);
         float minY = (float) ((region.getChunkY() << 4) - camY);
@@ -1045,10 +976,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
                 baseVertex, indexCount, visibility, s);
     }
 
-    /**
-     * Per-section chunk-load fade visibility. The engine owns the timer because we draw Sodium's raw geometry
-     * arena, not its shaded output, so Sodium's own fade is not in effect.
-     */
     private float translucentVisibility(int regionId, int sectionId, int originChunkX, int originChunkY,
                                         int originChunkZ, long now) {
         if (regionId < 0) {
@@ -1125,10 +1052,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
     }
 
-    /**
-     * Pack the region-input uvec4 per slot and upload. Packing (see terrain_region_input.glsl): x0 =
-     * X/Z24 and Y16 via TerrainRegionInput; x2 = regionId, x3 = the arena-run metadata.
-     */
     private void packAndUploadRegionInput(VisibleRegionBatch visible) {
         long ptr = regionInputScratch.ptr();
         boolean guest = GuestTerrainGate.packActive;
@@ -1184,7 +1107,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         MemoryUtil.memPutFloat(ptr + 64L, (float) (camPos.x - cbx));
         MemoryUtil.memPutFloat(ptr + 68L, (float) (camPos.y - cby));
         MemoryUtil.memPutFloat(ptr + 72L, (float) (camPos.z - cbz));
-        // The two .w pads carry the framebuffer pixel size: cameraPosAndPad.w = width, cameraBlockPosAndPad.w =
         MemoryUtil.memPutFloat(ptr + 76L, (float) viewWidth);
         MemoryUtil.memPutInt(ptr + 80L, cbx);
         MemoryUtil.memPutInt(ptr + 84L, cby);
@@ -1208,7 +1130,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         if (translucentBatch.count == 0 || !lastModelViewValid) {
             return;
         }
-        // Defensive only: translucentOitReplay() (the ownership predicate the seam cancels on) is already non-null
         if (translucentBatch.maxIndexCount <= 0) {
             return;
         }
@@ -1256,7 +1177,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         if (count == 0) {
             return;
         }
-        // The section-wide fades were already ramped this frame at the opaque seam (drawOpaqueSolid), which fires
         writeTranslucentHiZUniforms(width, height);
         ensureTranslucentCommandCapacity(count);
         packAndUploadTranslucentRegionInput();
@@ -1271,7 +1191,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         GL42.glMemoryBarrier(GL42.GL_BUFFER_UPDATE_BARRIER_BIT);
         clearTranslucentCommandCount(count);
 
-        // Regenerate the pyramid from the OIT-target depth -- the SAME depth the producers depth-test against (under
         int depthGlId = ((GlTexture) depthTexture).glId();
         GlCompat.pushDebugGroup("flywheel:gl/terrain/translucent_hiz");
         translucentDepthPyramid.regenerate(depthGlId, width, height);
@@ -1319,7 +1238,7 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         packAndBindSceneUbo(translucentRegionInputBuffer.deviceAddress(), registry.translucentSectionDataAddress(),
                 translucentRegionVisBuffer.deviceAddress(), registry.translucentVisAddress(),
                 translucentCommandBuffer.deviceAddress(), translucentCommandCount.deviceAddress(),
-                0L, // unused by region_test + the translucent cull-build
+                0L,
                 count, phase);
     }
 
@@ -1329,14 +1248,8 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         if (translucentRegionBatch.count == 0 || translucentRegionBatch.maxIndexCount <= 0) {
             return;
         }
-        // Mesh-backend draw seam: when a translucent strategy is registered, hand the per-mode producer draw to it
-        // INSTEAD of CrankShaft's glMultiDrawElementsIndirectCount two-stream loop. The emit-half (prepareCommands) has
-        // already written the mesh-task command stream(s) this frame; the strategy reads them off this dispatcher's
         TerrainTranslucentMeshDrawStrategy strategy = translucentMeshDrawStrategy;
         if (translucentMesh) {
-            // The mesh producer draws this mode for the settled stream always, the fading stream only when something is
-            // mid-fade. The mesh tier routes all its texture/sampler state through GlStateManager, so it leaves the
-            // encoder's cache coherent for the next Mojang pass with no separate priming draw.
             strategy.draw(this, pass, mode, framebuffer, false, lightmapView, blueNoiseView,
                     clampLinear, oitSampler, noiseSampler);
             if (registry.hasActiveFades()) {
@@ -1352,8 +1265,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
         GpuTextureView atlasView = Minecraft.getInstance().getTextureManager()
                                             .getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView();
-        // ChunkSection carries ONLY ModelViewMat now (the fade is GPU-resident); one slice per frame, shared across
-        // every region + both streams + the 3 OIT producer modes.
         GpuBufferSlice chunkSectionSlice = translucentChunkSectionUniforms.writeUniform(
                 new ChunkSectionUniform(lastModelView));
 
@@ -1375,7 +1286,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         pass.bindTexture("Sampler2", lightmapView, clampLinear);
         framebuffer.bindOitReads(pass, mode, blueNoiseView, oitSampler, noiseSampler);
         pass.setUniform("ChunkSection", chunkSectionSlice);
-        // Set the shared INTEGER index buffer AFTER setPipeline (it owns the encoder's index/VAO cache).
         pass.setIndexBuffer(sharedIndexGpu, IndexType.INT);
 
         drawTranslucentRegionSlots(pass, fading);
@@ -1415,10 +1325,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
     }
 
-    /**
-     * The translucent stream through a shaderpack guest's OIT producer. The guest program binds the OIT target and
-     * carries the pack's shading, so this only has to open a pass and issue the two stream draws.
-     */
     private void replayTranslucentGuestOit(RenderPipeline producer, GpuTextureView lightmapView,
                                            GpuSampler clampLinear) {
         if (translucentRegionBatch.count == 0 || translucentRegionBatch.maxIndexCount <= 0 || !lastModelViewValid) {
@@ -1516,7 +1422,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         MemoryUtil.memPutFloat(ptr + 64L, (float) (camPos.x - cbx));
         MemoryUtil.memPutFloat(ptr + 68L, (float) (camPos.y - cby));
         MemoryUtil.memPutFloat(ptr + 72L, (float) (camPos.z - cbz));
-        // The .w pads carry the OIT-target pixel size for the mesh tier's per-quad sub-pixel cull (mirrors
         MemoryUtil.memPutFloat(ptr + 76L, (float) width);
         MemoryUtil.memPutInt(ptr + 80L, cbx);
         MemoryUtil.memPutInt(ptr + 84L, cby);
@@ -1541,7 +1446,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
                         Math.toIntExact(regionTimeMillis - batch.creationTimes[i]));
             }
         }
-        // Resident immutable storage (pre-sized to the worst case): subData into the live prefix, never realloc.
         translucentRegionInputBuffer.uploadSpan(0, translucentRegionInputScratch.ptr(),
                 (long) count * REGION_INPUT_STRIDE);
         if (guest && count > 0) {
@@ -1550,10 +1454,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
     }
 
-    /**
-     * Build + upload the per-frame SLOT-keyed per-section live mask (8 uints/slot): bit s is set iff section s
-     * has live vertexCount > 0 in the region's CURRENT Sodium translucent storage.
-     */
     private void packAndUploadTranslucentLiveMask() {
         long ptr = translucentLiveMaskScratch.ptr();
         int count = translucentRegionBatch.count;
@@ -1587,7 +1487,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
             return;
         }
         int newCap = Math.max(count, Math.max(TRANSLUCENT_COMMAND_REGION_CAP_INIT, translucentCommandRegionCap * 2));
-        // Resident: a grow recreates the storage (new device address), re-fetched into the translucent cull scene UBO
         zeroFillResident(translucentCommandBuffer, TRANSLUCENT_REGION_COMMAND_BYTES * newCap);
         zeroFillResident(translucentCommandCount, (long) newCap * 8L);
         translucentCommandRegionCap = newCap;
@@ -1602,7 +1501,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         freeAll();
     }
 
-    // Shared with the constructor's rollback, where the four body-assigned resources may still be null.
     private void freeAll() {
         sharedIndexBuffer.delete();
         regionInputBuffers[PASS_SOLID].delete();
@@ -1669,7 +1567,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
 
         public void reset() {
-            // Null only the slots that were populated last frame; the GpuBuffer refs must not pin closed arenas.
             for (int i = 0; i < count; i++) {
                 geometryBuffers[i] = null;
                 storages[i] = null;
@@ -1719,7 +1616,6 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         public int[] baseVertex = new int[TRANSLUCENT_SECTION_INITIAL_CAP];
         public int[] indexCount = new int[TRANSLUCENT_SECTION_INITIAL_CAP];
         public float[] visibility = new float[TRANSLUCENT_SECTION_INITIAL_CAP];
-        // Local section index (0..255) of each entry, for the GPU OIT cull's section-AABB reconstruction.
         public int[] sectionIndex = new int[TRANSLUCENT_SECTION_INITIAL_CAP];
         public int maxIndexCount = 0;
         int capacity = TRANSLUCENT_SECTION_INITIAL_CAP;
@@ -1818,17 +1714,14 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
     }
 
-    private record ChunkSectionUniform(org.joml.Matrix4fc modelView, float chunkVisibility)
+    private record ChunkSectionUniform(Matrix4fc modelView, float chunkVisibility)
             implements DynamicUniformStorage.DynamicUniform {
-        ChunkSectionUniform(org.joml.Matrix4fc modelView) {
+        ChunkSectionUniform(Matrix4fc modelView) {
             this(modelView, 1.0f);
         }
 
         @Override
         public void write(ByteBuffer buf) {
-            // JOML get(index, buf) writes at the ABSOLUTE byte offset and does NOT advance the buffer position, so
-            // the trailing fields MUST use absolute puts as well. Relative puts here would start at position 0 and
-            // overwrite the matrix (zeroing ModelViewMat columns 0-1 -> degenerate view -> geometry collapses).
             modelView.get(0, buf);
             buf.putFloat(64, chunkVisibility);
             buf.putInt(68, 0);

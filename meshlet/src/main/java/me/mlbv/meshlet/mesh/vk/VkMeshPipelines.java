@@ -3,11 +3,12 @@
 
 package me.mlbv.meshlet.mesh.vk;
 
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
+import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.*;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainPipelines;
-import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout.Binding;
@@ -23,6 +24,7 @@ import org.lwjgl.vulkan.VkDevice;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
@@ -150,26 +152,42 @@ public final class VkMeshPipelines {
     }
 
     public void warmUp() {
-        drawPipeline(false, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
-        drawPipeline(true, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
-        emitPipeline();
+        VkPrograms programs = Objects.requireNonNull(VkPrograms.get());
+        if (programs.usesGpuTerrain()) {
+            drawPipeline(false, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
+            drawPipeline(true, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
+            emitPipeline();
+        }
+        if (!programs.usesGpuTranslucentTerrain()) {
+            return;
+        }
         translucentEmitPipeline();
         translucentGatherPipeline();
-        boolean localRead = VkCaps.DYNAMIC_RENDERING_LOCAL_READ_NEGOTIATED;
         for (OitMode mode : OitMode.values()) {
             if (mode == OitMode.OFF) {
                 continue;
             }
             translucentDrawPipeline(mode, VK12.VK_FORMAT_D32_SFLOAT, false);
-            if (localRead) {
-                translucentDrawPipeline(mode, VK12.VK_FORMAT_D32_SFLOAT, true);
+            if (programs.localRead()) {
+                warmOptional(ProgramAvailability.Feature.LOCAL_READ,
+                        () -> translucentDrawPipeline(mode, VK12.VK_FORMAT_D32_SFLOAT, true));
             }
         }
         for (OitInsertMode mode : OitInsertMode.values()) {
-            if (mode == OitInsertMode.MLAB && !VkCaps.FRAGMENT_SHADER_INTERLOCK_NEGOTIATED) {
-                continue;
+            if (OitConfig.supportsInsertMode(mode)) {
+                warmOptional(ProgramAvailability.insert(mode),
+                        () -> translucentMlabPipeline(mode, VK12.VK_FORMAT_D32_SFLOAT));
             }
-            translucentMlabPipeline(mode, VK12.VK_FORMAT_D32_SFLOAT);
+        }
+    }
+
+    private static void warmOptional(ProgramAvailability.Feature feature, Runnable factory) {
+        try {
+            factory.run();
+        } catch (ProgramAvailability.Failure failure) {
+            throw failure;
+        } catch (BackendUnavailableException failure) {
+            throw new ProgramAvailability.Failure(feature, failure);
         }
     }
 

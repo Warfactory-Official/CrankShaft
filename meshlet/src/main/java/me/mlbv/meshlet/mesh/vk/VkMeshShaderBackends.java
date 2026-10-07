@@ -6,6 +6,7 @@ package me.mlbv.meshlet.mesh.vk;
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.backend.Backends;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.EngineImpl;
@@ -28,7 +29,7 @@ public final class VkMeshShaderBackends {
     }
 
     private static Backend register() {
-        ShaderWarmup.registerVk(VkMeshShaderBackends::warmUp);
+        ShaderWarmup.registerVk(ProgramAvailability.Feature.MESH, VkMeshShaderBackends::warmUp);
         return SimpleBackend.builder()
                             .engineFactory(VkMeshShaderBackends::createEngine)
                             .priority(PRIORITY)
@@ -50,9 +51,11 @@ public final class VkMeshShaderBackends {
     }
 
     private static boolean isSupported() {
+        VkPrograms programs = VkPrograms.get();
         return VkContext.isVulkanHost()
                 && VkCaps.MESH_SHADER_NEGOTIATED
-                && VkPrograms.allLoaded()
+                && ProgramAvailability.allows(ProgramAvailability.Feature.MESH)
+                && programs != null && programs.instanceRoute() == VkPrograms.InstanceRoute.INDIRECT
                 && SodiumCompat.isSodiumActive();
     }
 

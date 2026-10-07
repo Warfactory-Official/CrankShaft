@@ -5,8 +5,16 @@ layout(std140) uniform _FlwEmbed {
 };
 #endif
 
+#ifdef _FLW_INSTANCING_SELECTOR
+layout(std140) uniform _FlwInstanceSelector {
+    ivec4 _flw_instanceSelector;
+};
+#endif
+
 void _flw_guestVertex() {
-    #ifdef _FLW_CRUMBLING
+    #ifdef _FLW_INSTANCING_SELECTOR
+    FlwInstance instance = _flw_unpackInstance(_flw_instanceSelector.x + gl_InstanceID);
+    #elif defined(_FLW_CRUMBLING)
     FlwInstance instance = _flw_unpackInstance(gl_BaseInstanceARB + gl_InstanceID);
     #else
     FlwInstance instance = _flw_unpackInstance(gl_InstanceID);

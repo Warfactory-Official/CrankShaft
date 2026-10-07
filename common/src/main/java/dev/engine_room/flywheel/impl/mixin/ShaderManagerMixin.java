@@ -3,14 +3,21 @@ package dev.engine_room.flywheel.impl.mixin;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
+import dev.engine_room.flywheel.backend.compile.MojImportPreprocessor;
 import dev.engine_room.flywheel.impl.FlwImpl;
 import net.minecraft.client.renderer.ShaderManager;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.packs.resources.Resource;
+import net.minecraft.server.packs.resources.ResourceManager;
+import net.minecraft.util.profiling.ProfilerFiller;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.io.IOException;
 import java.io.Reader;
+import java.util.Map;
 
 @Mixin(ShaderManager.class)
 abstract class ShaderManagerMixin {
@@ -33,5 +40,14 @@ abstract class ShaderManagerMixin {
             return source;
         }
         return source.replace(EMPTY_ALPHA, "if (all(equal(color, vec4(0.0))))");
+    }
+
+    // The local, not the listResources value: it holds the map after every mod's expression edit.
+    @Inject(method = "prepare(Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)Lnet/minecraft/client/renderer/ShaderManager$Configs;",
+            at = @At("RETURN"))
+    private void flw$listShaders(ResourceManager manager, ProfilerFiller profiler,
+                                 CallbackInfoReturnable<ShaderManager.Configs> cir,
+                                 @Local Map<Identifier, Resource> files) {
+        MojImportPreprocessor.listed(files);
     }
 }

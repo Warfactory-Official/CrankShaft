@@ -10,6 +10,7 @@ import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkBufferCopy;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
+import java.util.Arrays;
 import java.util.BitSet;
 
 public final class VkObjectStorage extends AbstractObjectStorage {
@@ -32,6 +33,9 @@ public final class VkObjectStorage extends AbstractObjectStorage {
     private long shadowPtr = FlwMemoryTracker.calloc(INITIAL_SLOTS, DESCRIPTOR_SIZE_BYTES);
     private long shadowBytes = (long) INITIAL_SLOTS * DESCRIPTOR_SIZE_BYTES;
     private int parity;
+    private long descriptorVersion;
+    private final long[] identityVersions = {-1L, -1L};
+    private int[] identityCounts = new int[0];
 
     public VkObjectStorage() {
         FlwMemoryTracker._allocCpuMemory(shadowBytes);
@@ -84,6 +88,37 @@ public final class VkObjectStorage extends AbstractObjectStorage {
         pending.clear();
     }
 
+    public void writeIdentityIndices(VkBuffer indexTable, VkBuffer models, int modelCount) {
+        if (identityVersions[parity] == descriptorVersion) {
+            return;
+        }
+        if (identityCounts.length < modelCount) {
+            identityCounts = new int[modelCount];
+        } else {
+            Arrays.fill(identityCounts, 0, modelCount, 0);
+        }
+        long indices = indexTable.mappedAddress();
+        long modelPtr = models.mappedAddress();
+        for (int slot = 0; slot < pageSlotCount(); slot++) {
+            long ptr = shadowPtr + (long) slot * DESCRIPTOR_SIZE_BYTES;
+            int valid = MemoryUtil.memGetInt(ptr + 4L);
+            if (valid == 0) {
+                continue;
+            }
+            int model = MemoryUtil.memGetInt(ptr);
+            int baseUint = MemoryUtil.memGetInt(ptr + 8L);
+            int stride = MemoryUtil.memGetInt(ptr + 12L) >>> 16;
+            int baseInstance = MemoryUtil.memGetInt(modelPtr + (long) model * IndirectBuffers.MODEL_STRIDE + 4L);
+            while (valid != 0) {
+                int bit = Integer.numberOfTrailingZeros(valid);
+                long index = (long) baseInstance + identityCounts[model]++;
+                MemoryUtil.memPutInt(indices + index * Integer.BYTES, baseUint + bit * stride);
+                valid &= valid - 1;
+            }
+        }
+        identityVersions[parity] = descriptorVersion;
+    }
+
     @Override
     protected void ensureCapacities(long objectBytes, int slotCount) {
         growObject(parity, objectBytes);
@@ -106,6 +141,7 @@ public final class VkObjectStorage extends AbstractObjectStorage {
         MemoryUtil.memPutInt(ptr + 12, typeInfo);
         pendingSlots[0].set(slot);
         pendingSlots[1].set(slot);
+        descriptorVersion++;
     }
 
     @Override

@@ -142,7 +142,7 @@ final class SundialDeferredPatch {
                     int background = declaration(statements, "solidColor");
                     if (background < 0) throw unsupported("material background");
                     statements.add(background + 1, parser.parseStatement(root,
-                            "solidColor.rgb = flw_resolveLight(solidColor.rgb, texel, waterDepth, solidDepth, uint(screenSize.x));"));
+                            "solidColor.rgb = flw_resolveLight(solidColor.rgb, texel, waterDepth, solidDepth, uvec2(screenSize));"));
                     int pixel = declaration(statements, "texel");
                     if (pixel < 0) throw unsupported("material pixel");
                     statements.add(pixel + 1, parser.parseStatement(root, """
@@ -212,7 +212,7 @@ final class SundialDeferredPatch {
                     nativeLight.forEach(Statement::detachAndDelete);
                     statements.add(first + 1, parser.parseStatement(root,
                             "if (!flw_oitActive || flw_overflow != 0u) {" + nativeMerge + "} else {"
-                                    + "solidColor = flw_resolveLight(solidColor, texel, 0.0, waterDepth, uint(screenSize.x)); }"));
+                                    + "solidColor = flw_resolveLight(solidColor, texel, 0.0, waterDepth, uvec2(screenSize)); }"));
                     last = assignment(statements, "texBuffer5");
                     guard(statements, first, last, parser, root);
                 }

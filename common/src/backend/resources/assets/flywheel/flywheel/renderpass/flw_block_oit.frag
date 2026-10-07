@@ -4,7 +4,7 @@
 #include "flywheel:internal/oit_producer.glsl"
 
 // Perf: OIT producers never write depth but do `discard` -- force the early depth test (see flw_ber_oit.fsh).
-#ifndef _FLW_OIT_INSERT
+#if !defined(_FLW_OIT_INSERT) && __VERSION__ >= 420
 layout(early_fragment_tests) in;
 #endif
 

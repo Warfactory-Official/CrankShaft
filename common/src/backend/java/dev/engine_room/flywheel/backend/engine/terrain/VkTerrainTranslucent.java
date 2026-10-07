@@ -20,6 +20,7 @@ import dev.engine_room.flywheel.backend.engine.indirect.VkFoldedOitReplay;
 import dev.engine_room.flywheel.backend.engine.indirect.VkMlabBuffers;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher.TranslucentBatch;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher.VisibleRegionBatch;
+import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkCmd;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.buffer.VkBuffer;
@@ -37,6 +38,7 @@ import net.caffeinemc.mods.sodium.client.util.iterator.ReversibleObjectArrayIter
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.util.Mth;
+import net.minecraft.util.Util;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VK12;
@@ -47,10 +49,10 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
     private static final int INDIRECT = VK12.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
     private static final int UNIFORM = VK12.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 
-    private static final long CS_STRIDE = 256; // >= minUniformBufferOffsetAlignment on all desktop GPUs
-    private static final long CANDIDATE_STRIDE = 40; // 10 uints: origin xyz, s, baseVertex, indexCount, geoAddr lo/hi, fadeBits, pad
-    private static final long COMMAND_STRIDE = 20;   // VkDrawIndexedIndirectCommand (5 uints)
-    private static final long DRAW_DATA_STRIDE = 32; // 8 uints: origin xyz, fadeBits, geoAddr lo/hi, pad, pad
+    private static final long CS_STRIDE = 256;
+    private static final long CANDIDATE_STRIDE = 40;
+    private static final long COMMAND_STRIDE = 20;
+    private static final long DRAW_DATA_STRIDE = 32;
     private static final int INITIAL_SECTIONS = 8192;
     final TranslucentBatch batch = new TranslucentBatch();
     final VisibleRegionBatch regionBatch = new VisibleRegionBatch(2);
@@ -84,8 +86,6 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
     void capture(ChunkRenderMatrices matrices, RenderSectionManager manager) {
         if (VkTerrainDrawManager.translucentMeshDrawStrategy != null) {
             collectRegions(matrices, manager);
-            // The mesh tier's task reads translucentVis (the chunk-load fade buffer); terrainMode TRANSLUCENT never
-            // runs drawOpaqueSolid's sizing, so size it here (present sections default to 1.0) before the ramp below.
             int maxRid = VkTerrainDrawManager.maxRegionId(regionBatch);
             if (maxRid >= 0) {
                 m.registry.ensureSectionVisCapacity(maxRid + 1);
@@ -93,12 +93,11 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
         } else {
             captureSections(manager, matrices);
         }
-        m.registry.updateTranslucentFades(net.minecraft.util.Util.getMillis());
+        m.registry.updateTranslucentFades(Util.getMillis());
     }
 
-    // terrainMode OPAQUE: no translucent capture (owns() stays false, Sodium keeps the layer), but the fade ramp
     void rampFadesOnly() {
-        m.registry.updateTranslucentFades(net.minecraft.util.Util.getMillis());
+        m.registry.updateTranslucentFades(Util.getMillis());
     }
 
     private void collectRegions(ChunkRenderMatrices matrices, RenderSectionManager manager) {
@@ -153,11 +152,11 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
     }
 
     private void captureSections(RenderSectionManager manager, ChunkRenderMatrices matrices) {
-        phase ^= 1; // double-buffer the OIT-replay UBOs (read by the async producer-pass draws)
+        phase ^= 1;
         lastModelView.set(matrices.modelView());
         lastModelViewValid = true;
         batch.reset();
-        long now = net.minecraft.util.Util.getMillis();
+        long now = Util.getMillis();
         ReversibleObjectArrayIterator<ChunkRenderList> it = manager.getRenderLists().iterator(false);
         while (it.hasNext()) {
             ChunkRenderList renderList = it.next();
@@ -183,6 +182,11 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
                 collectSection(storage, sections.nextByteAsInt(), geo, ox, oy, oz, regionId, now);
             }
         }
+        if (batch.count > VkCaps.MAX_DRAW_INDIRECT_COUNT) {
+            m.useClassicTranslucent(matrices, manager, batch.count);
+            batch.reset();
+            return;
+        }
         buildReplayBuffers();
     }
 
@@ -199,11 +203,6 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
         batch.add(geo, ox, oy, oz, baseVertex, indexCount, vis, s);
     }
 
-    /**
-     * Build the replay inputs the OIT producer binds ONCE per mode: the shared ModelViewMat (offset 0 of the
-     * single-slot ChunkSection UBO) + the candidate buffer the cull compacts into the per-draw data SSBO the
-     * bindless vsh indexes by {@code gl_InstanceIndex}.
-     */
     private void buildReplayBuffers() {
         int n = batch.count;
         if (n == 0) {
@@ -236,7 +235,6 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
     public void prepareCull(GpuTextureView depthView, int width, int height, boolean insert) {
         VkTerrainTranslucentMeshDrawStrategy strategy = VkTerrainDrawManager.translucentMeshDrawStrategy;
         if (strategy != null) {
-            // Publish this frame's resident parity before the translucent cull reads the registry buffers. In
             m.syncResidentMetadata();
             m.hiz.ensureFreshForTranslucentCull(depthView, width, height, m.writer);
             strategy.prepareCull(m, depthView.texture(), width, height);
@@ -352,10 +350,6 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
         VkContext.popLabel(cmd);
     }
 
-    /**
-     * Replays the captured translucent sections into the open OIT producer pass (once per {@link OitMode}) with the
-     * VK Sodium chunk-OIT producer pipeline -- raw VK, like the instance OIT draws, so Sodium's live CompactChunkVertex
-     */
     private void replayOnCmd(VkCommandBuffer cmd, OitMode mode, OitFramebuffer framebuffer, GpuTextureView lightmapView,
                              GpuTextureView blueNoiseView, GpuSampler clampLinear, GpuSampler oitSampler,
                              GpuSampler noiseSampler, boolean folded) {
@@ -414,9 +408,6 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
         VK12.vkCmdBindIndexBuffer(cmd, ((VulkanGpuBuffer) sharedIndexGpu).vkBuffer(), 0L, VK12.VK_INDEX_TYPE_UINT32);
 
-        // Bind the descriptor set ONCE for the whole mode; nothing varies per draw. The bindless producer reads each
-        // visible section's origin/fade/geoAddr from the compacted draw-data SSBO @1 (by gl_InstanceIndex) and the
-        // shared ModelViewMat from the ChunkSection UBO @21. No vertex input, no per-region bind.
         m.writer.storage(1, b.drawData.vkBuffer(), 0L, (long) batch.count * DRAW_DATA_STRIDE)
                 .sampler(10, atlasView, atlasSampler)
                 .sampler(12, lightmapVk, lightmapSampler)
@@ -455,8 +446,6 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
         phases[1].delete();
     }
 
-    // GPU-driven OIT replay buffers (vk_indirect), double-buffered by phase: the CPU gather fills cullInput;
-    // terrain_translucent_oit_cull.comp HiZ-culls it into a compacted DrawIndexedIndirect stream + a per-draw data
     private static final class PhaseSet {
         final VkBuffer chunkSectionUbo;
         final VkBuffer cullInput;

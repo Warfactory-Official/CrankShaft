@@ -18,10 +18,6 @@ import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
-/**
- * The HiZ inputs every VK terrain cull tests against: the per-parity UBO pair (viewProjection + camera +
- * viewport) and the terrain depth pyramid.
- */
 final class VkTerrainHiZ {
     private static final long UBO_BYTES = 96;
 
@@ -63,10 +59,6 @@ final class VkTerrainHiZ {
         MemoryUtil.memPutInt(ptr + 92L, t.height);
     }
 
-    /**
-     * terrainMode TRANSLUCENT: only the FULL path rewrites this UBO, so refresh both parity copies here -- a
-     * camera-only refresh would leave the matrix frozen at the last FULL frame after a mode switch.
-     */
     void writeTranslucentFrame(ChunkRenderMatrices matrices, Minecraft mc) {
         writeFrame(matrices, mc, 0);
         writeFrame(matrices, mc, 1);
@@ -91,7 +83,8 @@ final class VkTerrainHiZ {
         VkCommandBuffer cmd = VkContext.beginCommands();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/translucent_hiz");
         pyramid.regenerate(cmd, VkContext.imageView(depthView), pyramidSampler,
-                programs.downsampleFirstPipeline(), programs.downsampleSecondPipeline(), writer);
+                programs.downsampleFirstPipeline(), programs.downsampleSecondPipeline(), writer,
+                programs.hiZRoute() == VkPrograms.HiZRoute.SINGLE_MIP);
         VkContext.popLabel(cmd);
         VkContext.submitCommands(cmd);
     }

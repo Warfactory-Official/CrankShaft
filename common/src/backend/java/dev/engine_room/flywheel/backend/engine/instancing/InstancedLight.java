@@ -2,7 +2,10 @@ package dev.engine_room.flywheel.backend.engine.instancing;
 
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.systems.RenderSystem;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.engine.LightStorage;
+import dev.engine_room.flywheel.backend.gl.GlCompat;
+import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
@@ -23,14 +26,21 @@ public class InstancedLight {
         sectionsCapacity = MIN_BYTES;
     }
 
-    private static GpuBuffer createTexelBuffer(String label, long bytes) {
+    private static GpuBuffer createTexelBuffer(String label, long bytes, @Nullable GpuBuffer previous) {
+        GlCompat.requireTextureBufferSize(bytes, Integer.BYTES, label);
+        if (bytes > Integer.MAX_VALUE) {
+            throw new BackendUnavailableException(label + " exceeds the upload buffer limit");
+        }
+        if (previous != null) {
+            previous.close();
+        }
         return RenderSystem.getDevice()
                            .createBuffer(() -> label, GpuBuffer.USAGE_UNIFORM_TEXEL_BUFFER | GpuBuffer.USAGE_COPY_DST,
                                    bytes);
     }
 
     private static GpuBuffer createZeroed(String label, long bytes) {
-        GpuBuffer buffer = createTexelBuffer(label, bytes);
+        GpuBuffer buffer = createTexelBuffer(label, bytes, null);
         ByteBuffer zeros = MemoryUtil.memCalloc((int) bytes);
         RenderSystem.getDevice()
                     .createCommandEncoder()
@@ -55,10 +65,7 @@ public class InstancedLight {
         if (light.hasSectionChanges()) {
             long bytes = light.sectionDataBytes();
             if (sections == null || sectionsCapacity < bytes) {
-                if (sections != null) {
-                    sections.close();
-                }
-                sections = createTexelBuffer("flywheel light sections", bytes);
+                sections = createTexelBuffer("flywheel light sections", bytes, sections);
                 sectionsCapacity = bytes;
             }
             ByteBuffer data = MemoryUtil.memByteBuffer(light.sectionDataPointer(), (int) bytes);
@@ -72,8 +79,7 @@ public class InstancedLight {
             var words = light.createLut();
             long bytes = (long) words.size() * Integer.BYTES;
             if (lut == null || lutCapacity < bytes) {
-                if (lut != null) lut.close();
-                lut = createTexelBuffer("flywheel light lut", bytes);
+                lut = createTexelBuffer("flywheel light lut", bytes, lut);
                 lutCapacity = bytes;
             }
             if (staging == null || staging.capacity() < bytes) {

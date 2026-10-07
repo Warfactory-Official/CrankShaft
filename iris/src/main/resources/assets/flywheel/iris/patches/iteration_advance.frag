@@ -4,6 +4,7 @@ uniform sampler2D behind;
 uniform sampler2D frontDepth;
 uniform sampler2D backDepth;
 uniform int width;
+uniform int height;
 uniform int layer;
 layout(location=0) out vec4 color;
 void main() {
@@ -19,7 +20,7 @@ void main() {
         if (kind>=100u&&kind<=104u) {
             float alpha=unpackHalf2x16(flw_nodes[node].w).y;
             vec4 back=texelFetch(behind,p,0);
-            back.rgb=flw_resolveLight(back.rgb,p,uintBitsToFloat(flw_nodes[node].y),1.0-texelFetch(backDepth,p,0).r,uint(width));
+            back.rgb=flw_resolveLight(back.rgb,p,uintBitsToFloat(flw_nodes[node].y),1.0-texelFetch(backDepth,p,0).r,uvec2(width,height));
             color.rgb=mix(back.rgb,color.rgb,alpha);
         }
     }

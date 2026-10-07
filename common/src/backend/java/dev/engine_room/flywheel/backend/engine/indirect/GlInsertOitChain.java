@@ -176,8 +176,9 @@ public final class GlInsertOitChain {
             if (fabulous != null && OitConfig.exactFabulous() && fabulous.hasWeather()) {
                 replayWeather(pass, fabulous, mode, frame);
             }
+        } finally {
+            GlCompat.popDebugGroup();
         }
-        GlCompat.popDebugGroup();
 
         GL42.glMemoryBarrier(GL43.GL_SHADER_STORAGE_BARRIER_BIT);
 
@@ -194,8 +195,9 @@ public final class GlInsertOitChain {
             pass.setPipeline(OitPipelines.mlabNearestDepth());
             pass.bindTexture("_flw_mlabNearest", framebuffer.nearestDepthView(), frame.oitSampler());
             pass.draw(3, 1, 0, 0);
+        } finally {
+            GlCompat.popDebugGroup();
         }
-        GlCompat.popDebugGroup();
         return true;
     }
 
@@ -228,8 +230,9 @@ public final class GlInsertOitChain {
             pass.bindTexture("_flw_layerColor3", weather ? framebuffer.weatherColorView() : ph, s);
             pass.bindTexture("_flw_layerDepth3", weather ? framebuffer.weatherDepthView() : ph, s);
             pass.draw(3, 1, 0, 0);
+        } finally {
+            GlCompat.popDebugGroup();
         }
-        GlCompat.popDebugGroup();
     }
 
     private void replayChunks(RenderPass pass, ChunkSectionsToRender sections, OitInsertMode mode, OitFrame frame) {
@@ -316,7 +319,7 @@ public final class GlInsertOitChain {
         if (ubo == 0) {
             ubo = glCreateBuffers();
             glNamedBufferStorage(ubo, 32L,
-                    org.lwjgl.opengl.GL44.GL_DYNAMIC_STORAGE_BIT); // std140 _FlwMlabUniforms (20B used)
+                    GL_DYNAMIC_STORAGE_BIT); // std140 _FlwMlabUniforms (20B used)
         }
         if (countOrHead == null) {
             countOrHead = new ResizableStorageBuffer();

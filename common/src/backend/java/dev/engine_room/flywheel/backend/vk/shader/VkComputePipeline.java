@@ -1,5 +1,8 @@
 package dev.engine_room.flywheel.backend.vk.shader;
 
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
+import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.VkPipelineCaches;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout;
@@ -34,8 +37,13 @@ public final class VkComputePipeline {
             LongBuffer pPipeline = stack.callocLong(1);
             int result = VK12.vkCreateComputePipelines(VkContext.vkDevice(), VkPipelineCaches.handle(), info, null,
                     pPipeline);
-            if (result != VK12.VK_SUCCESS) {
-                throw new IllegalStateException("Vulkan error " + result + " creating compute pipeline");
+            try {
+                VkCaps.checkPipelineResult(result, "creating compute pipeline");
+            } catch (BackendUnavailableException failure) {
+                if (layout.usesDescriptorBuffer() && layout.pushFallbackAvailable()) {
+                    throw new ProgramAvailability.Failure(ProgramAvailability.Feature.DESCRIPTOR_BUFFER, failure);
+                }
+                throw failure;
             }
             this.pipeline = pPipeline.get(0);
         }

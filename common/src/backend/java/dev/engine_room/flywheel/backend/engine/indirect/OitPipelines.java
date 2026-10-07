@@ -20,6 +20,7 @@ import dev.engine_room.flywheel.backend.compile.*;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.BerFamily;
 import dev.engine_room.flywheel.backend.engine.OitTransparency;
+import dev.engine_room.flywheel.backend.engine.instancing.InstancingDrawSelector;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainVertexFormat;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
@@ -266,9 +267,13 @@ public final class OitPipelines {
 
     public static RenderPipeline producer(Material material, InstanceType<?> instanceType, OitMode mode,
                                           boolean indirect, boolean embedded) {
+        return producer(material, instanceType, mode, indirect, embedded, FrameUniforms.debugMode());
+    }
+
+    public static RenderPipeline producer(Material material, InstanceType<?> instanceType, OitMode mode,
+                                          boolean indirect, boolean embedded, DebugMode debug) {
         MaterialShaders shaders = material.shaders();
         LightSmoothness smoothness = BackendConfig.INSTANCE.lightSmoothness();
-        DebugMode debug = FrameUniforms.debugMode();
         Identifier vertexId = vertexId(instanceType, indirect, shaders, embedded, debug != DebugMode.OFF);
         VERTEX_ASSEMBLY.putIfAbsent(vertexId,
                 new VertexAssembly(instanceType, shaders, embedded, debug != DebugMode.OFF));
@@ -703,6 +708,9 @@ public final class OitPipelines {
                 b.withUniform("_FlwInstanceDraw", UniformType.UNIFORM_BUFFER);
             }
             b.withUniform("_FlwRenderOrigin", UniformType.UNIFORM_BUFFER);
+        }
+        if (!indirect) {
+            InstancingDrawSelector.addTo(b);
         }
         if (embedded && !indirect) {
             b.withUniform("_FlwEmbed", UniformType.UNIFORM_BUFFER);

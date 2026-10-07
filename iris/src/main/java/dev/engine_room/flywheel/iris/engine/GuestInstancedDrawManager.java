@@ -18,6 +18,7 @@ import dev.engine_room.flywheel.iris.compile.*;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.core.Vec3i;
 import net.minecraft.world.phys.Vec3;
@@ -27,10 +28,7 @@ import org.jspecify.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Instancing through the pack's block/entity programs: solid at the post-opaque seam, translucent at the translucent
- * seam.
- */
+/** Solid: post-opaque seam; translucent: translucent seam. */
 public class GuestInstancedDrawManager extends InstancedDrawManager implements GuestDrawManager {
     private final List<InstancedDraw> plainScratch = new ArrayList<>();
     private final List<InstancedDraw> orderIndependentScratch = new ArrayList<>();
@@ -42,7 +40,6 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
     private final List<InstancedDraw> eyesScratch = new ArrayList<>();
     private final List<InstancedDraw> translucentEntityScratch = new ArrayList<>();
     private final List<InstancedDraw> blendedEntityScratch = new ArrayList<>();
-    // submitPass state: the kind the selectors resolve for; the kinds a pass keeps.
     private int drawKind;
     private boolean passEntities = true;
     private boolean passBlockEntities = true;
@@ -104,7 +101,6 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
     public boolean renderOit(LightStorage lightStorage, EnvironmentStorage environmentStorage,
                              @Nullable ChunkSectionsToRender chunks, @Nullable BerTranslucentCapture ber,
                              @Nullable SodiumTerrainOitReplay terrain, @Nullable FabulousCaptures fabulous) {
-        // Sodium draws Iris shadow terrain through the same translucent seam.
         if (IrisApi.getInstance()
                    .isRenderingShadowPass()) {
             return false;
@@ -125,8 +121,6 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         }
     }
 
-    // Pack composites resolve sky, clouds, fog and translucency from depth: a colour-only surface reads as whatever
-    // lies behind it. A separate pass, so additive stacks and translucent layers still blend.
     private void submitDepthFill(IrisRenderingPipeline pipeline) {
         depthFillScratch.clear();
         if (!GuestPipelines.deferredTranslucent(pipeline)) {
@@ -246,7 +240,6 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         }
         if (passEntities) {
             submitKind(label + "_entities", entityScratch, TaggedEnvironment.KIND_ENTITY, modelView, pipelineFor);
-            // Vanilla submits a body before its layers.
             submitKind(label + "_translucent_entities", translucentEntityScratch,
                     TaggedEnvironment.KIND_ENTITY_TRANSLUCENT, modelView, pipelineFor);
             submitKind(label + "_eyes", eyesScratch, TaggedEnvironment.KIND_ENTITY_EYES, modelView, pipelineFor);
@@ -315,6 +308,11 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         } else {
             pipelineFor(material, type, false);
         }
+    }
+
+    @Override
+    public void triggerFallback() {
+        Minecraft.getInstance().levelExtractor.allChanged();
     }
 
     @Override

@@ -205,7 +205,7 @@ vec3 _flw_lightForDirection(uint[27] lights, vec3 interpolant, uint c00, uint c0
     // If the current corner has no valid blocks, use the opposite
     // corner's light based on which direction we're evaluating.
     // Because of how our corners are indexed, moving along one axis is the same as flipping a bit.
-    #define _FLW_CORNER_INDEX(i) ((summed[i] & _FLW_UPPER_10_BITS) == 0u ? i ^ oppositeMask : i)
+    #define _FLW_CORNER_INDEX(i) ((summed[i] & _FLW_UPPER_10_BITS) == 0u ? uint(i) ^ oppositeMask : uint(i))
     #else
     #define _FLW_CORNER_INDEX(i) i
     #endif
@@ -268,7 +268,7 @@ bool flw_light(vec3 worldPos, vec3 normal, out FlwLightAo light) {
 
     // The lowest corner of the 2x2x2 area we'll be trilinear interpolating.
     // The ugly bit on the end evaluates to -1 or 0 depending on which side of 0.5 we are.
-    uvec3 lowestCorner = blockInSectionPos + ivec3(floor(fract(worldPos) - 0.5));
+    uvec3 lowestCorner = uvec3(blockInSectionPos + ivec3(floor(fract(worldPos) - 0.5)));
 
     // The distance our fragment is from the center of the lowest corner.
     vec3 interpolant = fract(worldPos - 0.5);
@@ -354,7 +354,7 @@ bool flw_light(vec3 worldPos, vec3 normal, out FlwLightAo light) {
     // Entirely flat lighting, the lowest setting and a fallback in case an invalid option is set
     #else
 
-    light.light = vec2(_flw_lightAt(sectionOffset, blockInSectionPos)) * _FLW_LIGHT_NORMALIZER;
+    light.light = vec2(_flw_lightAt(sectionOffset, uvec3(blockInSectionPos))) * _FLW_LIGHT_NORMALIZER;
     light.ao = 1.;
 
     #endif

@@ -16,10 +16,15 @@ final class DeferredCaptureAllocator {
         tree.parseAndInjectNodes(parser, ASTInjectionPoint.BEFORE_DECLARATIONS,
                 "#extension GL_ARB_shader_ballot : require\n",
                 "#extension GL_ARB_gpu_shader_int64 : require\n");
-        var allocator = tree.getRoot().nodeIndex.getStream(FunctionDefinition.class)
-                                                .filter(definition -> definition.getFunctionPrototype().getName()
-                                                                                .getName().equals("flw_reserveSlots"))
-                                                .findFirst().orElseThrow();
+        // The root index still holds the injected library's detached originals; only the tree's own definition counts.
+        var allocators = tree.getChildren().stream().filter(FunctionDefinition.class::isInstance)
+                             .map(FunctionDefinition.class::cast)
+                             .filter(definition -> definition.getFunctionPrototype().getName().getName()
+                                                             .equals("flw_reserveSlots"))
+                             .toList();
+        if (allocators.size() != 1)
+            throw new IllegalStateException("Expected one flw_reserveSlots definition, found " + allocators.size());
+        var allocator = allocators.getFirst();
         allocator.getBody().replaceByAndDelete(parser.parseStatement(tree.getRoot(), """
                 {
                     uint64_t lanes = ballotARB(true);

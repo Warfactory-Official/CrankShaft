@@ -93,17 +93,21 @@ public final class VkDepthPyramid {
     }
 
     public void regenerate(VkCommandBuffer cmd, long depthView, long sampler, VkComputePipeline first,
-                           VkComputePipeline second, VkDescriptorWriter writer) {
+                           VkComputePipeline second, VkDescriptorWriter writer, boolean singleMip) {
         if (width < 0) {
             return;
         }
-        // srcStage carries COMPUTE (+TASK on the mesh tier) as a WAR guard: earlier submits' culls SAMPLE this pyramid, and the rebuild overwrites it in place -- without the ordering the culls read half-updated mips (over-cull).
         int warStages = VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
                 | (VkCaps.MESH_SHADER_NEGOTIATED ? EXTMeshShader.VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT : 0);
         barrier(cmd, VK12.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK12.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT
                         | warStages,
                 VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK12.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                 VK12.VK_ACCESS_SHADER_READ_BIT);
+
+        if (singleMip) {
+            regenerateSingleMip(cmd, depthView, sampler, first, second, writer);
+            return;
+        }
 
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, first.handle());
         writer.image(1, mipView(0)).sampler(10, depthView, sampler);
@@ -135,6 +139,27 @@ public final class VkDepthPyramid {
             VK12.vkCmdDispatch(cmd, Mth.positiveCeilDiv(width >> base, 64), Mth.positiveCeilDiv(height >> base, 64), 1);
         }
 
+        barrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK12.VK_ACCESS_SHADER_WRITE_BIT, VK12.VK_ACCESS_SHADER_READ_BIT);
+    }
+
+    private void regenerateSingleMip(VkCommandBuffer cmd, long depthView, long sampler, VkComputePipeline first,
+                                     VkComputePipeline second, VkDescriptorWriter writer) {
+        barrier(cmd, VK12.VK_PIPELINE_STAGE_TRANSFER_BIT, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK12.VK_ACCESS_TRANSFER_WRITE_BIT, VK12.VK_ACCESS_SHADER_WRITE_BIT);
+        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, first.handle());
+        writer.image(1, mipView(0)).sampler(10, depthView, sampler);
+        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, first.layout());
+        VK12.vkCmdDispatch(cmd, Mth.positiveCeilDiv(width, 8), Mth.positiveCeilDiv(height, 8), 1);
+        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, second.handle());
+        for (int level = 1; level < mipLevels; level++) {
+            barrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK12.VK_ACCESS_SHADER_WRITE_BIT, VK12.VK_ACCESS_SHADER_READ_BIT);
+            writer.image(0, mipView(level - 1)).image(1, mipView(level));
+            writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, second.layout());
+            VK12.vkCmdDispatch(cmd, Mth.positiveCeilDiv(width >> level, 8),
+                    Mth.positiveCeilDiv(height >> level, 8), 1);
+        }
         barrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 VK12.VK_ACCESS_SHADER_WRITE_BIT, VK12.VK_ACCESS_SHADER_READ_BIT);
     }
@@ -187,7 +212,7 @@ public final class VkDepthPyramid {
             VK12.vkCmdPipelineBarrier(cmd, VK12.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK12.VK_PIPELINE_STAGE_TRANSFER_BIT,
                     0, null, null, b);
 
-            VkClearColorValue clear = VkClearColorValue.calloc(stack); // all zero
+            VkClearColorValue clear = VkClearColorValue.calloc(stack);
             VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack)
                                                                           .aspectMask(VK12.VK_IMAGE_ASPECT_COLOR_BIT)
                                                                           .levelCount(mipLevels).layerCount(1);

@@ -36,10 +36,11 @@ public final class ShaderWarmupRegistry {
     }
 
     /**
-     * Shader and draw-state variants, independent of texture identity and runtime material property bits.
+     * Shader and draw-state variants, independent of texture identity and runtime material property bits, in key order:
+     * seeding assigns the cutout/fog indices baked into generated sources, which key cached program binaries.
      */
     public static synchronized List<Material> materials() {
-        Map<Key, Material> variants = new LinkedHashMap<>();
+        Map<Key, Material> variants = new TreeMap<>(Key.ORDER);
         for (Material material : MATERIALS) {
             variants.putIfAbsent(new Key(material), material);
         }
@@ -49,6 +50,11 @@ public final class ShaderWarmupRegistry {
     private record Key(Identifier vertex, Identifier fragment, Identifier cutout, Identifier light, Identifier fog,
                        Transparency transparency, DepthTest depthTest, WriteMask writeMask, boolean cull,
                        boolean polygonOffset, boolean useLight) {
+        private static final Comparator<Key> ORDER = Comparator.comparing(Key::vertex).thenComparing(Key::fragment)
+                .thenComparing(Key::cutout).thenComparing(Key::light).thenComparing(Key::fog)
+                .thenComparing(Key::transparency).thenComparing(Key::depthTest).thenComparing(Key::writeMask)
+                .thenComparing(Key::cull).thenComparing(Key::polygonOffset).thenComparing(Key::useLight);
+
         private Key(Material material) {
             this(material.shaders().vertexSource(), material.shaders().fragmentSource(), material.cutout().source(),
                     material.light().source(), material.fog().source(), material.transparency(), material.depthTest(),

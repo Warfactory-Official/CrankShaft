@@ -6,15 +6,10 @@ import net.minecraft.resources.Identifier;
 
 import java.util.Map;
 
-/**
- * Colorwheel OIT stages: producer {@code main}s wrapping the pack's (outputs demoted to globals, keyed by location)
- * and the composite. Pack draw buffer slot {@code s} = output location {@code s}.
- */
 final class GuestOitCodegen {
     static final Identifier LIBRARY = ResourceUtil.rl("iris/guest_oit.glsl");
 
-    static final String COMPOSITE_VERTEX = """
-            #version 460 core
+    static final String COMPOSITE_VERTEX = GuestShaders.versionPreamble() + """
             void main() {
                 vec2 corner = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
                 gl_Position = vec4(corner * 2.0 - 1.0, 0.0, 1.0);
@@ -24,9 +19,6 @@ final class GuestOitCodegen {
     private GuestOitCodegen() {
     }
 
-    /**
-     * Encoded device depth in the depth range's blue channel: MAX-blended, so nearer must be larger.
-     */
     private static String deviceDepth(boolean shadow) {
         return shadow ? "(1.0 - gl_FragCoord.z)" : "gl_FragCoord.z";
     }
@@ -148,7 +140,8 @@ final class GuestOitCodegen {
         int[] ranks = spec.oit()
                           .ranks();
         int[] drawBuffers = spec.drawBuffers();
-        StringBuilder out = new StringBuilder("#version 460 core\n");
+        StringBuilder out = new StringBuilder(GuestShaders.versionPreamble());
+        out.append(GuestShaders.libraryPreamble());
         out.append(FlwPrograms.SOURCES.get(LIBRARY)
                                       .source())
            .append('\n');
@@ -208,13 +201,8 @@ final class GuestOitCodegen {
                   .toString();
     }
 
-    /**
-     * The composite's depth, written after it under a nearer-or-equal test: a depth-test-off fragment behind the scene
-     * must not push its depth back. Discard == {@link #compositeFragment}.
-     */
     static String depthFragment(boolean shadow) {
-        return """
-                #version 460 core
+        return GuestShaders.versionPreamble() + """
                 uniform sampler2D _flw_depthRange;
                 void main() {
                     float depth = texelFetch(_flw_depthRange, ivec2(gl_FragCoord.xy), 0).b;

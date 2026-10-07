@@ -1,17 +1,21 @@
 package dev.engine_room.flywheel.backend.vk.shader;
 
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.shaderc.Shaderc;
+import org.lwjgl.vulkan.EXTDebugUtils;
 import org.lwjgl.vulkan.VK12;
+import org.lwjgl.vulkan.VkDebugUtilsObjectNameInfoEXT;
 import org.lwjgl.vulkan.VkShaderModuleCreateInfo;
 
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -64,17 +68,12 @@ public final class VkShaderCompiler {
             return;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            org.lwjgl.vulkan.VkDebugUtilsObjectNameInfoEXT info = org.lwjgl.vulkan.VkDebugUtilsObjectNameInfoEXT.calloc(
-                                                                             stack)
-                                                                                                                .sType$Default()
-                                                                                                                .objectType(
-                                                                                                                        VK12.VK_OBJECT_TYPE_SHADER_MODULE)
-                                                                                                                .objectHandle(
-                                                                                                                        module)
-                                                                                                                .pObjectName(
-                                                                                                                        stack.UTF8(
-                                                                                                                                name));
-            org.lwjgl.vulkan.EXTDebugUtils.vkSetDebugUtilsObjectNameEXT(VkContext.vkDevice(), info);
+            VkDebugUtilsObjectNameInfoEXT info = VkDebugUtilsObjectNameInfoEXT.calloc(stack)
+                                                                            .sType$Default()
+                                                                            .objectType(VK12.VK_OBJECT_TYPE_SHADER_MODULE)
+                                                                            .objectHandle(module)
+                                                                            .pObjectName(stack.UTF8(name));
+            EXTDebugUtils.vkSetDebugUtilsObjectNameEXT(VkContext.vkDevice(), info);
         } catch (Throwable t) {
             namesUnavailable = true;
         }
@@ -107,28 +106,41 @@ public final class VkShaderCompiler {
             }
         }
         reusedStages.incrementAndGet();
-        return cached.join().asReadOnlyBuffer();
+        try {
+            return cached.join().asReadOnlyBuffer();
+        } catch (CompletionException failure) {
+            if (failure.getCause() instanceof RuntimeException cause) throw cause;
+            if (failure.getCause() instanceof Error cause) throw cause;
+            throw failure;
+        }
     }
 
     private static ByteBuffer compileUncached(String name, String glsl, int shadercKind) {
+        // CharSequence overload encodes source on the 64 KiB thread MemoryStack; uber sources reach that => OOM.
+        ByteBuffer source = MemoryUtil.memUTF8(glsl, false);
         // shaderc_compile_into_spv explicitly permits concurrent calls with a shared const compiler/options.
         int concurrent = activeCompilations.incrementAndGet();
         peakCompilations.accumulateAndGet(concurrent, Math::max);
-        long result = Shaderc.shaderc_compile_into_spv(compiler, glsl, shadercKind, name, "main", options);
-        try {
-            int status = Shaderc.shaderc_result_get_compilation_status(result);
-            if (status != Shaderc.shaderc_compilation_status_success) {
-                throw new IllegalStateException(
-                        "Failed to compile " + name + ": " + Shaderc.shaderc_result_get_error_message(result));
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            long result = Shaderc.shaderc_compile_into_spv(compiler, source, shadercKind, stack.UTF8(name),
+                    stack.UTF8("main"), options);
+            try {
+                int status = Shaderc.shaderc_result_get_compilation_status(result);
+                if (status != Shaderc.shaderc_compilation_status_success) {
+                    throw new BackendUnavailableException(
+                            "Failed to compile " + name + ": " + Shaderc.shaderc_result_get_error_message(result));
+                }
+                ByteBuffer spirv = Shaderc.shaderc_result_get_bytes(result);
+                ByteBuffer copy = MemoryUtil.memAlloc(spirv.remaining());
+                MemoryUtil.memCopy(spirv, copy);
+                compiledStages.incrementAndGet();
+                return copy;
+            } finally {
+                Shaderc.shaderc_result_release(result);
             }
-            ByteBuffer spirv = Shaderc.shaderc_result_get_bytes(result);
-            ByteBuffer copy = MemoryUtil.memAlloc(spirv.remaining());
-            MemoryUtil.memCopy(spirv, copy);
-            compiledStages.incrementAndGet();
-            return copy;
         } finally {
-            Shaderc.shaderc_result_release(result);
             activeCompilations.decrementAndGet();
+            MemoryUtil.memFree(source);
         }
     }
 

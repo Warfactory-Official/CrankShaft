@@ -7,6 +7,7 @@ import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.engine.EngineImpl;
 import dev.engine_room.flywheel.backend.engine.indirect.MeshVisualDrawManager;
@@ -24,8 +25,6 @@ import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryUtil;
 
-// Self-registers GL_MESH_SHADER via its static field initializer; BackendManagerImpl.init() force-loads it by FQN
-// within the registry-freeze window (the :meshlet->:common dependency is one-way). Visuals reuse the INDIRECT engine.
 public final class MeshShaderBackends {
     public static final Backend GL_MESH_SHADER = register();
     private static final int PRIORITY = 900;
@@ -37,7 +36,7 @@ public final class MeshShaderBackends {
         if (CompatMod.IRIS.isLoaded) {
             IrisMeshBackends.init();
         }
-        ShaderWarmup.register(MeshShaderBackends::warmUp);
+        ShaderWarmup.register(ProgramAvailability.Feature.MESH, MeshShaderBackends::warmUp);
         return SimpleBackend.builder()
                             .engineFactory(MeshShaderBackends::createEngine)
                             .priority(PRIORITY)
@@ -60,7 +59,7 @@ public final class MeshShaderBackends {
 
     private static boolean isSupported() {
         boolean meshSupport = GlCompat.SUPPORTS_TERRAIN_MESH;
-        if (!meshSupport) {
+        if (!meshSupport || !ProgramAvailability.allows(ProgramAvailability.Feature.MESH)) {
             return false;
         }
         long fnPtr = GL.getCapabilities().glMultiDrawMeshTasksIndirectNV;

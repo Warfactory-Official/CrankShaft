@@ -22,18 +22,11 @@ import java.util.function.Consumer;
 
 import static dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout.*;
 
-/**
- * The FULL-terrain tier's pipelines for {@code vk_indirect}: the HiZ cull compute chain, the opaque/cutout MDI
- * draw over Sodium's arena (BDA, no vertex input), and the Sodium translucent-OIT producers (wavelet/folded/insert).
- */
 public final class VkTerrainPrograms {
     private static final Identifier CULL = ResourceUtil.rl("internal/indirect/terrain_cull.comp");
     private static final Identifier TRANSLUCENT_OIT_CULL = ResourceUtil.rl(
             "internal/indirect/terrain_translucent_oit_cull.comp");
 
-    // _FLW_TRANSLUCENT_INSTANCED (VK bindless replay): the vertex fetches CompactChunkVertex by device address, so it
-    // needs the buffer_reference extensions -- declared HERE, not in the shader: Vulkan-only + per-variant, and a
-    // conditional #extension can't survive the include-hoisting (Compilation rejects it).
     private static final Consumer<Compilation> TRANSLUCENT_INSTANCED = ctx -> {
         ctx.define("_FLW_TRANSLUCENT_INSTANCED");
         ctx.requireExtension("GL_EXT_buffer_reference2");
@@ -47,13 +40,14 @@ public final class VkTerrainPrograms {
     };
 
     private final ShaderSources sources;
-    // Indexed [pixelFilteringLinear ? 1 : 0]: crisp + Sodium-LINEAR variants coexist so a settings flip just lazily builds the other.
     private final VkGraphicsPipeline[] solid = new VkGraphicsPipeline[2];
     private final VkGraphicsPipeline[] cutout = new VkGraphicsPipeline[2];
     private final VkGraphicsPipeline[][] translucentProducer = new VkGraphicsPipeline[2][OitMode.values().length];
-    // Folded-OIT (dynamic_rendering_local_read) variants: 6-attachment pipelines with static location/input-index remaps.
     private final VkGraphicsPipeline[][] translucentProducerFolded = new VkGraphicsPipeline[2][OitMode.values().length];
     private final VkGraphicsPipeline[][] translucentMlab = new VkGraphicsPipeline[2][OitInsertMode.values().length];
+    private final VkGraphicsPipeline[][] classicTranslucentProducer = new VkGraphicsPipeline[2][OitMode.values().length];
+    private final VkGraphicsPipeline[][] classicTranslucentProducerFolded = new VkGraphicsPipeline[2][OitMode.values().length];
+    private final VkGraphicsPipeline[][] classicTranslucentMlab = new VkGraphicsPipeline[2][OitInsertMode.values().length];
     @Nullable
     private VkComputePipeline cull;
     @Nullable
@@ -140,15 +134,17 @@ public final class VkTerrainPrograms {
 
     public VkComputePipeline cullPipeline() {
         if (cull == null) {
-            cull = buildCompute("terrain/cull", CULL, cullBindings());
+            cull = VkPrograms.optional(ProgramAvailability.Feature.OPAQUE_TERRAIN,
+                    () -> buildCompute("terrain/cull", CULL, cullBindings()));
         }
         return cull;
     }
 
     public VkComputePipeline translucentOitCullPipeline() {
         if (translucentOitCull == null) {
-            translucentOitCull = buildCompute("terrain/translucent_oit_cull", TRANSLUCENT_OIT_CULL,
-                    translucentOitCullBindings());
+            translucentOitCull = VkPrograms.optional(ProgramAvailability.Feature.TERRAIN_OIT,
+                    () -> buildCompute("terrain/translucent_oit_cull", TRANSLUCENT_OIT_CULL,
+                            translucentOitCullBindings()));
         }
         return translucentOitCull;
     }
@@ -172,16 +168,14 @@ public final class VkTerrainPrograms {
         int lin = TerrainAtlasFilter.linear() ? 1 : 0;
         VkGraphicsPipeline[] cache = cutout ? this.cutout : solid;
         if (cache[lin] == null) {
-            cache[lin] = buildDraw(cutout, lin == 1, colorFormat, depthFormat);
+            cache[lin] = VkPrograms.optional(ProgramAvailability.Feature.OPAQUE_TERRAIN,
+                    () -> buildDraw(cutout, lin == 1, colorFormat, depthFormat));
         }
         return cache[lin];
     }
 
     private VkGraphicsPipeline buildDraw(boolean cutout, boolean linear, int colorFormat, int depthFormat) {
-        // _FLW_VK_BDA: the tier requires bufferDeviceAddress, so the opaque vsh fetches Sodium's CompactChunkVertex
-        // arena BINDLESS by device address (Vertex.NONE, no per-region bind).
         String vsGl = TerrainPipelines.assembleVertex(VkPrograms.VK.andThen(VK_BDA));
-        // assembleFragment(cutout, linear) bakes FLW_PIXEL_FILTER_LINEAR into the source; the #ifdef survives toVulkan. No _FLW_VK: only the vertex branches on it.
         String fsGl = TerrainPipelines.assembleFragment(cutout, linear);
         long vs = 0;
         long fs = 0;
@@ -191,7 +185,6 @@ public final class VkTerrainPrograms {
                     VkShaderTransform.toVulkan(vsGl, VkShaderTransform.Stage.VERTEX), VkShaderCompiler.KIND_VERTEX);
             fs = VkShaderCompiler.compileModule(cutout ? "terrain_cutout" : "terrain_solid",
                     VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
-            // Opaque: depth-write ON because the HiZ pyramid reads it.
             var blend = new VkGraphicsPipeline.Blend(false, 0, 0, 0, 0, 0, 0, VkGraphicsPipeline.COLOR_WRITE_RGBA);
             VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(new int[]{colorFormat},
                     new VkGraphicsPipeline.Blend[]{blend},
@@ -213,24 +206,45 @@ public final class VkTerrainPrograms {
         VkGraphicsPipeline[] cache = folded ? translucentProducerFolded[lin] : translucentProducer[lin];
         VkGraphicsPipeline p = cache[mode.ordinal()];
         if (p == null) {
-            p = buildTranslucentProducer(mode, folded, lin == 1);
+            p = VkPrograms.optional(ProgramAvailability.Feature.TERRAIN_OIT,
+                    () -> folded
+                            ? VkPrograms.optional(ProgramAvailability.Feature.LOCAL_READ,
+                                    () -> buildTranslucentProducer(mode, true, lin == 1, false))
+                            : buildTranslucentProducer(mode, false, lin == 1, false));
             cache[mode.ordinal()] = p;
         }
         return p;
     }
 
-    private VkGraphicsPipeline buildTranslucentProducer(OitMode mode, boolean folded, boolean linear) {
-        // _FLW_TRANSLUCENT_INSTANCED: one section per vkCmdDrawIndexed (firstInstance = section index), origin+fade
-        // read from an SSBO by gl_InstanceIndex -- the descriptor set is pushed once per mode instead of per section.
+    public VkGraphicsPipeline classicTranslucentProducerPipeline(OitMode mode, boolean folded) {
+        int lin = TerrainAtlasFilter.linear() ? 1 : 0;
+        VkGraphicsPipeline[] cache = (folded ? classicTranslucentProducerFolded : classicTranslucentProducer)[lin];
+        VkGraphicsPipeline p = cache[mode.ordinal()];
+        if (p == null) {
+            p = folded ? VkPrograms.optional(ProgramAvailability.Feature.LOCAL_READ,
+                    () -> buildTranslucentProducer(mode, true, lin == 1, true))
+                    : buildTranslucentProducer(mode, false, lin == 1, true);
+            cache[mode.ordinal()] = p;
+        }
+        return p;
+    }
+
+    private static List<Binding> classicBindings(List<Binding> bindings) {
+        bindings.removeIf(binding -> binding.binding() == 1);
+        bindings.add(new Binding(23, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
+        return bindings;
+    }
+
+    private VkGraphicsPipeline buildTranslucentProducer(OitMode mode, boolean folded, boolean linear, boolean classic) {
         String vsGl = RenderPassShaders.assembleSodiumChunkOitVertex(false, false,
-                VkPrograms.VK.andThen(TRANSLUCENT_INSTANCED));
+                classic ? VkPrograms.VK : VkPrograms.VK.andThen(TRANSLUCENT_INSTANCED));
         String fsGl = RenderPassShaders.assembleChunkOitFragment(mode, linear,
                 folded ? VkPrograms.LOCAL_READ : ShaderAssembly.NO_EXTRA);
         long vs = 0;
         long fs = 0;
         VkDescriptorLayout layout = null;
         try {
-            vs = VkShaderCompiler.compileModule("chunk_oit_sodium",
+            vs = VkShaderCompiler.compileModule(classic ? "chunk_oit_sodium_classic" : "chunk_oit_sodium",
                     VkShaderTransform.toVulkan(vsGl, VkShaderTransform.Stage.VERTEX), VkShaderCompiler.KIND_VERTEX);
             fs = VkShaderCompiler.compileModule("chunk_oit" + mode.name,
                     VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
@@ -238,9 +252,11 @@ public final class VkTerrainPrograms {
                     mode) : VkOitPipelines.oitProducerConfig(mode);
             VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(base.colorFormats(), base.blends(),
                     base.depthTest(), base.depthWrite(),
-                    base.depthCompareOp(), VkGraphicsPipeline.Vertex.NONE, base.cullMode(), base.depthFormat(),
+                    base.depthCompareOp(), classic ? VkGraphicsPipeline.Vertex.COMPACT_CHUNK
+                            : VkGraphicsPipeline.Vertex.NONE, base.cullMode(), base.depthFormat(),
                     0.0F, 0.0F, base.attachmentLocations(), base.inputAttachmentIndices());
-            layout = new VkDescriptorLayout(translucentProducerBindings(mode, folded), 0, 0);
+            List<Binding> bindings = translucentProducerBindings(mode, folded);
+            layout = new VkDescriptorLayout(classic ? classicBindings(bindings) : bindings, 0, 0);
             return new VkGraphicsPipeline(layout, vs, fs, config);
         } catch (Throwable t) {
             if (layout != null) {
@@ -255,36 +271,52 @@ public final class VkTerrainPrograms {
         int lin = TerrainAtlasFilter.linear() ? 1 : 0;
         VkGraphicsPipeline p = translucentMlab[lin][oitMode.ordinal()];
         if (p == null) {
-            String vsGl = RenderPassShaders.assembleSodiumChunkOitVertex(false, false,
-                    VkPrograms.VK.andThen(TRANSLUCENT_INSTANCED));
-            String fsGl = RenderPassShaders.assembleChunkMlabFragment(oitMode, lin == 1);
-            long vs = 0;
-            long fs = 0;
-            VkDescriptorLayout layout = null;
-            try {
-                vs = VkShaderCompiler.compileModule("chunk_mlab_sodium",
-                        VkShaderTransform.toVulkan(vsGl, VkShaderTransform.Stage.VERTEX), VkShaderCompiler.KIND_VERTEX);
-                fs = VkShaderCompiler.compileModule("chunk_mlab_" + oitMode,
-                        VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT),
-                        VkShaderCompiler.KIND_FRAGMENT);
-                VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(VkOitPipelines.MLAB_NO_COLOR,
-                        VkOitPipelines.MLAB_NO_BLEND, true, false,
-                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_BACK_BIT,
-                        VkOitPipelines.FMT_D32);
-                List<Binding> b = translucentBaseBindings();
-                VkOitPipelines.mlabBindings(b, oitMode);
-                layout = new VkDescriptorLayout(b, 0, 0);
-                p = new VkGraphicsPipeline(layout, vs, fs, config);
-            } catch (Throwable t) {
-                if (layout != null) {
-                    layout.delete();
-                }
-                destroyModules(vs, fs);
-                throw t;
-            }
+            p = VkPrograms.optional(ProgramAvailability.Feature.TERRAIN_OIT,
+                    () -> VkPrograms.optional(ProgramAvailability.insert(oitMode),
+                            () -> buildTranslucentMlab(oitMode, lin == 1, false)));
             translucentMlab[lin][oitMode.ordinal()] = p;
         }
         return p;
+    }
+
+    public VkGraphicsPipeline classicTranslucentMlabPipeline(OitInsertMode oitMode) {
+        int lin = TerrainAtlasFilter.linear() ? 1 : 0;
+        VkGraphicsPipeline p = classicTranslucentMlab[lin][oitMode.ordinal()];
+        if (p == null) {
+            p = VkPrograms.optional(ProgramAvailability.insert(oitMode),
+                    () -> buildTranslucentMlab(oitMode, lin == 1, true));
+            classicTranslucentMlab[lin][oitMode.ordinal()] = p;
+        }
+        return p;
+    }
+
+    private VkGraphicsPipeline buildTranslucentMlab(OitInsertMode oitMode, boolean linear, boolean classic) {
+        String vsGl = RenderPassShaders.assembleSodiumChunkOitVertex(false, false,
+                classic ? VkPrograms.VK : VkPrograms.VK.andThen(TRANSLUCENT_INSTANCED));
+        String fsGl = RenderPassShaders.assembleChunkMlabFragment(oitMode, linear);
+        long vs = 0;
+        long fs = 0;
+        VkDescriptorLayout layout = null;
+        try {
+            vs = VkShaderCompiler.compileModule(classic ? "chunk_mlab_sodium_classic" : "chunk_mlab_sodium",
+                    VkShaderTransform.toVulkan(vsGl, VkShaderTransform.Stage.VERTEX), VkShaderCompiler.KIND_VERTEX);
+            fs = VkShaderCompiler.compileModule("chunk_mlab_" + oitMode,
+                    VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
+            VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(VkOitPipelines.MLAB_NO_COLOR,
+                    VkOitPipelines.MLAB_NO_BLEND, true, false, VK12.VK_COMPARE_OP_GREATER_OR_EQUAL,
+                    classic ? VkGraphicsPipeline.Vertex.COMPACT_CHUNK : VkGraphicsPipeline.Vertex.NONE,
+                    VK12.VK_CULL_MODE_BACK_BIT, VkOitPipelines.FMT_D32);
+            List<Binding> bindings = translucentBaseBindings();
+            VkOitPipelines.mlabBindings(bindings, oitMode);
+            layout = new VkDescriptorLayout(classic ? classicBindings(bindings) : bindings, 0, 0);
+            return new VkGraphicsPipeline(layout, vs, fs, config);
+        } catch (Throwable t) {
+            if (layout != null) {
+                layout.delete();
+            }
+            destroyModules(vs, fs);
+            throw t;
+        }
     }
 
     void delete() {
@@ -313,11 +345,23 @@ public final class VkTerrainPrograms {
                     translucentProducerFolded[lin][i].delete();
                     translucentProducerFolded[lin][i] = null;
                 }
+                if (classicTranslucentProducer[lin][i] != null) {
+                    classicTranslucentProducer[lin][i].delete();
+                    classicTranslucentProducer[lin][i] = null;
+                }
+                if (classicTranslucentProducerFolded[lin][i] != null) {
+                    classicTranslucentProducerFolded[lin][i].delete();
+                    classicTranslucentProducerFolded[lin][i] = null;
+                }
             }
             for (int m = 0; m < translucentMlab[lin].length; m++) {
                 if (translucentMlab[lin][m] != null) {
                     translucentMlab[lin][m].delete();
                     translucentMlab[lin][m] = null;
+                }
+                if (classicTranslucentMlab[lin][m] != null) {
+                    classicTranslucentMlab[lin][m].delete();
+                    classicTranslucentMlab[lin][m] = null;
                 }
             }
         }

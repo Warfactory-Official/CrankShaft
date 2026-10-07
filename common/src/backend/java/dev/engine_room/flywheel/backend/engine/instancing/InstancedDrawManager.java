@@ -64,6 +64,8 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
     private final MeshPool meshPool;
     private final InstancedLight light;
     private final RenderPassUniforms renderPassUniforms = new RenderPassUniforms();
+    private final @Nullable InstancingDrawSelector drawSelector = GlCompat.USE_INSTANCING_SELECTOR
+            ? new InstancingDrawSelector() : null;
     private final WaveletOitChain oitChain = new WaveletOitChain();
     protected final Matrix4f renderModelView = new Matrix4f();
     private boolean needSort = false;
@@ -93,15 +95,16 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         submitOpaque();
     }
 
-    /**
-     * The frame's instance/mesh/light uploads, before any pass.
-     */
+    /** Frame uploads before any render pass. */
     protected void prepare(LightStorage lightStorage, EnvironmentStorage environmentStorage,
                            Matrix4fc modelViewMatrix, Vec3i renderOrigin, boolean constantAmbientLight) {
         super.render(lightStorage, environmentStorage, modelViewMatrix, renderOrigin, constantAmbientLight);
 
         renderModelView.set(modelViewMatrix);
         renderPassUniforms.beginFrame(renderOrigin, constantAmbientLight);
+        if (drawSelector != null) {
+            drawSelector.beginFrame();
+        }
 
         this.instancers.values()
                        .removeIf(instancer -> {
@@ -195,8 +198,6 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                 terrain, fabulous, this::submitOitInstances);
     }
 
-    // Opaque draw through Mojang RenderPass: encoder routing keeps 26.2's GL RHI state caches consistent
-    // (createRenderPass resets lastPipeline; setPipeline re-applies it), fixing the raw-GL path's flash.
     protected void submitPass(String label, List<InstancedDraw> list, Matrix4fc modelView,
                               PipelineSelector pipelineFor) {
         GpuBuffer vertexBuffer = meshPool.vertexBuffer();
@@ -245,10 +246,12 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         }
     }
 
-    // Port: RenderPass.drawIndexed re-runs trySetup (every sampler, texel buffer, UBO) per draw, ~12 us on 1300-draw
-    // entity scenes. Set up once per pipeline/texture run, then bind only per-draw state and draw raw.
     private void drawRuns(RenderPass pass, List<InstancedDraw> list, PipelineSelector pipelineFor,
                           @Nullable TextureManager textureManager) {
+        if (drawSelector != null) {
+            drawRunsPortable(pass, list, pipelineFor, textureManager, drawSelector);
+            return;
+        }
         RenderPipeline lastPipeline = null;
         Identifier lastTexture = null;
         GpuSampler lastSampler = null;
@@ -317,6 +320,78 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         }
     }
 
+    private void drawRunsPortable(RenderPass pass, List<InstancedDraw> list, PipelineSelector pipelineFor,
+                                  @Nullable TextureManager textureManager, InstancingDrawSelector selector) {
+        RenderPipeline lastPipeline = null;
+        Identifier lastTexture = null;
+        GpuSampler lastSampler = null;
+        Map<String, Uniform> uniforms = Map.of();
+        for (var drawCall : list) {
+            var mesh = drawCall.mesh();
+            if (mesh.isInvalid()) {
+                continue;
+            }
+            BatchedInstancedInstancer<?> instancer = (BatchedInstancedInstancer<?>) drawCall.instancer();
+            if (instancer.instanceCount() == 0) {
+                continue;
+            }
+            Material material = drawCall.material();
+            var environment = drawCall.groupKey.environment();
+            boolean embedded = environment instanceof EmbeddedEnvironment;
+            RenderPipeline pipeline = pipelineFor.pipeline(material, drawCall.groupKey.instanceType(), embedded);
+            GpuBufferSlice materialSlice = renderPassUniforms.material(MaterialEncoder.packProperties(material),
+                    drawCall.tags());
+            GpuBufferSlice embedSlice = null;
+            if (embedded) {
+                EmbeddedEnvironment env = (EmbeddedEnvironment) environment;
+                embedSlice = renderPassUniforms.embed(env.pose(), env.normal());
+            }
+            boolean prime = false;
+            if (pipeline != lastPipeline) {
+                pass.setPipeline(pipeline);
+                lastPipeline = pipeline;
+                prime = true;
+            }
+            if (textureManager != null) {
+                GpuSampler sampler = MaterialSamplers.get(material);
+                if (!material.texture().equals(lastTexture) || sampler != lastSampler) {
+                    lastTexture = material.texture();
+                    lastSampler = sampler;
+                    pass.bindTexture("Sampler0", textureManager.getTexture(lastTexture).getTextureView(), sampler);
+                    prime = true;
+                }
+            }
+            for (int batch = 0, count = instancer.batchCount(); batch < count; batch++) {
+                GpuBufferSlice selectorSlice = selector.slice(0, instancer.batchStart(batch), mesh.baseVertex());
+                if (prime) {
+                    pass.setUniform("_flw_instances", instancer.instanceTexels(batch).slice());
+                    pass.setUniform("_FlwInstanceDraw", materialSlice);
+                    pass.setUniform(InstancingDrawSelector.NAME, selectorSlice);
+                    if (lineMaterial(material)) {
+                        pass.setUniform("_FlwLineFrameUniforms", renderPassUniforms.lineFrameSlice());
+                    }
+                    if (embedSlice != null) {
+                        pass.setUniform("_FlwEmbed", embedSlice);
+                    }
+                    pass.drawIndexed(0, 0, 0, 0, 0);
+                    uniforms = ((GlRenderPipeline) RenderSystem.getDevice().precompilePipeline(pipeline)).program()
+                            .getUniforms();
+                    prime = false;
+                }
+                GlStateManager._activeTexture(
+                        GL13C.GL_TEXTURE0 + ((Uniform.Utb) uniforms.get("_flw_instances")).samplerIndex());
+                GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, instancer.texelTexture(batch));
+                bindUbo(uniforms, "_FlwInstanceDraw", materialSlice);
+                bindUbo(uniforms, InstancingDrawSelector.NAME, selectorSlice);
+                if (embedSlice != null) {
+                    bindUbo(uniforms, "_FlwEmbed", embedSlice);
+                }
+                GL32C.glDrawElementsInstancedBaseVertex(GL11C.GL_TRIANGLES, mesh.indexCount(), GL11C.GL_UNSIGNED_INT,
+                        (long) mesh.firstIndex() * Integer.BYTES, instancer.batchSize(batch), mesh.baseVertex());
+            }
+        }
+    }
+
     private void submitOitInstances(RenderPass pass, OitMode mode, OitFrame f, boolean additive) {
         boolean needsColor = mode != OitMode.DEPTH_RANGE;
         if (needsColor) {
@@ -354,6 +429,9 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
 
         light.delete();
         renderPassUniforms.delete();
+        if (drawSelector != null) {
+            drawSelector.delete();
+        }
 
         oitChain.delete();
 
@@ -362,7 +440,9 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
 
     @Override
     protected <I extends Instance> InstancedInstancer<I> create(InstancerKey<I> key) {
-        return new InstancedInstancer<>(key, new AbstractInstancer.Recreate<>(key, this));
+        var recreate = new AbstractInstancer.Recreate<>(key, this);
+        return drawSelector == null ? new InstancedInstancer<>(key, recreate)
+                : new BatchedInstancedInstancer<>(key, recreate);
     }
 
     @Override
@@ -386,9 +466,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         }
     }
 
-    /**
-     * Shaderpack guest tags of a new draw; {@code null} natively.
-     */
+    /** New-draw guest tags; native = {@code null}. */
     protected @Nullable DrawTags drawTags(Environment environment, Model model, Material material, Mesh mesh) {
         return null;
     }
@@ -481,7 +559,10 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                     for (var pair : progressEntry.getValue()) {
                         InstancedInstancer<?> instancer = pair.getFirst();
                         int index = pair.getSecond().index;
-                        GpuBuffer texels = instancer.instanceTexels();
+                        BatchedInstancedInstancer<?> batched = drawSelector == null ? null
+                                : (BatchedInstancedInstancer<?>) instancer;
+                        int batch = batched == null ? 0 : batched.batchForInstance(index);
+                        GpuBuffer texels = batched == null ? instancer.instanceTexels() : batched.instanceTexels(batch);
                         if (texels == null) {
                             continue;
                         }
@@ -501,7 +582,14 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                             pass.setUniform("_FlwInstanceDraw",
                                     renderPassUniforms.material(MaterialEncoder.packProperties(crumblingMaterial)));
 
-                            pass.drawIndexed(mesh.indexCount(), 1, mesh.firstIndex(), mesh.baseVertex(), index);
+                            if (drawSelector == null) {
+                                pass.drawIndexed(mesh.indexCount(), 1, mesh.firstIndex(), mesh.baseVertex(), index);
+                            } else {
+                                int first = batched.batchStart(batch);
+                                pass.setUniform(InstancingDrawSelector.NAME,
+                                        drawSelector.slice(index - first, first, mesh.baseVertex()));
+                                pass.drawIndexed(mesh.indexCount(), 1, mesh.firstIndex(), mesh.baseVertex(), 0);
+                            }
                         }
                     }
                 }
@@ -513,8 +601,6 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
     @Override
     public void triggerFallback() {
         InstancingPrograms.kill();
-        // 26.2: allChanged() moved to LevelExtractor (it rebuilds the SectionUpdateTracker the bare
-        // invalidateCompiledGeometry defers to does NOT). Not reentrant: runs inside the draw loop.
         Minecraft mc = Minecraft.getInstance();
         mc.levelExtractor.allChanged();
     }

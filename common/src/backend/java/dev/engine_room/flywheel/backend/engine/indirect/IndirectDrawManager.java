@@ -18,11 +18,13 @@ import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.model.Mesh;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.backend.BackendDebugFlags;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.SodiumClassLoadCheck;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.embed.Environment;
 import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
@@ -664,10 +666,16 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         boolean terrainOk = terrain == null || terrain.supportsInsert();
         boolean insertCompatible = insertMode != null && terrainOk;
         if (insertCompatible) {
-            return insertChain.render(renderModelView, meshPool.vertexBuffer(), meshPool.indexBuffer(),
-                    !uberOitMultiDraws.isEmpty() || !uberOitAdditiveMultiDraws.isEmpty(), null, chunks, ber, terrain,
-                    fabulous, insertMode,
-                    this::submitOitInsertProducerGeometry);
+            try {
+                return insertChain.render(renderModelView, meshPool.vertexBuffer(), meshPool.indexBuffer(),
+                        !uberOitMultiDraws.isEmpty() || !uberOitAdditiveMultiDraws.isEmpty(), null, chunks, ber, terrain,
+                        fabulous, insertMode,
+                        this::submitOitInsertProducerGeometry);
+            } catch (ProgramAvailability.Failure failure) {
+                throw failure;
+            } catch (BackendUnavailableException failure) {
+                throw new ProgramAvailability.Failure(ProgramAvailability.insert(insertMode), failure);
+            }
         }
         return oitChain.render(renderModelView, meshPool.vertexBuffer(), meshPool.indexBuffer(),
                 !uberOitMultiDraws.isEmpty() || !uberOitAdditiveMultiDraws.isEmpty(),

@@ -188,7 +188,7 @@ final class IterationDeferredAdapter implements DeferredOitAdapter {
                                                         planeNormal *= dot(planeNormal, viewDir) < 0.0 ? -1.0 : 1.0;
                                                         color = flw_resolveRefractedLight(color, refractCoord, back,
                                                                 vec4(planeNormal, -dot(planeNormal, viewPos)));
-                                                    } else color = flw_resolveLight(color, ivec2(refractCoord * screenSize), depth, back, uint(screenSize.x));
+                                                    } else color = flw_resolveLight(color, ivec2(refractCoord * screenSize), depth, back, uvec2(screenSize));
                                                 }
                                                 """));
                     } else {
@@ -224,7 +224,7 @@ final class IterationDeferredAdapter implements DeferredOitAdapter {
                                         "if (!flw_oitActive || flw_overflow != 0u) {"
                                                 + body
                                                 + "} else {"
-                                                + "color = flw_resolveLight(color, texelCoord, 0.0, texelFetch(depthtex0, texelCoord, 0).x, uint(screenSize.x)); }"));
+                                                + "color = flw_resolveLight(color, texelCoord, 0.0, texelFetch(depthtex0, texelCoord, 0).x, uvec2(screenSize)); }"));
                     }
                 });
         return parser.transform(source);

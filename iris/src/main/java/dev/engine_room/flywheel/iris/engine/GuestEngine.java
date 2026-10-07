@@ -1,8 +1,10 @@
 package dev.engine_room.flywheel.iris.engine;
 
+import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.api.backend.RenderContext;
 import dev.engine_room.flywheel.backend.Backends;
-import dev.engine_room.flywheel.backend.FlwBackend;
+import dev.engine_room.flywheel.backend.BackendRecovery;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.GpuTimer;
 import dev.engine_room.flywheel.backend.engine.AbstractInstancer;
 import dev.engine_room.flywheel.backend.engine.DrawManager;
@@ -35,9 +37,7 @@ import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
 
-/**
- * Iris draws its shadow pass before the post-opaque seam: whichever pass comes first this frame uploads.
- */
+/** Uploads before first main/shadow pass each frame. */
 public class GuestEngine extends EngineImpl {
     private static final NamespacedId CONVERTING_VILLAGER = new NamespacedId("minecraft",
             "zombie_villager_converting");
@@ -46,7 +46,6 @@ public class GuestEngine extends EngineImpl {
     private final MeshPool meshPool;
     private final GuestVertexExtras vertexExtras = new GuestVertexExtras();
     private final boolean constantAmbientLight;
-    // Set by renderShadow when the pack renders translucent shadows; consumed after Iris's pre-translucent depth copy.
     private @Nullable Matrix4f translucentShadowModelView;
     private boolean translucentShadowEntities;
     private boolean translucentShadowBlockEntities;
@@ -84,8 +83,6 @@ public class GuestEngine extends EngineImpl {
         if (ids == null) {
             return 0;
         }
-        // The only Iris entity id that is not the entity type's (the other, current_player, is never instanced).
-        // Flipping mid-life re-tags through EntityConversionMixin.
         if (entity instanceof ZombieVillager villager && villager.isConverting()
                 && WorldRenderingSettings.INSTANCE.hasVillagerConversionId()) {
             return TaggedEnvironment.tag(TaggedEnvironment.KIND_ENTITY, ids.applyAsInt(CONVERTING_VILLAGER));
@@ -104,8 +101,8 @@ public class GuestEngine extends EngineImpl {
             }
             preparedForMainPass = false;
             guest.drawOpaque(pipeline);
-        } catch (Exception e) {
-            FlwBackend.LOGGER.error("Falling back", e);
+        } catch (BackendUnavailableException e) {
+            BackendRecovery.reject(BackendManager.currentBackend(), e);
             guest.triggerFallback();
         } finally {
             GuestSsbos.restore(pipeline);
@@ -118,8 +115,6 @@ public class GuestEngine extends EngineImpl {
             preparedForMainPass = true;
             PackShadowDirectives directives = ((IrisRenderingPipelineAccessor) pipeline).flywheel$shadowDirectives();
             ContractProperties contract = GuestPipelines.contractProperties(pipeline);
-            // Port: Colorwheel gates contract shadows on shadow.enabled alone; the pack's per-kind directives also
-            // apply to entity/BE-tagged draws, as to the vanilla renderers they replace.
             if (contract == null || contract.shadowEnabled()) {
                 boolean entities = directives.shouldRenderEntities();
                 boolean blockEntities = directives.shouldRenderBlockEntities();
@@ -131,8 +126,8 @@ public class GuestEngine extends EngineImpl {
                     translucentShadowBlockEntities = blockEntities;
                 }
             }
-        } catch (Exception e) {
-            FlwBackend.LOGGER.error("Falling back", e);
+        } catch (BackendUnavailableException e) {
+            BackendRecovery.reject(BackendManager.currentBackend(), e);
             guest.triggerFallback();
         } finally {
             GuestSsbos.restore(pipeline);
@@ -148,8 +143,8 @@ public class GuestEngine extends EngineImpl {
         try {
             guest.drawShadowTranslucent(pipeline, modelView, translucentShadowEntities,
                     translucentShadowBlockEntities);
-        } catch (Exception e) {
-            FlwBackend.LOGGER.error("Falling back", e);
+        } catch (BackendUnavailableException e) {
+            BackendRecovery.reject(BackendManager.currentBackend(), e);
             guest.triggerFallback();
         } finally {
             GuestSsbos.restore(pipeline);

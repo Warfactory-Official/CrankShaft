@@ -7,6 +7,12 @@ layout(std140) uniform _FlwEmbed {
 };
 #endif
 
+#ifdef _FLW_INSTANCING_SELECTOR
+layout(std140) uniform _FlwInstanceSelector {
+    ivec4 _flw_instanceSelector;
+};
+#endif
+
 #ifdef _FLW_DEBUG
 flat out uvec2 _flw_ids;
 #endif
@@ -18,11 +24,14 @@ void _flw_layoutVertex() {
     flw_vertexOverlay = ivec2(0, 10);
     flw_vertexLight = vec2(UV2) / 256.0;
     flw_vertexNormal = Normal;
+    // Apple GL: FS read of an unwritten output => link error.
+    _flw_clipData = vec2(0.0);
 }
 
 void main() {
-    // Crumbling: ONE instance (the broken block); BaseInstance+InstanceID are int, not uint.
-    #ifdef _FLW_CRUMBLING
+    #ifdef _FLW_INSTANCING_SELECTOR
+    FlwInstance instance = _flw_unpackInstance(_flw_instanceSelector.x + gl_InstanceID);
+    #elif defined(_FLW_CRUMBLING)
     FlwInstance instance = _flw_unpackInstance(gl_BaseInstanceARB + gl_InstanceID);
     #else
     FlwInstance instance = _flw_unpackInstance(gl_InstanceID);
@@ -55,10 +64,19 @@ void main() {
     lightCoord = vec2(max(flw_vertexLight.x, _flw_dynamicBlockLight(flw_vertexPos.xyz) / 16.0), flw_vertexLight.y);
     overlayCoord = flw_vertexOverlay;
     #ifdef _FLW_DEBUG
-    #ifdef _FLW_CRUMBLING
-    _flw_ids = uvec2(uint(gl_BaseInstanceARB + gl_InstanceID), uint(gl_BaseVertex));
+    #ifdef _FLW_INSTANCING_SELECTOR
+    _flw_ids = uvec2(uint(_flw_instanceSelector.y + _flw_instanceSelector.x + gl_InstanceID), uint(_flw_instanceSelector.z));
     #else
-    _flw_ids = uvec2(uint(gl_InstanceID), uint(gl_BaseVertex));
+    #if __VERSION__ >= 460
+    #define _FLW_BASE_VERTEX gl_BaseVertex
+    #else
+    #define _FLW_BASE_VERTEX gl_BaseVertexARB
+    #endif
+    #ifdef _FLW_CRUMBLING
+    _flw_ids = uvec2(uint(gl_BaseInstanceARB + gl_InstanceID), uint(_FLW_BASE_VERTEX));
+    #else
+    _flw_ids = uvec2(uint(gl_InstanceID), uint(_FLW_BASE_VERTEX));
+    #endif
     #endif
     #endif
 

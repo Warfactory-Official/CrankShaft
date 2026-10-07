@@ -8,7 +8,11 @@ uniform sampler2D _flw_depthRange;
 uniform sampler2D _flw_emission;
 #endif
 #ifdef _FLW_COEFF_ARRAY
+#if __VERSION__ >= 420
 layout(binding = 11) uniform sampler2DArray _flw_coefficients;
+#else
+uniform sampler2DArray _flw_coefficients;
+#endif
 #define _FLW_FETCH_COEFFS(dst) dst[0] = texelFetch(_flw_coefficients, ivec3(gl_FragCoord.xy, 0), 0); \
     dst[1] = texelFetch(_flw_coefficients, ivec3(gl_FragCoord.xy, 1), 0); \
     dst[2] = texelFetch(_flw_coefficients, ivec3(gl_FragCoord.xy, 2), 0); \

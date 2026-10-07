@@ -34,6 +34,8 @@ with `"enabled": false` in `config/vanillate.json` (Fabric) or `enabled = false`
 ### Requirements
 
 - Minecraft 26.2 with NeoForge or Fabric (+ Fabric API), and Java 25+.
+- Any GPU and driver that run vanilla 26.2. CrankShaft uses the features your hardware offers and falls back
+  where it lacks them; see [Backends](#backends).
 - Optional: [Sodium](https://modrinth.com/mod/sodium) 0.9.2 or newer, below 0.10. Needed for the `opaque`/`full`
   terrain modes and the mesh-shader backends.
 - Optional: [Iris](https://modrinth.com/mod/iris) for shaderpacks (built against 1.11.4). Requires OpenGL.
@@ -54,6 +56,11 @@ CrankShaft picks the best supported backend for your hardware. `/flywheel backen
 
 If the requested backend is unsupported, CrankShaft falls back to the next one that is. While a shaderpack is active,
 choosing a native OpenGL backend selects its `iris_` counterpart.
+
+If a backend's shaders fail to compile or link on your driver, CrankShaft disables only the failing optional feature
+where it can, and otherwise falls back to the next backend, down to `flywheel:off` (vanilla rendering). The game
+keeps running and the log records the cause. `-Dcrankshaft.shader.strict=true` makes these failures crash instead,
+which is useful for bug reports.
 
 ### Vulkan
 
@@ -187,6 +194,13 @@ vanilla's renderers
 and mod renderers implementing `ConcurrentRenderStateExtraction`, with or without a backend. Turn it off if a mod that
 hooks entity rendering misbehaves.
 
+#### Shader caches
+
+On OpenGL, CrankShaft caches generated shader sources and linked programs under `cache/crankshaft/` in the game
+directory, so later launches compile less. The program cache is kept per driver (a driver update starts a new one) and
+is limited to 1 GiB; drivers that cannot load program binaries skip it. Deleting the folder is safe.
+`-Dcrankshaft.gl.programCache=false` and `-Dcrankshaft.glsl.sourceCache=false` turn the caches off.
+
 ### Instancing
 
 Flywheel provides an alternate, unified path for entity and block entity rendering that takes advantage of GPU
@@ -213,9 +227,9 @@ repositories {
 
 dependencies {
     // NeoForge
-    implementation("dev.engine_room:crankshaft-neoforge:1.5.8+mc26.2")
+    implementation("dev.engine_room:crankshaft-neoforge:1.5.9+mc26.2")
     // Fabric
-    implementation("dev.engine_room:crankshaft-fabric:1.5.8+mc26.2")
+    implementation("dev.engine_room:crankshaft-fabric:1.5.9+mc26.2")
 }
 ```
 
@@ -230,7 +244,7 @@ repositories {
     maven("https://repo.warfactory.co/snapshots")
 }
 
-implementation("dev.engine_room:crankshaft-fabric:1.5.8+mc26.2-SNAPSHOT")
+implementation("dev.engine_room:crankshaft-fabric:1.5.9+mc26.2-SNAPSHOT")
 ```
 
 ### License

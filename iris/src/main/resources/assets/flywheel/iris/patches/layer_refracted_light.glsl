@@ -1,6 +1,7 @@
 vec3 flw_resolveRefractedLight(vec3 background, vec2 coord, float back, vec4 plane) {
     if (!flw_oitActive || flw_overflow != 0u) return background;
     ivec2 pixel = ivec2(coord * screenSize);
+    if (any(greaterThanEqual(uvec2(pixel), uvec2(screenSize)))) return background;
     uint node = flw_lightHeads[uint(pixel.y) * uint(screenSize.x) + uint(pixel.x)];
     vec3 light = vec3(0.0);
     float transmission = 1.0;

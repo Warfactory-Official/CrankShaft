@@ -1,5 +1,7 @@
 package dev.engine_room.flywheel.backend.vk.descriptor;
 
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import org.lwjgl.system.MemoryStack;
@@ -21,15 +23,13 @@ public final class VkDescriptorLayout {
     public static final int STAGE_FRAGMENT = VK12.VK_SHADER_STAGE_FRAGMENT_BIT;
     public static final int STAGE_COMPUTE = VK12.VK_SHADER_STAGE_COMPUTE_BIT;
     private static final long[] EMPTY = new long[0];
-    // NV driver bug: sets consumed from a descriptor buffer MMU-fault a driver-internal descriptor-servicing kernel
-    // (2560 B compute) => push path. Graphics combined-image-sampler sets: 610.47/610.62, minutes into chunk churn.
-    // Input-attachment sets (folded wavelet producers): 616.92, first folded frame after insert-OIT frames,
-    // 5/5 vs 0/2 routed. Flip to false to retest against future drivers.
+    // TODO: NV descriptor-buffer graphics/input sets MMU-fault (610.47/610.62/616.92); push pending driver evidence.
     private static final boolean DB_ROUTE_FAULTING_SETS = true;
     private final long setLayout;
     private final long pipelineLayout;
     private final boolean descriptorBuffer;
     private final boolean bindlessTextures;
+    private final boolean pushFallbackAvailable;
     private final boolean[] declared;
     private long setSize;
     private long stagingPtr;
@@ -45,11 +45,19 @@ public final class VkDescriptorLayout {
 
     public VkDescriptorLayout(List<Binding> bindings, int pushConstantSize, int pushConstantStages,
                               boolean bindlessTextures) {
+        this(bindings, pushConstantSize, pushConstantStages, bindlessTextures,
+                ProgramAvailability.allows(ProgramAvailability.Feature.DESCRIPTOR_BUFFER));
+    }
+
+    public VkDescriptorLayout(List<Binding> bindings, int pushConstantSize, int pushConstantStages,
+                              boolean bindlessTextures, boolean descriptorBufferAllowed) {
         this.bindlessTextures = bindlessTextures && VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
-        boolean descriptorBuffer = VkCaps.DESCRIPTOR_BUFFER_NEGOTIATED
+        boolean descriptorBuffer = descriptorBufferAllowed && VkCaps.DESCRIPTOR_BUFFER_NEGOTIATED
                 && !this.bindlessTextures
                 && !(DB_ROUTE_FAULTING_SETS && hasFaultingDbBindings(bindings));
         this.descriptorBuffer = descriptorBuffer;
+        this.pushFallbackAvailable = bindings.size() <= VkCaps.MAX_PUSH_DESCRIPTORS;
+        VkCaps.requireDescriptorLayout(bindings, pushConstantSize, pushConstantStages, descriptorBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkDescriptorSetLayoutBinding.Buffer vkBindings = VkDescriptorSetLayoutBinding.calloc(bindings.size(),
                     stack);
@@ -69,7 +77,7 @@ public final class VkDescriptorLayout {
                                                                                                 : KHRPushDescriptor.VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR)
                                                                                         .pBindings(vkBindings);
             LongBuffer pSetLayout = stack.callocLong(1);
-            check(VK12.vkCreateDescriptorSetLayout(VkContext.vkDevice(), layoutInfo, null, pSetLayout),
+            VkCaps.checkPipelineResult(VK12.vkCreateDescriptorSetLayout(VkContext.vkDevice(), layoutInfo, null, pSetLayout),
                     "descriptor set layout");
             this.setLayout = pSetLayout.get(0);
 
@@ -87,8 +95,13 @@ public final class VkDescriptorLayout {
                 pipelineInfo.pPushConstantRanges(pcRange);
             }
             LongBuffer pPipelineLayout = stack.callocLong(1);
-            check(VK12.vkCreatePipelineLayout(VkContext.vkDevice(), pipelineInfo, null, pPipelineLayout),
-                    "pipeline layout");
+            try {
+                VkCaps.checkPipelineResult(VK12.vkCreatePipelineLayout(VkContext.vkDevice(), pipelineInfo, null, pPipelineLayout),
+                        "pipeline layout");
+            } catch (BackendUnavailableException e) {
+                VK12.vkDestroyDescriptorSetLayout(VkContext.vkDevice(), setLayout, null);
+                throw e;
+            }
             this.pipelineLayout = pPipelineLayout.get(0);
 
             int maxBinding = 0;
@@ -119,6 +132,11 @@ public final class VkDescriptorLayout {
                 }
                 this.stagingPtr = MemoryUtil.nmemCalloc(1, setSize);
             }
+        } catch (BackendUnavailableException e) {
+            if (descriptorBuffer && pushFallbackAvailable) {
+                throw new ProgramAvailability.Failure(ProgramAvailability.Feature.DESCRIPTOR_BUFFER, e);
+            }
+            throw e;
         }
     }
 
@@ -132,18 +150,16 @@ public final class VkDescriptorLayout {
         return false;
     }
 
-    private static void check(int result, String what) {
-        if (result != VK12.VK_SUCCESS) {
-            throw new IllegalStateException("Vulkan error " + result + " creating " + what);
-        }
-    }
-
     public boolean usesDescriptorBuffer() {
         return descriptorBuffer;
     }
 
     public boolean bindlessTextures() {
         return bindlessTextures;
+    }
+
+    public boolean pushFallbackAvailable() {
+        return pushFallbackAvailable;
     }
 
     public long setLayout() {
@@ -162,7 +178,7 @@ public final class VkDescriptorLayout {
         return stagingPtr;
     }
 
-    // Frame epochs invalidate every staged blob at once: handles can only be recycled across frames, so a same-params match within an epoch is the same resource.
+    // Handle reuse => epoch invalidates staged descriptors.
 
     void stageBuffer(long epoch, int binding, int type, long vkBuffer, long offset, long range) {
         if (stagedEpoch[binding] == epoch && stagedA[binding] == vkBuffer && stagedB[binding] == offset

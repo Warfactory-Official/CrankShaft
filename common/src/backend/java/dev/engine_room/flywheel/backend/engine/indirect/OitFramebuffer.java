@@ -14,6 +14,7 @@ import com.mojang.blaze3d.vulkan.VulkanGpuTexture;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.Samplers;
 import dev.engine_room.flywheel.backend.compile.OitMode;
+import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.gl.GlLayerTexture;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.VkLayerTextureView;
@@ -145,7 +146,6 @@ public class OitFramebuffer {
         return nearestDepthView;
     }
 
-    // Outside the chain targets: the insert paths release those every frame.
     public void prepareNearestDepth() {
         RenderTarget target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         maybeResize(target.width, target.height);
@@ -302,13 +302,14 @@ public class OitFramebuffer {
         depthBounds = device.createTexture(() -> "flywheel:oit/depth_bounds", USAGE, DEPTH_BOUNDS_FORMAT, lastWidth,
                 lastHeight, 1, 1);
         depthBoundsView = device.createTextureView(depthBounds);
-        if (VkContext.isVulkanHost()) {
+        boolean vulkan = VkContext.isVulkanHost();
+        if (vulkan && VkPrograms.get().localRead()) {
             coefficientsArray = new VulkanGpuTexture(VkContext.device(), USAGE, "flywheel:oit/coefficients",
                     COEFFICIENTS_FORMAT, lastWidth, lastHeight, 4, 1);
             for (int i = 0; i < 4; i++) {
                 coefficientsView[i] = VkLayerTextureView.create(coefficientsArray, i);
             }
-        } else if (OitConfig.coefficientArray()) {
+        } else if (!vulkan && OitConfig.coefficientArray()) {
             glCoefficientsArrayId = createGlCoefficientsArray(lastWidth, lastHeight);
             for (int i = 0; i < 4; i++) {
                 int viewId = GlStateManager._genTexture();

@@ -1,8 +1,13 @@
 package dev.engine_room.flywheel.impl;
 
 import dev.engine_room.flywheel.api.backend.Backend;
+import dev.engine_room.flywheel.backend.BackendRecovery;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
+import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.FlwBackend;
+import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
 import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
+import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
 import dev.engine_room.flywheel.lib.backend.SimpleBackend;
@@ -41,9 +46,7 @@ public final class BackendManagerImpl {
         return suspended;
     }
 
-    /**
-     * Port: see {@link dev.engine_room.flywheel.impl.visualization.WorldRenderOwnership}. The chosen backend is kept.
-     */
+    /** Port: ownership suspension; backend selection retained. */
     public static void setSuspended(boolean suspended) {
         BackendManagerImpl.suspended = suspended;
     }
@@ -78,7 +81,6 @@ public final class BackendManagerImpl {
 
     public static void init() {
         FlwBackend.init(FlwConfig.INSTANCE.backendConfig());
-        // Port: :meshlet and :iris can't be named from :common at compile time; force-load their self-registering backends.
         forceLoadModuleBackend("me.mlbv.meshlet.mesh.gl.MeshShaderBackends");
         forceLoadModuleBackend("me.mlbv.meshlet.mesh.vk.VkMeshShaderBackends");
         forceLoadModuleBackend("dev.engine_room.flywheel.iris.IrisBackends");
@@ -100,6 +102,20 @@ public final class BackendManagerImpl {
         VisualizationManagerImpl.resetAll();
     }
 
+    public static void recover(BackendUnavailableException failure) {
+        BackendRecovery.reject(backend, failure);
+        if (VkContext.isVulkanHost()) VkPrograms.kill();
+        else if (backend == Backends.INSTANCING) InstancingPrograms.kill();
+        else if (backend == Backends.INDIRECT
+                || Backend.REGISTRY.getIdOrThrow(backend).equals(ResourceUtil.rl("gl_mesh_shader"))) IndirectPrograms.kill();
+        reselect();
+    }
+
+    public static void reselect() {
+        chooseBackend();
+        VisualizationManagerImpl.resetAll();
+    }
+
     public static void onReloadLevelRenderer(Level level) {
         chooseBackend();
         VisualizationManagerImpl.reset(level);
@@ -108,7 +124,7 @@ public final class BackendManagerImpl {
     private static void chooseBackend() {
         Backend preferred = FlwConfig.INSTANCE.backend();
 
-        if (preferred.isSupported()) {
+        if (!BackendRecovery.isRejected(preferred) && preferred.isSupported()) {
             backend = preferred;
             return;
         }
@@ -118,15 +134,14 @@ public final class BackendManagerImpl {
         backend = OFF_BACKEND;
         for (int i = startIndex; i < sorted.size(); i++) {
             Backend candidate = sorted.get(i);
-            if (candidate.isSupported()) {
+            if (!BackendRecovery.isRejected(candidate) && candidate.isSupported()) {
                 backend = candidate;
                 break;
             }
         }
-        // 26.2: A failed GL instancing tier ends recovery; do not retry higher tiers.
         if (backend == OFF_BACKEND && (VkContext.isVulkanHost() || InstancingPrograms.allLoaded())) {
             for (Backend candidate : sorted) {
-                if (candidate.isSupported()) {
+                if (!BackendRecovery.isRejected(candidate) && candidate.isSupported()) {
                     backend = candidate;
                     break;
                 }

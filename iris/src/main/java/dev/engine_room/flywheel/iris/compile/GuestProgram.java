@@ -5,7 +5,10 @@ import com.mojang.blaze3d.opengl.*;
 import com.mojang.blaze3d.pipeline.BindGroupLayout;
 import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
+import dev.engine_room.flywheel.backend.gl.GlCompat;
+import dev.engine_room.flywheel.backend.glsl.GlslVersion;
 import dev.engine_room.flywheel.iris.mixin.CustomUniformsAccessor;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.blending.AlphaTest;
@@ -15,6 +18,8 @@ import net.irisshaders.iris.gl.blending.DepthColorStorage;
 import net.irisshaders.iris.gl.program.ProgramImages;
 import net.irisshaders.iris.gl.program.ProgramSamplers;
 import net.irisshaders.iris.gl.program.ProgramUniforms;
+import net.irisshaders.iris.gl.sampler.SamplerHolder;
+import net.irisshaders.iris.gl.sampler.SamplerLimits;
 import net.irisshaders.iris.gl.state.FogMode;
 import net.irisshaders.iris.helpers.MatrixUtils;
 import net.irisshaders.iris.mixin.GlStateManagerAccessor;
@@ -37,11 +42,8 @@ import java.util.Map;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
-/**
- * Iris runs {@link #iris$setupState} from the {@code trySetup} tail of every pass that selects a guest pipeline.
- */
+/** Iris {@code trySetup} tail calls {@link #iris$setupState}; render thread only. */
 public final class GuestProgram extends GlProgram implements IrisProgram {
-    // Iris binds its external samplers (albedo/overlay/lightmap) to these units by name.
     private static final String[] FIXED_SAMPLERS = {"Sampler0", "Sampler1", "Sampler2"};
     private static final int[] GRAYSCALE_SWIZZLE = {GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_RED};
     private static final Map<String, String> IRIS_BLOCKS = Map.of(
@@ -72,7 +74,6 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
     private final float[] floats9 = new float[9];
     private boolean rawSamplersAssigned;
     private boolean grayscaleAlbedo;
-    // Bindings a guest draw owns that Iris knows nothing about (terrain's Sodium u_Globals block).
     private boolean terrain;
     private int meshQuads;
     private int meshTaskQuads;
@@ -86,9 +87,6 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
     private int[] meshRuns;
     private int meshRunCount;
 
-    /**
-     * {@code rawTextures}: textures outside Blaze3D's bind groups, bound here on units after the layout's.
-     */
     GuestProgram(int programId, String label, List<BindGroupLayout> layouts, boolean albedoFromCrumbling,
                  IrisRenderingPipeline parent, boolean shadow, Target target,
                  @Nullable BlendModeOverride blendModeOverride, List<BufferBlendOverride> bufferBlendOverrides,
@@ -111,7 +109,14 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
         }
 
         ProgramUniforms.Builder uniformBuilder = ProgramUniforms.builder(label, programId);
+        boolean portable = GlCompat.MAX_GLSL_VERSION.compareTo(GlslVersion.V460) < 0;
+        int remainingUnits = portable ? SamplerLimits.get().getMaxTextureUnits() - reservedUnits : 0;
+        if (portable && remainingUnits < 0) {
+            throw new BackendUnavailableException(label + " reserves " + reservedUnits + " texture units; available "
+                    + SamplerLimits.get().getMaxTextureUnits());
+        }
         ProgramSamplers.Builder samplerBuilder = ProgramSamplers.builder(programId, reserved.build());
+        SamplerHolder samplerHolder = portable ? new GuestSamplers(samplerBuilder, remainingUnits, label) : samplerBuilder;
         ProgramImages.Builder imageBuilder = ProgramImages.builder(programId);
         CommonUniforms.addDynamicUniforms(uniformBuilder, FogMode.PER_VERTEX);
         parent.getCustomUniforms()
@@ -120,7 +125,7 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
         VanillaUniforms.addVanillaUniforms(uniformBuilder);
         Supplier<ImmutableSet<Integer>> flipped = shadow ? parent::getFlippedBeforeShadow
                 : () -> parent.isBeforeTranslucent ? parent.getFlippedAfterPrepare() : parent.getFlippedAfterTranslucent();
-        parent.addGbufferOrShadowSamplers(samplerBuilder, imageBuilder, flipped, shadow, true, true, true);
+        parent.addGbufferOrShadowSamplers(samplerHolder, imageBuilder, flipped, shadow, true, true, true);
         parent.getCustomUniforms()
               .mapholderToPass(uniformBuilder, this);
 
@@ -133,26 +138,18 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
         projectionInverse = GlStateManager._glGetUniformLocation(programId, "iris_ProjMatInverse");
     }
 
-    /**
-     * The model view the guest draw writes to {@code DynamicTransforms}; the Iris inverse/normal uniforms derive
-     * from it instead of {@code RenderSystem}'s stack.
-     */
+    /** Before guest draw; supply DynamicTransforms model view for Iris inverse/normal uniforms. */
     public static void setModelView(Matrix4fc modelView) {
         MODEL_VIEW.set(modelView);
     }
 
     static void grayscaleAlbedo(GpuTextureView albedo) {
         int texture = ((GlTexture) albedo.texture()).glId();
-        // Native font materials keep tint RGB independent of R coverage; Iris owns swizzle retirement.
         IrisRenderSystem.addUnswizzle(texture);
         IrisRenderSystem.texParameteriv(texture, GL11C.GL_TEXTURE_2D, ARBTextureSwizzle.GL_TEXTURE_SWIZZLE_RGBA,
                 GRAYSCALE_SWIZZLE);
     }
 
-    /**
-     * Samplers take units 0..2 then the rest, texel buffers follow; every layout entry is registered even when
-     * the linked program dropped it, since the draw loop reads its unit/binding by name. Returns the unit count.
-     */
     private int bindLayouts(List<BindGroupLayout> layouts, boolean albedoFromCrumbling) {
         Map<String, Uniform> byName = uniformsByName;
         int programId = getProgramId();
@@ -172,7 +169,6 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
                 continue;
             }
             if (albedoFromCrumbling && sampler.equals("_flw_crumblingTex")) {
-                // The pack's damagedblock program samples its albedo (unit 0) for the crack.
                 byName.put(sampler,
                         new Uniform.Sampler(GlStateManager._glGetUniformLocation(programId, "Sampler0"), 0));
                 continue;
@@ -211,7 +207,6 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
                     GuestTerrainGate.cameraIntZ);
             GL20C.glUniform3f(terrainCameraFrac, GuestTerrainGate.cameraFracX, GuestTerrainGate.cameraFracY,
                     GuestTerrainGate.cameraFracZ);
-            // Set before deriving inverse/normal matrices; an instance draw's model view is not terrain's.
             setModelView(shadow ? ShadowRenderer.MODELVIEW : CapturedRenderingState.INSTANCE.getGbufferModelView());
         }
 
@@ -270,7 +265,6 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
             if (texture.glTarget() == GL11C.GL_TEXTURE_2D) {
                 GlStateManager._bindTexture(texture.texture().getAsInt());
             } else {
-                // Untracked target: GlStateManager caches TEXTURE_2D only.
                 GL11C.glBindTexture(texture.glTarget(), texture.texture().getAsInt());
             }
         }
@@ -295,31 +289,22 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
         return meshQuads;
     }
 
-    /**
-     * Source quads per task workgroup, or per mesh workgroup when no task shader is linked.
-     */
+    /** Source quads per task group; no task stage => mesh group. */
     public int meshTaskQuads() {
         return meshTaskQuads;
     }
 
-    /**
-     * Whether opaque phase one can reject on carried depth and therefore needs immediate terrain-phase recovery.
-     */
+    /** Carried-depth rejection; requires immediate terrain-phase recovery. */
     public boolean meshTaskRecovery() {
         return meshTaskRecovery;
     }
 
-    /**
-     * Empty-draw removal changes gl_DrawID even though the surviving command order is preserved.
-     */
+    /** Empty-draw removal changes {@code gl_DrawID}. */
     public boolean meshCompactSafe() {
         return meshCompactSafe;
     }
 
-    /**
-     * The terrain companion sets these on the render thread immediately before its RenderPass draw. Each four-int
-     * run contains first command, capacity, count-buffer word offset, padding. The arrays remain live until that draw.
-     */
+    /** Before terrain draw, render thread; retain runs through draw: (first, capacity, count-word offset, pad). */
     public void meshCommands(int commands, int counts, int[] runs, int runCount) {
         meshCommandBuffer = commands;
         meshCountBuffer = counts;
@@ -327,9 +312,7 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
         meshRunCount = runCount;
     }
 
-    /**
-     * Consumed by the GL encoder's draw seam, after ordinary RenderPass and Iris state setup.
-     */
+    /** GL draw seam after RenderPass/Iris setup. */
     public void drawMeshCommands() {
         GlStateManager._glBindBuffer(GL40C.GL_DRAW_INDIRECT_BUFFER, meshCommandBuffer);
         GL15C.glBindBuffer(GL46C.GL_PARAMETER_BUFFER, meshCountBuffer);
@@ -343,7 +326,6 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
 
     @Override
     public void close() {
-        // Iris retains dimension pipelines; closed guest variants must not remain keys in their custom uniforms.
         ((CustomUniformsAccessor) parent.getCustomUniforms()).flywheel$locations().remove(this);
         super.close();
     }
@@ -362,7 +344,6 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
         return GL31C.glGetUniformBlockIndex(program, IRIS_BLOCKS.getOrDefault(name, name));
     }
 
-    // Always false: Iris skips setup for a set-up program, which would leave the previous pipeline's framebuffer.
     @Override
     public boolean iris$isSetUp() {
         return false;
@@ -372,9 +353,7 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
         void bind(boolean beforeTranslucent);
     }
 
-    /**
-     * Sampled with {@code texelFetch} only: no sampler object state applies.
-     */
+    /** {@code texelFetch}-only; no sampler state. */
     record RawTexture(String name, int glTarget, IntSupplier texture) {
     }
 }

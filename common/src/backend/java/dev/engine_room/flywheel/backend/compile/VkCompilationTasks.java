@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.backend.compile;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vulkan.Destroyable;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkPipelineCaches;
@@ -34,7 +35,7 @@ public final class VkCompilationTasks {
     public static void run(List<Runnable> jobs) {
         RenderSystem.assertOnRenderThread();
         VkPipelineCaches.initialize();
-        if (VkCaps.BINDLESS_TEXTURES_NEGOTIATED) VkBindlessTable.setLayoutHandle();
+        if (VkPrograms.bindlessTexturesEnabled()) VkBindlessTable.setLayoutHandle();
         int threads = Math.min(jobs.size(), Runtime.getRuntime().availableProcessors());
         AtomicInteger active = new AtomicInteger();
         AtomicInteger peak = new AtomicInteger();
@@ -61,9 +62,9 @@ public final class VkCompilationTasks {
                 try {
                     future.get();
                 } catch (ExecutionException e) {
-                    if (failure == null) failure = e.getCause();
+                    failure = mergeFailure(failure, e.getCause());
                 } catch (InterruptedException e) {
-                    if (failure == null) failure = e;
+                    failure = mergeFailure(failure, e);
                 }
             }
         } finally {
@@ -79,5 +80,17 @@ public final class VkCompilationTasks {
                 VkShaderCompiler.compiledStages() - stagesBefore,
                 VkShaderCompiler.reusedStages() - reuseBefore, VkShaderCompiler.cachedBytes(),
                 (System.nanoTime() - start) / 1_000_000);
+    }
+
+    private static Throwable mergeFailure(@Nullable Throwable previous, Throwable next) {
+        while (next instanceof CompletionException && next.getCause() != null) next = next.getCause();
+        if (previous == null) return next;
+        if (previous == next) return previous;
+        if (previous instanceof BackendUnavailableException && !(next instanceof BackendUnavailableException)) {
+            next.addSuppressed(previous);
+            return next;
+        }
+        previous.addSuppressed(next);
+        return previous;
     }
 }

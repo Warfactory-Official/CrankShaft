@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.backend.vk;
 import com.mojang.blaze3d.vulkan.VulkanBackend;
 import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
 import com.mojang.blaze3d.vulkan.init.VulkanFeature;
+import com.mojang.blaze3d.vulkan.init.VulkanPNextStruct;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkBindlessTable;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
@@ -16,344 +17,315 @@ import org.lwjgl.vulkan.*;
 import java.util.Collection;
 import java.util.Set;
 
-/**
- * All requests fail closed (advertised AND requested, recorded in {@link VkCaps}) so an unsupported feature stays
- * dormant instead of failing {@code vkCreateDevice}.
- */
 public final class VkDeviceNegotiation {
-    // Compile-time bindless kill-switch (flip to true + rebuild -- REQUIRED for every -Pvkvalidation run, flip back after).
+    // Vulkan validation: bindless off.
     public static final boolean NO_BINDLESS_TEXTURES = false;
     private static final boolean CRASH_DIAG = false;
     private static final int VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES = 49;
     private static final int VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES = 51;
-    private static boolean bindlessSupported;
-    private static boolean f16IoSupported;
+    private static boolean deviceFaultSupported;
+    private static boolean vendorBinarySupported;
+    private static boolean crashDiagSupported;
+    private static int robustUniformDescriptorSize;
+    private static int robustStorageDescriptorSize;
 
     private VkDeviceNegotiation() {
     }
 
     public static void appendDeviceRequests(Collection<String> deviceExtensions, VulkanPhysicalDevice physicalDevice,
                                             Set<VulkanFeature> vulkanFeatures) {
-        vulkanFeatures.add(new VulkanFeature(VulkanBackend.VK10_FEATURES_STRUCT, "drawIndirectFirstInstance",
-                VkPhysicalDeviceFeatures.DRAWINDIRECTFIRSTINSTANCE));
-
-        boolean drawIndirectCount;
-        boolean bufferDeviceAddress;
+        VkCaps.initialize(physicalDevice);
+        boolean shaderInt64;
+        boolean shaderInt16;
+        boolean storageBuffer16BitAccess;
+        boolean uniformAndStorageBuffer16BitAccess;
+        boolean shaderInt8;
+        boolean storageBuffer8BitAccess;
+        boolean uniformAndStorageBuffer8BitAccess;
+        boolean sampledArrayDynamic;
+        boolean taskShader;
+        boolean meshShader;
+        boolean subgroupControl;
         boolean descriptorBuffer;
         boolean localRead;
-        boolean deviceFault;
         boolean bindless;
-        boolean interlock;
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkPhysicalDeviceVulkan11Features features11 = VkPhysicalDeviceVulkan11Features.calloc(stack)
-                                                                                          .sType$Default();
-            VkPhysicalDeviceVulkan12Features features12 = VkPhysicalDeviceVulkan12Features.calloc(stack)
-                                                                                          .sType$Default();
-            VkPhysicalDeviceDescriptorBufferFeaturesEXT dbFeatures = VkPhysicalDeviceDescriptorBufferFeaturesEXT.calloc(
-                    stack).sType$Default();
-            VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR lrFeatures =
-                    VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR.calloc(stack).sType$Default();
-            VkPhysicalDeviceFaultFeaturesEXT faultFeatures = VkPhysicalDeviceFaultFeaturesEXT.calloc(stack)
-                                                                                             .sType$Default();
-            VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT ilFeatures =
-                    VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT.calloc(stack).sType$Default();
+            VkPhysicalDeviceVulkan11Features features11 = VkPhysicalDeviceVulkan11Features.calloc(stack).sType$Default();
+            VkPhysicalDeviceVulkan12Features features12 = VkPhysicalDeviceVulkan12Features.calloc(stack).sType$Default();
+            VkPhysicalDeviceDescriptorBufferFeaturesEXT dbFeatures = VkPhysicalDeviceDescriptorBufferFeaturesEXT.calloc(stack).sType$Default();
+            VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR lrFeatures = VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR.calloc(stack).sType$Default();
+            VkPhysicalDeviceFaultFeaturesEXT faultFeatures = VkPhysicalDeviceFaultFeaturesEXT.calloc(stack).sType$Default();
+            VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT ilFeatures = VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT.calloc(stack).sType$Default();
+            VkPhysicalDeviceMeshShaderFeaturesEXT meshFeatures = VkPhysicalDeviceMeshShaderFeaturesEXT.calloc(stack).sType$Default();
+            VkPhysicalDeviceSubgroupSizeControlFeaturesEXT sgFeatures = VkPhysicalDeviceSubgroupSizeControlFeaturesEXT.calloc(stack).sType$Default();
+            VkPhysicalDeviceRepresentativeFragmentTestFeaturesNV repFeatures = VkPhysicalDeviceRepresentativeFragmentTestFeaturesNV.calloc(stack).sType$Default();
+            VkPhysicalDeviceDiagnosticsConfigFeaturesNV diagFeatures = VkPhysicalDeviceDiagnosticsConfigFeaturesNV.calloc(stack).sType$Default();
+            repFeatures.pNext(diagFeatures.address());
+            sgFeatures.pNext(repFeatures.address());
+            meshFeatures.pNext(sgFeatures.address());
+            ilFeatures.pNext(meshFeatures.address());
             faultFeatures.pNext(ilFeatures.address());
             lrFeatures.pNext(faultFeatures.address());
             dbFeatures.pNext(lrFeatures.address());
             features12.pNext(dbFeatures.address());
             features11.pNext(features12.address());
-            VkPhysicalDeviceFeatures2 features2 = VkPhysicalDeviceFeatures2.calloc(stack).sType$Default();
-            features2.pNext(features11.address());
+            VkPhysicalDeviceFeatures2 features2 = VkPhysicalDeviceFeatures2.calloc(stack).sType$Default().pNext(features11.address());
             VK12.vkGetPhysicalDeviceFeatures2(physicalDevice.vkPhysicalDevice(), features2);
-            f16IoSupported = features11.storageInputOutput16() && features12.shaderFloat16();
-            drawIndirectCount = features12.drawIndirectCount();
-            bufferDeviceAddress = features12.bufferDeviceAddress();
+            VkPhysicalDeviceFeatures features10 = features2.features();
+            VkCaps.DRAW_INDIRECT_FIRST_INSTANCE_SUPPORTED = features10.drawIndirectFirstInstance();
+            VkCaps.DRAW_INDIRECT_COUNT_SUPPORTED = features12.drawIndirectCount();
+            VkCaps.BUFFER_DEVICE_ADDRESS_SUPPORTED = features12.bufferDeviceAddress();
+            VkCaps.FRAGMENT_STORES_AND_ATOMICS_SUPPORTED = features10.fragmentStoresAndAtomics();
+            VkCaps.INDEPENDENT_BLEND_SUPPORTED = features10.independentBlend();
+            shaderInt64 = features10.shaderInt64();
+            shaderInt16 = features10.shaderInt16();
+            storageBuffer16BitAccess = features11.storageBuffer16BitAccess();
+            uniformAndStorageBuffer16BitAccess = features11.uniformAndStorageBuffer16BitAccess();
+            shaderInt8 = features12.shaderInt8();
+            storageBuffer8BitAccess = features12.storageBuffer8BitAccess();
+            uniformAndStorageBuffer8BitAccess = features12.uniformAndStorageBuffer8BitAccess();
+            sampledArrayDynamic = features10.shaderSampledImageArrayDynamicIndexing();
+            VkCaps.MESH_F16_VARYINGS_SUPPORTED = features11.storageInputOutput16() && features12.shaderFloat16();
+            taskShader = meshFeatures.taskShader();
+            meshShader = meshFeatures.meshShader();
+            subgroupControl = sgFeatures.subgroupSizeControl();
+            VkCaps.REPRESENTATIVE_FRAGMENT_TEST_SUPPORTED = repFeatures.representativeFragmentTest()
+                    && physicalDevice.hasDeviceExtension(NVRepresentativeFragmentTest.VK_NV_REPRESENTATIVE_FRAGMENT_TEST_EXTENSION_NAME);
+            descriptorBuffer = dbFeatures.descriptorBuffer() && VkCaps.BUFFER_DEVICE_ADDRESS_SUPPORTED
+                    && physicalDevice.hasDeviceExtension(EXTDescriptorBuffer.VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
+            localRead = lrFeatures.dynamicRenderingLocalRead() && VkCaps.INDEPENDENT_BLEND_SUPPORTED
+                    && physicalDevice.hasDeviceExtension(KHRDynamicRenderingLocalRead.VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME);
+            deviceFaultSupported = faultFeatures.deviceFault()
+                    && physicalDevice.hasDeviceExtension(EXTDeviceFault.VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+            vendorBinarySupported = deviceFaultSupported && faultFeatures.deviceFaultVendorBinary();
+            crashDiagSupported = CRASH_DIAG && diagFeatures.diagnosticsConfig()
+                    && physicalDevice.hasDeviceExtension(NVDeviceDiagnosticsConfig.VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME);
+            VkCaps.FRAGMENT_SHADER_INTERLOCK_SUPPORTED = ilFeatures.fragmentShaderPixelInterlock()
+                    && VkCaps.FRAGMENT_STORES_AND_ATOMICS_SUPPORTED
+                    && physicalDevice.hasDeviceExtension(EXTFragmentShaderInterlock.VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
             bindless = features12.shaderSampledImageArrayNonUniformIndexing()
                     && features12.descriptorBindingSampledImageUpdateAfterBind()
                     && features12.descriptorBindingPartiallyBound()
                     && features12.descriptorBindingUpdateUnusedWhilePending();
-            // NV driver bug classes routed to push by VkDescriptorLayout.DB_ROUTE_FAULTING_SETS => negotiate whenever
-            // supported.
-            descriptorBuffer = dbFeatures.descriptorBuffer()
-                    && physicalDevice.hasDeviceExtension(EXTDescriptorBuffer.VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
-            localRead = lrFeatures.dynamicRenderingLocalRead()
-                    && features2.features().independentBlend()
-                    && physicalDevice.hasDeviceExtension(
-                    KHRDynamicRenderingLocalRead.VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME);
-            deviceFault = faultFeatures.deviceFault()
-                    && physicalDevice.hasDeviceExtension(EXTDeviceFault.VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
-            interlock = ilFeatures.fragmentShaderPixelInterlock()
-                    && features2.features().fragmentStoresAndAtomics()
-                    && physicalDevice.hasDeviceExtension(
-                    EXTFragmentShaderInterlock.VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
         }
-        if (deviceFault) {
-            deviceExtensions.add(EXTDeviceFault.VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
-        }
-        if (interlock) {
-            deviceExtensions.add(EXTFragmentShaderInterlock.VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
-            vulkanFeatures.add(new VulkanFeature(VulkanBackend.VK10_FEATURES_STRUCT, "fragmentStoresAndAtomics",
-                    VkPhysicalDeviceFeatures.FRAGMENTSTORESANDATOMICS));
-        }
-
-        if (CRASH_DIAG && physicalDevice.hasDeviceExtension(
-                NVDeviceDiagnosticsConfig.VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME)) {
-            deviceExtensions.add(NVDeviceDiagnosticsConfig.VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME);
-        }
-        if (drawIndirectCount) {
-            vulkanFeatures.add(new VulkanFeature(VulkanBackend.VK12_FEATURES_STRUCT, "drawIndirectCount",
-                    VkPhysicalDeviceVulkan12Features.DRAWINDIRECTCOUNT));
-        }
-        VkCaps.DRAW_INDIRECT_COUNT_NEGOTIATED = drawIndirectCount;
-        if (bufferDeviceAddress) {
-            vulkanFeatures.add(new VulkanFeature(VulkanBackend.VK12_FEATURES_STRUCT, "bufferDeviceAddress",
-                    VkPhysicalDeviceVulkan12Features.BUFFERDEVICEADDRESS));
-        }
-        VkCaps.BUFFER_DEVICE_ADDRESS_NEGOTIATED = bufferDeviceAddress;
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkPhysicalDeviceSubgroupProperties subgroupProps = VkPhysicalDeviceSubgroupProperties.calloc(stack)
-                                                                                                 .sType$Default();
-            VkPhysicalDeviceVulkan12Properties props12 = VkPhysicalDeviceVulkan12Properties.calloc(stack)
-                                                                                           .sType$Default();
-            subgroupProps.pNext(props12.address());
-            VkPhysicalDeviceProperties2 props2 = VkPhysicalDeviceProperties2.calloc(stack).sType$Default();
-            props2.pNext(subgroupProps.address());
-            VK12.vkGetPhysicalDeviceProperties2(physicalDevice.vkPhysicalDevice(), props2);
-            long uabLimit = Math.min(
-                    Integer.toUnsignedLong(props12.maxPerStageDescriptorUpdateAfterBindSampledImages()),
-                    Integer.toUnsignedLong(props12.maxDescriptorSetUpdateAfterBindSampledImages()));
-            bindless = bindless && uabLimit >= VkBindlessTable.MIN_CAPACITY;
-            VkCaps.BINDLESS_TABLE_CAPACITY = (int) Math.min(uabLimit, VkBindlessTable.MAX_CAPACITY);
-            int subgroupSize = subgroupProps.subgroupSize();
-            if (subgroupSize > 0) {
-                VkCaps.SUBGROUP_SIZE = subgroupSize;
-            }
+            VkPhysicalDeviceSubgroupProperties subgroup = VkPhysicalDeviceSubgroupProperties.calloc(stack).sType$Default();
+            VkPhysicalDeviceVulkan12Properties props12 = VkPhysicalDeviceVulkan12Properties.calloc(stack).sType$Default();
+            VkPhysicalDevicePushDescriptorPropertiesKHR push = VkPhysicalDevicePushDescriptorPropertiesKHR.calloc(stack).sType$Default();
+            VkPhysicalDeviceSubgroupSizeControlPropertiesEXT control = VkPhysicalDeviceSubgroupSizeControlPropertiesEXT.calloc(stack).sType$Default();
+            VkPhysicalDeviceMeshShaderPropertiesEXT mesh = VkPhysicalDeviceMeshShaderPropertiesEXT.calloc(stack).sType$Default();
+            VkPhysicalDeviceDescriptorBufferPropertiesEXT db = VkPhysicalDeviceDescriptorBufferPropertiesEXT.calloc(stack).sType$Default();
+            mesh.pNext(db.address());
+            control.pNext(mesh.address());
+            push.pNext(control.address());
+            props12.pNext(push.address());
+            subgroup.pNext(props12.address());
+            VkPhysicalDeviceProperties2 properties = VkPhysicalDeviceProperties2.calloc(stack).sType$Default().pNext(subgroup.address());
+            VK12.vkGetPhysicalDeviceProperties2(physicalDevice.vkPhysicalDevice(), properties);
+            VkCaps.initializeLimits(properties.properties().limits(), physicalDevice.vkPhysicalDeviceVulkan11Properties().maxMemoryAllocationSize());
+            VkCaps.MAX_PUSH_DESCRIPTORS = VkCaps.unsigned(push.maxPushDescriptors());
+            VkCaps.SUBGROUP_SIZE = subgroup.subgroupSize() > 0 ? subgroup.subgroupSize() : 32;
             int ballotOps = VK12.VK_SUBGROUP_FEATURE_BASIC_BIT | VK12.VK_SUBGROUP_FEATURE_BALLOT_BIT;
-            VkCaps.SUBGROUP_BALLOT = (subgroupProps.supportedOperations() & ballotOps) == ballotOps
-                    && (subgroupProps.supportedStages() & VK12.VK_SHADER_STAGE_COMPUTE_BIT) != 0;
+            VkCaps.SUBGROUP_BALLOT = (subgroup.supportedOperations() & ballotOps) == ballotOps
+                    && (subgroup.supportedStages() & VK12.VK_SHADER_STAGE_COMPUTE_BIT) != 0;
+            long uabLimit = Math.min(Math.min(VkCaps.unsigned(props12.maxPerStageDescriptorUpdateAfterBindSampledImages()),
+                            VkCaps.unsigned(props12.maxDescriptorSetUpdateAfterBindSampledImages())),
+                    Math.min(VkCaps.unsigned(props12.maxPerStageDescriptorUpdateAfterBindSamplers()),
+                            VkCaps.unsigned(props12.maxDescriptorSetUpdateAfterBindSamplers())));
+            uabLimit = Math.min(uabLimit, VkCaps.unsigned(props12.maxUpdateAfterBindDescriptorsInAllPools()));
+            VkCaps.BINDLESS_TABLE_CAPACITY = (int) Math.min(uabLimit, VkBindlessTable.MAX_CAPACITY);
+            VkCaps.BINDLESS_TEXTURES_SUPPORTED = bindless && !NO_BINDLESS_TEXTURES
+                    && uabLimit >= VkBindlessTable.MIN_CAPACITY;
+            VkCaps.DESCRIPTOR_BUFFER_SUPPORTED = descriptorBuffer;
+            VkCaps.DB_OFFSET_ALIGNMENT = db.descriptorBufferOffsetAlignment();
+            VkCaps.DB_UNIFORM_BUFFER_SIZE = (int) db.uniformBufferDescriptorSize();
+            VkCaps.DB_STORAGE_BUFFER_SIZE = (int) db.storageBufferDescriptorSize();
+            VkCaps.DB_COMBINED_IMAGE_SAMPLER_SIZE = (int) db.combinedImageSamplerDescriptorSize();
+            VkCaps.DB_STORAGE_IMAGE_SIZE = (int) db.storageImageDescriptorSize();
+            VkCaps.DB_INPUT_ATTACHMENT_SIZE = (int) db.inputAttachmentDescriptorSize();
+            robustUniformDescriptorSize = (int) db.robustUniformBufferDescriptorSize();
+            robustStorageDescriptorSize = (int) db.robustStorageBufferDescriptorSize();
+            VkCaps.DB_MAX_RESOURCE_RANGE = VkCaps.unsignedSize(db.maxResourceDescriptorBufferRange());
+            VkCaps.DB_MAX_SAMPLER_RANGE = VkCaps.unsignedSize(db.maxSamplerDescriptorBufferRange());
+            VkCaps.DYNAMIC_RENDERING_LOCAL_READ_SUPPORTED = localRead && VkCaps.MAX_COLOR_ATTACHMENTS >= 6
+                    && VkCaps.MAX_PER_STAGE_DESCRIPTOR_INPUT_ATTACHMENTS >= 5;
+            int meshStages = EXTMeshShader.VK_SHADER_STAGE_TASK_BIT_EXT | EXTMeshShader.VK_SHADER_STAGE_MESH_BIT_EXT;
+            int meshOps = ballotOps | VK12.VK_SUBGROUP_FEATURE_SHUFFLE_BIT;
+            VkCaps.MESH_SHADER_SUPPORTED = taskShader && meshShader && shaderInt64
+                    && VkCaps.BUFFER_DEVICE_ADDRESS_SUPPORTED && subgroupControl
+                    && physicalDevice.hasDeviceExtension(EXTMeshShader.VK_EXT_MESH_SHADER_EXTENSION_NAME)
+                    && physicalDevice.hasDeviceExtension(EXTSubgroupSizeControl.VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME)
+                    && control.minSubgroupSize() <= 32 && control.maxSubgroupSize() >= 32
+                    && (control.requiredSubgroupSizeStages() & meshStages) == meshStages
+                    && (subgroup.supportedStages() & meshStages) == meshStages
+                    && (subgroup.supportedOperations() & meshOps) == meshOps
+                    && mesh.maxTaskWorkGroupInvocations() >= 32 && mesh.maxTaskWorkGroupSize(0) >= 32
+                    && mesh.maxMeshWorkGroupInvocations() >= 64 && mesh.maxMeshWorkGroupSize(0) >= 64
+                    && mesh.maxMeshOutputVertices() >= 64 && mesh.maxMeshOutputPrimitives() >= 32;
+            VkCaps.MESH_MAX_WORKGROUP_COUNT_X = mesh.maxMeshWorkGroupCount(0);
+            VkCaps.MESH_MAX_OUTPUT_VERTICES = Math.min(256, mesh.maxMeshOutputVertices());
+            VkCaps.MESH_MAX_OUTPUT_PRIMITIVES = Math.min(512, mesh.maxMeshOutputPrimitives());
         }
-        bindlessSupported = bindless && !NO_BINDLESS_TEXTURES;
 
-        if (descriptorBuffer && bufferDeviceAddress) {
-            deviceExtensions.add(EXTDescriptorBuffer.VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                VkPhysicalDeviceDescriptorBufferPropertiesEXT dbProps =
-                        VkPhysicalDeviceDescriptorBufferPropertiesEXT.calloc(stack).sType$Default();
-                VkPhysicalDeviceProperties2 props2 = VkPhysicalDeviceProperties2.calloc(stack).sType$Default();
-                props2.pNext(dbProps.address());
-                VK12.vkGetPhysicalDeviceProperties2(physicalDevice.vkPhysicalDevice(), props2);
-                VkCaps.DB_OFFSET_ALIGNMENT = dbProps.descriptorBufferOffsetAlignment();
-                VkCaps.DB_UNIFORM_BUFFER_SIZE = (int) dbProps.uniformBufferDescriptorSize();
-                VkCaps.DB_STORAGE_BUFFER_SIZE = (int) dbProps.storageBufferDescriptorSize();
-                VkCaps.DB_COMBINED_IMAGE_SAMPLER_SIZE = (int) dbProps.combinedImageSamplerDescriptorSize();
-                VkCaps.DB_STORAGE_IMAGE_SIZE = (int) dbProps.storageImageDescriptorSize();
-                VkCaps.DB_INPUT_ATTACHMENT_SIZE = (int) dbProps.inputAttachmentDescriptorSize();
-            }
-        }
-
-        if (localRead) {
+        request(vulkanFeatures, VkCaps.DRAW_INDIRECT_FIRST_INSTANCE_SUPPORTED, VulkanBackend.VK10_FEATURES_STRUCT,
+                "drawIndirectFirstInstance", VkPhysicalDeviceFeatures.DRAWINDIRECTFIRSTINSTANCE);
+        request(vulkanFeatures, VkCaps.FRAGMENT_STORES_AND_ATOMICS_SUPPORTED, VulkanBackend.VK10_FEATURES_STRUCT,
+                "fragmentStoresAndAtomics", VkPhysicalDeviceFeatures.FRAGMENTSTORESANDATOMICS);
+        request(vulkanFeatures, VkCaps.INDEPENDENT_BLEND_SUPPORTED, VulkanBackend.VK10_FEATURES_STRUCT,
+                "independentBlend", VkPhysicalDeviceFeatures.INDEPENDENTBLEND);
+        request(vulkanFeatures, VkCaps.DRAW_INDIRECT_COUNT_SUPPORTED, VulkanBackend.VK12_FEATURES_STRUCT,
+                "drawIndirectCount", VkPhysicalDeviceVulkan12Features.DRAWINDIRECTCOUNT);
+        request(vulkanFeatures, VkCaps.BUFFER_DEVICE_ADDRESS_SUPPORTED, VulkanBackend.VK12_FEATURES_STRUCT,
+                "bufferDeviceAddress", VkPhysicalDeviceVulkan12Features.BUFFERDEVICEADDRESS);
+        request(vulkanFeatures, VkCaps.BINDLESS_TEXTURES_SUPPORTED && sampledArrayDynamic, VulkanBackend.VK10_FEATURES_STRUCT,
+                "shaderSampledImageArrayDynamicIndexing", VkPhysicalDeviceFeatures.SHADERSAMPLEDIMAGEARRAYDYNAMICINDEXING);
+        if (deviceFaultSupported) deviceExtensions.add(EXTDeviceFault.VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+        if (crashDiagSupported) deviceExtensions.add(NVDeviceDiagnosticsConfig.VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME);
+        if (VkCaps.DESCRIPTOR_BUFFER_SUPPORTED) deviceExtensions.add(EXTDescriptorBuffer.VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
+        if (VkCaps.DYNAMIC_RENDERING_LOCAL_READ_SUPPORTED) {
             deviceExtensions.add(KHRDynamicRenderingLocalRead.VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME);
-            vulkanFeatures.add(new VulkanFeature(VulkanBackend.VK10_FEATURES_STRUCT, "independentBlend",
-                    VkPhysicalDeviceFeatures.INDEPENDENTBLEND));
         }
-
-        // Append mesh extensions here so createDevice sees them in the name chain; subgroup-size-control + rep-fragment-test ride along only with mesh shaders.
-        if (physicalDevice.hasDeviceExtension(EXTMeshShader.VK_EXT_MESH_SHADER_EXTENSION_NAME)) {
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                VkPhysicalDeviceMeshShaderPropertiesEXT meshProps =
-                        VkPhysicalDeviceMeshShaderPropertiesEXT.calloc(stack).sType$Default();
-                VkPhysicalDeviceProperties2 props2 = VkPhysicalDeviceProperties2.calloc(stack).sType$Default();
-                props2.pNext(meshProps.address());
-                VK12.vkGetPhysicalDeviceProperties2(physicalDevice.vkPhysicalDevice(), props2);
-                VkCaps.MESH_MAX_WORKGROUP_COUNT_X = Math.max(65535, meshProps.maxMeshWorkGroupCount(0));
-                VkCaps.MESH_MAX_OUTPUT_PRIMITIVES = Math.min(512, Math.max(256, meshProps.maxMeshOutputPrimitives()));
-            }
+        if (VkCaps.FRAGMENT_SHADER_INTERLOCK_SUPPORTED) {
+            deviceExtensions.add(EXTFragmentShaderInterlock.VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
+        }
+        if (VkCaps.MESH_SHADER_SUPPORTED) {
             deviceExtensions.add(EXTMeshShader.VK_EXT_MESH_SHADER_EXTENSION_NAME);
-            if (physicalDevice.hasDeviceExtension(EXTSubgroupSizeControl.VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME)) {
-                deviceExtensions.add(EXTSubgroupSizeControl.VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
+            deviceExtensions.add(EXTSubgroupSizeControl.VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
+            request(vulkanFeatures, true, VulkanBackend.VK10_FEATURES_STRUCT, "shaderInt64", VkPhysicalDeviceFeatures.SHADERINT64);
+            request(vulkanFeatures, shaderInt16, VulkanBackend.VK10_FEATURES_STRUCT, "shaderInt16", VkPhysicalDeviceFeatures.SHADERINT16);
+            request(vulkanFeatures, storageBuffer16BitAccess, VulkanBackend.VK11_FEATURES_STRUCT,
+                    "storageBuffer16BitAccess", VkPhysicalDeviceVulkan11Features.STORAGEBUFFER16BITACCESS);
+            request(vulkanFeatures, uniformAndStorageBuffer16BitAccess, VulkanBackend.VK11_FEATURES_STRUCT,
+                    "uniformAndStorageBuffer16BitAccess", VkPhysicalDeviceVulkan11Features.UNIFORMANDSTORAGEBUFFER16BITACCESS);
+            request(vulkanFeatures, shaderInt8, VulkanBackend.VK12_FEATURES_STRUCT, "shaderInt8", VkPhysicalDeviceVulkan12Features.SHADERINT8);
+            request(vulkanFeatures, storageBuffer8BitAccess, VulkanBackend.VK12_FEATURES_STRUCT,
+                    "storageBuffer8BitAccess", VkPhysicalDeviceVulkan12Features.STORAGEBUFFER8BITACCESS);
+            request(vulkanFeatures, uniformAndStorageBuffer8BitAccess, VulkanBackend.VK12_FEATURES_STRUCT,
+                    "uniformAndStorageBuffer8BitAccess", VkPhysicalDeviceVulkan12Features.UNIFORMANDSTORAGEBUFFER8BITACCESS);
+            if (VkCaps.MESH_F16_VARYINGS_SUPPORTED) {
+                request(vulkanFeatures, true, VulkanBackend.VK11_FEATURES_STRUCT, "storageInputOutput16", VkPhysicalDeviceVulkan11Features.STORAGEINPUTOUTPUT16);
+                request(vulkanFeatures, true, VulkanBackend.VK12_FEATURES_STRUCT, "shaderFloat16", VkPhysicalDeviceVulkan12Features.SHADERFLOAT16);
             }
-            if (physicalDevice.hasDeviceExtension(
-                    NVRepresentativeFragmentTest.VK_NV_REPRESENTATIVE_FRAGMENT_TEST_EXTENSION_NAME)) {
+            if (VkCaps.REPRESENTATIVE_FRAGMENT_TEST_SUPPORTED) {
                 deviceExtensions.add(NVRepresentativeFragmentTest.VK_NV_REPRESENTATIVE_FRAGMENT_TEST_EXTENSION_NAME);
             }
         }
     }
 
-    /**
-     * Wraps {@code vkCreateDevice}: re-detect negotiated features off the extension-name chain, chain the enable structs, and publish every cap in ONE success-gated block so a re-created device resets stale caps.
-     */
-    public static int createDevice(VkPhysicalDevice vkPhysicalDevice, VkDeviceCreateInfo createInfo,
-                                   VkAllocationCallbacks allocator, PointerBuffer pDevice) {
-        boolean meshShader = nameChainContainsExtension(createInfo, EXTMeshShader.VK_EXT_MESH_SHADER_EXTENSION_NAME);
-        boolean descriptorBuffer = nameChainContainsExtension(createInfo,
-                EXTDescriptorBuffer.VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
-        boolean localRead = nameChainContainsExtension(createInfo,
-                KHRDynamicRenderingLocalRead.VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME);
-        boolean deviceFault = nameChainContainsExtension(createInfo, EXTDeviceFault.VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
-        boolean crashDiag = nameChainContainsExtension(createInfo,
-                NVDeviceDiagnosticsConfig.VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME);
-        boolean interlock = nameChainContainsExtension(createInfo,
-                EXTFragmentShaderInterlock.VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
-        boolean bindless = bindlessSupported;
-        boolean vendorBinary = false;
-        boolean subgroupControl = false;
-        boolean representativeTest = false;
+    private static void request(Set<VulkanFeature> features, boolean supported,
+                                 VulkanPNextStruct struct, String name, int offset) {
+        if (supported) features.add(new VulkanFeature(struct, name, offset));
+    }
 
-        int result;
+    public static int createDevice(VkPhysicalDevice physicalDevice, VkDeviceCreateInfo createInfo,
+                                   VkAllocationCallbacks allocator, PointerBuffer pDevice) {
+        boolean meshShader = VkCaps.MESH_SHADER_SUPPORTED
+                && nameChainContainsExtension(createInfo, EXTMeshShader.VK_EXT_MESH_SHADER_EXTENSION_NAME);
+        boolean descriptorBuffer = VkCaps.DESCRIPTOR_BUFFER_SUPPORTED
+                && nameChainContainsExtension(createInfo, EXTDescriptorBuffer.VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
+        boolean localRead = VkCaps.DYNAMIC_RENDERING_LOCAL_READ_SUPPORTED
+                && nameChainContainsExtension(createInfo, KHRDynamicRenderingLocalRead.VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME);
+        boolean deviceFault = deviceFaultSupported
+                && nameChainContainsExtension(createInfo, EXTDeviceFault.VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+        boolean interlock = VkCaps.FRAGMENT_SHADER_INTERLOCK_SUPPORTED
+                && nameChainContainsExtension(createInfo, EXTFragmentShaderInterlock.VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
+        boolean representativeTest = meshShader && VkCaps.REPRESENTATIVE_FRAGMENT_TEST_SUPPORTED
+                && nameChainContainsExtension(createInfo, NVRepresentativeFragmentTest.VK_NV_REPRESENTATIVE_FRAGMENT_TEST_EXTENSION_NAME);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             if (deviceFault) {
-                VkPhysicalDeviceFaultFeaturesEXT supported = VkPhysicalDeviceFaultFeaturesEXT.calloc(stack)
-                                                                                             .sType$Default();
-                VkPhysicalDeviceFeatures2 query = VkPhysicalDeviceFeatures2.calloc(stack).sType$Default();
-                query.pNext(supported.address());
-                VK12.vkGetPhysicalDeviceFeatures2(vkPhysicalDevice, query);
-                vendorBinary = supported.deviceFaultVendorBinary();
-                VkPhysicalDeviceFaultFeaturesEXT faultFeatures = VkPhysicalDeviceFaultFeaturesEXT.calloc(stack)
-                                                                                                 .sType$Default()
-                                                                                                 .deviceFault(true)
-                                                                                                 .deviceFaultVendorBinary(
-                                                                                                         vendorBinary);
-                chain(createInfo, faultFeatures);
+                chain(createInfo, VkPhysicalDeviceFaultFeaturesEXT.calloc(stack).sType$Default()
+                        .deviceFault(true).deviceFaultVendorBinary(vendorBinarySupported));
             }
-            if (crashDiag) {
-                VkPhysicalDeviceDiagnosticsConfigFeaturesNV diagFeatures =
-                        VkPhysicalDeviceDiagnosticsConfigFeaturesNV.calloc(stack)
-                                                                   .sType$Default()
-                                                                   .diagnosticsConfig(true);
-                chain(createInfo, diagFeatures);
-                VkDeviceDiagnosticsConfigCreateInfoNV diagConfig = VkDeviceDiagnosticsConfigCreateInfoNV.calloc(stack)
-                                                                                                        .sType$Default()
-                                                                                                        .flags(NVDeviceDiagnosticsConfig.VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV
-                                                                                                                | NVDeviceDiagnosticsConfig.VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV
-                                                                                                                | NVDeviceDiagnosticsConfig.VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV);
-                chain(createInfo, diagConfig);
+            if (crashDiagSupported && nameChainContainsExtension(createInfo,
+                    NVDeviceDiagnosticsConfig.VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME)) {
+                chain(createInfo, VkPhysicalDeviceDiagnosticsConfigFeaturesNV.calloc(stack).sType$Default().diagnosticsConfig(true));
+                chain(createInfo, VkDeviceDiagnosticsConfigCreateInfoNV.calloc(stack).sType$Default()
+                        .flags(NVDeviceDiagnosticsConfig.VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV
+                                | NVDeviceDiagnosticsConfig.VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV
+                                | NVDeviceDiagnosticsConfig.VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV));
             }
             if (descriptorBuffer) {
-                VkPhysicalDeviceDescriptorBufferFeaturesEXT dbFeatures =
-                        VkPhysicalDeviceDescriptorBufferFeaturesEXT.calloc(stack)
-                                                                   .sType$Default()
-                                                                   .descriptorBuffer(true);
-                chain(createInfo, dbFeatures);
+                chain(createInfo, VkPhysicalDeviceDescriptorBufferFeaturesEXT.calloc(stack).sType$Default().descriptorBuffer(true));
             }
             if (localRead) {
-                VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR lrFeatures =
-                        VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR.calloc(stack)
-                                                                            .sType$Default()
-                                                                            .dynamicRenderingLocalRead(true);
-                chain(createInfo, lrFeatures);
+                chain(createInfo, VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR.calloc(stack).sType$Default().dynamicRenderingLocalRead(true));
             }
             if (interlock) {
-                VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT ilFeatures =
-                        VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT.calloc(stack)
-                                                                          .sType$Default()
-                                                                          .fragmentShaderPixelInterlock(true);
-                chain(createInfo, ilFeatures);
+                chain(createInfo, VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT.calloc(stack).sType$Default().fragmentShaderPixelInterlock(true));
             }
-            if (bindless) {
-                enableBindlessFeatures(createInfo, stack);
-            }
+            if (VkCaps.BINDLESS_TEXTURES_SUPPORTED) enableBindlessFeatures(createInfo, stack);
             if (meshShader) {
-                VkPhysicalDeviceFeatures features10 = createInfo.pEnabledFeatures();
-                MemoryUtil.memPutInt(features10.address() + VkPhysicalDeviceFeatures.SHADERINT64, 1);
-                MemoryUtil.memPutInt(features10.address() + VkPhysicalDeviceFeatures.SHADERINT16, 1);
-
-                long vulkan11 = findStruct(createInfo.pNext(), VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES);
-                if (vulkan11 != 0L) {
-                    MemoryUtil.memPutInt(vulkan11 + VkPhysicalDeviceVulkan11Features.STORAGEBUFFER16BITACCESS, 1);
-                    MemoryUtil.memPutInt(vulkan11 + VkPhysicalDeviceVulkan11Features.UNIFORMANDSTORAGEBUFFER16BITACCESS,
-                            1);
-                    MemoryUtil.memPutInt(vulkan11 + VkPhysicalDeviceVulkan11Features.SHADERDRAWPARAMETERS, 1);
-                    if (f16IoSupported) {
-                        MemoryUtil.memPutInt(vulkan11 + VkPhysicalDeviceVulkan11Features.STORAGEINPUTOUTPUT16, 1);
-                    }
-                } else {
-                    VkPhysicalDeviceVulkan11Features features11 = VkPhysicalDeviceVulkan11Features.calloc(stack)
-                                                                                                  .sType$Default()
-                                                                                                  .storageBuffer16BitAccess(
-                                                                                                          true)
-                                                                                                  .uniformAndStorageBuffer16BitAccess(
-                                                                                                          true)
-                                                                                                  .shaderDrawParameters(
-                                                                                                          true)
-                                                                                                  .storageInputOutput16(
-                                                                                                          f16IoSupported);
-                    chain(createInfo, features11);
-                }
-
-                long vulkan12 = findStruct(createInfo.pNext(), VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES);
-                if (vulkan12 != 0L) {
-                    MemoryUtil.memPutInt(vulkan12 + VkPhysicalDeviceVulkan12Features.BUFFERDEVICEADDRESS, 1);
-                    MemoryUtil.memPutInt(vulkan12 + VkPhysicalDeviceVulkan12Features.SHADERINT8, 1);
-                    MemoryUtil.memPutInt(vulkan12 + VkPhysicalDeviceVulkan12Features.STORAGEBUFFER8BITACCESS, 1);
-                    MemoryUtil.memPutInt(vulkan12 + VkPhysicalDeviceVulkan12Features.UNIFORMANDSTORAGEBUFFER8BITACCESS,
-                            1);
-                    if (f16IoSupported) {
-                        MemoryUtil.memPutInt(vulkan12 + VkPhysicalDeviceVulkan12Features.SHADERFLOAT16, 1);
-                    }
-                } else {
-                    VkPhysicalDeviceVulkan12Features features12 = VkPhysicalDeviceVulkan12Features.calloc(stack)
-                                                                                                  .sType$Default()
-                                                                                                  .bufferDeviceAddress(
-                                                                                                          true)
-                                                                                                  .shaderInt8(true)
-                                                                                                  .storageBuffer8BitAccess(
-                                                                                                          true)
-                                                                                                  .uniformAndStorageBuffer8BitAccess(
-                                                                                                          true)
-                                                                                                  .shaderFloat16(
-                                                                                                          f16IoSupported);
-                    chain(createInfo, features12);
-                }
-
-                VkPhysicalDeviceMeshShaderFeaturesEXT meshFeatures = VkPhysicalDeviceMeshShaderFeaturesEXT.calloc(stack)
-                                                                                                          .sType$Default()
-                                                                                                          .taskShader(
-                                                                                                                  true)
-                                                                                                          .meshShader(
-                                                                                                                  true);
-                chain(createInfo, meshFeatures);
-
-                subgroupControl = nameChainContainsExtension(createInfo,
-                        EXTSubgroupSizeControl.VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
-                if (subgroupControl) {
-                    VkPhysicalDeviceSubgroupSizeControlFeaturesEXT subgroupFeatures =
-                            VkPhysicalDeviceSubgroupSizeControlFeaturesEXT.calloc(stack)
-                                                                          .sType$Default()
-                                                                          .subgroupSizeControl(true);
-                    chain(createInfo, subgroupFeatures);
-                }
-
-                representativeTest = nameChainContainsExtension(createInfo,
-                        NVRepresentativeFragmentTest.VK_NV_REPRESENTATIVE_FRAGMENT_TEST_EXTENSION_NAME);
+                chain(createInfo, VkPhysicalDeviceMeshShaderFeaturesEXT.calloc(stack).sType$Default().taskShader(true).meshShader(true));
+                chain(createInfo, VkPhysicalDeviceSubgroupSizeControlFeaturesEXT.calloc(stack).sType$Default().subgroupSizeControl(true));
                 if (representativeTest) {
-                    VkPhysicalDeviceRepresentativeFragmentTestFeaturesNV repFeatures =
-                            VkPhysicalDeviceRepresentativeFragmentTestFeaturesNV.calloc(stack)
-                                                                                .sType$Default()
-                                                                                .representativeFragmentTest(true);
-                    chain(createInfo, repFeatures);
+                    chain(createInfo, VkPhysicalDeviceRepresentativeFragmentTestFeaturesNV.calloc(stack).sType$Default().representativeFragmentTest(true));
                 }
             }
-
-            result = VK12.vkCreateDevice(vkPhysicalDevice, createInfo, allocator, pDevice);
+            int result = VK12.vkCreateDevice(physicalDevice, createInfo, allocator, pDevice);
+            publish(createInfo, result == VK12.VK_SUCCESS);
+            return result;
         }
+    }
 
-        boolean ok = result == VK12.VK_SUCCESS;
-        // Mesh + the 32-lane pin must BOTH negotiate: the subgroup reductions are only correct at size 32 -- else the tier stays dormant.
-        VkCaps.MESH_SHADER_NEGOTIATED = ok && subgroupControl;
-        VkCaps.MESH_F16_VARYINGS_NEGOTIATED = ok && meshShader && f16IoSupported;
-        VkCaps.REPRESENTATIVE_FRAGMENT_TEST_NEGOTIATED = ok && representativeTest;
-        VkCaps.DESCRIPTOR_BUFFER_NEGOTIATED = ok && descriptorBuffer;
-        VkCaps.DYNAMIC_RENDERING_LOCAL_READ_NEGOTIATED = ok && localRead;
-        VkCaps.DEVICE_FAULT_NEGOTIATED = ok && deviceFault;
-        VkCaps.DEVICE_FAULT_VENDOR_BINARY_NEGOTIATED = ok && vendorBinary;
-        VkCaps.BINDLESS_TEXTURES_NEGOTIATED = ok && bindless;
-        VkCaps.FRAGMENT_SHADER_INTERLOCK_NEGOTIATED = ok && interlock;
-        return result;
+    private static void publish(VkDeviceCreateInfo createInfo, boolean success) {
+        VkPhysicalDeviceFeatures features10 = createInfo.pEnabledFeatures();
+        VkCaps.DRAW_INDIRECT_FIRST_INSTANCE_NEGOTIATED = success && VkCaps.DRAW_INDIRECT_FIRST_INSTANCE_SUPPORTED
+                && features10.drawIndirectFirstInstance();
+        VkCaps.FRAGMENT_STORES_AND_ATOMICS_NEGOTIATED = success && VkCaps.FRAGMENT_STORES_AND_ATOMICS_SUPPORTED
+                && features10.fragmentStoresAndAtomics();
+        VkCaps.INDEPENDENT_BLEND_NEGOTIATED = success && VkCaps.INDEPENDENT_BLEND_SUPPORTED && features10.independentBlend();
+        VkCaps.DRAW_INDIRECT_COUNT_NEGOTIATED = success && VkCaps.DRAW_INDIRECT_COUNT_SUPPORTED
+                && enabled(createInfo, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, VkPhysicalDeviceVulkan12Features.DRAWINDIRECTCOUNT);
+        VkCaps.BUFFER_DEVICE_ADDRESS_NEGOTIATED = success && VkCaps.BUFFER_DEVICE_ADDRESS_SUPPORTED
+                && enabled(createInfo, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, VkPhysicalDeviceVulkan12Features.BUFFERDEVICEADDRESS);
+        VkCaps.MESH_SHADER_NEGOTIATED = success && VkCaps.MESH_SHADER_SUPPORTED && VkCaps.BUFFER_DEVICE_ADDRESS_NEGOTIATED
+                && features10.shaderInt64()
+                && enabled(createInfo, EXTMeshShader.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT, VkPhysicalDeviceMeshShaderFeaturesEXT.TASKSHADER)
+                && enabled(createInfo, EXTMeshShader.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT, VkPhysicalDeviceMeshShaderFeaturesEXT.MESHSHADER)
+                && enabled(createInfo, EXTSubgroupSizeControl.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT,
+                        VkPhysicalDeviceSubgroupSizeControlFeaturesEXT.SUBGROUPSIZECONTROL);
+        VkCaps.MESH_F16_VARYINGS_NEGOTIATED = VkCaps.MESH_SHADER_NEGOTIATED && VkCaps.MESH_F16_VARYINGS_SUPPORTED
+                && enabled(createInfo, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, VkPhysicalDeviceVulkan11Features.STORAGEINPUTOUTPUT16)
+                && enabled(createInfo, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, VkPhysicalDeviceVulkan12Features.SHADERFLOAT16);
+        VkCaps.REPRESENTATIVE_FRAGMENT_TEST_NEGOTIATED = VkCaps.MESH_SHADER_NEGOTIATED
+                && VkCaps.REPRESENTATIVE_FRAGMENT_TEST_SUPPORTED
+                && enabled(createInfo, NVRepresentativeFragmentTest.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_REPRESENTATIVE_FRAGMENT_TEST_FEATURES_NV,
+                        VkPhysicalDeviceRepresentativeFragmentTestFeaturesNV.REPRESENTATIVEFRAGMENTTEST);
+        VkCaps.DESCRIPTOR_BUFFER_NEGOTIATED = success && VkCaps.DESCRIPTOR_BUFFER_SUPPORTED && VkCaps.BUFFER_DEVICE_ADDRESS_NEGOTIATED
+                && enabled(createInfo, EXTDescriptorBuffer.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT,
+                        VkPhysicalDeviceDescriptorBufferFeaturesEXT.DESCRIPTORBUFFER);
+        if (VkCaps.DESCRIPTOR_BUFFER_NEGOTIATED && features10.robustBufferAccess()) {
+            VkCaps.DB_UNIFORM_BUFFER_SIZE = robustUniformDescriptorSize;
+            VkCaps.DB_STORAGE_BUFFER_SIZE = robustStorageDescriptorSize;
+        }
+        VkCaps.DYNAMIC_RENDERING_LOCAL_READ_NEGOTIATED = success && VkCaps.DYNAMIC_RENDERING_LOCAL_READ_SUPPORTED
+                && VkCaps.INDEPENDENT_BLEND_NEGOTIATED
+                && enabled(createInfo, KHRDynamicRenderingLocalRead.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_LOCAL_READ_FEATURES_KHR,
+                        VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR.DYNAMICRENDERINGLOCALREAD);
+        VkCaps.FRAGMENT_SHADER_INTERLOCK_NEGOTIATED = success && VkCaps.FRAGMENT_SHADER_INTERLOCK_SUPPORTED
+                && VkCaps.FRAGMENT_STORES_AND_ATOMICS_NEGOTIATED
+                && enabled(createInfo, EXTFragmentShaderInterlock.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT,
+                        VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT.FRAGMENTSHADERPIXELINTERLOCK);
+        VkCaps.BINDLESS_TEXTURES_NEGOTIATED = success && VkCaps.BINDLESS_TEXTURES_SUPPORTED
+                && enabled(createInfo, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, VkPhysicalDeviceVulkan12Features.SHADERSAMPLEDIMAGEARRAYNONUNIFORMINDEXING)
+                && enabled(createInfo, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, VkPhysicalDeviceVulkan12Features.DESCRIPTORBINDINGSAMPLEDIMAGEUPDATEAFTERBIND)
+                && enabled(createInfo, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, VkPhysicalDeviceVulkan12Features.DESCRIPTORBINDINGPARTIALLYBOUND)
+                && enabled(createInfo, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, VkPhysicalDeviceVulkan12Features.DESCRIPTORBINDINGUPDATEUNUSEDWHILEPENDING);
+        VkCaps.DEVICE_FAULT_NEGOTIATED = success && deviceFaultSupported
+                && enabled(createInfo, EXTDeviceFault.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT, VkPhysicalDeviceFaultFeaturesEXT.DEVICEFAULT);
+        VkCaps.DEVICE_FAULT_VENDOR_BINARY_NEGOTIATED = VkCaps.DEVICE_FAULT_NEGOTIATED && vendorBinarySupported
+                && enabled(createInfo, EXTDeviceFault.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT, VkPhysicalDeviceFaultFeaturesEXT.DEVICEFAULTVENDORBINARY);
+        VkCaps.initializeRoutes(success);
+    }
+
+    private static boolean enabled(VkDeviceCreateInfo createInfo, int type, int offset) {
+        long address = findStruct(createInfo.pNext(), type);
+        return address != 0L && MemoryUtil.memGetInt(address + offset) != 0;
     }
 
     public static int createVma(VmaAllocatorCreateInfo createInfo, PointerBuffer pAllocator) {
-        if (VkCaps.MESH_SHADER_NEGOTIATED || VkCaps.BUFFER_DEVICE_ADDRESS_NEGOTIATED) {
+        if (VkCaps.BUFFER_DEVICE_ADDRESS_NEGOTIATED) {
             createInfo.flags(createInfo.flags() | Vma.VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT);
         }
         return Vma.vmaCreateAllocator(createInfo, pAllocator);
@@ -361,67 +333,48 @@ public final class VkDeviceNegotiation {
 
     private static boolean nameChainContainsExtension(VkDeviceCreateInfo createInfo, String extension) {
         PointerBuffer names = createInfo.ppEnabledExtensionNames();
-        if (names == null) {
-            return false;
-        }
-        for (int i = 0; i < names.remaining(); i++) {
-            if (extension.equals(MemoryUtil.memUTF8(names.get(i)))) {
-                return true;
-            }
+        if (names == null) return false;
+        for (int i = names.position(); i < names.limit(); i++) {
+            if (extension.equals(MemoryUtil.memUTF8(names.get(i)))) return true;
         }
         return false;
     }
 
     private static void enableBindlessFeatures(VkDeviceCreateInfo createInfo, MemoryStack stack) {
-        MemoryUtil.memPutInt(createInfo.pEnabledFeatures().address()
-                + VkPhysicalDeviceFeatures.SHADERSAMPLEDIMAGEARRAYDYNAMICINDEXING, 1);
-        long vulkan12 = findStruct(createInfo.pNext(), VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES);
-        if (vulkan12 != 0L) {
-            MemoryUtil.memPutInt(vulkan12 + VkPhysicalDeviceVulkan12Features.SHADERSAMPLEDIMAGEARRAYNONUNIFORMINDEXING,
-                    1);
-            MemoryUtil.memPutInt(
-                    vulkan12 + VkPhysicalDeviceVulkan12Features.DESCRIPTORBINDINGSAMPLEDIMAGEUPDATEAFTERBIND, 1);
-            MemoryUtil.memPutInt(vulkan12 + VkPhysicalDeviceVulkan12Features.DESCRIPTORBINDINGPARTIALLYBOUND, 1);
-            MemoryUtil.memPutInt(vulkan12 + VkPhysicalDeviceVulkan12Features.DESCRIPTORBINDINGUPDATEUNUSEDWHILEPENDING,
-                    1);
+        long address = findStruct(createInfo.pNext(), VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES);
+        VkPhysicalDeviceVulkan12Features features;
+        if (address != 0L) {
+            features = VkPhysicalDeviceVulkan12Features.create(address);
         } else {
-            VkPhysicalDeviceVulkan12Features features12 = VkPhysicalDeviceVulkan12Features.calloc(stack)
-                                                                                          .sType$Default()
-                                                                                          .shaderSampledImageArrayNonUniformIndexing(
-                                                                                                  true)
-                                                                                          .descriptorBindingSampledImageUpdateAfterBind(
-                                                                                                  true)
-                                                                                          .descriptorBindingPartiallyBound(
-                                                                                                  true)
-                                                                                          .descriptorBindingUpdateUnusedWhilePending(
-                                                                                                  true);
-            chain(createInfo, features12);
+            features = VkPhysicalDeviceVulkan12Features.calloc(stack).sType$Default();
+            chain(createInfo, features);
         }
+        features.shaderSampledImageArrayNonUniformIndexing(true)
+                .descriptorBindingSampledImageUpdateAfterBind(true)
+                .descriptorBindingPartiallyBound(true)
+                .descriptorBindingUpdateUnusedWhilePending(true);
     }
 
     private static long findStruct(long pNextChain, int sType) {
         while (pNextChain != 0L) {
-            if (MemoryUtil.memGetInt(pNextChain) == sType) {
-                return pNextChain;
-            }
+            if (MemoryUtil.memGetInt(pNextChain) == sType) return pNextChain;
             pNextChain = MemoryUtil.memGetAddress(pNextChain + Pointer.POINTER_SIZE);
         }
         return 0L;
     }
 
-    // Compat with Caustica: it chains VkPhysicalDeviceFaultFeaturesEXT through a VulkanFeature. A duplicate sType fails
-    // vkCreateDevice, so OR our VkBool32/flag words into an existing struct.
+    // Compat with Caustica: duplicate sType invalid; merge feature words.
     private static void chain(VkDeviceCreateInfo createInfo, Struct<?> struct) {
-        long structAddr = struct.address();
-        long existing = findStruct(createInfo.pNext(), MemoryUtil.memGetInt(structAddr));
+        long address = struct.address();
+        long existing = findStruct(createInfo.pNext(), MemoryUtil.memGetInt(address));
         if (existing == 0L) {
-            MemoryUtil.memPutAddress(structAddr + Pointer.POINTER_SIZE, createInfo.pNext());
-            createInfo.pNext(structAddr);
+            MemoryUtil.memPutAddress(address + Pointer.POINTER_SIZE, createInfo.pNext());
+            createInfo.pNext(address);
             return;
         }
         for (long offset = 2L * Pointer.POINTER_SIZE; offset + Integer.BYTES <= struct.sizeof(); offset += Integer.BYTES) {
             MemoryUtil.memPutInt(existing + offset,
-                    MemoryUtil.memGetInt(existing + offset) | MemoryUtil.memGetInt(structAddr + offset));
+                    MemoryUtil.memGetInt(existing + offset) | MemoryUtil.memGetInt(address + offset));
         }
     }
 }

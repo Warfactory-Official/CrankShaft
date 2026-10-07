@@ -53,7 +53,11 @@ layout(std430, binding = 10) restrict readonly buffer _flw_RegionInputBuf {
     uvec4 _flw_regionInput[];
 };
 #else
+#if __VERSION__ >= 420
 layout(std140, binding = 10) uniform u_RegionChunkOrigin {
+#else
+layout(std140) uniform u_RegionChunkOrigin {
+#endif
     ivec3 _flw_regionChunkOrigin;
     int _flw_regionPadding;
 };

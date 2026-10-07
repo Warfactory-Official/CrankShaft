@@ -3,13 +3,14 @@ package dev.engine_room.flywheel.backend.engine.indirect;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
+import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.BindlessSlots;
 import dev.engine_room.flywheel.backend.engine.DrawTags;
 import dev.engine_room.flywheel.backend.engine.MaterialEncoder;
 import dev.engine_room.flywheel.backend.engine.MeshPool;
 import dev.engine_room.flywheel.backend.engine.embed.EmbeddedEnvironment;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
-import dev.engine_room.flywheel.backend.vk.VkCaps;
+import dev.engine_room.flywheel.backend.vk.VkContext;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
 
@@ -39,8 +40,9 @@ public class IndirectDraw {
 
         this.packedFogAndCutout = MaterialEncoder.packUberShader(material);
         this.packedMaterialProperties = MaterialEncoder.packProperties(material);
-        int texSlot = VkCaps.BINDLESS_TEXTURES_NEGOTIATED || GlCompat.SUPPORTS_BINDLESS_TEXTURES
-                ? BindlessSlots.slot(material) : 0;
+        boolean bindless = VkContext.isVulkanHost() ? VkPrograms.bindlessTexturesEnabled()
+                : GlCompat.SUPPORTS_BINDLESS_TEXTURES;
+        int texSlot = bindless ? BindlessSlots.slot(material) : 0;
         this.packedTexIndices = texSlot | (InstanceTypeIds.id(instancer.type) << 16);
     }
 
@@ -93,7 +95,6 @@ public class IndirectDraw {
 
         MemoryUtil.memPutInt(ptr + 28, packedFogAndCutout); // packedFogAndCutout
         MemoryUtil.memPutInt(ptr + 32, packedMaterialProperties); // packedMaterialProperties
-        // Tags exist only under a shaderpack guest, where no mesh tier reads vertexCount/meshletBase.
         MemoryUtil.memPutInt(ptr + 36, tags != null ? tags.itemTag() : mesh.vertexCount());
         MemoryUtil.memPutInt(ptr + 40, tags != null ? tags.drawTag() : mesh.meshletBase());
         MemoryUtil.memPutInt(ptr + 44, packedTexIndices);

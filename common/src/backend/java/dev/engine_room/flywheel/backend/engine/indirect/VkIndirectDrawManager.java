@@ -15,9 +15,11 @@ import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.backend.BackendConfig;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.BackendDebugFlags;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
@@ -99,9 +101,15 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     private long copySrcBuffer;
     private int copyRegionCount;
     private int frameParity;
+    private final boolean direct;
+    private final int maxDrawCount;
+    private int checkedCullCount = -1;
+    private int checkedApplyCount = -1;
 
     public VkIndirectDrawManager(VkPrograms programs) {
         this.programs = programs;
+        direct = programs.instanceRoute() == VkPrograms.InstanceRoute.DIRECT;
+        maxDrawCount = programs.drawIndex() ? (int) Math.min(VkCaps.MAX_DRAW_INDIRECT_COUNT, Integer.MAX_VALUE) : 1;
         programs.acquire();
     }
 
@@ -110,7 +118,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                 || a.embeddedVariant() != b.embeddedVariant()) {
             return true;
         }
-        if (!VkCaps.BINDLESS_TEXTURES_NEGOTIATED) {
+        if (!VkPrograms.bindlessTexturesEnabled()) {
             return !a.material().texture().equals(b.material().texture())
                     || a.material().blur() != b.material().blur()
                     || a.material().mipmap() != b.material().mipmap();
@@ -120,7 +128,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
     static void bindGraphicsPipeline(VkCommandBuffer cmd, long handle, VkDescriptorLayout layout) {
         VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, handle);
-        if (VkCaps.BINDLESS_TEXTURES_NEGOTIATED) {
+        if (VkPrograms.bindlessTexturesEnabled()) {
             VkBindlessTable.bind(cmd, layout.pipelineLayout());
         }
     }
@@ -128,6 +136,35 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     static void drawUberIndirect(VkCommandBuffer cmd, VkBuffer drawBuffer, UberDraw batch) {
         VK10.vkCmdDrawIndexedIndirect(cmd, drawBuffer.vkBuffer(),
                 (long) batch.start() * DRAW_COMMAND_STRIDE, batch.end() - batch.start(), DRAW_COMMAND_STRIDE);
+    }
+
+    private void submitUberDraws(VkCommandBuffer cmd, VkBuffer drawBuffer, UberDraw batch,
+                                 VkDescriptorLayout layout) {
+        int count = batch.end() - batch.start();
+        if (!direct && count <= maxDrawCount) {
+            drawUberIndirect(cmd, drawBuffer, batch);
+            return;
+        }
+        if (!direct) {
+            for (int start = batch.start(); start < batch.end(); ) {
+                int drawCount = Math.min(maxDrawCount, batch.end() - start);
+                writer.uniform(23, renderPassUniforms.embedDraw(start));
+                writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, layout);
+                VK10.vkCmdDrawIndexedIndirect(cmd, drawBuffer.vkBuffer(),
+                        (long) start * DRAW_COMMAND_STRIDE, drawCount, DRAW_COMMAND_STRIDE);
+                start += drawCount;
+            }
+            return;
+        }
+        long base = drawBuffer.mappedAddress();
+        for (int i = batch.start(); i < batch.end(); i++) {
+            long ptr = base + (long) i * DRAW_COMMAND_STRIDE;
+            writer.uniform(23, renderPassUniforms.embedDraw(i));
+            writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, layout);
+            VK10.vkCmdDrawIndexed(cmd, MemoryUtil.memGetInt(ptr), MemoryUtil.memGetInt(ptr + 4L),
+                    MemoryUtil.memGetInt(ptr + 8L), MemoryUtil.memGetInt(ptr + 12L),
+                    MemoryUtil.memGetInt(ptr + 16L));
+        }
     }
 
     boolean wantsMeshletBounds() {
@@ -165,7 +202,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         frameParity ^= 1;
         FrameSet fs = frames[frameParity];
         objectStorage.beginFrame(frameParity);
-        pass2Pending = false; // an unconsumed pass-2 draw from a translucent-less frame is dropped, not carried
+        pass2Pending = false;
         renderPassUniforms.beginFrame(renderOrigin, constantAmbientLight);
 
         groups.values().removeIf(Group::flushInstancers);
@@ -209,6 +246,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             needsDrawSort = false;
         }
         frameDrawCount = allDraws.size();
+        validateComputeCounts();
 
         VkCommandBuffer copyCmd = VkContext.beginCommands();
         VkContext.pushLabel(copyCmd, "flywheel:vk/instance_upload");
@@ -233,6 +271,9 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             for (IndirectInstancer<?> instancer : group.instancers) {
                 instancer.writeModel(mp);
                 instancer.writeModel(mp2);
+                if (direct) {
+                    MemoryUtil.memPutInt(mp, instancer.instanceCount());
+                }
                 mp += MODEL_STRIDE;
                 mp2 += MODEL_STRIDE;
             }
@@ -246,6 +287,11 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         for (IndirectDraw draw : allDraws) {
             draw.write(dp);
             draw.write(dp2);
+            if (direct) {
+                int modelIndex = MemoryUtil.memGetInt(dp + 20L);
+                MemoryUtil.memPutInt(dp + 4L,
+                        MemoryUtil.memGetInt(fs.model.mappedAddress() + (long) modelIndex * MODEL_STRIDE));
+            }
             dp += DRAW_COMMAND_STRIDE;
             dp2 += DRAW_COMMAND_STRIDE;
         }
@@ -261,12 +307,38 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         MemoryUtil.memCopy(environmentStorage.arena.indexToPointer(0), fs.matrices.mappedAddress(), matBytes);
 
         objectStorage.flushDescriptors();
-        dispatchCompute();
+        if (direct) {
+            objectStorage.writeIdentityIndices(fs.indexTable, fs.model, modelCount);
+            publishDirectUploads();
+            carriedActive = false;
+        } else {
+            dispatchCompute();
+        }
         submitOpaque(modelViewMatrix, false);
         VkTerrainDrawManager.runDeferredPhase2();
         if (carriedActive) {
             dispatchPass2Compute();
         }
+    }
+
+    private void validateComputeCounts() {
+        if (direct) {
+            return;
+        }
+        int cullCount = objectStorage.pageSlotCount();
+        int applyCount = Mth.positiveCeilDiv(frameDrawCount, VkCaps.SUBGROUP_SIZE);
+        if (cullCount == checkedCullCount && applyCount == checkedApplyCount) {
+            return;
+        }
+        try {
+            VkCaps.requireComputeDispatch("instance cull", cullCount, 1, 1);
+            VkCaps.requireComputeDispatch("instance apply", applyCount, 1, 1);
+        } catch (BackendUnavailableException e) {
+            programs.rejectInstanceRoute();
+            throw new ProgramAvailability.Failure(ProgramAvailability.Feature.INSTANCE_CULL, e);
+        }
+        checkedCullCount = cullCount;
+        checkedApplyCount = applyCount;
     }
 
     private void appendCopyRegion(VkCommandBuffer cmd, long srcBuffer, long dstBuffer, long src, long dst, long size) {
@@ -392,6 +464,13 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         submitOpaque(renderModelView, true);
     }
 
+    private void publishDirectUploads() {
+        VkCommandBuffer cmd = VkContext.beginCommands();
+        VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, VK10.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+                VK10.VK_ACCESS_TRANSFER_WRITE_BIT, VK10.VK_ACCESS_SHADER_READ_BIT);
+        VkContext.submitCommands(cmd);
+    }
+
     private void dispatchCompute() {
         VkCommandBuffer cmd = VkContext.beginCommands();
         VkContext.pushLabel(cmd, "flywheel:vk/instance_compute");
@@ -434,7 +513,8 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             return;
         }
         depthPyramid.regenerate(cmd, VkContext.imageView(depthTexView), sampler, programs.downsampleFirstPipeline(),
-                programs.downsampleSecondPipeline(), writer);
+                programs.downsampleSecondPipeline(), writer,
+                programs.hiZRoute() == VkPrograms.HiZRoute.SINGLE_MIP);
     }
 
     private void submitOpaque(Matrix4fc modelViewMatrix, boolean pass2) {
@@ -474,7 +554,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         long indexVk = VkContext.buffer(indexBuffer);
 
         warmTextures(textureManager);
-        if (VkCaps.BINDLESS_TEXTURES_NEGOTIATED) {
+        if (VkPrograms.bindlessTexturesEnabled()) {
             VkBindlessTable.refresh(textureManager);
             VkBindlessTable.setReserved(VkBindlessTable.SLOT_OVERLAY, overlayView, overlaySampler);
             VkBindlessTable.setReserved(VkBindlessTable.SLOT_LIGHTMAP, lightmapView, overlaySampler);
@@ -563,7 +643,6 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     }
 
     private void writeLineFrame(FrameSet fs, Material material) {
-        // Graphics binding 16 carries Mojang Projection; line expansion also needs this frame at 41.
         if (material.shaders().vertexSource().equals(StandardMaterialShaders.LINE.vertexSource()))
             writer.uniform(41, fs.frameUbo);
     }
@@ -595,7 +674,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         FrameSet fs = frame();
         var smoothness = BackendConfig.INSTANCE.lightSmoothness();
         boolean needsColor = mode != OitMode.DEPTH_RANGE;
-        boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+        boolean bindless = VkPrograms.bindlessTexturesEnabled();
         VkGraphicsPipeline lastPipeline = null;
         for (UberDraw multiDraw : draws) {
             Material material = multiDraw.material();
@@ -619,7 +698,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                 VkWaveletOitChain.writeOitReads(writer, f, mode, folded);
             }
             writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
-            drawUberIndirect(cmd, fs.draw, multiDraw);
+            submitUberDraws(cmd, fs.draw, multiDraw, pipeline.layout());
         }
     }
 
@@ -636,7 +715,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         }
         FrameSet fs = frame();
         var smoothness = BackendConfig.INSTANCE.lightSmoothness();
-        boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+        boolean bindless = VkPrograms.bindlessTexturesEnabled();
         VkGraphicsPipeline lastPipeline = null;
         for (UberDraw multiDraw : draws) {
             Material material = multiDraw.material();
@@ -657,7 +736,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             writeLightFog(fs, f.fog(), f.lights(), f.globals(), f.renderOriginSlice());
             mlab.bind(writer);
             writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
-            drawUberIndirect(cmd, fs.draw, multiDraw);
+            submitUberDraws(cmd, fs.draw, multiDraw, pipeline.layout());
         }
     }
 
@@ -681,7 +760,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         VkBuffer indexTable = pass2 ? fs.indexTable2 : fs.indexTable;
         VkBuffer drawBuffer = pass2 ? fs.draw2 : fs.draw;
         var smoothness = BackendConfig.INSTANCE.lightSmoothness();
-        boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+        boolean bindless = VkPrograms.bindlessTexturesEnabled();
         VkGraphicsPipeline lastPipeline = null;
         for (UberDraw multiDraw : uberMultiDraws) {
             Material material = multiDraw.material();
@@ -703,7 +782,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             writeLightFog(fs, fog, lights, globals, renderOriginSlice);
             writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
 
-            drawUberIndirect(cmd, drawBuffer, multiDraw);
+            submitUberDraws(cmd, drawBuffer, multiDraw, pipeline.layout());
         }
     }
 
@@ -872,27 +951,20 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
     static final class FrameSet {
         final BitSet lutPending = new BitSet();
-        final VkBuffer indexTable = storage(256);                 // binding 2: written by the cull
-        final VkBuffer model = storage(256);                      // binding 3: cull-zeroed + apply-read
-        final VkBuffer draw = indirectStorage(256);               // binding 4
-        final VkBuffer visWords = storage(
-                256);                   // binding 6: 2 words per page slot: [2w]=drawn, [2w+1]=frustum-passed
+        final VkBuffer indexTable = storage(256);
+        final VkBuffer model = storage(256);
+        final VkBuffer draw = indirectStorage(256);
+        final VkBuffer visWords = storage(256);
         final VkBuffer indexTable2 = storage(256);
         final VkBuffer model2 = storage(256);
         final VkBuffer draw2 = indirectStorage(256);
-        // Section-light SSBOs (bindings 5/6): changes fold into BOTH parities so they propagate over two frames, changed-only.
         final VkBuffer lightLut = storage(1L << 12);
         final VkBuffer lightSections = storage(1L << 16);
         final BitSet lightPending = new BitSet();
-        // Frame UBO (binding 16): single-buffered would race the next frame's overwrite -> corrupted frustum.
         final VkBuffer frameUbo = new VkBuffer(VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, FrameUniforms.size());
-        // Embedded pose matrices SSBO (binding 7), host-copied; slot 0 is the reserved identity, so matrixIndex 0
-        // never indexes past it. The cull reads them too, so the copy must be complete before dispatchCompute.
         final VkBuffer matrices = storage(1L << 12);
-        // Mesh-visual tier: per-parity VkDrawMeshTasksIndirectCommandEXT stream (binding 15), allocated lazily.
         @Nullable
         VkBuffer meshTaskCommands;
-        // The per-frame render-origin modelview UBO (binding 9, _FlwMeshVisualFrame) the mesh + fragment share.
         @Nullable
         VkBuffer meshVisualModelView;
 

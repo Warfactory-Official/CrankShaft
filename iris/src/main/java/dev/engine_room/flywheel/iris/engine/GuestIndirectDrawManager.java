@@ -36,11 +36,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 
-/**
- * GPU-culled indirect through the pack's block/entity programs. Two-phase HiZ draws both phases at the post-opaque seam
- * (pass 2 would otherwise land after Iris's deferred composites); the shadow pass culls against Iris's shadow
- * frustum into the pass-2 buffers before the main cull re-seeds them.
- */
+/** Main HiZ phases precede deferred composites; shadow cull precedes main buffer reseeding. */
 public class GuestIndirectDrawManager extends IndirectDrawManager implements GuestDrawManager {
     private final GuestShadowCull shadowCull = new GuestShadowCull();
     private final List<UberDraw> plainScratch = new ArrayList<>();
@@ -53,13 +49,11 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
     private final List<UberDraw> eyesScratch = new ArrayList<>();
     private final List<UberDraw> translucentEntityScratch = new ArrayList<>();
     private final List<UberDraw> blendedEntityScratch = new ArrayList<>();
-    // submitUberPass state: the kind the selectors resolve for; the kinds a pass keeps.
     private int drawKind;
     private boolean passEntities = true;
     private boolean passBlockEntities = true;
     private boolean shadowPass;
     private boolean hasDraws;
-    // Set for the duration of the main-pass translucent submit: the terrain stream joins the OIT producer passes.
     private @Nullable SodiumTerrainOitReplay guestTerrain;
 
     public GuestIndirectDrawManager(IndirectPrograms programs) {
@@ -107,7 +101,6 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         return true;
     }
 
-    // Pass-2 buffers still hold the shadow cull: the main cull re-seeds them after the shadow pass.
     @Override
     public void drawShadowTranslucent(IrisRenderingPipeline pipeline, Matrix4fc shadowModelView, boolean entities,
                                       boolean blockEntities) {
@@ -125,19 +118,16 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
     public boolean renderOit(LightStorage lightStorage, EnvironmentStorage environmentStorage,
                              @Nullable ChunkSectionsToRender chunks, @Nullable BerTranslucentCapture ber,
                              @Nullable SodiumTerrainOitReplay terrain, @Nullable FabulousCaptures fabulous) {
-        // Sodium draws Iris shadow terrain through the same translucent seam.
         if (IrisApi.getInstance()
                    .isRenderingShadowPass() || (!hasDraws && terrain == null)) {
             return false;
         }
         IrisRenderingPipeline pipeline = (IrisRenderingPipeline) Iris.getPipelineManager().getPipelineNullable();
         try {
-            // Without the contract, returning false keeps Sodium's own sorted translucent draw.
             if (terrain != null && !GuestPipelines.oitActive(pipeline, false) && !GuestPipelines.deferredOitActive(
                     pipeline)) {
                 terrain = null;
             }
-            // Compute cannot run inside a RenderPass; cull before opening the producer chain.
             if (terrain != null) {
                 RenderTarget target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
                 GpuTextureView depthView = target.getDepthTextureView();
@@ -157,13 +147,11 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
                     submitAdditive("flywheel:iris/translucent_additive");
                 }
                 submitDepthFill(pipeline);
-                // Deferred adapters resolve later in the pack's composite phase; their capture must finish here.
                 return terrain != null;
             } finally {
                 GlCompat.popDebugGroup();
             }
         } finally {
-            // EngineImpl catches draw failures and continues with a fallback.
             GuestSsbos.restore(pipeline);
         }
     }
@@ -180,8 +168,6 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         }
     }
 
-    // Pack composites resolve sky, clouds, fog and translucency from depth: a colour-only surface reads as whatever
-    // lies behind it. A separate pass, so additive stacks and translucent layers still blend.
     private void submitDepthFill(IrisRenderingPipeline pipeline) {
         depthFillScratch.clear();
         if (!GuestPipelines.deferredTranslucent(pipeline) && !GuestPipelines.deferredOitActive(pipeline)) {
@@ -270,7 +256,6 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         if (batches.isEmpty()) {
             return;
         }
-        // Terrain can run between instance pass 1/2 and between OIT producers, using different shifted bindings.
         GuestSsbos.bindForGuest((IrisRenderingPipeline) Iris.getPipelineManager().getPipelineNullable());
         GuestProgram.setModelView(modelViewMatrix);
         blockScratch.clear();
@@ -306,7 +291,6 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         if (passEntities) {
             submitKind(label + "_entities", entityScratch, TaggedEnvironment.KIND_ENTITY, modelViewMatrix, pass2,
                     pipelineFor);
-            // Vanilla submits a body before its layers.
             submitKind(label + "_translucent_entities", translucentEntityScratch,
                     TaggedEnvironment.KIND_ENTITY_TRANSLUCENT, modelViewMatrix, pass2, pipelineFor);
             submitKind(label + "_eyes", eyesScratch, TaggedEnvironment.KIND_ENTITY_EYES, modelViewMatrix, pass2,
@@ -350,8 +334,6 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         return GuestDrawManager.drawnInAdditivePass(draw.material(), draw.drawTag());
     }
 
-    // Guest programs compile the cutout in (Iris alpha test / contract discard) and the program per draw kind; uber
-    // batches dispatch the cutout at runtime.
     @Override
     protected boolean incompatibleUber(IndirectDraw a, IndirectDraw b) {
         return super.incompatibleUber(a, b) || a.material()
@@ -372,12 +354,16 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
 
     @Override
     protected void warmUp(Material material, boolean embedded) {
-        // Iris: guest programs are warmed with their pack; native programs do not participate in these draws.
     }
 
     @Override
     protected RenderPipeline crumblingPipelineFor(Material crumblingMaterial, InstanceType<?> type) {
         return GuestPipelines.crumbling(crumblingMaterial, type, true);
+    }
+
+    @Override
+    public void triggerFallback() {
+        Minecraft.getInstance().levelExtractor.allChanged();
     }
 
     @Override

@@ -2,6 +2,9 @@ package dev.engine_room.flywheel.backend.vk.shader;
 
 import dev.engine_room.flywheel.api.material.DepthTest;
 import dev.engine_room.flywheel.api.material.Transparency;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
+import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.VkPipelineCaches;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout;
@@ -11,10 +14,6 @@ import org.lwjgl.vulkan.*;
 
 import java.nio.LongBuffer;
 
-/**
- * A Flywheel graphics pipeline over a {@link VkDescriptorLayout} using dynamic rendering; the opaque draw, the OIT
- * producers, and the fullscreen composite/depth passes differ only by their {@link Config}. Viewport and scissor are dynamic.
- */
 public final class VkGraphicsPipeline {
     public static final int COLOR_WRITE_RGBA = VK10.VK_COLOR_COMPONENT_R_BIT | VK10.VK_COLOR_COMPONENT_G_BIT
             | VK10.VK_COLOR_COMPONENT_B_BIT | VK10.VK_COLOR_COMPONENT_A_BIT;
@@ -29,6 +28,7 @@ public final class VkGraphicsPipeline {
     private final long pipeline;
 
     public VkGraphicsPipeline(VkDescriptorLayout layout, long vertexModule, long fragmentModule, Config config) {
+        preflight(config);
         this.layout = layout;
         this.vertexModule = vertexModule;
         this.fragmentModule = fragmentModule;
@@ -101,6 +101,7 @@ public final class VkGraphicsPipeline {
 
                 vertexInput.pVertexBindingDescriptions(binding).pVertexAttributeDescriptions(attrs);
             }
+            VkCaps.requireVertexInput(vertexInput);
 
             VkPipelineInputAssemblyStateCreateInfo inputAssembly = VkPipelineInputAssemblyStateCreateInfo.calloc(stack)
                                                                                                          .sType$Default()
@@ -118,7 +119,6 @@ public final class VkGraphicsPipeline {
                                                                                                           VK10.VK_POLYGON_MODE_FILL)
                                                                                                   .cullMode(
                                                                                                           config.cullMode())
-                                                                                                  // Vanilla's VK pipelines use frontFace=CLOCKWISE: the positive-height viewport + Y-flipped projection invert winding vs GL.
                                                                                                   .frontFace(
                                                                                                           VK10.VK_FRONT_FACE_CLOCKWISE)
                                                                                                   .lineWidth(1.0F)
@@ -209,10 +209,68 @@ public final class VkGraphicsPipeline {
             LongBuffer pPipeline = stack.callocLong(1);
             int result = VK10.vkCreateGraphicsPipelines(VkContext.vkDevice(), VkPipelineCaches.handle(), info, null,
                     pPipeline);
-            if (result != VK10.VK_SUCCESS) {
-                throw new IllegalStateException("Vulkan error " + result + " creating graphics pipeline");
+            try {
+                VkCaps.checkPipelineResult(result, "graphics pipeline");
+            } catch (BackendUnavailableException e) {
+                if (layout.usesDescriptorBuffer() && layout.pushFallbackAvailable()) {
+                    throw new ProgramAvailability.Failure(ProgramAvailability.Feature.DESCRIPTOR_BUFFER, e);
+                }
+                throw e;
             }
             this.pipeline = pPipeline.get(0);
+        }
+    }
+
+    private static void preflight(Config config) {
+        int attachments = config.colorFormats().length;
+        if (config.blends().length != attachments) {
+            throw new IllegalArgumentException("Color formats and blend states differ in length");
+        }
+        if (attachments > VkCaps.MAX_COLOR_ATTACHMENTS) {
+            throw new BackendUnavailableException("Graphics pipeline requires " + attachments
+                    + " color attachments; device limit " + VkCaps.MAX_COLOR_ATTACHMENTS);
+        }
+        for (int i = 0; i < attachments; i++) {
+            Blend blend = config.blends()[i];
+            if (i > 0 && !VkCaps.INDEPENDENT_BLEND_NEGOTIATED && !blend.equals(config.blends()[0])) {
+                throw new BackendUnavailableException("Independent attachment blending is not enabled");
+            }
+            int format = config.colorFormats()[i];
+            if (format != VK10.VK_FORMAT_UNDEFINED) {
+                int features = VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+                if (blend.enable()) features |= VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
+                VkCaps.requireFormat("Color attachment", format, features);
+            }
+        }
+        if (config.depthFormat() != VK10.VK_FORMAT_UNDEFINED) {
+            VkCaps.requireFormat("Depth attachment", config.depthFormat(), VK10.VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+        }
+        if (config.attachmentLocations() != null) {
+            if (config.attachmentLocations().length != attachments || config.inputAttachmentIndices() == null
+                    || config.inputAttachmentIndices().length != attachments) {
+                throw new IllegalArgumentException("Local-read attachment mappings differ in length");
+            }
+            if (!VkCaps.DYNAMIC_RENDERING_LOCAL_READ_NEGOTIATED) {
+                throw new BackendUnavailableException("Dynamic rendering local read is not enabled");
+            }
+            requireAttachmentIndices("Output location", config.attachmentLocations(), VkCaps.MAX_COLOR_ATTACHMENTS);
+            requireAttachmentIndices("Input attachment", config.inputAttachmentIndices(), VkCaps.MAX_PER_STAGE_DESCRIPTOR_INPUT_ATTACHMENTS);
+        } else if (config.inputAttachmentIndices() != null) {
+            throw new IllegalArgumentException("Input attachment indices without output locations");
+        }
+    }
+
+    private static void requireAttachmentIndices(String label, int[] indices, long limit) {
+        for (int i = 0; i < indices.length; i++) {
+            int index = indices[i];
+            if (index == VK10.VK_ATTACHMENT_UNUSED) continue;
+            if (index < 0) throw new IllegalArgumentException(label + " is negative: " + index);
+            if (index >= limit) {
+                throw new BackendUnavailableException(label + " " + index + " exceeds device limit " + limit);
+            }
+            for (int j = 0; j < i; j++) {
+                if (indices[j] == index) throw new IllegalArgumentException("Duplicate " + label + ": " + index);
+            }
         }
     }
 
@@ -329,7 +387,7 @@ public final class VkGraphicsPipeline {
         }
 
         /**
-         * Folded-OIT variant ({@code VK_KHR_dynamic_rendering_local_read}): static per-attachment output locations + input-attachment indices ({@code VK_ATTACHMENT_UNUSED} where this stage neither writes nor reads).
+         * Local-read mappings; unused attachments = {@code VK_ATTACHMENT_UNUSED}.
          */
         public Config withLocalRead(int[] locations, int[] inputIndices) {
             return new Config(colorFormats, blends, depthTest, depthWrite, depthCompareOp, vertex, cullMode,

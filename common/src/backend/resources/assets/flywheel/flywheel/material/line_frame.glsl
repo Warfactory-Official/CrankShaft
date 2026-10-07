@@ -21,7 +21,11 @@ struct _FlwLineCullData {
 };
 
 // Layout matches FrameUniforms; distinct member names avoid dynamic-transform and mesh-frame collisions.
+#if __VERSION__ >= 420
 layout(std140, binding = 8) uniform _FlwLineFrameUniforms {
+#else
+layout(std140) uniform _FlwLineFrameUniforms {
+#endif
     _FlwLineFrustumPlanes _flw_lineFrustumPlanes;
     _FlwLineCullData _flw_lineCullData;
 

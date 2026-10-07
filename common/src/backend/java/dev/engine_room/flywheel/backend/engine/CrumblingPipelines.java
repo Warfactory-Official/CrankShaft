@@ -14,6 +14,7 @@ import dev.engine_room.flywheel.backend.InternalVertex;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
+import dev.engine_room.flywheel.backend.engine.instancing.InstancingDrawSelector;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
@@ -54,10 +55,12 @@ public final class CrumblingPipelines {
     }
 
     public static RenderPipeline pipeline(Material crumblingMaterial, InstanceType<?> instanceType, boolean indirect) {
-        // Read once per request; a config change yields a new key + fragment id => cache miss => recompile next
-        // frame (pipeline runs every frame from the crumbling draw loop). The debug mode rides the same way.
+        return pipeline(crumblingMaterial, instanceType, indirect, FrameUniforms.debugMode());
+    }
+
+    public static RenderPipeline pipeline(Material crumblingMaterial, InstanceType<?> instanceType, boolean indirect,
+                                           DebugMode debug) {
         LightSmoothness smoothness = BackendConfig.INSTANCE.lightSmoothness();
-        DebugMode debug = FrameUniforms.debugMode();
         Identifier vertexId = vertexId(instanceType, indirect, debug != DebugMode.OFF);
         TYPE_BY_VERTEX_ID.putIfAbsent(vertexId, instanceType);
         FRAGMENT_KEY.putIfAbsent(fragmentId(indirect, smoothness, debug), new FragmentKey(indirect, smoothness, debug));
@@ -123,6 +126,7 @@ public final class CrumblingPipelines {
             b = b.withUniform("_flw_instances", UniformType.TEXEL_BUFFER, GpuFormat.RGBA32_UINT)
                  .withUniform("_flw_lightLut", UniformType.TEXEL_BUFFER, GpuFormat.R32_UINT)
                  .withUniform("_flw_lightSections", UniformType.TEXEL_BUFFER, GpuFormat.R32_UINT);
+            InstancingDrawSelector.addTo(b);
         }
         return b.withUniform("_FlwInstanceDraw", UniformType.UNIFORM_BUFFER)
                 .withUniform("_FlwRenderOrigin", UniformType.UNIFORM_BUFFER)

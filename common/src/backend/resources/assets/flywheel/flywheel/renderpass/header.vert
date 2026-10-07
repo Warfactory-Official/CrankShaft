@@ -31,7 +31,11 @@ out float cylindricalVertexDistance;
 flat out uvec2 _flw_packedMaterial;
 
 // GL: raw-bound at 11 per MultiDraw (trySetup hoist); instancing/crumbling use pass.setUniform. VK: set 0, bind 21.
+#if __VERSION__ >= 420
 layout(std140, binding = 11) uniform _FlwInstanceDraw {
+#else
+layout(std140) uniform _FlwInstanceDraw {
+#endif
     uvec2 _flw_drawPackedMaterial;
     float flw_systemSeconds;
     float flw_glintSpeedOption;

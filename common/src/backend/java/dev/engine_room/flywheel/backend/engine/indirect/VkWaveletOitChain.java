@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.backend.engine.indirect;
 import com.mojang.blaze3d.IndexType;
 import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderPassDescriptor;
@@ -12,15 +13,16 @@ import com.mojang.blaze3d.vulkan.VulkanRenderPass;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.compile.VkOitPipelines;
+import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.vk.FlwPassBarrier;
-import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorWriter;
 import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.StagedVertexBuffer;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
+import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.TextureManager;
 import org.lwjgl.system.MemoryStack;
@@ -30,19 +32,13 @@ import java.util.List;
 
 import static dev.engine_room.flywheel.backend.vk.VkCmd.*;
 
-/**
- * The VK wavelet/moment OIT chain: depthRange -> coefficients -> evaluate -> composite, folded (local_read) or standalone passes.
- * Frames with {@code ORDER_INDEPENDENT_ADDITIVE} producers add a standalone emission pass before the composite and an
- * emission composite after it.
- */
 final class VkWaveletOitChain extends VkOitChain {
     VkWaveletOitChain(VkIndirectDrawManager m, OitFramebuffer framebuffer) {
         super(m, framebuffer);
     }
 
-    // The wavelet OIT reads: input attachments on the folded instance, samplers on the standalone passes (bindless: reserved slots, nothing pushed).
     static void writeOitReads(VkDescriptorWriter writer, VkOitRenderer.OitFrame f, OitMode mode, boolean folded) {
-        boolean bindless = VkCaps.BINDLESS_TEXTURES_NEGOTIATED;
+        boolean bindless = VkPrograms.bindlessTexturesEnabled();
         if (folded) {
             writer.inputAttachment(14, f.depthRangeView());
         } else if (!bindless) {
@@ -71,10 +67,9 @@ final class VkWaveletOitChain extends VkOitChain {
         }
     }
 
-    // The only barrier shape legal INSIDE a dynamic rendering instance (local_read): framebuffer-space, memory-only, BY_REGION.
     private static void byRegionBarrier(VkCommandBuffer cmd) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            var b = org.lwjgl.vulkan.VkMemoryBarrier.calloc(1, stack)
+            var b = VkMemoryBarrier.calloc(1, stack)
                                                     .sType$Default()
                                                     .srcAccessMask(VK12.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
                                                     .dstAccessMask(VK12.VK_ACCESS_INPUT_ATTACHMENT_READ_BIT);
@@ -96,7 +91,6 @@ final class VkWaveletOitChain extends VkOitChain {
             producerPass(encoder, framebuffer.accumulateDescriptor(depthView), OitMode.EVALUATE, frame, replay,
                     vertexVk, indexVk, width, height, hasInstanceOit);
         }
-        // Before the depth writeback: the nearest OIT depth would cull emission behind it.
         if (hasAdditive) {
             emissionPass(encoder, framebuffer.emissionDescriptor(depthView), frame, vertexVk, indexVk, width, height);
         }
@@ -146,7 +140,6 @@ final class VkWaveletOitChain extends VkOitChain {
                               VkOitRenderer.OitFrame frame,
                               VkOitRenderer.OitReplay replay, long vertexVk, long indexVk, int width, int height,
                               boolean hasInstanceOit) {
-        // This producer's output is SAMPLED by the next OIT pass, so declare the precise submit barrier -> the encoder mixin skips Mojang's ALL_COMMANDS barrier for this close.
         FlwPassBarrier.expectFramebufferSample();
         try (RenderPass pass = encoder.createRenderPass(descriptor)) {
             VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
@@ -370,7 +363,7 @@ final class VkWaveletOitChain extends VkOitChain {
     }
 
     private void foldedChunks(VkCommandBuffer cmd, OitMode mode, VkOitRenderer.OitFrame frame,
-                              net.minecraft.client.renderer.chunk.ChunkSectionsToRender chunks) {
+                              ChunkSectionsToRender chunks) {
         var drawGroup = chunks.drawGroupsPerLayer().get(ChunkSectionLayer.TRANSLUCENT);
         if (drawGroup == null || drawGroup.isEmpty()) {
             return;
@@ -382,7 +375,7 @@ final class VkWaveletOitChain extends VkOitChain {
         long atlasView = VkContext.imageView(chunks.textureView());
         long sharedIndexBuffer = chunkSharedIndexBuffer(chunks);
         for (var draws : drawGroup.values()) {
-            for (RenderPass.Draw<com.mojang.blaze3d.buffers.GpuBufferSlice[]> draw : draws.reversed()) {
+            for (RenderPass.Draw<GpuBufferSlice[]> draw : draws.reversed()) {
                 bindChunkDraw(cmd, frame, chunks, atlasView, sharedIndexBuffer, draw);
                 if (nonDepthRange) {
                     writeFoldedExtraReads(mode, frame);

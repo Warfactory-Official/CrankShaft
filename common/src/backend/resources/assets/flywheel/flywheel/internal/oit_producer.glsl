@@ -71,7 +71,11 @@ layout(input_attachment_index = 4, set = 0, binding = 27) uniform subpassInput _
     dst[2] = texelFetch(_flw_textures[7], ivec2(gl_FragCoord.xy), 0); \
     dst[3] = texelFetch(_flw_textures[8], ivec2(gl_FragCoord.xy), 0)
 #elif defined(_FLW_COEFF_ARRAY)
+#if __VERSION__ >= 420
 layout(binding = 11) uniform sampler2DArray _flw_coefficients;
+#else
+uniform sampler2DArray _flw_coefficients;
+#endif
 #define _FLW_FETCH_COEFFS(dst) dst[0] = texelFetch(_flw_coefficients, ivec3(gl_FragCoord.xy, 0), 0); \
     dst[1] = texelFetch(_flw_coefficients, ivec3(gl_FragCoord.xy, 1), 0); \
     dst[2] = texelFetch(_flw_coefficients, ivec3(gl_FragCoord.xy, 2), 0); \

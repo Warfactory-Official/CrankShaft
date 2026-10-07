@@ -35,15 +35,10 @@ public final class RenderPassShaders {
         ctx.requireExtension("GL_ARB_bindless_texture");
         ctx.define("_FLW_BINDLESS_GL");
     };
-    // ORDER_INDEPENDENT_ADDITIVE variants (EVALUATE/insert producers, wavelet composite); a per-fragment
-    // transparency branch costs +24% wavelet EVALUATE.
     public static final Consumer<Compilation> EMISSION_PRODUCER = ctx -> ctx.define("_FLW_OIT_EMISSION");
-    // Every stage of an embedded variant (readsEmbedded): the uber/mesh vertex keeps its runtime matrixIndex branch.
     public static final Consumer<Compilation> EMBEDDED = ctx -> ctx.define("FLW_EMBEDDED");
     private static final Pattern EMBEDDED_TOKEN = Pattern.compile("\\bFLW_EMBEDDED\\b");
-    // Keyed per loaded ShaderSources; populated on the render thread before Vulkan workers read this generation.
     private static final Map<Identifier, Boolean> READS_EMBEDDED = new HashMap<>();
-    // Fragment globals the spliced light stack reads; hand-declared (not api_impl.glsl) so the fragment stays self-contained.
     private static final String FRAG_LIGHTING_PRELUDE = """
             struct FlwLightAo { vec2 light; float ao; };
             in vec4 flw_vertexPos;
@@ -58,7 +53,6 @@ public final class RenderPassShaders {
             vec4 flw_vertexColor;
             FlwMaterial flw_material;
             """;
-    // Runtime cardinalLightingMode branch (upstream common.frag _flw_diffuseFactor); the ENTITY branch flips the normal per fragment (26.2 vanilla PER_FACE_LIGHTING).
     private static final String FRAG_DIFFUSE_FACTOR = """
             float _flw_diffuseFactor() {
                 if (flw_material.cardinalLightingMode == FLW_MAT_CARDINAL_LIGHTING_MODE_ENTITY) {
@@ -70,7 +64,6 @@ public final class RenderPassShaders {
                 }
             }
             """;
-    // Declared for the cutout-predicate splice (CLIP_SLAB/CLIP_HALFSPACE read it; header.vsh emits the out unconditionally).
     private static final String FRAG_CLIP_VARYINGS = """
             in vec2 _flw_clipData;
             """;
@@ -89,8 +82,6 @@ public final class RenderPassShaders {
     private static final Identifier DIFFUSE = ResourceUtil.rl("internal/diffuse.glsl");
     private static final Identifier INSTANCING_LIGHT = ResourceUtil.rl("internal/instancing/light.glsl");
     private static final Identifier INDIRECT_LIGHT = ResourceUtil.rl("internal/indirect/light.glsl");
-    // Vanilla terrain.fsh atlas filtering (texel-snap + RGSS via flw_sampleAtlas), TERRAIN-ONLY: instance
-    // fragments plain-sample (the texel-snap collapses UVs on the NEAREST entity samplers at grazing angles).
     private static final Identifier TEXEL_FILTER = ResourceUtil.rl("internal/texel_filter.glsl");
     private static final Identifier WAVELET = ResourceUtil.rl("internal/wavelet.glsl");
     private static final Identifier OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_oit.frag");
@@ -109,22 +100,28 @@ public final class RenderPassShaders {
     private static final Identifier BLOCK_OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_block_oit.frag");
     private static final Identifier BEAM_OIT_VERTEX = ResourceUtil.rl("renderpass/beam_oit.vert");
     private static final Identifier BEAM_OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_beam_oit.frag");
-    // Clouds/weather-OIT (the Improved Transparency reroute): clouds consume the RESOLVED prepass layer (depth-writes resolve self-occlusion); weather replays vanilla's quads.
     private static final Identifier LAYER_OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_layer_oit.frag");
     private static final Identifier WEATHER_OIT_VERTEX = ResourceUtil.rl("renderpass/weather_oit.vert");
     private static final Identifier WEATHER_OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_weather_oit.frag");
-    // The indirect main reads gl_BaseInstanceARB; the instancing main uses only core gl_InstanceID.
     private static final Consumer<Compilation> INDIRECT_PREAMBLE = ctx -> ctx.requireExtension(
             "GL_ARB_shader_draw_parameters");
     private static final Consumer<Compilation> INSTANCING_PREAMBLE = ctx -> {
     };
-    private static final Consumer<Compilation> INSTANCING_CRUMBLING_PREAMBLE = ctx -> {
-        ctx.requireExtension("GL_ARB_shader_draw_parameters");
-        ctx.define("_FLW_CRUMBLING");
+    private static final Consumer<Compilation> INSTANCING_VERTEX_PREAMBLE = ctx -> {
+        if (GlCompat.USE_INSTANCING_SELECTOR) {
+            ctx.define("_FLW_INSTANCING_SELECTOR");
+        }
     };
+    private static final Consumer<Compilation> INSTANCING_CRUMBLING_PREAMBLE = INSTANCING_VERTEX_PREAMBLE.andThen(ctx -> {
+        if (!GlCompat.USE_INSTANCING_SELECTOR) {
+            ctx.requireExtension("GL_ARB_shader_draw_parameters");
+        }
+        ctx.define("_FLW_CRUMBLING");
+    });
     private static final Consumer<Compilation> INDIRECT_CRUMBLING_PREAMBLE = INDIRECT_PREAMBLE.andThen(
             ctx -> ctx.define("_FLW_CRUMBLING"));
-    private static final Consumer<Compilation> INSTANCING_EMBEDDED_PREAMBLE = ctx -> ctx.define("FLW_EMBEDDED");
+    private static final Consumer<Compilation> INSTANCING_EMBEDDED_PREAMBLE = INSTANCING_VERTEX_PREAMBLE.andThen(
+            ctx -> ctx.define("FLW_EMBEDDED"));
     private static final Consumer<Compilation> INDIRECT_EMBEDDED_PREAMBLE = INDIRECT_PREAMBLE.andThen(
             ctx -> ctx.define("FLW_EMBEDDED"));
     private static boolean registeredReadsEmbedded;
@@ -132,11 +129,7 @@ public final class RenderPassShaders {
     private RenderPassShaders() {
     }
 
-    /**
-     * Whether an embedded draw of {@code material} needs its own {@link #EMBEDDED} program: some source it links
-     * (light, material, or any registered cutout/fog/instance vertex) reads {@code FLW_EMBEDDED}. Upstream compiles
-     * every embedded program with the define; here the rest share the non-embedded program and MDI run.
-     */
+    /** Populate on render thread before Vulkan warm workers; reload-generation cache. */
     public static boolean readsEmbedded(Material material) {
         if (readsEmbeddedSources != FlwPrograms.SOURCES) {
             readsEmbeddedSources = FlwPrograms.SOURCES;
@@ -185,7 +178,6 @@ public final class RenderPassShaders {
     }
 
     public static void mlabProducerDefines(Compilation ctx, OitInsertMode mode) {
-        // The interlock extension must ride right after #version, so it is emitted first.
         if (mode.needsInterlock()) {
             ctx.requireExtension("GL_ARB_fragment_shader_interlock");
         }
@@ -197,7 +189,6 @@ public final class RenderPassShaders {
 
     private static void mlabResolveDefines(Compilation ctx, OitInsertMode mode) {
         ctx.define(mode.define);
-        // _FLW_MLAB_MAX only sizes the resolve's local arrays; must equal OitConfig.MAX_LAYERS (K is a runtime uniform).
         ctx.define("_FLW_MLAB_MAX", "32");
         if (mode == OitInsertMode.ABUFFER) {
             ctx.define("_FLW_MLAB_WINDOW", "16u");
@@ -227,10 +218,6 @@ public final class RenderPassShaders {
                 materialShaders);
     }
 
-    /**
-     * Type-erased indirect vertex (VK): a typeId switch over every registered type; embedded folds into
-     * a runtime {@code matrixIndex > 0} branch.
-     */
     public static String assembleUberIndirectVertex(MaterialShaders materialShaders, boolean debug,
                                                     Consumer<Compilation> extra) {
         List<SourceComponent> roots = new ArrayList<>();
@@ -249,7 +236,7 @@ public final class RenderPassShaders {
 
     public static String assembleInstancingVertex(InstanceType<?> type, MaterialShaders materialShaders,
                                                   boolean debug) {
-        return assembleVertex(type, INSTANCING_PREAMBLE.andThen(debugVertexExtra(debug)),
+        return assembleVertex(type, INSTANCING_VERTEX_PREAMBLE.andThen(instancingDebugExtra(debug)),
                 new BufferTextureInstanceComponent(type), INSTANCING_MAIN, "instancing" + debugVertexSuffix(debug),
                 false, materialShaders);
     }
@@ -261,7 +248,7 @@ public final class RenderPassShaders {
     }
 
     public static String assembleInstancingCrumblingVertex(InstanceType<?> type, boolean debug) {
-        return assembleVertex(type, INSTANCING_CRUMBLING_PREAMBLE.andThen(debugVertexExtra(debug)),
+        return assembleVertex(type, INSTANCING_CRUMBLING_PREAMBLE.andThen(instancingDebugExtra(debug)),
                 new BufferTextureInstanceComponent(type), INSTANCING_MAIN,
                 "instancing_crumbling" + debugVertexSuffix(debug), false, StandardMaterialShaders.DEFAULT);
     }
@@ -280,7 +267,7 @@ public final class RenderPassShaders {
 
     public static String assembleInstancingEmbeddedVertex(InstanceType<?> type, MaterialShaders materialShaders,
                                                           boolean debug) {
-        return assembleVertex(type, INSTANCING_EMBEDDED_PREAMBLE.andThen(debugVertexExtra(debug)),
+        return assembleVertex(type, INSTANCING_EMBEDDED_PREAMBLE.andThen(instancingDebugExtra(debug)),
                 new BufferTextureInstanceComponent(type), INSTANCING_MAIN,
                 "instancing_embedded" + debugVertexSuffix(debug), false, materialShaders);
     }
@@ -331,7 +318,6 @@ public final class RenderPassShaders {
                 }, roots);
     }
 
-    // Upstream's _FLW_DEBUG switch, compile-keyed on the live DebugMode (the frame UBO is not part of the fragment interface).
     private static String debugSuffix(DebugMode debug) {
         return debug == DebugMode.OFF ? "" : "_debug_" + debug.getSerializedName();
     }
@@ -346,19 +332,25 @@ public final class RenderPassShaders {
         return ctx -> debugDefine(ctx, debug);
     }
 
-    // The vertex debug side is presence-only (the _flw_ids emission is mode-independent), so ONE debug vertex serves every fragment mode.
     private static Consumer<Compilation> debugVertexExtra(boolean debug) {
         return debug ? ctx -> ctx.define("_FLW_DEBUG") : ShaderAssembly.NO_EXTRA;
+    }
+
+    private static Consumer<Compilation> instancingDebugExtra(boolean debug) {
+        return ctx -> {
+            if (debug) {
+                if (!GlCompat.USE_INSTANCING_SELECTOR && ShaderAssembly.glslVersion().version < 460) {
+                    ctx.requireExtension("GL_ARB_shader_draw_parameters");
+                }
+                ctx.define("_FLW_DEBUG");
+            }
+        };
     }
 
     private static String debugVertexSuffix(boolean debug) {
         return debug ? "_debug" : "";
     }
 
-    /**
-     * Type-erased opaque fragment (VK): cutout/fog dispatch at runtime on the draw command's packedFogAndCutout;
-     * light + material shaders stay compile-keyed.
-     */
     public static String uberFragment(LightShader light, MaterialShaders materialShaders, LightSmoothness smoothness,
                                       DebugMode debug, Consumer<Compilation> extra) {
         List<SourceComponent> roots = new ArrayList<>(lightingRoots(light, true));
@@ -485,9 +477,6 @@ public final class RenderPassShaders {
                 }, roots);
     }
 
-    /**
-     * The insert-OIT fullscreen resolve (plain reads after a producer barrier -- no interlock).
-     */
     public static String assembleMlabResolve(OitInsertMode oitMode) {
         List<SourceComponent> roots = List.of(
                 FlwPrograms.SOURCES.get(MLAB),
@@ -516,7 +505,6 @@ public final class RenderPassShaders {
         ctx.define("flw_light0Direction", "Light0_Direction");
         ctx.define("flw_light1Direction", "Light1_Direction");
         if (indirect) {
-            // indirect/light.glsl binds its SSBOs at these points (== BufferBindings.LIGHT_LUT / LIGHT_SECTION).
             ctx.define("_FLW_LIGHT_LUT_BUFFER_BINDING", "5");
             ctx.define("_FLW_LIGHT_SECTIONS_BUFFER_BINDING", "6");
         }
@@ -534,12 +522,10 @@ public final class RenderPassShaders {
                                              CutoutShader cutout, FogShader fog, DebugMode debug,
                                              Consumer<Compilation> extra) {
         boolean depthRange = mode == OitMode.DEPTH_RANGE;
-        // Cutout applies only where the color is computed (COEFFS/EVALUATE); DEPTH_RANGE writes eye-Z only, never sampling the atlas.
         boolean useDiscard = !depthRange && cutout != CutoutShaders.OFF;
 
         List<SourceComponent> roots = new ArrayList<>();
         roots.add(FlwPrograms.SOURCES.get(WAVELET));
-        // DEPTH_RANGE writes only eye-Z, so it skips the light stack + per-material fragment (its flw_oit.fsh color branch is #ifdef'd out).
         if (!depthRange) {
             roots.addAll(lightingRoots(light, indirect));
             roots.add(FlwPrograms.SOURCES.get(materialShaders.fragmentSource()));
@@ -564,7 +550,6 @@ public final class RenderPassShaders {
                         ctx.define(mode.define);
                     }
                     if (!depthRange) {
-                        // fog.glsl must precede the spliced flw_fogFilter root; the preamble lands it first (the in-body dup dedups).
                         fragmentImports(ctx);
                         lightingDefines(ctx, indirect, smoothness);
                         debugDefine(ctx, debug);
@@ -611,7 +596,6 @@ public final class RenderPassShaders {
         return assemble("chunk_oit" + mode.name + (linear ? "_linear" : "") + ".fsh",
                 ctx -> {
                     ctx.define("_FLW_OIT");
-                    // globals.glsl (UseRgss) must precede the texel_filter root; the LINEAR define gates flw_sampleAtlas to its smooth branch.
                     ctx.mojImport("minecraft:globals.glsl");
                     coefficientDefines(ctx);
                     if (linear) {
@@ -624,7 +608,6 @@ public final class RenderPassShaders {
                 }, roots);
     }
 
-    // ENTITY-format families share the ber_oit sources; divergence rides variant defines.
     private static Identifier berVertexSource(BerFamily family) {
         return switch (family) {
             case ENTITY, ITEM, ENTITY_EMISSIVE -> BER_OIT_VERTEX;
@@ -760,7 +743,6 @@ public final class RenderPassShaders {
         if (!Compilation.DUMP_SHADER_SOURCE) {
             return;
         }
-        // Compiler jobs may dump different variants to the same diagnostic filename.
         synchronized (RenderPassShaders.class) {
             File file = new File(new File(Minecraft.getInstance().gameDirectory, "flywheel_sources/renderpass"),
                     fileName);
