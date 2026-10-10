@@ -8,6 +8,7 @@ import net.irisshaders.iris.gl.blending.BlendModeFunction;
 import net.irisshaders.iris.gl.blending.BlendModeOverride;
 import net.irisshaders.iris.gl.blending.BufferBlendInformation;
 import net.irisshaders.iris.gl.texture.InternalTextureFormat;
+import net.irisshaders.iris.gl.texture.PixelFormat;
 import net.irisshaders.iris.gl.texture.ShaderDataType;
 import net.irisshaders.iris.helpers.StringPair;
 import net.irisshaders.iris.shaderpack.option.OrderBackedProperties;
@@ -109,9 +110,10 @@ public final class ContractProperties {
                 if (buffer.index() == buffers[slot]) mode = buffer.blendMode();
             }
             // Only a declared source-over signal is composable without knowing the pack's deferred material ABI.
+            // Compat with Iris: RGB targets discard alpha, so their alpha blend factors do not affect storage.
             if (mode == null || mode.dstRgb() != GL11C.GL_ONE_MINUS_SRC_ALPHA
                     || mode.srcRgb() != GL11C.GL_SRC_ALPHA && mode.srcRgb() != GL11C.GL_ONE
-                    || !sourceOverAlpha(mode)) {
+                    || format.getPixelFormat() != PixelFormat.RGB && !sourceOverAlpha(mode)) {
                 FlwBackend.LOGGER.info(
                         "Shared OIT rejected: {} colortex{} is not source-over; retaining native translucency",
                         source.getName(), buffers[slot]);

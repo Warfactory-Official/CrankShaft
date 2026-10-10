@@ -5,6 +5,7 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import dev.engine_room.flywheel.api.model.Mesh;
 import dev.engine_room.flywheel.api.vertex.VertexList;
 import dev.engine_room.flywheel.backend.engine.MeshVertexExtras;
+import dev.engine_room.flywheel.lib.model.QuadIndexSequence;
 import dev.engine_room.flywheel.lib.model.QuadMesh;
 import dev.engine_room.flywheel.lib.model.baked.BakedMesh;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
@@ -69,7 +70,9 @@ public final class GuestVertexExtras implements MeshVertexExtras {
             }
         }
 
-        int quadVertices = mesh instanceof QuadMesh ? vertexCount - vertexCount % 4 : 0;
+        // Compat with Iris: RetexturedMesh preserves quad indices while wrapping the mesh's concrete type.
+        int quadVertices = mesh instanceof QuadMesh || mesh.indexSequence() == QuadIndexSequence.INSTANCE
+                ? vertexCount - vertexCount % 4 : 0;
         for (int vertex = quadVertices; vertex < vertexCount; vertex++) {
             long p = ptr + vertex * STRIDE;
             MemoryUtil.memSet(p + 4L, 0, 12L);

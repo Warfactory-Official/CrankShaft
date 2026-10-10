@@ -58,14 +58,31 @@ public final class VkCompilationTasks {
                 }
             })).toList();
             // Join all jobs even when one fails: no worker can outlive a reload, cache destruction or the device.
+            int joined = 0;
+            boolean frames = true;
             for (Future<?> future : futures) {
                 try {
-                    future.get();
+                    for (;;) {
+                        try {
+                            future.get(50, TimeUnit.MILLISECONDS);
+                            break;
+                        } catch (TimeoutException e) {
+                            if (!frames) continue;
+                            try {
+                                ShaderWarmupSplash.progress(joined, futures.size(), () -> {
+                                });
+                            } catch (Throwable frame) {
+                                frames = false;
+                                failure = mergeFailure(failure, frame);
+                            }
+                        }
+                    }
                 } catch (ExecutionException e) {
                     failure = mergeFailure(failure, e.getCause());
                 } catch (InterruptedException e) {
                     failure = mergeFailure(failure, e);
                 }
+                joined++;
             }
         } finally {
             cleanup = null;

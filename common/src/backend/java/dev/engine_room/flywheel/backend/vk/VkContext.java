@@ -5,6 +5,7 @@ import com.mojang.blaze3d.systems.GpuDevice;
 import com.mojang.blaze3d.systems.GpuDeviceBackend;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuSampler;
+import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vulkan.*;
 import com.mojang.blaze3d.vulkan.checkpoints.CheckpointExtension;
@@ -14,9 +15,12 @@ import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkBindlessTable;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorHeap;
 import dev.engine_room.flywheel.backend.vk.shader.VkShaderCompiler;
+import net.minecraft.client.Minecraft;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
+
+import java.util.Objects;
 
 public final class VkContext {
     private static boolean labelsUnavailable;
@@ -55,6 +59,35 @@ public final class VkContext {
         return ((VulkanGpuBuffer) buffer).vkBuffer();
     }
 
+    public static int mainDepthFormat() {
+        GpuTexture depth = Objects.requireNonNull(Minecraft.getInstance().gameRenderer.mainRenderTarget()
+                                                           .getDepthTexture());
+        return VulkanConst.toVk(depth.getFormat());
+    }
+
+    // Metal rejects a pipeline/attachment stencil-format mismatch; NVIDIA tolerates it.
+    public static int stencilFormat(int depthFormat) {
+        return depthFormat == VK12.VK_FORMAT_D32_SFLOAT_S8_UINT || depthFormat == VK12.VK_FORMAT_D24_UNORM_S8_UINT
+                ? depthFormat : VK12.VK_FORMAT_UNDEFINED;
+    }
+
+    public static void attachDepth(MemoryStack stack, VkRenderingInfo rendering, GpuTextureView depthView) {
+        long view = imageView(depthView);
+        rendering.pDepthAttachment(loadStore(stack, view));
+        if (depthView.texture().getFormat().hasStencilAspect()) {
+            rendering.pStencilAttachment(loadStore(stack, view));
+        }
+    }
+
+    private static VkRenderingAttachmentInfo loadStore(MemoryStack stack, long view) {
+        return VkRenderingAttachmentInfo.calloc(stack)
+                                        .sType$Default()
+                                        .imageView(view)
+                                        .imageLayout(VK12.VK_IMAGE_LAYOUT_GENERAL)
+                                        .loadOp(VK12.VK_ATTACHMENT_LOAD_OP_LOAD)
+                                        .storeOp(VK12.VK_ATTACHMENT_STORE_OP_STORE);
+    }
+
     public static VulkanCommandEncoder encoder() {
         return device().createCommandEncoder();
     }
@@ -64,11 +97,6 @@ public final class VkContext {
         encoder().queueForDestroy(destroyable);
     }
 
-    /**
-     * record in true chronological order into the encoder's single frame submit (vanilla ends and submits the buffer
-     * at its next seam). A standalone transient buffer spliced via {@code execute()} is deliberately NOT used -- the
-     * splice reorders around vanilla's pre-registered open buffer.
-     */
     /**
      * Render thread, from {@code VulkanDevice.close} ahead of its encoder (which flushes deferred destroys), allocator
      * and device: the engine's process-lifetime objects. Per-world engines are gone with their level.

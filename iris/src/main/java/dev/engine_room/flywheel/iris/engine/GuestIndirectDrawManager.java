@@ -8,6 +8,7 @@ import com.mojang.blaze3d.textures.GpuTextureView;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
+import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.api.model.Mesh;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
@@ -173,7 +174,7 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         if (!GuestPipelines.deferredTranslucent(pipeline) && !GuestPipelines.deferredOitActive(pipeline)) {
             boolean oit = GuestPipelines.oitActive(pipeline, false);
             for (UberDraw batch : uberOitMultiDraws) {
-                if (!batch.material()
+                if (batch.material().transparency() != Transparency.GLINT && !batch.material()
                           .writeMask()
                           .depth() && !(oit && GuestDrawManager.orderIndependent(batch.material(),
                         batch.drawTag()))) {
@@ -267,6 +268,7 @@ public class GuestIndirectDrawManager extends IndirectDrawManager implements Gue
         blendedEntityScratch.clear();
         boolean dropBlobShadows = GuestEntityShadows.suppressed();
         for (UberDraw batch : batches) {
+            if (shadowPass && GuestPipelines.nativeGlint() && batch.material().transparency() == Transparency.GLINT) continue;
             if (shadowPass && GuestDrawManager.emissive(batch.material())) continue;
             if (dropBlobShadows && GuestEntityShadows.isBlobShadow(batch.material())) {
                 continue;

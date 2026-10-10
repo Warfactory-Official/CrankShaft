@@ -201,6 +201,9 @@ directory, so later launches compile less. The program cache is kept per driver 
 is limited to 1 GiB; drivers that cannot load program binaries skip it. Deleting the folder is safe.
 `-Dcrankshaft.gl.programCache=false` and `-Dcrankshaft.glsl.sourceCache=false` turn the caches off.
 
+Shader compilation during loading that lasts longer than a quarter second adds a progress bar under the loading bar.
+Each program is cached as soon as it compiles, so closing the game mid-compile keeps the progress made so far.
+
 ### Instancing
 
 Flywheel provides an alternate, unified path for entity and block entity rendering that takes advantage of GPU
@@ -227,9 +230,9 @@ repositories {
 
 dependencies {
     // NeoForge
-    implementation("dev.engine_room:crankshaft-neoforge:1.5.9+mc26.2")
+    implementation("dev.engine_room:crankshaft-neoforge:1.5.10+mc26.2")
     // Fabric
-    implementation("dev.engine_room:crankshaft-fabric:1.5.9+mc26.2")
+    implementation("dev.engine_room:crankshaft-fabric:1.5.10+mc26.2")
 }
 ```
 
@@ -244,7 +247,7 @@ repositories {
     maven("https://repo.warfactory.co/snapshots")
 }
 
-implementation("dev.engine_room:crankshaft-fabric:1.5.9+mc26.2-SNAPSHOT")
+implementation("dev.engine_room:crankshaft-fabric:1.5.10+mc26.2-SNAPSHOT")
 ```
 
 ### License

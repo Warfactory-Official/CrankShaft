@@ -59,7 +59,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     static final int REGION_SIZE = 256;
     static final int MAX_VISIBLE_REGIONS = 4096;
     private static final int COLOR_FORMAT = VK12.VK_FORMAT_R8G8B8A8_UNORM;
-    private static final int DEPTH_FORMAT = VK12.VK_FORMAT_D32_SFLOAT;
     private static final int STORAGE = VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     private static final int INDIRECT = VK12.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
     private static final int UNIFORM = VK12.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
@@ -639,7 +638,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         }
         CullBuffers b = cull[pass][commandParity];
         VkGraphicsPipeline pipeline = f.programs().terrain()
-                                       .drawPipeline(pass == PASS_CUTOUT, COLOR_FORMAT, DEPTH_FORMAT);
+                                       .drawPipeline(pass == PASS_CUTOUT, COLOR_FORMAT);
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
         VK12.vkCmdBindIndexBuffer(cmd, f.indexVk(), 0L, VK12.VK_INDEX_TYPE_UINT32);
 

@@ -99,6 +99,8 @@ public final class GuestPipelines {
     private static final BlendModeOverride ENTITY_TRANSLUCENT_BLEND = new BlendModeOverride(new BlendMode(
             BlendModeFunction.SRC_ALPHA.getGlId(), BlendModeFunction.ONE_MINUS_SRC_ALPHA.getGlId(),
             BlendModeFunction.ONE.getGlId(), BlendModeFunction.ONE_MINUS_SRC_ALPHA.getGlId()));
+    private static final BlendModeOverride GLINT_BLEND = new BlendModeOverride(new BlendMode(
+            GL11C.GL_SRC_COLOR, GL11C.GL_ONE, GL11C.GL_ZERO, GL11C.GL_ONE));
     private static final BlendFunction COMPOSITE_BLEND = new BlendFunction(BlendFactor.SRC_ALPHA,
             BlendFactor.ONE_MINUS_SRC_ALPHA, BlendFactor.ONE, BlendFactor.ONE_MINUS_SRC_ALPHA);
     private static final Map<LinkKey, GuestProgram> PROGRAMS = new HashMap<>();
@@ -107,6 +109,8 @@ public final class GuestPipelines {
     private static final GuestOitTargets[] OIT_TARGETS = new GuestOitTargets[2];
     private static @Nullable IrisRenderingPipeline owner;
     private static @Nullable IrisRenderingPipeline warmed;
+    private static @Nullable IrisRenderingPipeline glintOwner;
+    private static boolean nativeGlint;
 
     private GuestPipelines() {
     }
@@ -311,6 +315,20 @@ public final class GuestPipelines {
     /** Resource apply/dimension entry; before visual draws. */
     public static void warmUp(IrisRenderingPipeline pipeline) {
         if (warmed == pipeline) return;
+        if (glintOwner != pipeline) {
+            glintOwner = pipeline;
+            ContractProgramSet contracts = contractSet((IrisRenderingPipelineAccessor) pipeline);
+            boolean nextNativeGlint = !contracts.flywheel$hasContract(ContractProgram.GBUFFERS_GLINT);
+            if (!nextNativeGlint) {
+                ProgramSource glint = contracts.flywheel$contractSource(ContractProgram.GBUFFERS_GLINT);
+                nextNativeGlint = glint.getTessControlSource().isPresent() || glint.getTessEvalSource().isPresent();
+            }
+            if (nativeGlint != nextNativeGlint) {
+                nativeGlint = nextNativeGlint;
+                // Compat with Iris: shader-only reloads can change glint's stage without changing the vertex format.
+                if (Minecraft.getInstance().level != null) Minecraft.getInstance().levelExtractor.allChanged();
+            }
+        }
         if (FlwConfig.INSTANCE.backend() == BackendManager.offBackend()) return;
         if (FlwPrograms.SOURCES == null || !GlCompat.SUPPORTS_INSTANCING) return;
         GuestShaders.clearTransformMemos();
@@ -355,6 +373,7 @@ public final class GuestPipelines {
         Map<LinkKey, List<RenderPipeline>> pending = new HashMap<>();
         Set<RenderPipeline> requested = new ReferenceOpenHashSet<>();
         try (GlCompilationBatch batch = new GlCompilationBatch()) {
+            batch.splash(0);
             for (InstanceType<?> type : types) {
                 for (Material material : materials) {
                     for (PackRole role : PackRole.values()) {
@@ -547,6 +566,7 @@ public final class GuestPipelines {
 
     /** Iris pipeline destruction, render thread; releases owned guest resources. */
     public static void release(IrisRenderingPipeline pipeline) {
+        if (glintOwner == pipeline) glintOwner = null;
         if (owner == pipeline) {
             track(null);
         }
@@ -575,6 +595,11 @@ public final class GuestPipelines {
         }
         owner = current;
         warmed = null;
+    }
+
+    /** Render-thread draw partitioning; selected when the active Iris pipeline is installed. */
+    public static boolean nativeGlint() {
+        return nativeGlint;
     }
 
     /** Order-independent draws admitted to contract OIT. */
@@ -815,7 +840,8 @@ public final class GuestPipelines {
         IrisRenderingPipelineAccessor accessor = (IrisRenderingPipelineAccessor) pipeline;
         AlphaTest alpha = contract != null ? AlphaTests.OFF : source.getDirectives()
                                                                     .getAlphaTestOverride()
-                                                                    .orElse(key.alphaTest());
+                                                                    .orElse(key.role() == PackRole.GLINT
+                                                                            ? ShaderKey.GLINT.getAlphaTest() : key.alphaTest());
         boolean nativeAdapter = source.getFragmentSource().orElseThrow().contains(ContractPatches.NATIVE_TRANSLUCENT);
         boolean nativeShadowAdapter = source.getFragmentSource().orElseThrow()
                                             .contains(ContractPatches.NATIVE_SHADOW_TRANSLUCENT);
@@ -873,7 +899,8 @@ public final class GuestPipelines {
                                            .getBufferBlendOverrides();
             blend = source.getDirectives()
                           .getBlendModeOverride()
-                          .orElse(key.role() == PackRole.ENTITIES_TRANSLUCENT ? ENTITY_TRANSLUCENT_BLEND
+                          .orElse(key.role() == PackRole.GLINT ? GLINT_BLEND
+                                  : key.role() == PackRole.ENTITIES_TRANSLUCENT ? ENTITY_TRANSLUCENT_BLEND
                                   : key.role().programId.getBlendModeOverride());
         }
         if (blend == null && key.role() == PackRole.ADDITIVE && deferredEmissive(pipeline)) {

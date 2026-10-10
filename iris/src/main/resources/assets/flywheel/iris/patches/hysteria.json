@@ -1,0 +1,30 @@
+{
+  "schema": 2,
+  "name": "Hysteria",
+  "testedVersions": [
+    "Hysteria v1.2.2"
+  ],
+  "matches": [
+    {
+      "path": "program/gbuffer/translucent.glsl",
+      "contains": [
+        "Hysteria"
+      ]
+    }
+  ],
+  "files": [],
+  "wrappers": [],
+  "blends": [],
+  "properties": "oit.gbuffers = true\noit.gbuffers.colortex0 = 0\noit.gbuffers.colortex1 = frontmost\noit.gbuffers.colortex2 = frontmost\n",
+  "forwardOit": {
+    "programs": [
+      "gbuffers_water"
+    ],
+    "paths": [
+      "shaders.properties"
+    ],
+    "fingerprints": [
+      "6d0582c72a1f1a6c359edabf62c8efc90082d6fe4065e25ba7884630c29d5923"
+    ]
+  }
+}

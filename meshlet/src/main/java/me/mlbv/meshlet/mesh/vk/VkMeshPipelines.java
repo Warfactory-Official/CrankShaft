@@ -70,6 +70,7 @@ public final class VkMeshPipelines {
             new Binding(0, SSBO, COMP), new Binding(1, SSBO, COMP), new Binding(7, SSBO, COMP),
             new Binding(8, SSBO, COMP), new Binding(14, SSBO, COMP),
             new Binding(5, UBO, COMP), new Binding(10, SAMPLER, COMP));
+    private final int depthFormat = Objects.requireNonNull(VkPrograms.get()).depthFormat();
     private final VkMeshPipeline[][] drawPipelines = new VkMeshPipeline[2][2];
     private final VkMeshPipeline[][] translucentDraw = new VkMeshPipeline[2][OitMode.values().length];
     private final VkMeshPipeline[][] translucentDrawFolded = new VkMeshPipeline[2][OitMode.values().length];
@@ -154,8 +155,8 @@ public final class VkMeshPipelines {
     public void warmUp() {
         VkPrograms programs = Objects.requireNonNull(VkPrograms.get());
         if (programs.usesGpuTerrain()) {
-            drawPipeline(false, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
-            drawPipeline(true, VK12.VK_FORMAT_R8G8B8A8_UNORM, VK12.VK_FORMAT_D32_SFLOAT);
+            drawPipeline(false, VK12.VK_FORMAT_R8G8B8A8_UNORM);
+            drawPipeline(true, VK12.VK_FORMAT_R8G8B8A8_UNORM);
             emitPipeline();
         }
         if (!programs.usesGpuTranslucentTerrain()) {
@@ -167,16 +168,16 @@ public final class VkMeshPipelines {
             if (mode == OitMode.OFF) {
                 continue;
             }
-            translucentDrawPipeline(mode, VK12.VK_FORMAT_D32_SFLOAT, false);
+            translucentDrawPipeline(mode, false);
             if (programs.localRead()) {
                 warmOptional(ProgramAvailability.Feature.LOCAL_READ,
-                        () -> translucentDrawPipeline(mode, VK12.VK_FORMAT_D32_SFLOAT, true));
+                        () -> translucentDrawPipeline(mode, true));
             }
         }
         for (OitInsertMode mode : OitInsertMode.values()) {
             if (OitConfig.supportsInsertMode(mode)) {
                 warmOptional(ProgramAvailability.insert(mode),
-                        () -> translucentMlabPipeline(mode, VK12.VK_FORMAT_D32_SFLOAT));
+                        () -> translucentMlabPipeline(mode));
             }
         }
     }
@@ -191,7 +192,7 @@ public final class VkMeshPipelines {
         }
     }
 
-    public VkMeshPipeline drawPipeline(boolean cutout, int colorFormat, int depthFormat) {
+    public VkMeshPipeline drawPipeline(boolean cutout, int colorFormat) {
         int idx = cutout ? 1 : 0;
         int lin = TerrainAtlasFilter.linear() ? 1 : 0;
         if (drawPipelines[idx][lin] == null) {
@@ -237,7 +238,7 @@ public final class VkMeshPipelines {
         return emitPipeline;
     }
 
-    public VkMeshPipeline translucentDrawPipeline(OitMode mode, int depthFormat, boolean localRead) {
+    public VkMeshPipeline translucentDrawPipeline(OitMode mode, boolean localRead) {
         int lin = TerrainAtlasFilter.linear() ? 1 : 0;
         VkMeshPipeline[] cache = localRead ? translucentDrawFolded[lin] : translucentDraw[lin];
         VkMeshPipeline p = cache[mode.ordinal()];
@@ -283,7 +284,7 @@ public final class VkMeshPipelines {
         return p;
     }
 
-    public VkMeshPipeline translucentMlabPipeline(OitInsertMode oitMode, int depthFormat) {
+    public VkMeshPipeline translucentMlabPipeline(OitInsertMode oitMode) {
         int lin = TerrainAtlasFilter.linear() ? 1 : 0;
         VkMeshPipeline p = translucentMlab[lin][oitMode.ordinal()];
         if (p == null) {

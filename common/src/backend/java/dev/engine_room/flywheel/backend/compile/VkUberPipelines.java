@@ -36,8 +36,10 @@ public final class VkUberPipelines {
     private final Map<UberOitKey, VkGraphicsPipeline> oitCache = new HashMap<>();
     private final Map<UberMlabKey, VkGraphicsPipeline> mlabCache = new HashMap<>();
     private final Map<CrumblingKey, VkGraphicsPipeline> crumblingCache = new HashMap<>();
+    private final int depthFormat;
 
-    VkUberPipelines() {
+    VkUberPipelines(int depthFormat) {
+        this.depthFormat = depthFormat;
     }
 
     private static void destroyModules(long... modules) {
@@ -276,7 +278,7 @@ public final class VkUberPipelines {
                                                                                   .getSerializedName()),
                     VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
             VkGraphicsPipeline.Config base = key.folded() ? VkOitPipelines.foldedProducerConfig(
-                    key.mode()) : VkOitPipelines.oitProducerConfig(key.mode());
+                    key.mode(), depthFormat) : VkOitPipelines.oitProducerConfig(key.mode(), depthFormat);
             var config = new VkGraphicsPipeline.Config(base.colorFormats(), base.blends(), base.depthTest(),
                     base.depthWrite(),
                     VkGraphicsPipeline.compareOp(key.depthTest()), base.vertex(),
@@ -330,7 +332,7 @@ public final class VkUberPipelines {
             var config = new VkGraphicsPipeline.Config(VkOitPipelines.MLAB_NO_COLOR, VkOitPipelines.MLAB_NO_BLEND, true,
                     false,
                     VkGraphicsPipeline.compareOp(key.depthTest()), VkGraphicsPipeline.Vertex.INTERNAL,
-                    key.cull() ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE, VkOitPipelines.FMT_D32,
+                    key.cull() ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE, depthFormat,
                     key.polygonOffset() ? 10.0F : 0.0F, key.polygonOffset() ? 1.0F : 0.0F);
             layout = new VkDescriptorLayout(withLineFrame(mlabProducerBindings(bindless, key.oitMode(), key.light()),
                     key.materialShaders()), 0, 0, bindless);

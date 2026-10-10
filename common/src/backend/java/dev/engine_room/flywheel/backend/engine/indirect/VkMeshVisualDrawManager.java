@@ -173,7 +173,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         for (MeshDrawRun multiDraw : meshMultiDraws) {
             Material material = multiDraw.material();
             VkMeshPipeline pipeline = meshVisualPipelines().solidPipeline(multiDraw.type(), material,
-                    multiDraw.embedded(), COLOR_FORMAT, DEPTH_FORMAT);
+                    multiDraw.embedded(), COLOR_FORMAT, programs.depthFormat());
             if (pipeline != lastPipeline) {
                 bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
                 lastPipeline = pipeline;
@@ -215,7 +215,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
 
         for (MeshDrawRun multiDraw : draws) {
             VkMeshPipeline pipeline = meshVisualPipelines().oitPipeline(multiDraw.type(), multiDraw.material(),
-                    multiDraw.embedded(), mode, DEPTH_FORMAT, folded);
+                    multiDraw.embedded(), mode, programs.depthFormat(), folded);
             if (pipeline != lastPipeline) {
                 bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
                 lastPipeline = pipeline;
@@ -264,7 +264,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
 
         for (MeshDrawRun multiDraw : draws) {
             VkMeshPipeline pipeline = meshVisualPipelines().mlabPipeline(multiDraw.type(), multiDraw.material(),
-                    multiDraw.embedded(), oitMode, DEPTH_FORMAT);
+                    multiDraw.embedded(), oitMode, programs.depthFormat());
             if (pipeline != lastPipeline) {
                 bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
                 lastPipeline = pipeline;
@@ -300,7 +300,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
             return true;
         }
         VkMeshPipeline pipeline = meshVisualPipelines().crumblingPipeline(crumblingMaterial, instanceType, COLOR_FORMAT,
-                DEPTH_FORMAT);
+                programs.depthFormat());
         VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
 
         Material material = draw.material();

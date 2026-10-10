@@ -12,14 +12,20 @@ import org.lwjgl.system.MemoryUtil;
 import java.util.*;
 import java.util.function.IntConsumer;
 
-/** Render-thread only; unretained shaders/unpublished programs deleted on close. */
+/**
+ * Render-thread only; unretained shaders/unpublished programs deleted on close. Linked programs store binaries as
+ * they complete; validation failures throw only from {@link #finish}.
+ */
 public final class GlCompilationBatch implements AutoCloseable {
     private final Map<StageKey, Integer> sharedStages = new HashMap<>();
     private final List<Stage> stages = new ArrayList<>();
     private final Map<Integer, Stage> stageHandles = new HashMap<>();
     private final List<Program> programs = new ArrayList<>();
+    private final ArrayDeque<Program> linking = new ArrayDeque<>();
     private final Set<Integer> retainedStages = new HashSet<>();
     private final int parallelApi;
+    private @Nullable IntConsumer progress;
+    private int completed;
     private boolean hinted;
     private int previousThreadHint;
     private int reusedStages;
@@ -31,6 +37,21 @@ public final class GlCompilationBatch implements AutoCloseable {
         GLCapabilities caps = GL.getCapabilities();
         parallelApi = caps.GL_ARB_parallel_shader_compile && caps.glMaxShaderCompilerThreadsARB != MemoryUtil.NULL ? 1
                 : caps.GL_KHR_parallel_shader_compile && caps.glMaxShaderCompilerThreadsKHR != MemoryUtil.NULL ? 2 : 0;
+    }
+
+    /** Reports to {@link ShaderWarmupSplash}; {@code total <= 0} unknown. */
+    public void splash(int total) {
+        progress = done -> {
+            ShaderWarmupSplash.progress(done, total, GlCompilationBatch::raiseFatalError);
+            if (ShaderWarmupSplash.cancelled) throw new ShaderWarmupSplash.CancellationException();
+        };
+    }
+
+    // Frames consume GL errors.
+    private static void raiseFatalError() {
+        int error = GlStateManager._getError();
+        if (error == GL11C.GL_OUT_OF_MEMORY) throw new OutOfMemoryError("OpenGL out of memory compiling shaders");
+        if (error == GL45C.GL_CONTEXT_LOST) throw new IllegalStateException("OpenGL context lost compiling shaders");
     }
 
     private void hintThreads() {
@@ -98,6 +119,8 @@ public final class GlCompilationBatch implements AutoCloseable {
         programs.add(pending);
         if (key != null && GlProgramBinaryCache.load(key, program)) {
             pending.loaded = true;
+            completed++;
+            report();
             return program;
         }
         hintThreads();
@@ -116,20 +139,47 @@ public final class GlCompilationBatch implements AutoCloseable {
         }
         if (key != null) GlProgramBinaryCache.retrievable(program);
         GlStateManager.glLinkProgram(program);
+        linking.add(pending);
+        drain(false);
+        report();
         return program;
+    }
+
+    // In link order; parallel compile: non-blocking stops at the first incomplete program.
+    private void drain(boolean block) {
+        while (!linking.isEmpty()) {
+            Program program = linking.peekFirst();
+            if (!block && parallelApi != 0 && GlStateManager.glGetProgrami(program.handle,
+                    ARBParallelShaderCompile.GL_COMPLETION_STATUS_ARB) == 0) {
+                return;
+            }
+            linking.removeFirst();
+            program.linked = GlStateManager.glGetProgrami(program.handle, GL20C.GL_LINK_STATUS) != 0;
+            program.log = GlStateManager.glGetProgramInfoLog(program.handle, 32768);
+            if (program.key != null && program.linked && !program.log.contains("Failed for unknown reason")) {
+                GlProgramBinaryCache.store(program.key, program.handle);
+            }
+            completed++;
+            if (block) report();
+        }
+    }
+
+    private void report() {
+        if (progress != null) progress.accept(completed);
     }
 
     /** Validates before shader/program ownership transfer. */
     public void finish(Runnable publishShaders) {
         int pendingAtValidation = 0;
         if (parallelApi != 0) {
-            for (Program program : programs) {
+            for (Program program : linking) {
                 if (GlStateManager.glGetProgrami(program.handle,
                         ARBParallelShaderCompile.GL_COMPLETION_STATUS_ARB) == 0) {
                     pendingAtValidation++;
                 }
             }
         }
+        drain(true);
         for (Stage stage : stages) {
             if (stage.compiled && GlStateManager.glGetShaderi(stage.handle, GL20C.GL_COMPILE_STATUS) == 0) {
                 Set<String> failed = new LinkedHashSet<>();
@@ -152,15 +202,10 @@ public final class GlCompilationBatch implements AutoCloseable {
                 loaded++;
                 continue;
             }
-            int status = GlStateManager.glGetProgrami(program.handle, GL20C.GL_LINK_STATUS);
-            String log = GlStateManager.glGetProgramInfoLog(program.handle, 32768);
-            if (status == 0 || log.contains("Failed for unknown reason")) {
-                throw failure("Failed to link " + program.label + ": " + log, Set.of(program.label));
+            if (!program.linked || program.log.contains("Failed for unknown reason")) {
+                throw failure("Failed to link " + program.label + ": " + program.log, Set.of(program.label));
             }
-            if (!log.isEmpty()) FlwBackend.LOGGER.info("Info log when linking {}: {}", program.label, log);
-        }
-        for (Program program : programs) {
-            if (!program.loaded && program.key != null) GlProgramBinaryCache.store(program.key, program.handle);
+            if (!program.log.isEmpty()) FlwBackend.LOGGER.info("Info log when linking {}: {}", program.label, program.log);
         }
         publishShaders.run();
         for (Program program : programs) {
@@ -234,6 +279,8 @@ public final class GlCompilationBatch implements AutoCloseable {
         private boolean loaded;
         private boolean attached;
         private boolean transferred;
+        private boolean linked;
+        private String log = "";
 
         private Program(int handle, String label, int[] shaders, IntConsumer publish, @Nullable String key) {
             this.handle = handle;

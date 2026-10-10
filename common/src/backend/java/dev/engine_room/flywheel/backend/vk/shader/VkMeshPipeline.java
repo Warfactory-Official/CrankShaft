@@ -145,7 +145,10 @@ public final class VkMeshPipeline {
                                                                                                  stack.ints(
                                                                                                          colorFormats))
                                                                                          .depthAttachmentFormat(
-                                                                                                 depthFormat);
+                                                                                                 depthFormat)
+                                                                                         .stencilAttachmentFormat(
+                                                                                                 VkContext.stencilFormat(
+                                                                                                         depthFormat));
             if (attachmentLocations != null) {
                 VkRenderingInputAttachmentIndexInfoKHR inputIndices = VkRenderingInputAttachmentIndexInfoKHR.calloc(
                                                                                                                     stack)

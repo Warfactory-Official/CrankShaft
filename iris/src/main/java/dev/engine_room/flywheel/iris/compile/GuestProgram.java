@@ -219,7 +219,7 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
                                                                           .get(floats9));
         }
         if (projectionInverse > -1) {
-            Matrix4fc projection = shadow ? MatrixUtils.undoRevZ(ShadowRenderer.PROJECTION)
+            Matrix4fc projection = shadow ? MatrixUtils.toMinusOneToOne(ShadowRenderer.PROJECTION)
                     : CapturedRenderingState.INSTANCE.getGbufferProjection();
             IrisRenderSystem.uniformMatrix4fv(projectionInverse, false, projection.invert(scratch)
                                                                                   .get(floats16));

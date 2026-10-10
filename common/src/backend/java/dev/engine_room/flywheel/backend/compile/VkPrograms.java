@@ -75,8 +75,9 @@ public class VkPrograms extends AtomicReferenceCounted {
     private final boolean bindlessTextures;
     private final boolean localRead;
     private final boolean descriptorBuffers;
-    private final VkUberPipelines uber = new VkUberPipelines();
-    private final VkOitPipelines oit = new VkOitPipelines();
+    private final int depthFormat;
+    private final VkUberPipelines uber;
+    private final VkOitPipelines oit;
     private final VkMeshVisualPipelines meshVisual = new VkMeshVisualPipelines();
     private final VkTerrainPrograms terrain;
     private final Map<Integer, VkComputePipeline> cullCache = new HashMap<>();
@@ -94,7 +95,10 @@ public class VkPrograms extends AtomicReferenceCounted {
 
     private VkPrograms(ShaderSources sources) {
         this.sources = sources;
-        this.terrain = new VkTerrainPrograms(sources);
+        depthFormat = VkContext.mainDepthFormat();
+        uber = new VkUberPipelines(depthFormat);
+        oit = new VkOitPipelines(depthFormat);
+        terrain = new VkTerrainPrograms(sources, depthFormat);
         hiZRoute = VkCaps.MULTI_MIP_HIZ && ProgramAvailability.allows(ProgramAvailability.Feature.HIZ_MULTI)
                 ? HiZRoute.MULTI_MIP
                 : VkCaps.SINGLE_MIP_HIZ && ProgramAvailability.allows(ProgramAvailability.Feature.HIZ_SINGLE)
@@ -139,6 +143,10 @@ public class VkPrograms extends AtomicReferenceCounted {
 
     public boolean descriptorBuffers() {
         return descriptorBuffers;
+    }
+
+    public int depthFormat() {
+        return depthFormat;
     }
 
     public boolean rejectInstanceRoute() {
@@ -345,7 +353,7 @@ public class VkPrograms extends AtomicReferenceCounted {
     public VkComputePipeline applyPipeline() {
         if (applyPipeline == null) {
             applyPipeline = optional(ProgramAvailability.Feature.INSTANCE_CULL,
-                    () -> buildComputePipeline("utilities/apply", APPLY_MAIN, applyBindings(), 0));
+                    () -> buildComputePipeline("utilities/apply", APPLY_MAIN, applyBindings(), Integer.BYTES));
         }
         return applyPipeline;
     }

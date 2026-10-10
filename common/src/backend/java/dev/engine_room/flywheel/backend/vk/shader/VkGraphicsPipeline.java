@@ -172,7 +172,10 @@ public final class VkGraphicsPipeline {
                                                                                                  stack.ints(
                                                                                                          config.colorFormats()))
                                                                                          .depthAttachmentFormat(
-                                                                                                 config.depthFormat());
+                                                                                                 config.depthFormat())
+                                                                                         .stencilAttachmentFormat(
+                                                                                                 VkContext.stencilFormat(
+                                                                                                         config.depthFormat()));
             if (config.attachmentLocations() != null) {
                 VkRenderingInputAttachmentIndexInfoKHR inputIndices = VkRenderingInputAttachmentIndexInfoKHR.calloc(
                                                                                                                     stack)

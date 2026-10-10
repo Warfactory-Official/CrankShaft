@@ -168,7 +168,7 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
         }
         Minecraft mc = Minecraft.getInstance();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/mesh/translucent_oit/" + mode.name);
-        VkMeshPipeline pipeline = pipelines.translucentDrawPipeline(mode, VK12.VK_FORMAT_D32_SFLOAT, localRead);
+        VkMeshPipeline pipeline = pipelines.translucentDrawPipeline(mode, localRead);
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
 
         long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS)
@@ -222,7 +222,7 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
         }
         Minecraft mc = Minecraft.getInstance();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/mesh/translucent_mlab/" + oitMode);
-        VkMeshPipeline pipeline = pipelines.translucentMlabPipeline(oitMode, VK12.VK_FORMAT_D32_SFLOAT);
+        VkMeshPipeline pipeline = pipelines.translucentMlabPipeline(oitMode);
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
 
         long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS)

@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.iris.compile;
 
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.CutoutShader;
 import dev.engine_room.flywheel.api.material.Transparency;
@@ -98,6 +99,8 @@ public final class GuestShaders {
 
     private static final ShaderAttributeInputs INPUTS = new ShaderAttributeInputs(IrisVertexFormats.ENTITY, false,
             false, false, false, false);
+    private static final ShaderAttributeInputs GLINT_INPUTS = new ShaderAttributeInputs(DefaultVertexFormat.POSITION_TEX,
+            false, false, true, false, false);
 
     private static final Pattern VERSION_LINE = Pattern.compile("#version\\s+(\\d+)[^\\n]*\\n");
     private static final Pattern ALPHA_DITHER_DISCARD = Pattern.compile(
@@ -185,10 +188,12 @@ public final class GuestShaders {
             packVertex = ADAPTED.computeIfAbsent(new TextPair("shadowVertex", packVertex, packFragment),
                     pair -> SundialTranslucent.shadowVertex(pair.first(), pair.second()));
         }
-        Map<PatchShaderType, String> patched = TransformPatcher.patchVanilla(source.getName(),
+        // Compat with Iris: virtual shadow names must satisfy its depth transform's shadow-name predicate.
+        String transformName = key.role().shadow ? source.getName() + "_shadow" : source.getName();
+        Map<PatchShaderType, String> patched = TransformPatcher.patchVanilla(transformName,
                 packVertex, source.getGeometrySource().orElse(null),
                 source.getTessControlSource().orElse(null), source.getTessEvalSource().orElse(null),
-                packFragment, alpha, false, false, true, INPUTS,
+                packFragment, alpha, false, false, true, !contract && key.role() == PackRole.GLINT ? GLINT_INPUTS : INPUTS,
                 pipeline.getTextureMap());
         patched.forEach((stage, text) -> requireSupportedStage(source.getName() + "/" + stage, text));
 
@@ -220,7 +225,7 @@ public final class GuestShaders {
         boolean proxy = contract || PROXY_INPUTS.stream()
                                                 .anyMatch(inputs.types()::containsKey);
         boolean emissive = key.role() == PackRole.ADDITIVE;
-        String library = library(body, key, !contract && !key.crumbling() && !emissive
+        String library = library(body, key, !contract && !key.crumbling() && !emissive && key.role() != PackRole.GLINT
                         ? source.getParent().getPackDirectives() : null, contract, oit != null, proxy, emissive,
                 emissive && GuestPipelines.deferredEmissive(pipeline));
         String fragment = shiftBufferBindings(modelChunkFade(patched.get(PatchShaderType.FRAGMENT), shadow));

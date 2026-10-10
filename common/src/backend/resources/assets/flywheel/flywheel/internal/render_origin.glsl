@@ -28,6 +28,7 @@ uint _flw_dynamicLightKey(ivec3 cell) {
 }
 
 // LambDynamicLights falloff at the block centre, no occlusion: max(luminance - distance * 15 / 7.75), 0-15.
+// Compat with SEUS: its water-stage varying named distance hides the GLSL built-in.
 float _flw_dynamicBlockLight(vec3 pos) {
     ivec3 block = ivec3(floor(pos));
     vec3 centre = vec3(block) + 0.5;
@@ -36,7 +37,7 @@ float _flw_dynamicBlockLight(vec3 pos) {
         vec4 a = _flw_dynamicSegments[2u * i];
         vec3 ab = _flw_dynamicSegments[2u * i + 1u].xyz - a.xyz;
         float t = clamp(dot(centre - a.xyz, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
-        result = max(result, a.w - distance(centre, a.xyz + t * ab) * (15.0 / 7.75));
+        result = max(result, a.w - length(centre - (a.xyz + t * ab)) * (15.0 / 7.75));
     }
     if (_flw_dynamicLightCount == 0u || any(lessThan(centre, _flw_dynamicLightMin.xyz))
             || any(greaterThan(centre, _flw_dynamicLightMax.xyz))) {
@@ -48,7 +49,7 @@ float _flw_dynamicBlockLight(vec3 pos) {
     for (uint i = cell & 0xFFFFu; i < end; i++) {
         uint light = (_flw_dynamicLightIndices[i >> 3u][(i >> 1u) & 3u] >> ((i & 1u) << 4u)) & 0xFFFFu;
         vec4 source = _flw_dynamicLights[light];
-        result = max(result, source.w - distance(centre, source.xyz) * (15.0 / 7.75));
+        result = max(result, source.w - length(centre - source.xyz) * (15.0 / 7.75));
     }
     return min(result, 15.0);
 }

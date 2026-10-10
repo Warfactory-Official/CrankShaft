@@ -1,0 +1,70 @@
+{
+  "schema": 2,
+  "name": "SEUS PTGI HRR Test 2.1 GFME 1.22 RC1",
+  "testedVersions": [
+    "SEUS PTGI HRR Test 2.1 GFME 1.22 RC1"
+  ],
+  "matches": [
+    {
+      "path": "gbuffers_water.fsh",
+      "contains": [
+        "/program/gbuffers_water.fsh.glsl"
+      ]
+    }
+  ],
+  "files": [],
+  "wrappers": [],
+  "blends": [],
+  "properties": "blend.clrwl_gbuffers_translucent = ONE ZERO ONE ZERO\n",
+  "deferred": {
+    "profile": "SEUS",
+    "sources": {
+      "programs": [
+        "gbuffers_water",
+        "gbuffers_textured",
+        "composite",
+        "composite1",
+        "composite2",
+        "composite3",
+        "composite4",
+        "composite5",
+        "composite6",
+        "composite7",
+        "composite8",
+        "composite9",
+        "composite10",
+        "composite11",
+        "composite12",
+        "composite13",
+        "composite14",
+        "composite15",
+        "gbuffers_beaconbeam",
+        "gbuffers_particles_translucent",
+        "gbuffers_textured_lit",
+        "deferred",
+        "deferred1",
+        "deferred2",
+        "deferred3",
+        "deferred4",
+        "deferred5",
+        "deferred6",
+        "deferred7",
+        "deferred8",
+        "deferred9",
+        "deferred10",
+        "deferred11",
+        "deferred12"
+      ],
+      "paths": [
+        "shaders.properties"
+      ],
+      "fingerprints": [
+        "ced28ecec50ced78e3dbea983e13c69ef76fc07c6a81f53acb4bfb35602823a7"
+      ]
+    }
+  },
+  "deferredTranslucent": true,
+  "deferredEmissive": true,
+  "patches": [],
+  "programs": []
+}

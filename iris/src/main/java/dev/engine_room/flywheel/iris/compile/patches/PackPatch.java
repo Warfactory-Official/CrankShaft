@@ -30,7 +30,8 @@ record PackPatch(int schema, String name, List<String> testedVersions, List<Sour
     private static final Pattern INCLUDE = Pattern.compile("(?m)^\\h*#\\h*include\\h+\"([^\"]+)\"");
     private static final List<PackPatch> PATCHES = List.of("complementary", "euphoria", "solas", "iteration", "sundial",
                                                                "bsl",
-                                                               "makeup", "photon", "bliss", "sildur")
+                                                               "makeup", "photon", "bliss", "sildur", "hysteria",
+                                                               "seus_hrr21", "seus_hrr3", "seus_gfme")
                                                        .stream().map(PackPatch::load).toList();
 
     PackPatch {

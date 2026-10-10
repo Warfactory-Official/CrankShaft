@@ -284,17 +284,11 @@ final class VkWaveletOitChain extends VkOitChain {
                      .storeOp(VK12.VK_ATTACHMENT_STORE_OP_STORE)
                      .clearValue(clear);
             }
-            VkRenderingAttachmentInfo depth = VkRenderingAttachmentInfo.calloc(stack)
-                                                                       .sType$Default()
-                                                                       .imageView(VkContext.imageView(depthView))
-                                                                       .imageLayout(VK12.VK_IMAGE_LAYOUT_GENERAL)
-                                                                       .loadOp(VK12.VK_ATTACHMENT_LOAD_OP_LOAD)
-                                                                       .storeOp(VK12.VK_ATTACHMENT_STORE_OP_STORE);
             VkRenderingInfo rendering = VkRenderingInfo.calloc(stack).sType$Default();
             rendering.renderArea().extent().set(width, height);
             rendering.layerCount(1)
-                     .pColorAttachments(color)
-                     .pDepthAttachment(depth);
+                     .pColorAttachments(color);
+            VkContext.attachDepth(stack, rendering, depthView);
             KHRDynamicRendering.vkCmdBeginRenderingKHR(cmd, rendering);
 
             VkRenderingInputAttachmentIndexInfoKHR inputIndices = VkRenderingInputAttachmentIndexInfoKHR.calloc(stack)

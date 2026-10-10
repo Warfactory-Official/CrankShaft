@@ -19,7 +19,9 @@ import java.util.Set;
 
 public enum DeferredOitProfile {
     SUNDIAL(new SundialDeferredAdapter()),
-    ITERATION(new IterationDeferredAdapter());
+    ITERATION(new IterationDeferredAdapter()),
+    SEUS(new SeusDeferredAdapter(false)),
+    SEUS_HRR3(new SeusDeferredAdapter(true));
 
     private final DeferredOitAdapter adapter;
     private final boolean capturesTerrain;

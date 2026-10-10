@@ -91,7 +91,10 @@ public final class RenderPipelineCompiler {
         }
         GlDevice device = (GlDevice) RenderSystem.getDevice().backend;
         Map<GlDevice.ShaderCompilationKey, GlShaderModule> pendingShaders = new LinkedHashMap<>();
+        int uncached = 0;
+        for (RenderPipeline pipeline : requests.keySet()) if (device.pipelineCache.get(pipeline) == null) uncached++;
         try (GlCompilationBatch batch = new GlCompilationBatch()) {
+            batch.splash(uncached);
             for (var request : requests.entrySet()) {
                 RenderPipeline pipeline = request.getKey();
                 GlRenderPipeline cached = device.pipelineCache.get(pipeline);

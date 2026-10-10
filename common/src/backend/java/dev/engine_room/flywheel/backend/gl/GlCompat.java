@@ -45,10 +45,10 @@ public final class GlCompat {
     public static final int MAX_TEXTURE_BUFFER_SIZE = maxTextureBufferSize();
     public static final boolean SUPPORTS_INDIRECT = isIndirectSupported();
     public static final int MAX_SHADER_STORAGE_BUFFER_BINDINGS = maxShaderStorageBufferBindings();
+    public static final boolean SUPPORTS_NV_BUFFER_LOAD = isNvBufferLoadSupported();
     @Nullable
     public static final String TERRAIN_UNSUPPORTED_REASON = terrainUnsupportedReason();
     public static final boolean SUPPORTS_TERRAIN = TERRAIN_UNSUPPORTED_REASON == null;
-    public static final boolean SUPPORTS_NV_BUFFER_LOAD = isNvBufferLoadSupported();
     public static final boolean SUPPORTS_TERRAIN_MESH = isMeshShaderSupported();
     public static final boolean SUPPORTS_BINDLESS_TEXTURES = isBindlessTextureSupported();
     public static final boolean SUPPORTS_DEBUG_GROUP = CAPABILITIES != null && CAPABILITIES.glPushDebugGroup != MemoryUtil.NULL;
@@ -243,6 +243,12 @@ public final class GlCompat {
         if (!(CAPABILITIES.OpenGL43 || CAPABILITIES.GL_ARB_shader_storage_buffer_object)) {
             return "shader storage buffers are unavailable";
         }
+        // Port: MDI replay uses SSBOs 10-11; the non-NV terrain cull uses 9-15.
+        int requiredBindings = SUPPORTS_NV_BUFFER_LOAD ? 12 : 16;
+        if (MAX_SHADER_STORAGE_BUFFER_BINDINGS < requiredBindings) {
+            return "terrain requires " + requiredBindings + " SSBO binding points; host exposes "
+                    + MAX_SHADER_STORAGE_BUFFER_BINDINGS;
+        }
         if (!(CAPABILITIES.OpenGL43 || CAPABILITIES.GL_ARB_multi_draw_indirect)) {
             return "multi draw indirect is unavailable";
         }
@@ -282,17 +288,25 @@ public final class GlCompat {
     }
 
     private static boolean canCompileVersion(GlslVersion version) {
-        int handle = GL20.glCreateShader(GL20.GL_VERTEX_SHADER);
+        int handle = GL20.glCreateShader(GL20.GL_FRAGMENT_SHADER);
         if (handle == 0) {
             int error = GL11C.glGetError();
             if (error == GL11C.GL_OUT_OF_MEMORY) throw new OutOfMemoryError("Allocating GLSL version probe");
             throw new IllegalStateException("Could not allocate GLSL version probe: GL error 0x" + Integer.toHexString(error));
         }
         try {
+            // Compat with legacy NVIDIA: #version can succeed while wavelet's fragment fma is unavailable.
+            String body = version.compareTo(GlslVersion.V400) >= 0 ? """
+                    uniform vec3 _flw_probeInput;
+                    out float _flw_probeResult;
+                    void main() {
+                        _flw_probeResult = fma(_flw_probeInput.x, _flw_probeInput.y, _flw_probeInput.z);
+                    }
+                    """ : "void main() {}";
             var source = """
                     #version %d
-                    void main() {}
-                    """.formatted(version.version);
+                    %s
+                    """.formatted(version.version, body);
             safeShaderSource(handle, source);
             GL20.glCompileShader(handle);
             boolean success = GL20.glGetShaderi(handle, GL20.GL_COMPILE_STATUS) == GL11.GL_TRUE;

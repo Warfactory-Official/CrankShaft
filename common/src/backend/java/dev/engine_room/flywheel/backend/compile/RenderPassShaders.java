@@ -13,6 +13,7 @@ import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainVertexFormat;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
+import dev.engine_room.flywheel.backend.glsl.GlslVersion;
 import dev.engine_room.flywheel.backend.glsl.ShaderSources;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
@@ -574,6 +575,9 @@ public final class RenderPassShaders {
                 ctx -> {
                     if (mdi) {
                         ctx.define("_FLW_TRANSLUCENT_MDI");
+                        // 26.2: A core-3.3 host may expose SSBOs through the extension rather than its GLSL version.
+                        if (ShaderAssembly.glslVersion().compareTo(GlslVersion.V430) < 0)
+                            ctx.requireExtension("GL_ARB_shader_storage_buffer_object");
                     }
                     if (fade) {
                         ctx.define("_FLW_TRANSLUCENT_FADE");

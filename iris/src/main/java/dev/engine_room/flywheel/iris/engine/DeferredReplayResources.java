@@ -44,6 +44,10 @@ public interface DeferredReplayResources extends AutoCloseable {
     default void replayCommands(int buffer, long computeOffset) {
     }
 
+    /** Completes capture-side work before demand readback, including the single-layer native path. */
+    default void prepareCapture() {
+    }
+
     void snapshot();
 
     /**

@@ -310,8 +310,10 @@ public final class DeferredOitRenderer implements AutoCloseable {
     }
 
     private void replay() {
-        harvestReadbacks();
+        resources.prepareCapture();
+        // Publish capture to both shader consumers and API copies/clears made while harvesting demand.
         GL43C.glMemoryBarrier(GL43C.GL_SHADER_STORAGE_BARRIER_BIT | GL43C.GL_BUFFER_UPDATE_BARRIER_BIT);
+        harvestReadbacks();
         if (readbackFence[readbackSlot] == 0) {
             GL45C.glCopyNamedBufferSubData(counts.getId(), readback[readbackSlot], 0, 0, 16);
             readbackBounds[readbackSlot] = layerBound;
@@ -651,7 +653,6 @@ public final class DeferredOitRenderer implements AutoCloseable {
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, nodes.getIndex(), buffer);
         poolNodes = count;
         // Capture ran before the asynchronous resize decision; the replacement has no nodes for this frame.
-        GL43C.glMemoryBarrier(GL43C.GL_BUFFER_UPDATE_BARRIER_BIT);
         GL45C.glClearNamedBufferSubData(counts.getId(), GL30C.GL_R32UI, 4, 4,
                 GL30C.GL_RED_INTEGER, GL11C.GL_UNSIGNED_INT, INVALID_CAPTURE);
     }

@@ -219,7 +219,6 @@ final class SundialReplayResources implements DeferredReplayResources {
         GL45C.glProgramUniform1i(program, widthLocation, width);
         GL45C.glProgramUniform1i(program, layerLocation, layer);
         draw(indexType, offset);
-        GL43C.glMemoryBarrier(GL42C.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL43C.GL_FRAMEBUFFER_BARRIER_BIT);
     }
 
     @Override

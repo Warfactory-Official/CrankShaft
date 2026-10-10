@@ -17,6 +17,7 @@
     "GlCommandEncoderMixin",
     "GlTextureMixin",
     "GlyphStitcherMixin",
+    "GuiMixin",
     "ItemMixin",
     "LambDynLightsAccessor",
     "LevelMixin",

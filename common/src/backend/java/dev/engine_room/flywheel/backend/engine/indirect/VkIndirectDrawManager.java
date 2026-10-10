@@ -48,6 +48,7 @@ import net.minecraft.util.Mth;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
+import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkBufferCopy;
@@ -57,7 +58,6 @@ import java.util.*;
 
 public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     static final int COLOR_FORMAT = VK10.VK_FORMAT_R8G8B8A8_UNORM;
-    static final int DEPTH_FORMAT = VK10.VK_FORMAT_D32_SFLOAT;
     static final int DRAW_COMMAND_STRIDE = (int) IndirectBuffers.DRAW_COMMAND_STRIDE;
     private static final long ZERO_BYTES = 1L << 18;
     private static final int MODEL_STRIDE = 28;
@@ -452,6 +452,10 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle());
         writer.storage(3, pass2 ? fs.model2 : fs.model).storage(4, pass2 ? fs.draw2 : fs.draw);
         writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.layout());
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VK10.vkCmdPushConstants(cmd, pipeline.layout().pipelineLayout(), VK10.VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                    stack.ints(frameDrawCount));
+        }
         VK10.vkCmdDispatch(cmd, Mth.positiveCeilDiv(frameDrawCount, VkCaps.SUBGROUP_SIZE), 1, 1);
         VkContext.popLabel(cmd);
     }
@@ -766,7 +770,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             Material material = multiDraw.material();
             VkGraphicsPipeline pipeline = programs.uber()
                                                   .drawPipeline(material, multiDraw.embedded(), smoothness,
-                                                          COLOR_FORMAT, DEPTH_FORMAT);
+                                                          COLOR_FORMAT, programs.depthFormat());
             if (pipeline != lastPipeline) {
                 bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
                 lastPipeline = pipeline;
@@ -876,7 +880,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                                 continue;
                             }
                             VkGraphicsPipeline pipeline = programs.uber().crumblingPipeline(crumblingMaterial,
-                                    instanceType, smoothness, COLOR_FORMAT, DEPTH_FORMAT);
+                                    instanceType, smoothness, COLOR_FORMAT, programs.depthFormat());
                             VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
 
                             writer.storage(1, objectBuffer);

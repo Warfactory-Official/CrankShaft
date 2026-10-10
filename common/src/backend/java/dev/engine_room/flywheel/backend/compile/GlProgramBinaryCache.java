@@ -116,6 +116,9 @@ public final class GlProgramBinaryCache {
 
     /** Persists the linked {@code program} under {@code key}. */
     public static void store(String key, int program) {
+        Path path = directory.resolve(key + ".bin");
+        // In-batch duplicate linked before the first stored; Windows refuses replacing a just-written file.
+        if (Files.exists(path)) return;
         int length = GL20C.glGetProgrami(program, GL41C.GL_PROGRAM_BINARY_LENGTH);
         if (length <= 0) throw new IllegalStateException("Linked program reports no binary: " + key);
         ByteBuffer binary = MemoryUtil.memAlloc(length);
@@ -125,7 +128,6 @@ public final class GlProgramBinaryCache {
             byte[] bytes = new byte[12 + length];
             ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putInt(MAGIC).putInt(format[0]).putInt(length);
             binary.get(bytes, 12, length);
-            Path path = directory.resolve(key + ".bin");
             Path temporary = Files.createTempFile(directory, key, ".tmp");
             Files.write(temporary, bytes);
             Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);

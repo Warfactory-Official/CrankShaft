@@ -28,7 +28,6 @@ public final class VkOitPipelines {
     public static final int[] FOLDED_FORMATS = {FMT_RGBA32F, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F};
     static final int FMT_R32F = VK12.VK_FORMAT_R32_SFLOAT;
     static final int FMT_RGBA8 = VK12.VK_FORMAT_R8G8B8A8_UNORM;
-    static final int FMT_D32 = VK12.VK_FORMAT_D32_SFLOAT;
     static final int[] MLAB_NO_COLOR = new int[0];
     private static final VkGraphicsPipeline.Blend REPLACE = new VkGraphicsPipeline.Blend(false, 0, 0, 0, 0, 0, 0,
             VkGraphicsPipeline.COLOR_WRITE_RGBA);
@@ -51,25 +50,26 @@ public final class VkOitPipelines {
     private VkGraphicsPipeline mlabNearestDepth;
     @Nullable
     private VkGraphicsPipeline depth;
+    private final int depthFormat;
 
-
-    VkOitPipelines() {
+    VkOitPipelines(int depthFormat) {
+        this.depthFormat = depthFormat;
     }
 
-    static VkGraphicsPipeline.Config oitProducerConfig(OitMode mode) {
+    static VkGraphicsPipeline.Config oitProducerConfig(OitMode mode, int depthFormat) {
         int ge = VK12.VK_COMPARE_OP_GREATER_OR_EQUAL;
         int cull = VK12.VK_CULL_MODE_BACK_BIT;
         return switch (mode) {
             case DEPTH_RANGE -> new VkGraphicsPipeline.Config(new int[]{FMT_RGBA32F},
                     new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.max()}, true, false, ge,
-                    VkGraphicsPipeline.Vertex.INTERNAL, cull, FMT_D32);
+                    VkGraphicsPipeline.Vertex.INTERNAL, cull, depthFormat);
             case GENERATE_COEFFICIENTS -> new VkGraphicsPipeline.Config(
                     new int[]{FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F},
                     new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.additive(), VkGraphicsPipeline.additive(), VkGraphicsPipeline.additive(), VkGraphicsPipeline.additive()},
-                    true, false, ge, VkGraphicsPipeline.Vertex.INTERNAL, cull, FMT_D32);
+                    true, false, ge, VkGraphicsPipeline.Vertex.INTERNAL, cull, depthFormat);
             case EVALUATE -> new VkGraphicsPipeline.Config(new int[]{FMT_RGBA16F},
                     new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.additive()}, true, false, ge,
-                    VkGraphicsPipeline.Vertex.INTERNAL, cull, FMT_D32);
+                    VkGraphicsPipeline.Vertex.INTERNAL, cull, depthFormat);
             case OFF -> throw new IllegalArgumentException("OitMode.OFF is not a producer mode");
         };
     }
@@ -100,10 +100,10 @@ public final class VkOitPipelines {
         return b;
     }
 
-    static VkGraphicsPipeline.Config foldedProducerConfig(OitMode mode) {
+    static VkGraphicsPipeline.Config foldedProducerConfig(OitMode mode, int depthFormat) {
         return new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(mode), true, false,
                 VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.INTERNAL, VK12.VK_CULL_MODE_BACK_BIT,
-                FMT_D32)
+                depthFormat)
                 .withLocalRead(foldedLocations(mode), FOLDED_INPUT_INDICES);
     }
 
@@ -229,10 +229,10 @@ public final class VkOitPipelines {
         }
     }
 
-    private static VkGraphicsPipeline.Config writebackConfig() {
+    private VkGraphicsPipeline.Config writebackConfig() {
         return new VkGraphicsPipeline.Config(new int[]{FMT_RGBA8},
                 new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.noColorWrite()}, true, true,
-                VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_NONE, FMT_D32);
+                VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_NONE, depthFormat);
     }
 
     /**
@@ -267,7 +267,7 @@ public final class VkOitPipelines {
                     new VkGraphicsPipeline.Blend[]{emission ? VkGraphicsPipeline.premultiplied()
                             : VkGraphicsPipeline.composite()},
                     true, false, VK12.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_NONE,
-                    FMT_D32);
+                    depthFormat);
             List<Binding> bindings = compositeBindings();
             if (emission) {
                 bindings.add(new Binding(38, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
@@ -298,7 +298,7 @@ public final class VkOitPipelines {
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(new int[]{FMT_RGBA8},
                         new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.additive()},
                         true, false, VK12.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_NONE,
-                        FMT_D32);
+                        depthFormat);
                 layout = new VkDescriptorLayout(List.of(new Binding(28, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT),
                         new Binding(38, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT)), 0, 0);
                 emission = new VkGraphicsPipeline(layout, vs, fs, config);
@@ -390,7 +390,7 @@ public final class VkOitPipelines {
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(mode),
                         true, false,
                         VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_NONE,
-                        FMT_D32)
+                        depthFormat)
                         .withLocalRead(foldedLocations(mode), FOLDED_INPUT_INDICES);
                 layout = new VkDescriptorLayout(layerFoldedBindings(mode), 0, 0);
                 p = new VkGraphicsPipeline(layout, vs, fs, config);
@@ -426,7 +426,7 @@ public final class VkOitPipelines {
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(mode),
                         true, false,
                         VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.PARTICLE, VK12.VK_CULL_MODE_NONE,
-                        FMT_D32)
+                        depthFormat)
                         .withLocalRead(foldedLocations(mode), FOLDED_INPUT_INDICES);
                 layout = new VkDescriptorLayout(weatherFoldedBindings(mode), 0, 0);
                 p = new VkGraphicsPipeline(layout, vs, fs, config);
@@ -461,7 +461,7 @@ public final class VkOitPipelines {
                         VkShaderCompiler.KIND_FRAGMENT);
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(mode),
                         true, false,
-                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, berVertex(family), berCullMode(family), FMT_D32)
+                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, berVertex(family), berCullMode(family), depthFormat)
                         .withLocalRead(foldedLocations(mode), FOLDED_INPUT_INDICES);
                 layout = new VkDescriptorLayout(berFoldedBindings(family, mode), 0, 0);
                 p = new VkGraphicsPipeline(layout, vs, fs, config);
@@ -498,7 +498,7 @@ public final class VkOitPipelines {
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(mode),
                         true, false,
                         VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.BLOCK,
-                        VK12.VK_CULL_MODE_BACK_BIT, FMT_D32)
+                        VK12.VK_CULL_MODE_BACK_BIT, depthFormat)
                         .withLocalRead(foldedLocations(mode), FOLDED_INPUT_INDICES);
                 layout = new VkDescriptorLayout(chunkFoldedBindings(mode), 0, 0);
                 p = new VkGraphicsPipeline(layout, vs, fs, config);
@@ -532,7 +532,7 @@ public final class VkOitPipelines {
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(MLAB_NO_COLOR, MLAB_NO_BLEND, true,
                         false,
                         VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.PARTICLE, VK12.VK_CULL_MODE_NONE,
-                        FMT_D32);
+                        depthFormat);
                 List<Binding> b = weatherBindings();
                 mlabBindings(b, oitMode);
                 layout = new VkDescriptorLayout(b, 0, 0);
@@ -565,7 +565,7 @@ public final class VkOitPipelines {
                                 VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(MLAB_NO_COLOR, MLAB_NO_BLEND, true,
                         false,
-                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, berVertex(family), berCullMode(family), FMT_D32);
+                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, berVertex(family), berCullMode(family), depthFormat);
                 List<Binding> b = berBindings(family);
                 mlabBindings(b, oitMode);
                 layout = new VkDescriptorLayout(b, 0, 0);
@@ -601,7 +601,7 @@ public final class VkOitPipelines {
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(MLAB_NO_COLOR, MLAB_NO_BLEND, true,
                         false,
                         VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.BLOCK,
-                        VK12.VK_CULL_MODE_BACK_BIT, FMT_D32);
+                        VK12.VK_CULL_MODE_BACK_BIT, depthFormat);
                 List<Binding> b = chunkBindings();
                 mlabBindings(b, oitMode);
                 layout = new VkDescriptorLayout(b, 0, 0);
@@ -643,7 +643,7 @@ public final class VkOitPipelines {
             VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(new int[]{FMT_RGBA8, FMT_R32F},
                     new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.premultiplied(), REPLACE},
                     true, false, VK12.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.NONE,
-                    VK12.VK_CULL_MODE_NONE, FMT_D32);
+                    VK12.VK_CULL_MODE_NONE, depthFormat);
             List<Binding> b = new ArrayList<>();
             mlabBindings(b, oitMode);
             b.add(new Binding(29, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));

@@ -7,6 +7,7 @@ import dev.engine_room.flywheel.backend.engine.OitTransparency;
 import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
 import dev.engine_room.flywheel.backend.engine.embed.TaggedEnvironment;
 import dev.engine_room.flywheel.iris.compile.PackRole;
+import dev.engine_room.flywheel.iris.compile.GuestPipelines;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.minecraft.core.Vec3i;
 import net.minecraft.world.phys.Vec3;
@@ -39,7 +40,8 @@ interface GuestDrawManager {
         return material.transparency() == Transparency.TRANSLUCENT
                 || material.transparency() == Transparency.TRANSLUCENT_ALPHA_REPLACE
                 || OitTransparency.orderIndependent(material) || kind == TaggedEnvironment.KIND_ENTITY_TRANSLUCENT
-                || kind == TaggedEnvironment.KIND_ENTITY_BLENDED;
+                || kind == TaggedEnvironment.KIND_ENTITY_BLENDED
+                || material.transparency() == Transparency.GLINT && GuestPipelines.nativeGlint();
     }
 
     static boolean drawnInAdditivePass(Material material, int drawTag) {

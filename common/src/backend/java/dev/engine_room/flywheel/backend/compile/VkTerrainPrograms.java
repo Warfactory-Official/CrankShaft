@@ -52,9 +52,11 @@ public final class VkTerrainPrograms {
     private VkComputePipeline cull;
     @Nullable
     private VkComputePipeline translucentOitCull;
+    private final int depthFormat;
 
-    VkTerrainPrograms(ShaderSources sources) {
+    VkTerrainPrograms(ShaderSources sources, int depthFormat) {
         this.sources = sources;
+        this.depthFormat = depthFormat;
     }
 
     private static List<Binding> cullBindings() {
@@ -164,17 +166,17 @@ public final class VkTerrainPrograms {
         }
     }
 
-    public VkGraphicsPipeline drawPipeline(boolean cutout, int colorFormat, int depthFormat) {
+    public VkGraphicsPipeline drawPipeline(boolean cutout, int colorFormat) {
         int lin = TerrainAtlasFilter.linear() ? 1 : 0;
         VkGraphicsPipeline[] cache = cutout ? this.cutout : solid;
         if (cache[lin] == null) {
             cache[lin] = VkPrograms.optional(ProgramAvailability.Feature.OPAQUE_TERRAIN,
-                    () -> buildDraw(cutout, lin == 1, colorFormat, depthFormat));
+                    () -> buildDraw(cutout, lin == 1, colorFormat));
         }
         return cache[lin];
     }
 
-    private VkGraphicsPipeline buildDraw(boolean cutout, boolean linear, int colorFormat, int depthFormat) {
+    private VkGraphicsPipeline buildDraw(boolean cutout, boolean linear, int colorFormat) {
         String vsGl = TerrainPipelines.assembleVertex(VkPrograms.VK.andThen(VK_BDA));
         String fsGl = TerrainPipelines.assembleFragment(cutout, linear);
         long vs = 0;
@@ -249,7 +251,7 @@ public final class VkTerrainPrograms {
             fs = VkShaderCompiler.compileModule("chunk_oit" + mode.name,
                     VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
             VkGraphicsPipeline.Config base = folded ? VkOitPipelines.foldedProducerConfig(
-                    mode) : VkOitPipelines.oitProducerConfig(mode);
+                    mode, depthFormat) : VkOitPipelines.oitProducerConfig(mode, depthFormat);
             VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(base.colorFormats(), base.blends(),
                     base.depthTest(), base.depthWrite(),
                     base.depthCompareOp(), classic ? VkGraphicsPipeline.Vertex.COMPACT_CHUNK
@@ -305,7 +307,7 @@ public final class VkTerrainPrograms {
             VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(VkOitPipelines.MLAB_NO_COLOR,
                     VkOitPipelines.MLAB_NO_BLEND, true, false, VK12.VK_COMPARE_OP_GREATER_OR_EQUAL,
                     classic ? VkGraphicsPipeline.Vertex.COMPACT_CHUNK : VkGraphicsPipeline.Vertex.NONE,
-                    VK12.VK_CULL_MODE_BACK_BIT, VkOitPipelines.FMT_D32);
+                    VK12.VK_CULL_MODE_BACK_BIT, depthFormat);
             List<Binding> bindings = translucentBaseBindings();
             VkOitPipelines.mlabBindings(bindings, oitMode);
             layout = new VkDescriptorLayout(classic ? classicBindings(bindings) : bindings, 0, 0);

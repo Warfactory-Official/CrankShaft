@@ -142,9 +142,12 @@ bool _flw_isVisible(uint objectUint, uint modelIndex, uint typeId, out bool frus
 void main() {
     uint pageIndex = gl_WorkGroupID.x << 2u;
 
+    // Port: MoltenVK 1.4 push-descriptor length() = 0.
+#ifndef _FLW_VK
     if (pageIndex >= _flw_pageFrameDescriptors.length()) {
         return;
     }
+#endif
 
     uint modelIndex = _flw_pageFrameDescriptors[pageIndex];
 

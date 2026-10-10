@@ -4,6 +4,7 @@ import com.mojang.blaze3d.pipeline.RenderPipeline;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
+import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.api.model.Mesh;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
@@ -126,7 +127,7 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         if (!GuestPipelines.deferredTranslucent(pipeline)) {
             boolean oit = GuestPipelines.oitActive(pipeline, false);
             for (InstancedDraw draw : oitDraws) {
-                if (!draw.material()
+                if (draw.material().transparency() != Transparency.GLINT && !draw.material()
                          .writeMask()
                          .depth() && !(oit && GuestDrawManager.orderIndependent(draw.material(), drawTag(draw)))) {
                     depthFillScratch.add(draw);
@@ -203,6 +204,7 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         blendedEntityScratch.clear();
         boolean dropBlobShadows = GuestEntityShadows.suppressed();
         for (InstancedDraw draw : list) {
+            if (shadowPass && GuestPipelines.nativeGlint() && draw.material().transparency() == Transparency.GLINT) continue;
             if (shadowPass && GuestDrawManager.emissive(draw.material())) continue;
             if (dropBlobShadows && GuestEntityShadows.isBlobShadow(draw.material())) {
                 continue;

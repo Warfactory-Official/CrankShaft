@@ -188,7 +188,7 @@ public final class ShaderWarmup {
             OitPipelines.weatherProducer(mode);
             if (sodium) {
                 OitPipelines.chunkSodiumProducer(mode);
-                if (GlCompat.SUPPORTS_INDIRECT) {
+                if (GlCompat.SUPPORTS_TERRAIN) {
                     OitPipelines.chunkSodiumProducer(mode, false);
                     OitPipelines.chunkSodiumProducer(mode, true);
                 }
@@ -217,7 +217,7 @@ public final class ShaderWarmup {
                 }
             });
         }
-        if (sodium) {
+        if (sodium && GlCompat.SUPPORTS_TERRAIN) {
             RenderPipelineCompiler.feature(ProgramAvailability.Feature.OPAQUE_TERRAIN, () -> {
                 TerrainPipelines.solid();
                 TerrainPipelines.cutout();
@@ -323,8 +323,8 @@ public final class ShaderWarmup {
             if (programs.usesGpuTerrain()) {
                 ProgramAvailability.run(ProgramAvailability.Feature.OPAQUE_TERRAIN, () -> {
                     terrain.cullPipeline();
-                    terrain.drawPipeline(false, VK10.VK_FORMAT_R8G8B8A8_UNORM, VK10.VK_FORMAT_D32_SFLOAT);
-                    terrain.drawPipeline(true, VK10.VK_FORMAT_R8G8B8A8_UNORM, VK10.VK_FORMAT_D32_SFLOAT);
+                    terrain.drawPipeline(false, VK10.VK_FORMAT_R8G8B8A8_UNORM);
+                    terrain.drawPipeline(true, VK10.VK_FORMAT_R8G8B8A8_UNORM);
                 });
             }
             if (programs.usesGpuTranslucentTerrain()) {
@@ -340,7 +340,7 @@ public final class ShaderWarmup {
             for (Material material : materials) {
                 for (boolean embedded : new boolean[]{false, true}) {
                     uber.drawPipeline(material, embedded, smoothness, VK10.VK_FORMAT_R8G8B8A8_UNORM,
-                            VK10.VK_FORMAT_D32_SFLOAT);
+                            programs.depthFormat());
                 }
             }
         });
@@ -372,7 +372,7 @@ public final class ShaderWarmup {
         jobs.add(() -> {
             for (InstanceType<?> type : STANDARD_TYPES) {
                 uber.crumblingPipeline(Materials.CRUMBLING, type, smoothness,
-                        VK10.VK_FORMAT_R8G8B8A8_UNORM, VK10.VK_FORMAT_D32_SFLOAT);
+                        VK10.VK_FORMAT_R8G8B8A8_UNORM, programs.depthFormat());
             }
         });
         if (VkCaps.MESH_SHADER_NEGOTIATED && ProgramAvailability.allows(ProgramAvailability.Feature.MESH)
@@ -383,25 +383,25 @@ public final class ShaderWarmup {
             mesh.builderPipeline();
             for (InstanceType<?> type : STANDARD_TYPES) {
                 mesh.crumblingPipeline(Materials.CRUMBLING, type, VK10.VK_FORMAT_R8G8B8A8_UNORM,
-                        VK10.VK_FORMAT_D32_SFLOAT);
+                        programs.depthFormat());
             }
             for (InstanceType<?> type : MESH_VISUAL_TYPES) {
                 for (Material material : materials) {
                     if (!OitTransparency.orderIndependent(material)) {
                         mesh.solidPipeline(type, material, false, VK10.VK_FORMAT_R8G8B8A8_UNORM,
-                                VK10.VK_FORMAT_D32_SFLOAT);
+                                programs.depthFormat());
                     } else {
                         for (OitMode mode : OitMode.values()) {
                             if (mode == OitMode.OFF) continue;
                             if (localRead) {
                                 ProgramAvailability.run(ProgramAvailability.Feature.LOCAL_READ,
                                         () -> mesh.oitPipeline(type, material, false, mode,
-                                                VK10.VK_FORMAT_D32_SFLOAT, true));
-                            } else mesh.oitPipeline(type, material, false, mode, VK10.VK_FORMAT_D32_SFLOAT, false);
+                                                programs.depthFormat(), true));
+                            } else mesh.oitPipeline(type, material, false, mode, programs.depthFormat(), false);
                         }
                         for (OitInsertMode mode : insertModes) {
                             ProgramAvailability.run(ProgramAvailability.insert(mode),
-                                    () -> mesh.mlabPipeline(type, material, false, mode, VK10.VK_FORMAT_D32_SFLOAT));
+                                    () -> mesh.mlabPipeline(type, material, false, mode, programs.depthFormat()));
                         }
                     }
                 }

@@ -36,7 +36,6 @@ public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrate
     private static final int PASS_COUNT = 2;
     private static final int COMMAND_STRIDE = 32; // VkDrawMeshTasksIndirectCommandEXT + the per-region record
     private static final int COLOR_FORMAT = VK12.VK_FORMAT_R8G8B8A8_UNORM;
-    private static final int DEPTH_FORMAT = VK12.VK_FORMAT_D32_SFLOAT;
     private static final int STORAGE = VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     private static final int INDIRECT = VK12.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
     private final VkMeshPipelines pipelines;
@@ -96,7 +95,7 @@ public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrate
         int parity = manager.boundParity;
         Minecraft mc = Minecraft.getInstance();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/mesh/draw/" + (pass == 0 ? "solid" : "cutout"));
-        VkMeshPipeline draw = pipelines.drawPipeline(pass != 0, COLOR_FORMAT, DEPTH_FORMAT);
+        VkMeshPipeline draw = pipelines.drawPipeline(pass != 0, COLOR_FORMAT);
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, draw.handle());
 
         long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS)

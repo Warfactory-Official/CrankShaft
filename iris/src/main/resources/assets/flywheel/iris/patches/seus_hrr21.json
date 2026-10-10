@@ -1,0 +1,58 @@
+{
+  "schema": 2,
+  "name": "SEUS PTGI HRR Test 2.1",
+  "testedVersions": [
+    "SEUS PTGI HRR Test 2.1"
+  ],
+  "matches": [
+    {
+      "path": "gbuffers_water.fsh",
+      "contains": [
+        "DRAWBUFFERS:12",
+        "GBufferDataTransparent",
+        "lib/GBufferData.inc"
+      ],
+      "excludes": [
+        "DRAWBUFFERS:128"
+      ]
+    }
+  ],
+  "files": [],
+  "wrappers": [],
+  "blends": [],
+  "properties": "blend.clrwl_gbuffers_translucent = ONE ZERO ONE ZERO\n",
+  "deferred": {
+    "profile": "SEUS",
+    "sources": {
+      "programs": [
+        "gbuffers_water",
+        "gbuffers_textured",
+        "composite",
+        "composite1",
+        "composite2",
+        "composite3",
+        "composite4",
+        "composite5",
+        "composite6",
+        "composite7",
+        "composite8",
+        "composite9",
+        "composite10",
+        "composite11",
+        "composite12",
+        "composite13",
+        "composite14",
+        "composite15"
+      ],
+      "paths": [
+        "shaders.properties"
+      ],
+      "fingerprints": [
+        "8447fe4d3fed2ee8b527c1b119414632d263bd27f4d49f7ad4dc072a6ab7a2fb"
+      ]
+    }
+  },
+  "deferredTranslucent": true,
+  "patches": [],
+  "programs": []
+}
