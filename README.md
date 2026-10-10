@@ -7,211 +7,164 @@
 
 ### About
 
-CrankShaft is an **unofficial port** of [Flywheel](https://github.com/Engine-Room/Flywheel) to Minecraft 26.2,
-carrying forward the work of Jozufozu and the Engine-Room team as well as CrankShaft's own 1.12.2 backport. It runs on
-NeoForge and Fabric. Its Iris shaderpack support is an adaptation
-of [Colorwheel](https://github.com/djefrey/Colorwheel):
-Colorwheel's shaderpack contract and wavelet OIT, rebuilt on CrankShaft's renderer. It is not affiliated with, endorsed
-by, or supported by Flywheel, Colorwheel, or their maintainers. Bugs in CrankShaft are CrankShaft's, not theirs — please
-file them here.
+CrankShaft is an **unofficial port** of [Flywheel](https://github.com/Engine-Room/Flywheel) to Minecraft 26.2 for
+NeoForge and Fabric, building on the work of Jozufozu and the Engine-Room team and on CrankShaft's 1.12.2 backport.
+Its shaderpack support adapts [Colorwheel](https://github.com/djefrey/Colorwheel)'s shaderpack contract and wavelet
+OIT. It is not affiliated with or supported by Flywheel, Colorwheel or their maintainers; please report bugs here.
 
-Shipped alongside CrankShaft is **Vanillate**, the 26.2 counterpart to Vanillin: instanced rendering for vanilla
-entities and block entities via Flywheel. It is bundled inside the CrankShaft jar and is **on by default**. Turn it off
-with `"enabled": false` in `config/vanillate.json` (Fabric) or `enabled = false` in `config/vanillate-client.toml`
-(NeoForge); it then registers nothing and vanilla renders as usual. A config written by an earlier CrankShaft keeps its
-`false`. Individual entities and block entities can be enabled or disabled per entry in the same file.
+The bundled **Vanillate** (our counterpart to Vanillin) instances vanilla entities and block entities. It is on
+by default; set `enabled` to false, or disable individual entries, in `config/vanillate.json` (Fabric) or
+`config/vanillate-client.toml` (NeoForge).
 
 ### Features
 
-- **OpenGL and Vulkan.** Native backends for both of Minecraft 26.2's graphics APIs, selected automatically.
-- **Iris shaderpacks.** Instanced visuals render through the active shaderpack's own programs, including its shadow
-  pass, instead of being switched off.
-- **Order-independent transparency (OIT).** Overlapping translucent instances blend correctly without sorting. Five
-  methods are available; see [OIT](#order-independent-transparency).
-- **Terrain integration.** Translucent chunk terrain joins the same OIT as instances by default. With Sodium,
-  CrankShaft can also cull and draw opaque terrain on the GPU; see [Terrain](#terrain-modes).
+- Native OpenGL and Vulkan backends, selected automatically.
+- Iris shaderpacks: instances render through the pack's own programs, shadow pass included. Multi-layer OIT for
+  Sundial, IterationRP and SEUS PTGI; see [Iris](#iris-shaderpacks).
+- Order-independent transparency for translucent instances and terrain.
+- With Sodium, opaque terrain can also be GPU-culled and drawn by CrankShaft.
 
 ### Requirements
 
-- Minecraft 26.2 with NeoForge or Fabric (+ Fabric API), and Java 25+.
-- Any GPU and driver that run vanilla 26.2. CrankShaft uses the features your hardware offers and falls back
-  where it lacks them; see [Backends](#backends).
-- Optional: [Sodium](https://modrinth.com/mod/sodium) 0.9.2 or newer, below 0.10. Needed for the `opaque`/`full`
-  terrain modes and the mesh-shader backends.
-- Optional: [Iris](https://modrinth.com/mod/iris) for shaderpacks (built against 1.11.4). Requires OpenGL.
+- Minecraft 26.2, NeoForge or Fabric (+ Fabric API), Java 25+.
+- Any GPU and driver that run vanilla 26.2; features your hardware lacks fall back (see [Backends](#backends)).
+- Optional: [Sodium](https://modrinth.com/mod/sodium) 0.9.2+, for the `opaque`/`full` terrain modes and the
+  mesh-shader backends.
+- Optional: [Iris](https://modrinth.com/mod/iris) (1.11.4+) for shaderpacks. OpenGL only.
 
 ### Backends
 
-CrankShaft picks the best supported backend for your hardware. `/flywheel backend` shows or changes it.
+`/flywheel backend` shows or changes the backend; by default CrankShaft picks the best one supported.
 
-| Backend                                              | API    | Selected by default          | Notes                                                                  |
-|------------------------------------------------------|--------|------------------------------|------------------------------------------------------------------------|
-| `flywheel:vk_indirect`                               | Vulkan | Yes                          | GPU culling + indirect draws.                                          |
-| `flywheel:vk_mesh_shader`                            | Vulkan | No                           | Mesh shaders (`VK_EXT_mesh_shader`). Requires Sodium.                  |
-| `flywheel:indirect`                                  | OpenGL | Yes, except on Intel GPUs    | GPU culling + indirect draws.                                          |
-| `flywheel:gl_mesh_shader`                            | OpenGL | No                           | Mesh shaders, NVIDIA only (`GL_NV_mesh_shader`). Requires Sodium.      |
-| `flywheel:instancing`                                | OpenGL | On Intel GPUs; fallback      | Instanced draws without GPU culling.                                   |
-| `flywheel:iris_indirect`, `flywheel:iris_instancing` | OpenGL | While a shaderpack is active | Draw through the shaderpack's programs; see [Iris](#iris-shaderpacks). |
-| `flywheel:off`                                       | —      | No                           | Disables CrankShaft rendering; vanilla draws everything.               |
+| Backend                                              | API    | Default                      | Notes                                                 |
+|------------------------------------------------------|--------|------------------------------|-------------------------------------------------------|
+| `flywheel:vk_indirect`                               | Vulkan | Yes                          | GPU culling + indirect draws.                         |
+| `flywheel:vk_mesh_shader`                            | Vulkan | No                           | `VK_EXT_mesh_shader`. Requires Sodium.                |
+| `flywheel:indirect`                                  | OpenGL | Yes, except on Intel         | GPU culling + indirect draws.                         |
+| `flywheel:gl_mesh_shader`                            | OpenGL | No                           | `GL_NV_mesh_shader` (NVIDIA). Requires Sodium.        |
+| `flywheel:instancing`                                | OpenGL | On Intel; fallback           | Instanced draws, no GPU culling.                      |
+| `flywheel:iris_indirect`, `flywheel:iris_instancing` | OpenGL | While a shaderpack is active | Draw through the pack; see [Iris](#iris-shaderpacks). |
+| `flywheel:off`                                       | —      | No                           | Vanilla draws everything.                             |
 
-If the requested backend is unsupported, CrankShaft falls back to the next one that is. While a shaderpack is active,
-choosing a native OpenGL backend selects its `iris_` counterpart.
-
-If a backend's shaders fail to compile or link on your driver, CrankShaft disables only the failing optional feature
-where it can, and otherwise falls back to the next backend, down to `flywheel:off` (vanilla rendering). The game
-keeps running and the log records the cause. `-Dcrankshaft.shader.strict=true` makes these failures crash instead,
-which is useful for bug reports.
+An unsupported backend falls back to the next supported one; under a shaderpack, native OpenGL backends map to their
+`iris_` counterparts. If shaders fail to compile or link, CrankShaft drops the failing optional feature or falls back
+a backend, down to `flywheel:off`, and logs the cause. `-Dcrankshaft.shader.strict=true` crashes instead (useful for
+bug reports).
 
 ### Vulkan
 
-Minecraft 26.2 can render with Vulkan: **Options → Video Settings → Graphics API → Vulkan**, then restart the game.
-CrankShaft detects the Vulkan renderer and switches to its Vulkan backends; no CrankShaft setting is needed.
+Select **Options → Video Settings → Graphics API → Vulkan** and restart; CrankShaft follows automatically. On
+NeoForge, also set `earlyWindowControl = false` in `config/fml.toml`, or the game fails to start. Shaderpacks need
+OpenGL; everything else works on both APIs.
 
-On **NeoForge**, also set `earlyWindowControl = false` in `config/fml.toml`. NeoForge's loading screen is
-OpenGL-only, and the game fails to start on Vulkan without this change.
-
-Rendering features are the same on both APIs; only shaderpack support requires OpenGL.
-
-Mods that replace the world renderer (for example the path tracer Caustica) take over drawing: CrankShaft suspends
-itself while they do, and entities and block entities appear through their vanilla renderers.
+Mods that replace the world renderer (e.g. Caustica) suspend CrankShaft while active; entities and block entities
+then use their vanilla renderers.
 
 ### Iris shaderpacks
 
-With Iris and a shaderpack enabled, CrankShaft switches to its `iris_` backends and renders instances through the
-pack's own programs, shadows included. Nothing needs configuring.
+With a shaderpack active, CrankShaft switches to its `iris_` backends; nothing needs configuring.
 
-- Packs that implement [Colorwheel](https://github.com/djefrey/Colorwheel)'s shaderpack contract (`clrwl_` programs
-  and `colorwheel.properties`) use it directly, including its OIT where the pack enables it.
-- Bundled adapters fill gaps in specific packs (see below). An adapter checks the pack's actual shader sources, not its
-  file name or version. If a pack has changed, the adapter is skipped as a whole and the pack falls back to the shared
-  path.
+- Packs implementing Colorwheel's contract (`clrwl_` programs, `colorwheel.properties`) use it directly, including
+  its OIT.
+- Bundled adapters add OIT and fixes for the packs below. They match the pack's shader sources, not its file name:
+  other versions or edited packs skip the adapter.
 - Other packs render instances through their standard programs, without OIT.
-- Under a shaderpack, OIT follows the pack's own settings; `/flywheel oit mode` applies only to the non-Iris backends.
+- OIT follows the pack; `/flywheel oit mode` applies only to non-Iris backends.
+- Any [terrain mode](#terrain-modes) but `off` also draws chunk terrain through the pack's terrain programs, GPU-culled,
+  so it sorts against instances.
 
-Tested shaderpacks:
+| Shaderpack                         | Tested version              | Colorwheel contract | OIT                   |
+|------------------------------------|-----------------------------|---------------------|-----------------------|
+| Complementary Reimagined / Unbound | r5.9.3                      | Yes                 | Wavelet               |
+| Complementary Euphoria             | r5.9.3 + Patches 1.10.5     | Yes                 | Wavelet               |
+| Solas                              | V3.7b                       | Yes                 | Wavelet               |
+| BSL                                | v10.1.8                     | No                  | Wavelet               |
+| MakeUp UltraFast                   | 9.5f                        | No                  | Wavelet               |
+| Bliss                              | v2.1.2 (Chocapic13 edit)    | No                  | Wavelet               |
+| Sildur's Vibrant Shaders           | v2.02 Extreme               | No                  | Wavelet               |
+| Photon                             | v1.3b                       | No                  | Wavelet               |
+| Hysteria                           | v1.2.2                      | No                  | Wavelet               |
+| Sundial                            | Alpha Build 2026-09-25      | Yes                 | Deferred, multi-layer |
+| IterationRP                        | Alpha 0.8.29                | Yes                 | Deferred, multi-layer |
+| SEUS PTGI                          | HRR Test 2.1, HRR 3         | No                  | Deferred, multi-layer |
+| SEUS PTGI GFME                     | v1.22 RC1                   | No                  | Deferred, multi-layer |
 
-| Shaderpack               | Version                  | Colorwheel contract | Bundled adapter | OIT                          |
-|--------------------------|--------------------------|---------------------|-----------------|------------------------------|
-| Complementary Reimagined | r5.9.3                   | Yes                 | Yes             | Yes                          |
-| Complementary Unbound    | r5.9.3                   | Yes                 | Yes             | Yes                          |
-| Complementary Euphoria   | r5.9.3 + Patches 1.10.5  | Yes                 | Yes             | Yes                          |
-| Solas                    | V3.7b                    | Yes                 | Yes             | Yes                          |
-| BSL                      | v10.1.8                  | No                  | Yes             | Yes                          |
-| MakeUp UltraFast         | 9.5f                     | No                  | Yes             | Yes                          |
-| Sundial                  | Alpha Build 2026-09-25   | Yes                 | Yes             | Yes, multi-layer (see below) |
-| IterationRP              | Alpha 0.8.29             | Yes                 | Yes             | Yes, multi-layer (see below) |
-| Bliss                    | v2.1.2 (Chocapic13 edit) | No                  | Yes             | Yes                          |
-| Sildur's Vibrant Shaders | v2.02 Extreme            | No                  | Yes             | Yes                          |
-| Photon                   | v1.3b                    | No                  | Yes             | Yes                          |
+Instances drawn through a pack can differ slightly from the pack's own rendering. Under Sildur's underwater fog,
+translucents behind water are tinted slightly differently.
 
-Instances drawn through a pack can differ slightly from what the pack's own renderer would produce.
+**Deferred multi-layer OIT** captures translucent fragments, sorts them by depth and re-runs the pack's own lighting,
+reflection and refraction passes per layer. Overlapping translucent layers cost extra GPU time and memory. Unsupported
+shader variants and frames exceeding capture capacity (over 64 layers at a pixel, or sudden growth) keep the pack's
+native ordering; fallbacks are logged. `-Dcrankshaft.iris.oit.deferred=false` disables it;
+`-Dcrankshaft.iris.oit.iteration=false` disables only IterationRP's.
 
-Sundial and IterationRP use multi-layer deferred OIT. Captured material, unlit-opacity and emission fragments are
-sorted by depth and composited in their depth intervals. Each material layer retains the pack's lighting, reflection
-and refraction; IterationRP also keeps separate temporal histories. Overlapping material surfaces can add substantial
-GPU time and memory. IterationRP skips material replay for a single smooth water/glass surface and resolves clouds
-and emission separately. Unsupported shader variants and temporary capture overflow retain the pack's native frame.
-The node pool is limited by hardware storage capacity and a global budget of 16 slots per screen pixel (one slot
-for light/opacity, two for Sundial materials, three for IterationRP materials). Individual pixel lists can be longer
-than 16 layers; a frame with more than 64 layers at any pixel keeps the pack's native frame. Sudden layer growth, pool
-replacement and IterationRP opaque-backup warm-up can also retain native
-ordering temporarily; capture fallback and recovery transitions are logged. These frames do not guarantee OIT.
-`-Dcrankshaft.iris.oit.deferred=false` disables deferred OIT; `-Dcrankshaft.iris.oit.iteration=false` disables only the
-IterationRP integration. Under Sildur's underwater fog, translucents seen through water are tinted slightly differently
-from the pack's own sorted rendering.
+Experimental, **off by default**:
 
-Under a shaderpack, any [terrain mode](#terrain-modes) but `off` also draws chunk terrain through the pack's own
-terrain programs with GPU culling.
-
-Experimental options, **off by default**, are enabled with Java arguments in your launcher:
-
-| Argument                             | Effect                                                                                                                            |
-|--------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| `-Dcrankshaft.iris.mesh=true`        | With a terrain mode other than `off`: mesh-shader terrain. `flywheel:iris_mesh_shader` is then selected on supported NVIDIA GPUs. |
-| `-Dcrankshaft.iris.mesh.direct=true` | With both of the above: opaque terrain skips task-shader culling, lowering its overhead.                                          |
+| Java argument                        | Effect                                                                                             |
+|--------------------------------------|----------------------------------------------------------------------------------------------------|
+| `-Dcrankshaft.iris.mesh=true`        | Mesh-shader terrain under a terrain mode but `off`; selects `flywheel:iris_mesh_shader` on NVIDIA. |
+| `-Dcrankshaft.iris.mesh.direct=true` | With the above: opaque terrain skips task-shader culling, lowering overhead.                       |
 
 ### Commands
 
-Commands are client-side; settings they change are saved to the config file. Tab completion lists every option.
+Client-side; changes are saved to the config. Tab completion lists every option.
 
-| Command                                                    | Effect                                                                                                                                                 |
-|------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `/flywheel backend`                                        | Show the active backend.                                                                                                                               |
-| `/flywheel backend <id>` / `/flywheel backend DEFAULT`     | Use a specific backend / let CrankShaft choose. Reloads renderers.                                                                                     |
-| `/flywheel terrain off\|translucent\|opaque\|full`         | Terrain integration mode; see below.                                                                                                                   |
-| `/flywheel oit`                                            | Show the OIT method, layer budgets and weather mode.                                                                                                   |
-| `/flywheel oit mode auto\|wavelet\|kbuffer\|mlab\|abuffer` | Choose the OIT method; see below.                                                                                                                      |
-| `/flywheel oit layers <0-32>`                              | Layer budget of the active insert method (`0` = its preset).                                                                                           |
-| `/flywheel oit reset`                                      | Restore all layer budgets to their presets.                                                                                                            |
-| `/flywheel oit exactweather true\|false`                   | `true`: rain and snow sort per fragment against other translucents. `false` (default): weather is blended as one layer, which is much cheaper in rain. |
-| `/flywheel lightSmoothness <mode>`                         | `flat`, `tri_linear`, `smooth` (default) or `smooth_inner_face_corrected`.                                                                             |
-| `/flywheel limitUpdates on\|off`                           | Update distant instances less often (default on).                                                                                                      |
-| `/flywheel debug info`                                     | Version, backend, settings and visual/instance counts; useful for bug reports.                                                                         |
-| `/flywheel debug gpuTimer on\|off\|once\|summary`          | Per-pass GPU timings.                                                                                                                                  |
+| Command                                                    | Effect                                                                              |
+|------------------------------------------------------------|-------------------------------------------------------------------------------------|
+| `/flywheel backend [<id>\|DEFAULT]`                        | Show or set the backend. Reloads renderers.                                         |
+| `/flywheel terrain off\|translucent\|opaque\|full`         | [Terrain mode](#terrain-modes).                                                     |
+| `/flywheel oit`                                            | Show OIT method, layer budgets and weather mode.                                    |
+| `/flywheel oit mode auto\|wavelet\|kbuffer\|mlab\|abuffer` | [OIT method](#order-independent-transparency).                                      |
+| `/flywheel oit layers <0-32>`                              | Layer budget of the active insert method (`0` = preset).                            |
+| `/flywheel oit reset`                                      | Restore all layer budgets to presets.                                               |
+| `/flywheel oit exactweather true\|false`                   | Sort rain/snow per fragment (`true`) or blend weather as one cheap layer (default). |
+| `/flywheel lightSmoothness <mode>`                         | `flat`, `tri_linear`, `smooth` (default) or `smooth_inner_face_corrected`.          |
+| `/flywheel limitUpdates on\|off`                           | Update distant instances less often (default on).                                   |
+| `/flywheel debug info`                                     | Version, backend, settings and instance counts, for bug reports.                    |
+| `/flywheel debug gpuTimer on\|off\|once\|summary`          | Per-pass GPU timings.                                                               |
 
 #### Order-independent transparency
 
-| Mode             | Method                                                                                     |
-|------------------|--------------------------------------------------------------------------------------------|
-| `auto` (default) | `mlab` where the GPU supports fragment-shader interlock, otherwise `wavelet`.              |
-| `wavelet`        | Flywheel's multi-pass wavelet transmittance. Works everywhere.                             |
-| `kbuffer`        | Stores the first *K* fragments to reach each pixel (preset 4), then sorts them.            |
-| `mlab`           | Multi-layer alpha blending: *K* sorted layers (preset 8). Needs fragment-shader interlock. |
-| `abuffer`        | Per-pixel fragment lists, resolving the nearest *N* (preset 16). Highest memory use.       |
+| Mode             | Method                                                                  | Past the layer budget   |
+|------------------|-------------------------------------------------------------------------|-------------------------|
+| `auto` (default) | `mlab` with fragment-shader interlock, else `wavelet`.                  | As resolved             |
+| `wavelet`        | Multi-pass wavelet transmittance; always approximate. Works everywhere. | —                       |
+| `kbuffer`        | First *K* fragments per pixel (preset 4), sorted.                       | Drops extras, any depth |
+| `mlab`           | *K* sorted layers (preset 8). Needs fragment-shader interlock.          | Merges farthest layers  |
+| `abuffer`        | Per-pixel lists, nearest *N* resolved (preset 16). Most memory.         | Drops farthest          |
 
-`wavelet` is always an approximation. `kbuffer`, `mlab` and `abuffer` are single-pass *insert* methods and are exact
-while no pixel has more translucent fragments than the layer budget (*K*, or *N* for `abuffer`). Past the budget,
-`kbuffer` drops the extra fragments regardless of depth, `mlab` merges its farthest layers and `abuffer` drops the
-farthest. `abuffer` is also only exact while its fragment pool, 8 per screen pixel across the whole frame, doesn't run
-out. More layers keep deeper stacks of stained-glass exact at a higher GPU cost.
-
-On OpenGL the insert methods run on the GPU-driven backends (`indirect`, `gl_mesh_shader`); `instancing` always uses
-`wavelet`. Without fragment-shader interlock, `mlab` falls back to `wavelet`.
+The insert methods (`kbuffer`, `mlab`, `abuffer`) are exact within their layer budget; `abuffer` also needs its
+pool of 8 fragments per screen pixel not to run out. On OpenGL they need `indirect` or `gl_mesh_shader`;
+`instancing`, and `mlab` without interlock, use `wavelet`.
 
 #### Terrain modes
 
-| Mode                    | Opaque terrain         | Translucent terrain (water, glass, ice) | Requires                     |
-|-------------------------|------------------------|-----------------------------------------|------------------------------|
-| `off`                   | Vanilla / Sodium       | Vanilla / Sodium                        | —                            |
-| `translucent` (default) | Vanilla / Sodium       | CrankShaft OIT, blended with instances  | Any backend, Sodium optional |
-| `opaque`                | CrankShaft, GPU-culled | Sodium                                  | Sodium, GPU-driven backend   |
-| `full`                  | CrankShaft, GPU-culled | CrankShaft OIT, blended with instances  | Sodium, GPU-driven backend   |
+| Mode                    | Opaque terrain         | Translucent terrain (water, glass, ice) | Requires                   |
+|-------------------------|------------------------|-----------------------------------------|----------------------------|
+| `off`                   | Vanilla / Sodium       | Vanilla / Sodium                        | —                          |
+| `translucent` (default) | Vanilla / Sodium       | CrankShaft OIT, with instances          | —                          |
+| `opaque`                | CrankShaft, GPU-culled | Sodium                                  | Sodium, GPU-driven backend |
+| `full`                  | CrankShaft, GPU-culled | CrankShaft OIT, with instances          | Sodium, GPU-driven backend |
 
-GPU-driven backends are `indirect`, `gl_mesh_shader`, `vk_indirect` and `vk_mesh_shader`. On other backends or without
-Sodium, `opaque` behaves like `off` and `full` like `translucent`.
-
-With a shaderpack loaded, any mode but `off` additionally hands chunk terrain to the pack's terrain programs, which is
-what lets engine translucents and pack-drawn terrain sort against each other.
+GPU-driven backends: `indirect`, `gl_mesh_shader`, `vk_indirect`, `vk_mesh_shader`. Otherwise `opaque` acts as `off`
+and `full` as `translucent`.
 
 ### Configuration
 
-Commands write the same files you can edit by hand: `config/crankshaft.json` on Fabric, `config/crankshaft-client.toml`
-on NeoForge. Settings: `backend`, `limitUpdates`, `workerThreads`, `useCommonPool`, `concurrentExtraction`, and under
-`flw_backends`: `lightSmoothness`, `terrain` and the OIT settings.
+`config/crankshaft.json` (Fabric) or `config/crankshaft-client.toml` (NeoForge): `backend`, `limitUpdates`,
+`workerThreads`, `useCommonPool`, `concurrentExtraction`, and under `flw_backends` `lightSmoothness`, `terrain` and
+the OIT settings.
 
-`concurrentExtraction` (default on) extracts entity and block entity render states on Flywheel's worker threads, for
-vanilla's renderers
-and mod renderers implementing `ConcurrentRenderStateExtraction`, with or without a backend. Turn it off if a mod that
-hooks entity rendering misbehaves.
+`concurrentExtraction` (default on) extracts entity and block entity render states on worker threads, for vanilla
+renderers and mod renderers implementing `ConcurrentRenderStateExtraction`. Turn it off if a mod hooking entity
+rendering misbehaves.
 
 #### Shader caches
 
-On OpenGL, CrankShaft caches generated shader sources and linked programs under `cache/crankshaft/` in the game
-directory, so later launches compile less. The program cache is kept per driver (a driver update starts a new one) and
-is limited to 1 GiB; drivers that cannot load program binaries skip it. Deleting the folder is safe.
-`-Dcrankshaft.gl.programCache=false` and `-Dcrankshaft.glsl.sourceCache=false` turn the caches off.
-
-Shader compilation during loading that lasts longer than a quarter second adds a progress bar under the loading bar.
-Each program is cached as soon as it compiles, so closing the game mid-compile keeps the progress made so far.
-
-### Instancing
-
-Flywheel provides an alternate, unified path for entity and block entity rendering that takes advantage of GPU
-instancing. Flywheel gives the developer the flexibility to define their instance formats and write custom shaders to
-ingest that data.
-
-To accommodate the developer and leave more in the hands of the engine, Flywheel provides a custom shader loading and
-templating system to hide the details of the CPU/GPU interface.
+On OpenGL, generated shader sources and linked programs are cached under `cache/crankshaft/`, per driver, up to 1 GiB.
+Programs are cached as they compile, so an interrupted launch keeps its progress; compiles longer than a quarter
+second show a progress bar under the loading bar. Deleting the folder is safe. `-Dcrankshaft.gl.programCache=false`
+and `-Dcrankshaft.glsl.sourceCache=false` disable the caches.
 
 ### Building
 
@@ -221,11 +174,10 @@ gradlew build
 
 ### Getting Started (For Developers)
 
-Add the following repo and dependency to your `build.gradle.kts`:
-
 ```kotlin
 repositories {
     maven("https://repo.warfactory.co/releases")
+    // Snapshots (append -SNAPSHOT to the version): maven("https://repo.warfactory.co/snapshots")
 }
 
 dependencies {
@@ -236,19 +188,8 @@ dependencies {
 }
 ```
 
-For a list of available CrankShaft versions, you can check
-the [Fabric](https://repo.warfactory.co/releases/dev/engine_room/crankshaft-fabric/) and
-[NeoForge](https://repo.warfactory.co/releases/dev/engine_room/crankshaft-neoforge/) Maven directories.
-
-If you want the bleeding edge:
-
-```kotlin
-repositories {
-    maven("https://repo.warfactory.co/snapshots")
-}
-
-implementation("dev.engine_room:crankshaft-fabric:1.5.10+mc26.2-SNAPSHOT")
-```
+Available versions: [Fabric](https://repo.warfactory.co/releases/dev/engine_room/crankshaft-fabric/),
+[NeoForge](https://repo.warfactory.co/releases/dev/engine_room/crankshaft-neoforge/).
 
 ### License
 
