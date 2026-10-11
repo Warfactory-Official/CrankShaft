@@ -954,7 +954,9 @@ public final class OitPipelines {
                                                                new ColorTargetState(Optional.of(PREMULT_BLEND),
                                                                        GpuFormat.RGBA8_UNORM,
                                                                        ColorTargetState.WRITE_ALL))
-                                                       .withColorTargetState(1, new ColorTargetState(Optional.empty(),
+                                                       // 26.2: GL_BLEND toggles globally, cached per index; unblended,
+                                                       // a stale index-1 cache disables attachment 0's blend.
+                                                       .withColorTargetState(1, new ColorTargetState(Optional.of(PREMULT_BLEND),
                                                                OitFramebuffer.NEAREST_DEPTH_FORMAT,
                                                                ColorTargetState.WRITE_ALL));
         return builder.build();

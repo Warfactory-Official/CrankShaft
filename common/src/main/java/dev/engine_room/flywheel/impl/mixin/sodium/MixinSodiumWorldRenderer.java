@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.impl.mixin.sodium;
 
 import com.mojang.blaze3d.textures.GpuSampler;
 import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
+import dev.engine_room.flywheel.impl.compat.LodCompat;
 import dev.engine_room.flywheel.impl.compat.SodiumCompat;
 import dev.engine_room.flywheel.impl.compat.VoxyCompat;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
@@ -86,9 +87,20 @@ public class MixinSodiumWorldRenderer {
             return;
         }
 
+        LodCompat.captureTerrainDepth(1);
         if (manager.renderTranslucentOitSodium((SodiumWorldRenderer) (Object) this, matrices, x, y, z,
                 terrainSampler)) {
+            LodCompat.captureTerrainDepth(2);
             ci.cancel();
+        }
+    }
+
+    @Inject(method = "drawChunkLayer", at = @At("RETURN"), require = 1)
+    private void flywheel$captureTranslucentTerrain(ChunkSectionLayerGroup group, ChunkRenderMatrices matrices,
+                                                   double x, double y, double z, GpuSampler terrainSampler,
+                                                   CallbackInfo ci) {
+        if (group == ChunkSectionLayerGroup.TRANSLUCENT && SodiumCompat.isSodiumActive()) {
+            LodCompat.captureTerrainDepth(2);
         }
     }
 }

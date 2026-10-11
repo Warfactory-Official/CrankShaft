@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.impl.FlwImplXplat;
 
 // 26.2: Sodium ships native NeoForge support; Embeddium fork is obsolete.
 public enum CompatMod {
+    DISTANT_HORIZONS("distanthorizons"),
     ENTITY_CULLING("entityculling"),
     ENTITY_MODEL_FEATURES("entity_model_features"),
     ENTITY_TEXTURE_FEATURES("entity_texture_features"),

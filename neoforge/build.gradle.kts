@@ -1,12 +1,13 @@
 plugins {
     id("multiloader-platform")
 
-    id("net.neoforged.moddev") version ("2.0.147")
+    id("net.neoforged.moddev") version ("2.0.148")
     `maven-publish`
 }
 
 val quickPlay: String? = providers.gradleProperty("quickPlay").orNull
 val vulkan = providers.gradleProperty("vulkan").isPresent
+val iris = providers.gradleProperty("iris").isPresent
 
 val sourcesJar = tasks.register<Jar>("sourcesJar") {
     archiveClassifier = "sources"
@@ -76,10 +77,10 @@ dependencies {
 
     jarJar(project(":iris"))
 
-    if (project.hasProperty("sodium") || project.hasProperty("iris")) {
+    if (project.hasProperty("sodium") || iris) {
         runtimeOnly("net.caffeinemc:sodium-neoforge:${sodiumVersion}")
     }
-    if (project.hasProperty("iris")) {
+    if (iris) {
         runtimeOnly("maven.modrinth:iris:${irisVersion}-neoforge")
     }
 }
@@ -109,7 +110,7 @@ neoForge {
             }
             // Iris 1.11.4 swaps in 1-entry vertex format binding arrays; IDE-only GlCommandEncoder.validateDraw
             // indexes 16 => AIOOBE on the first Iris-mapped draw (also with flywheel:off).
-            if (project.hasProperty("iris")) {
+            if (iris) {
                 jvmArguments.add("-Dneoforge.disableGlValidation=true")
             }
         }

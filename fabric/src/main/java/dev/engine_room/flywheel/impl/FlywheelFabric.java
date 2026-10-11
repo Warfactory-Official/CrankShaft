@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.impl;
 
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.backend.compile.FlwProgramsReloader;
+import dev.engine_room.flywheel.impl.compat.DistantHorizonsCompat;
 import dev.engine_room.flywheel.impl.compat.LambDynLightsCompat;
 import dev.engine_room.flywheel.impl.test.OitDemoContent;
 import dev.engine_room.flywheel.impl.test.OitDemoVisual;
@@ -96,6 +97,7 @@ public final class FlywheelFabric implements ClientModInitializer {
     public void onInitializeClient() {
         BackendManagerImpl.init();
         LambDynLightsCompat.init();
+        DistantHorizonsCompat.init();
         InstanceTypes.TRANSFORMED.hashCode();
         Materials.SOLID_BLOCK.hashCode();
         FlwImpl.freezeRegistries();

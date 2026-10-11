@@ -7,8 +7,13 @@
   "client": [
     "BlockEntityTypeMixin",
     "BlockModelSetMixin",
+    "CameraMixin",
     "ClientChunkCacheMixin",
     "CloudRendererMixin",
+    "DhApiTerrainDataRepoMixin",
+    "DhBlazeVanillaFadeRendererMixin",
+    "DhGlDhVanillaFadeShaderMixin",
+    "DhGlVanillaFadeRendererMixin",
     "EmfBlockEntityRenderersMixin",
     "EmfEntityRenderersMixin",
     "EmfManagerMixin",

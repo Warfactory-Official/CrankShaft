@@ -2,7 +2,7 @@ plugins {
     id("multiloader-base")
     id("java-library")
 
-    id("net.fabricmc.fabric-loom") version ("1.18.2")
+    id("net.fabricmc.fabric-loom") version ("1.18.4")
 }
 
 base {
@@ -73,6 +73,7 @@ dependencies {
     compileOnly("net.caffeinemc:sodium-fabric-api:${sodiumVersion}")
     compileOnly("net.caffeinemc:sodium-fabric:${sodiumVersion}")
     compileOnly("maven.modrinth:voxy:${voxyVersion}")
+    compileOnly("maven.modrinth:distanthorizons:${distantHorizonsVersion}") { isTransitive = false }
     compileOnly("maven.modrinth:entityculling:${entityCullingVersion}") { isTransitive = false }
     compileOnly("maven.modrinth:lambdynamiclights:${lambDynLightsVersion}") { isTransitive = false }
     compileOnly("maven.modrinth:entitytexturefeatures:${etfVersion}") { isTransitive = false }

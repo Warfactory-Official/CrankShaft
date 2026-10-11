@@ -372,9 +372,12 @@ public class VisualizationManagerImpl implements VisualizationManager {
         return engineOwnsTerrain && composited;
     }
 
-    public void runDeferredTranslucentOit() {
+    /**
+     * @return whether a deferred chain ran.
+     */
+    public boolean runDeferredTranslucentOit() {
         if (!oitDeferred) {
-            return;
+            return false;
         }
         oitDeferred = false;
         boolean sodium = oitDeferredSodium;
@@ -394,7 +397,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
 
         RenderContext ctx = lastFrameCtx;
         if (ctx == null) {
-            return;
+            return false;
         }
         boolean composited = runOitChain(ctx, chunks, terrain, sodium);
         if (ImplDebugFlags.FABULOUS_LAYER_VIEW) {
@@ -416,6 +419,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
                 runningDeferredFallback = false;
             }
         }
+        return true;
     }
 
     /**

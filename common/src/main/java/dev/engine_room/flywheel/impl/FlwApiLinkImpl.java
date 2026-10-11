@@ -3,11 +3,13 @@ package dev.engine_room.flywheel.impl;
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.api.internal.FlwApiLink;
 import dev.engine_room.flywheel.api.layout.LayoutBuilder;
+import dev.engine_room.flywheel.api.lod.LodSurface;
 import dev.engine_room.flywheel.api.registry.IdRegistry;
 import dev.engine_room.flywheel.api.visualization.BlockEntityVisualizer;
 import dev.engine_room.flywheel.api.visualization.EntityVisualizer;
 import dev.engine_room.flywheel.api.visualization.ItemStackVisualizer;
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
+import dev.engine_room.flywheel.impl.compat.LodCompat;
 import dev.engine_room.flywheel.impl.layout.LayoutBuilderImpl;
 import dev.engine_room.flywheel.impl.registry.IdRegistryImpl;
 import dev.engine_room.flywheel.impl.visualization.ConcurrentExtraction;
@@ -19,7 +21,11 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.levelgen.Heightmap;
 import org.jspecify.annotations.Nullable;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.function.IntConsumer;
 
 public class FlwApiLinkImpl implements FlwApiLink {
     @Override
@@ -105,5 +111,20 @@ public class FlwApiLinkImpl implements FlwApiLink {
     @Override
     public boolean supportsConcurrentExtraction(Object renderer) {
         return ConcurrentExtraction.supports(renderer);
+    }
+
+    @Override
+    public int lodTerrainDistance() {
+        return LodCompat.distance();
+    }
+
+    @Override
+    public void onLodTerrainChange(IntConsumer listener) {
+        LodCompat.onChange(listener);
+    }
+
+    @Override
+    public CompletableFuture<LodSurface> lodTerrainSurface(Heightmap.Types type, int minX, int minZ, int size) {
+        return LodCompat.surface(type, minX, minZ, size);
     }
 }

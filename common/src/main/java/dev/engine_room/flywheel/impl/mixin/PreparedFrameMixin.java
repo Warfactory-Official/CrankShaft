@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.impl.mixin;
 
 import dev.engine_room.flywheel.backend.engine.BerTranslucentCapture;
 import dev.engine_room.flywheel.impl.FabulousReroute;
+import dev.engine_room.flywheel.impl.compat.LodCompat;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.SubmitNodeStorage;
@@ -31,6 +32,13 @@ abstract class PreparedFrameMixin {
         return manager != null && !manager.isShaderPackGuest() ? manager.berTranslucent() : null;
     }
 
+    @Inject(method = "executeSolid", at = @At("HEAD"), require = 1)
+    private void flw$captureOpaqueTerrain(CallbackInfo ci) {
+        if (FabulousReroute.isLevelFrame(submitNodeStorage)) {
+            LodCompat.captureTerrainDepth(0);
+        }
+    }
+
     @Inject(method = "executeTranslucent", at = @At("HEAD"), require = 1)
     private void flw$beginOitFrame(CallbackInfo ci) {
         BerTranslucentCapture capture = flw$capture();
@@ -47,8 +55,8 @@ abstract class PreparedFrameMixin {
         }
         FabulousReroute.closeLayerWindow();
         VisualizationManagerImpl manager = VisualizationManagerImpl.get(Minecraft.getInstance().level);
-        if (manager != null) {
-            manager.runDeferredTranslucentOit();
+        if (manager != null && manager.runDeferredTranslucentOit()) {
+            LodCompat.captureTerrainDepth(2);
         }
     }
 

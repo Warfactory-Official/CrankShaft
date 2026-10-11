@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.impl.mixin;
 
 import com.mojang.blaze3d.textures.GpuSampler;
+import dev.engine_room.flywheel.impl.compat.LodCompat;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayerGroup;
@@ -17,12 +18,21 @@ public class MixinChunkSectionsToRender {
         if (group != ChunkSectionLayerGroup.TRANSLUCENT) {
             return;
         }
+        LodCompat.captureTerrainDepth(1);
         VisualizationManagerImpl manager = VisualizationManagerImpl.get(Minecraft.getInstance().level);
         if (manager == null) {
             return;
         }
         if (manager.renderTranslucentOit((ChunkSectionsToRender) (Object) this, sampler)) {
+            LodCompat.captureTerrainDepth(2);
             ci.cancel();
+        }
+    }
+
+    @Inject(method = "renderGroup", at = @At("RETURN"), require = 1)
+    private void flw$captureTranslucentTerrain(ChunkSectionLayerGroup group, GpuSampler sampler, CallbackInfo ci) {
+        if (group == ChunkSectionLayerGroup.TRANSLUCENT) {
+            LodCompat.captureTerrainDepth(2);
         }
     }
 }

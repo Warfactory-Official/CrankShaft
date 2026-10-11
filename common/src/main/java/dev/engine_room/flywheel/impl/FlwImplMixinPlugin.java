@@ -20,6 +20,9 @@ public final class FlwImplMixinPlugin implements IMixinConfigPlugin {
     private static final boolean POLYTONE_PRESENT = classPresent("net.mehvahdjukaar.polytone.Polytone");
     private static final String MIXIN_EMF = "dev.engine_room.flywheel.impl.mixin.Emf";
     private static final boolean EMF_PRESENT = classPresent("traben.entity_model_features.EMFManager");
+    private static final String MIXIN_DISTANT_HORIZONS = "dev.engine_room.flywheel.impl.mixin.Dh";
+    private static final boolean DISTANT_HORIZONS_PRESENT = classPresent(
+            "com.seibel.distanthorizons.core.api.internal.ClientApi");
 
     private static boolean classPresent(String name) {
         return FlwImplMixinPlugin.class.getClassLoader().getResource(name.replace('.', '/') + ".class") != null;
@@ -41,6 +44,9 @@ public final class FlwImplMixinPlugin implements IMixinConfigPlugin {
         }
         if (mixinClassName.startsWith(MIXIN_EMF)) {
             return EMF_PRESENT;
+        }
+        if (mixinClassName.startsWith(MIXIN_DISTANT_HORIZONS)) {
+            return DISTANT_HORIZONS_PRESENT;
         }
         return true;
     }

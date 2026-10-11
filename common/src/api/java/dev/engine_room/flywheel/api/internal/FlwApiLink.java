@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.api.internal;
 
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.api.layout.LayoutBuilder;
+import dev.engine_room.flywheel.api.lod.LodSurface;
 import dev.engine_room.flywheel.api.registry.IdRegistry;
 import dev.engine_room.flywheel.api.visualization.BlockEntityVisualizer;
 import dev.engine_room.flywheel.api.visualization.EntityVisualizer;
@@ -13,7 +14,11 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.levelgen.Heightmap;
 import org.jspecify.annotations.Nullable;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.function.IntConsumer;
 
 /**
  * Reflective seam letting the platform-agnostic {@code api} sourceset reach {@code impl} classes
@@ -59,4 +64,10 @@ public interface FlwApiLink {
 
     // An EntityRenderer or BlockEntityRenderer.
     boolean supportsConcurrentExtraction(Object renderer);
+
+    int lodTerrainDistance();
+
+    void onLodTerrainChange(IntConsumer listener);
+
+    CompletableFuture<LodSurface> lodTerrainSurface(Heightmap.Types type, int minX, int minZ, int size);
 }

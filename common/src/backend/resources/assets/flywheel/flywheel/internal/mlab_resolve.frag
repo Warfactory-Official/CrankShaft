@@ -1,7 +1,6 @@
 layout(location = 0) out vec4 frag;
 
-// Alpha 1: 26.2 GL toggles GL_BLEND for every draw buffer (GlStateManager BLEND[i] is non-indexed), so this target
-// takes attachment 0's premultiplied blend; with src.a = 1 that is an exact replace.
+// Alpha 1: premultiplied blend => exact replace.
 layout(location = 1) out vec4 _flw_nearestOut;
 #define _FLW_TRACK_NODE(c, depth) if (!occluded && (c).a > 0.0) { occluded = true; nearestDepth = (depth); }
 #define _FLW_RESOLVE_OUT(acc, transmittance, occluded, nearestDepth) { frag = vec4(acc, 1.0 - (transmittance)); \
