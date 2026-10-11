@@ -50,11 +50,10 @@ public class MinecartVisual<T extends AbstractMinecart> extends AbstractEntityVi
         EntityFeatureCompat.observeTexture(entity.getType(), TEXTURE);
 
         instances = InstanceTree.create(instancerProvider(), ModelTrees.of(layerLocation, MATERIAL));
+        // 26.2: Tick-plan construction overlaps vanilla's interpolation-list updates; pose in beginFrame.
+        instances.visible(false);
         blockState = entity.getDisplayBlockState();
         contents = createContentsInstance();
-
-        updateInstances(partialTick);
-        updateLight(partialTick);
     }
 
     /**
@@ -72,10 +71,11 @@ public class MinecartVisual<T extends AbstractMinecart> extends AbstractEntityVi
             return null;
         }
 
-        return instancerProvider().instancer(InstanceTypes.TRANSFORMED,
-                                          Objects.requireNonNull(Models.displayBlock(blockState,
-                                                  AbstractMinecartRenderer.BLOCK_DISPLAY_CONTEXT)))
-                                  .createInstance();
+        TransformedInstance instance = instancerProvider().instancer(InstanceTypes.TRANSFORMED,
+                Objects.requireNonNull(Models.displayBlock(blockState, AbstractMinecartRenderer.BLOCK_DISPLAY_CONTEXT)))
+                .createInstance();
+        instance.setVisible(false);
+        return instance;
     }
 
     @Override
@@ -185,10 +185,12 @@ public class MinecartVisual<T extends AbstractMinecart> extends AbstractEntityVi
             stack.translate(-0.5F, (float) (displayOffset - 8) / 16, 0.5F);
             stack.rotateY(90 * Mth.DEG_TO_RAD);
             updateContents(contents, stack, partialTick);
+            contents.setVisible(true);
             stack.popMatrix();
         }
 
         stack.scale(-1.0F, -1.0F, 1.0F);
+        if (!instances.visible()) instances.visible(true);
         instances.updateInstances(stack);
 
         // TODO: Use LightUpdatedVisual/ShaderLightVisual if possible.
