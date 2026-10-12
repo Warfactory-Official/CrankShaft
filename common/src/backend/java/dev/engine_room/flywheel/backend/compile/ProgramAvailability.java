@@ -6,6 +6,7 @@ import dev.engine_room.flywheel.backend.BackendUnavailableException;
 // Render-thread rejection after warm-worker join; resource apply resets availability.
 public final class ProgramAvailability {
     public enum Feature {
+        INSTANCE_SCATTER,
         INSTANCE_CULL,
         DRAW_INDEX,
         HIZ_MULTI,

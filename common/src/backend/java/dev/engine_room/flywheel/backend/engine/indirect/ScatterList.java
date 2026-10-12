@@ -42,15 +42,19 @@ public class ScatterList {
         long srcOffset = transfers.srcOffset(transferIndex);
         long dstOffset = transfers.dstOffset(transferIndex);
 
-        long offset = 0;
-        long remaining = size;
-
-        while (offset < size) {
-            long copySize = Math.min(remaining, maxBytesPerScatter);
-            push(copySize, srcOffset + offset, dstOffset + offset);
-            offset += copySize;
-            remaining -= copySize;
+        int count = (int) ((size + maxBytesPerScatter - 1) / maxBytesPerScatter);
+        if (count == 0) {
+            return;
         }
+        block.reallocIfNeeded(length + count - 1);
+        long ptr = block.ptrForIndex(length);
+        for (long offset = 0; offset < size; offset += maxBytesPerScatter, ptr += STRIDE) {
+            long copySize = Math.min(size - offset, maxBytesPerScatter);
+            MemoryUtil.memPutInt(ptr, packSizeAndSrcOffset(copySize, srcOffset + offset));
+            MemoryUtil.memPutInt(ptr + Integer.BYTES, (int) ((dstOffset + offset) >> 2));
+        }
+        length += count;
+        usedBytes += count * STRIDE;
     }
 
     public void push(long sizeBytes, long srcOffsetBytes, long dstOffsetBytes) {

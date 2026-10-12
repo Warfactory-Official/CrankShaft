@@ -69,6 +69,8 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             .thenComparing(IndirectDraw::material, MaterialRenderState.COMPARATOR)
             .thenComparingInt((IndirectDraw d) -> InstanceTypeIds.id(d.instanceType()));
     private static final int COPY_REGION_CAP = 256;
+    // Port: scatter amortizes small copies; large contiguous ranges stay on the transfer path.
+    private static final long MAX_SCATTER_BYTES = 16L << 10;
     final VkPrograms programs;
     final MeshPool meshPool = new MeshPool();
     final RenderPassUniforms renderPassUniforms = new RenderPassUniforms();
@@ -100,8 +102,11 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     private boolean pass2Pending;
     private long copySrcBuffer;
     private int copyRegionCount;
+    private int scatterCount;
     private int frameParity;
     private final boolean direct;
+    private final boolean scatterUploads;
+    private final int maxUploadGroups;
     private final int maxDrawCount;
     private int checkedCullCount = -1;
     private int checkedApplyCount = -1;
@@ -109,6 +114,8 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     public VkIndirectDrawManager(VkPrograms programs) {
         this.programs = programs;
         direct = programs.instanceRoute() == VkPrograms.InstanceRoute.DIRECT;
+        scatterUploads = programs.scatterUploads();
+        maxUploadGroups = (int) Math.min(Integer.MAX_VALUE, VkCaps.MAX_COMPUTE_WORK_GROUP_COUNT_X);
         maxDrawCount = programs.drawIndex() ? (int) Math.min(VkCaps.MAX_DRAW_INDIRECT_COUNT, Integer.MAX_VALUE) : 1;
         programs.acquire();
     }
@@ -184,7 +191,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
     @Override
     protected <I extends Instance> IndirectInstancer<?> create(InstancerKey<I> key) {
-        return new IndirectInstancer<>(key, new AbstractInstancer.Recreate<>(key, this), VkSlab::new);
+        return new IndirectInstancer<>(key, new AbstractInstancer.Recreate<>(key, this), HostSlab::new);
     }
 
     @Override
@@ -251,13 +258,18 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         VkCommandBuffer copyCmd = VkContext.beginCommands();
         VkContext.pushLabel(copyCmd, "flywheel:vk/instance_upload");
         long objectVkBuffer = objectStorage.objectBuffer().vkBuffer();
+        fs.instanceUpload.ensureCapacityDiscard(objectStorage.objectBuffer().sizeBytes());
+        if (scatterUploads) {
+            fs.instanceCopies.ensureCapacityDiscard((long) objectStorage.pageSlotCount() * 2 * Integer.BYTES);
+        }
         for (Group<?> group : frameGroups) {
             for (IndirectInstancer<?> instancer : group.instancers) {
                 instancer.uploadInstances((slab, src, dst, size) ->
-                        appendCopyRegion(copyCmd, ((VkSlab) slab).vkBuffer(), objectVkBuffer, src, dst, size), true);
+                        appendInstanceCopy(copyCmd, (HostSlab) slab, fs.instanceUpload, fs.instanceCopies,
+                                objectVkBuffer, src, dst, size), true);
             }
         }
-        flushCopyRegions(copyCmd, objectVkBuffer);
+        flushInstanceCopies(copyCmd, fs.instanceUpload, fs.instanceCopies, objectStorage.objectBuffer());
         VkContext.popLabel(copyCmd);
         VkContext.submitCommands(copyCmd);
 
@@ -341,7 +353,54 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         checkedApplyCount = applyCount;
     }
 
+    private void appendInstanceCopy(VkCommandBuffer cmd, HostSlab slab, VkBuffer upload, VkBuffer copies, long dstBuffer,
+                                    long src, long dst, long size) {
+        MemoryUtil.memCopy(slab.ptrForPage(0) + src, upload.mappedAddress() + dst, size);
+        if (scatterUploads && size <= MAX_SCATTER_BYTES) {
+            long ptr = copies.mappedAddress() + (long) scatterCount++ * 2 * Integer.BYTES;
+            MemoryUtil.memPutInt(ptr, (int) (dst >>> 2));
+            MemoryUtil.memPutInt(ptr + Integer.BYTES, (int) (size >>> 2));
+        } else {
+            appendCopyRegion(cmd, upload.vkBuffer(), dstBuffer, dst, dst, size);
+        }
+    }
+
+    private void flushInstanceCopies(VkCommandBuffer cmd, VkBuffer upload, VkBuffer copies, VkBuffer destination) {
+        boolean mixed = copyRegionCount > 0 && scatterCount > 0;
+        flushCopyRegions(cmd, destination.vkBuffer());
+        if (scatterCount == 0) {
+            return;
+        }
+        if (mixed) {
+            VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK10.VK_ACCESS_TRANSFER_WRITE_BIT, VK10.VK_ACCESS_SHADER_WRITE_BIT);
+        }
+        VkComputePipeline pipeline = programs.scatterPipeline();
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle());
+        writer.storage(0, copies).storage(1, upload).storage(2, destination);
+        writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.layout());
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            var offset = stack.mallocInt(1);
+            for (int first = 0; first < scatterCount;) {
+                int count = Math.min(scatterCount - first, maxUploadGroups);
+                offset.put(0, first);
+                VK10.vkCmdPushConstants(cmd, pipeline.layout().pipelineLayout(), VK10.VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                        offset);
+                VK10.vkCmdDispatch(cmd, count, 1, 1);
+                first += count;
+            }
+        }
+        scatterCount = 0;
+    }
+
     private void appendCopyRegion(VkCommandBuffer cmd, long srcBuffer, long dstBuffer, long src, long dst, long size) {
+        if (copyRegionCount > 0 && srcBuffer == copySrcBuffer) {
+            VkBufferCopy last = copyRegions.get(copyRegionCount - 1);
+            if (last.srcOffset() + last.size() == src && last.dstOffset() + last.size() == dst) {
+                last.size(last.size() + size);
+                return;
+            }
+        }
         if (copyRegionCount > 0 && (srcBuffer != copySrcBuffer || copyRegionCount == COPY_REGION_CAP)) {
             flushCopyRegions(cmd, dstBuffer);
         }
@@ -470,8 +529,9 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
     private void publishDirectUploads() {
         VkCommandBuffer cmd = VkContext.beginCommands();
-        VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, VK10.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-                VK10.VK_ACCESS_TRANSFER_WRITE_BIT, VK10.VK_ACCESS_SHADER_READ_BIT);
+        VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT | VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK10.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | meshVisualDstStageBits(),
+                VK10.VK_ACCESS_TRANSFER_WRITE_BIT | VK10.VK_ACCESS_SHADER_WRITE_BIT, VK10.VK_ACCESS_SHADER_READ_BIT);
         VkContext.submitCommands(cmd);
     }
 
@@ -484,9 +544,9 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         generatePyramid(cmd, pyramidSampler);
         VkContext.popLabel(cmd);
 
-        VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT | VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK10.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | meshVisualDstStageBits(),
-                VK10.VK_ACCESS_TRANSFER_WRITE_BIT, VK10.VK_ACCESS_SHADER_READ_BIT);
+                VK10.VK_ACCESS_TRANSFER_WRITE_BIT | VK10.VK_ACCESS_SHADER_WRITE_BIT, VK10.VK_ACCESS_SHADER_READ_BIT);
 
         dispatchCullPass(cmd, pyramidSampler, programs.cullPipeline(), false);
         VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -954,6 +1014,10 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     }
 
     static final class FrameSet {
+        // Port: the host's two-submit fence protects these snapshots along with the other frame buffers.
+        final VkBuffer instanceUpload = new VkBuffer(VK10.VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+                | VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 256);
+        final VkBuffer instanceCopies = storage(256);
         final BitSet lutPending = new BitSet();
         final VkBuffer indexTable = storage(256);
         final VkBuffer model = storage(256);
@@ -982,6 +1046,8 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         }
 
         void delete() {
+            instanceUpload.delete();
+            instanceCopies.delete();
             indexTable.delete();
             model.delete();
             draw.delete();

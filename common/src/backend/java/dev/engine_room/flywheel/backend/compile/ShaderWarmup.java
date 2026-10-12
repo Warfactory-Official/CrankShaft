@@ -271,6 +271,9 @@ public final class ShaderWarmup {
         VkUberPipelines uber = programs.uber();
         List<Runnable> jobs = new ArrayList<>();
         jobs.add(() -> {
+            if (programs.scatterUploads()) {
+                programs.scatterPipeline();
+            }
             if (programs.instanceRoute() == VkPrograms.InstanceRoute.INDIRECT) {
                 programs.cullPipeline();
                 programs.cullPass2Pipeline();

@@ -7,9 +7,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Contiguous host-memory instance pages of an instancing-backend instancer; the texel upload reads them directly.
+ * Contiguous host-memory instance pages. Instancing uploads texels from them; Vulkan indirect snapshots live
+ * ranges into fenced frame storage before GPU consumption.
+ * Allocation, growth and retirement run on the render thread after instance updates join.
  */
-public final class HostSlab {
+public final class HostSlab implements Slab {
     private final long pageSizeBytes;
     private long ptr;
     private int pageCapacity;
@@ -25,7 +27,9 @@ public final class HostSlab {
 
     private static long allocate(long bytes) {
         FlwMemoryTracker._allocCpuMemory(bytes);
-        return MemoryUtil.nmemAlloc(bytes);
+        long ptr = MemoryUtil.nmemAlloc(bytes);
+        if (ptr == MemoryUtil.NULL) throw new OutOfMemoryError("Allocating instance slab of " + bytes + " bytes");
+        return ptr;
     }
 
     public long ptrForPage(int pageNo) {
@@ -34,6 +38,10 @@ public final class HostSlab {
 
     public int pageCapacity() {
         return pageCapacity;
+    }
+
+    @Override
+    public void flushRange(long byteOffset, long byteSize) {
     }
 
     private long capacityBytes() {

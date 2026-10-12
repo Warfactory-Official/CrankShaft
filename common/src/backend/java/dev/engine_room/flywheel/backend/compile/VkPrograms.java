@@ -47,6 +47,7 @@ public class VkPrograms extends AtomicReferenceCounted {
     private static final Identifier CULL_MAIN = ResourceUtil.rl("internal/indirect/cull.glsl");
 
     private static final Identifier APPLY_MAIN = ResourceUtil.rl("internal/indirect/apply.glsl");
+    private static final Identifier SCATTER_MAIN = ResourceUtil.rl("internal/indirect/vk_scatter.glsl");
     private static final Identifier DOWNSAMPLE_FIRST = ResourceUtil.rl("internal/indirect/downsample_first.glsl");
     private static final Identifier DOWNSAMPLE_SECOND = ResourceUtil.rl("internal/indirect/downsample_second.glsl");
     private static final Identifier DOWNSAMPLE_FIRST_SMALL = ResourceUtil.rl("internal/indirect/vk_downsample_first_small.glsl");
@@ -75,6 +76,7 @@ public class VkPrograms extends AtomicReferenceCounted {
     private final boolean bindlessTextures;
     private final boolean localRead;
     private final boolean descriptorBuffers;
+    private final boolean scatterUploads;
     private final int depthFormat;
     private final VkUberPipelines uber;
     private final VkOitPipelines oit;
@@ -84,6 +86,8 @@ public class VkPrograms extends AtomicReferenceCounted {
     private final Map<Integer, VkComputePipeline> cullPass2Cache = new HashMap<>();
     @Nullable
     private VkComputePipeline applyPipeline;
+    @Nullable
+    private VkComputePipeline scatterPipeline;
     @Nullable
     private VkComputePipeline downsampleFirstPipeline;
     @Nullable
@@ -115,6 +119,9 @@ public class VkPrograms extends AtomicReferenceCounted {
                 && ProgramAvailability.allows(ProgramAvailability.Feature.LOCAL_READ);
         descriptorBuffers = VkCaps.DESCRIPTOR_BUFFER_NEGOTIATED
                 && ProgramAvailability.allows(ProgramAvailability.Feature.DESCRIPTOR_BUFFER);
+        scatterUploads = VkCaps.MAX_PER_STAGE_DESCRIPTOR_STORAGE_BUFFERS >= 3
+                && VkCaps.canComputeWorkgroup(32, 1, 1)
+                && ProgramAvailability.allows(ProgramAvailability.Feature.INSTANCE_SCATTER);
     }
 
     public InstanceRoute instanceRoute() {
@@ -143,6 +150,10 @@ public class VkPrograms extends AtomicReferenceCounted {
 
     public boolean descriptorBuffers() {
         return descriptorBuffers;
+    }
+
+    public boolean scatterUploads() {
+        return scatterUploads;
     }
 
     public int depthFormat() {
@@ -358,6 +369,17 @@ public class VkPrograms extends AtomicReferenceCounted {
         return applyPipeline;
     }
 
+    public VkComputePipeline scatterPipeline() {
+        if (scatterPipeline == null) {
+            scatterPipeline = optional(ProgramAvailability.Feature.INSTANCE_SCATTER,
+                    () -> buildComputePipeline("utilities/scatter", SCATTER_MAIN,
+                            List.of(new Binding(0, TYPE_STORAGE_BUFFER, STAGE_COMPUTE),
+                                    new Binding(1, TYPE_STORAGE_BUFFER, STAGE_COMPUTE),
+                                    new Binding(2, TYPE_STORAGE_BUFFER, STAGE_COMPUTE)), Integer.BYTES));
+        }
+        return scatterPipeline;
+    }
+
     public VkComputePipeline downsampleFirstPipeline() {
         if (hiZRoute == HiZRoute.SINGLE_MIP) {
             if (downsampleFirstSmallPipeline == null) {
@@ -443,6 +465,10 @@ public class VkPrograms extends AtomicReferenceCounted {
         if (applyPipeline != null) {
             applyPipeline.delete();
             applyPipeline = null;
+        }
+        if (scatterPipeline != null) {
+            scatterPipeline.delete();
+            scatterPipeline = null;
         }
         if (downsampleFirstPipeline != null) {
             downsampleFirstPipeline.delete();

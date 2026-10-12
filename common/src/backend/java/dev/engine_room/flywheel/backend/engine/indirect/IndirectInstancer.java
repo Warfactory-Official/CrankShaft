@@ -196,10 +196,16 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
                     continue;
                 }
                 long baseByte = mapping.page2ByteOffset(page);
-                if (baseByte < 0) {
+                int valid = pages[page].valid.get();
+                if (baseByte < 0 || valid == 0) {
                     continue;
                 }
-                copier.copyPage(slabBuffer, (long) page * pageBytes, baseByte, pageBytes);
+                // Port: culling consumes only valid slots; snapshots need the enclosing live range.
+                int first = Integer.numberOfTrailingZeros(valid);
+                int end = Integer.SIZE - Integer.numberOfLeadingZeros(valid);
+                long offset = first * instanceStride;
+                copier.copyPage(slabBuffer, (long) page * pageBytes + offset, baseByte + offset,
+                        (end - first) * instanceStride);
             }
             spanStart = contentsChanged.nextSetBit(spanEnd + 1);
         }

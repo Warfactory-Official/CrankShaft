@@ -83,6 +83,18 @@ public final class VkBuffer {
     }
 
     public boolean ensureCapacity(long minBytes) {
+        return ensureCapacity(minBytes, true);
+    }
+
+    /**
+     * Render-thread growth without retaining contents; overwrite every GPU-read byte before submission. Prior allocations
+     * remain alive until the host retires their last submission, just as with {@link #ensureCapacity(long)}.
+     */
+    public boolean ensureCapacityDiscard(long minBytes) {
+        return ensureCapacity(minBytes, false);
+    }
+
+    private boolean ensureCapacity(long minBytes, boolean preserve) {
         if (minBytes <= sizeBytes) {
             return false;
         }
@@ -95,7 +107,9 @@ public final class VkBuffer {
         long oldSize = sizeBytes;
         allocate(newSize);
         if (!deviceLocal) {
-            MemoryUtil.memCopy(oldMapped, mappedAddress, oldSize);
+            if (preserve) {
+                MemoryUtil.memCopy(oldMapped, mappedAddress, oldSize);
+            }
             Vma.vmaUnmapMemory(vma, oldAllocation);
         }
         VkContext.deferDestroy(() -> {

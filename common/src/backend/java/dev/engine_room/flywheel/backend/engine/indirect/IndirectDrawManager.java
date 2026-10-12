@@ -112,7 +112,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         // WARN: We should avoid eagerly grabbing GlPrograms here as catching compile
         // errors and falling back during construction is a bit more complicated.
         stagingBuffer = new StagingBuffer(this.programs);
-        slabArena = new GlSlabArena(this.programs);
+        slabArena = new GlSlabArena(stagingBuffer);
         meshPool = new MeshPool();
         lightBuffers = new LightBuffers();
         matrixBuffer = new MatrixBuffer();
@@ -393,12 +393,12 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     }
 
     private void uploadInstances() {
+        slabArena.beginUpload(buffers.objectStorage.objectBuffer.handle());
         for (var group : frameGroups) {
             for (var instancer : group.instancers()) {
                 instancer.uploadInstances(slabArena);
             }
         }
-        slabArena.flush(buffers.objectStorage.objectBuffer.handle());
     }
 
     private void uploadModels(StagingBuffer stagingBuffer) {

@@ -1,14 +1,10 @@
 package dev.engine_room.flywheel.backend.engine.indirect;
 
-import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
 import dev.engine_room.flywheel.backend.engine.Slab;
 import dev.engine_room.flywheel.backend.engine.SlabPageCopier;
-import dev.engine_room.flywheel.backend.gl.buffer.GlBuffer;
-import dev.engine_room.flywheel.backend.gl.buffer.GlBufferUsage;
 import dev.engine_room.flywheel.lib.memory.FlwMemoryTracker;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
-import org.lwjgl.opengl.*;
 import org.lwjgl.system.MemoryUtil;
 
 import java.util.ArrayList;
@@ -16,30 +12,23 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * GL indirect {@link Slab}s carved into page slots of shared, persistently mapped chunks, so a frame's dirty pages reach
- * the object buffer through one scatter dispatch per chunk rather than one {@code glCopyNamedBufferSubData} per page.
- * Slots never move; a freed slot is reused two frames later. Render thread only.
+ * GL indirect {@link Slab}s carved into stable host-memory page slots. Dirty live ranges snapshot into a batched
+ * upload before the GPU reads them, so later instance writes cannot change an in-flight upload.
+ * A freed slot is reused two frames later. Allocation and upload run on the render thread.
  */
 final class GlSlabArena implements SlabPageCopier {
     private static final long FIRST_CHUNK_BYTES = 1L << 20;
-    // Scatter source offsets are 24-bit uint indices (64 MiB).
     private static final long MAX_CHUNK_BYTES = 16L << 20;
-    private static final long COPY_BYTES = 64 * Integer.BYTES;
-    // Scatter loads a full workgroup row before its size check.
-    private static final long TAIL_BYTES = COPY_BYTES;
-    private static final long COPY_STRIDE = 2 * Integer.BYTES;
-    private static final int STORAGE_FLAGS = GL44C.GL_MAP_PERSISTENT_BIT | GL30C.GL_MAP_WRITE_BIT;
-    private static final int MAP_FLAGS = GL44C.GL_MAP_PERSISTENT_BIT | GL30C.GL_MAP_WRITE_BIT | GL30C.GL_MAP_FLUSH_EXPLICIT_BIT;
 
-    private final IndirectPrograms programs;
+    private final StagingBuffer stagingBuffer;
     private final List<Chunk> chunks = new ArrayList<>();
     private final Long2ObjectOpenHashMap<LongArrayList> freeSlots = new Long2ObjectOpenHashMap<>();
-    private final GlBuffer copyBuffer = new GlBuffer(GlBufferUsage.STREAM_COPY);
+    private int dstVbo;
     private List<ArenaSlab> retiredThisFrame = new ArrayList<>();
     private List<ArenaSlab> retiredLastFrame = new ArrayList<>();
 
-    GlSlabArena(IndirectPrograms programs) {
-        this.programs = programs;
+    GlSlabArena(StagingBuffer stagingBuffer) {
+        this.stagingBuffer = stagingBuffer;
     }
 
     private static int chunkIndex(long slot) {
@@ -68,6 +57,10 @@ final class GlSlabArena implements SlabPageCopier {
         retiredThisFrame = tmp;
     }
 
+    void beginUpload(int dstVbo) {
+        this.dstVbo = dstVbo;
+    }
+
     @Override
     public void copyPage(Slab source, long srcByteOffset, long dstByteOffset, long byteSize) {
         ArenaSlab slab = (ArenaSlab) source;
@@ -75,35 +68,8 @@ final class GlSlabArena implements SlabPageCopier {
         int page = (int) (srcByteOffset / pageBytes);
         long slot = slab.slots[page];
         Chunk chunk = chunks.get(chunkIndex(slot));
-        chunk.queueCopy(offset(slot) + srcByteOffset - page * pageBytes, dstByteOffset, byteSize);
-    }
-
-    /**
-     * Flushes the frame's slab writes and scatters the queued page copies into {@code dstVbo}.
-     */
-    void flush(int dstVbo) {
-        boolean bound = false;
-        for (Chunk chunk : chunks) {
-            if (chunk.flushEnd > chunk.flushStart) {
-                GL45C.glFlushMappedNamedBufferRange(chunk.handle, chunk.flushStart, chunk.flushEnd - chunk.flushStart);
-                chunk.flushStart = Long.MAX_VALUE;
-                chunk.flushEnd = 0;
-            }
-            if (chunk.copyCount == 0) {
-                continue;
-            }
-            if (!bound) {
-                programs.getScatterProgram()
-                        .bind();
-                GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 2, dstVbo);
-                bound = true;
-            }
-            copyBuffer.upload(chunk.copies, chunk.copyCount * COPY_STRIDE);
-            GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 0, copyBuffer.handle());
-            GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 1, chunk.handle);
-            GL43C.glDispatchCompute(chunk.copyCount, 1, 1);
-            chunk.copyCount = 0;
-        }
+        long src = offset(slot) + srcByteOffset - page * pageBytes;
+        stagingBuffer.enqueueBatchedCopy(chunk.ptr + src, byteSize, dstVbo, dstByteOffset);
     }
 
     void delete() {
@@ -114,7 +80,6 @@ final class GlSlabArena implements SlabPageCopier {
         freeSlots.clear();
         retiredThisFrame.clear();
         retiredLastFrame.clear();
-        copyBuffer.delete();
     }
 
     private long allocate(long pageBytes) {
@@ -134,50 +99,20 @@ final class GlSlabArena implements SlabPageCopier {
     }
 
     private static final class Chunk {
-        private final int handle;
         private final long ptr;
         private final long capacity;
-        private long copies;
-        private int copyCapacity;
-        private int copyCount;
         private long top;
-        private long flushStart = Long.MAX_VALUE;
-        private long flushEnd;
 
         private Chunk(long capacity) {
             this.capacity = capacity;
-            long bytes = capacity + TAIL_BYTES;
-            handle = GL45C.glCreateBuffers();
-            GL45C.glNamedBufferStorage(handle, bytes, STORAGE_FLAGS);
-            ptr = GL45C.nglMapNamedBufferRange(handle, 0, bytes, MAP_FLAGS);
-            FlwMemoryTracker._allocGpuMemory(bytes);
-        }
-
-        private void queueCopy(long src, long dst, long bytes) {
-            int n = (int) ((bytes + COPY_BYTES - 1) / COPY_BYTES);
-            if (copyCount + n > copyCapacity) {
-                copyCapacity = Math.max(copyCount + n, copyCapacity * 2);
-                copies = MemoryUtil.nmemRealloc(copies, copyCapacity * COPY_STRIDE);
-            }
-            long ptr = copies + copyCount * COPY_STRIDE;
-            for (long done = 0; done < bytes; done += COPY_BYTES, ptr += COPY_STRIDE) {
-                long size = Math.min(COPY_BYTES, bytes - done);
-                MemoryUtil.memPutInt(ptr, (int) ((size >>> 2) << 24 | ((src + done) >>> 2)));
-                MemoryUtil.memPutInt(ptr + Integer.BYTES, (int) ((dst + done) >>> 2));
-            }
-            copyCount += n;
-        }
-
-        private void markWritten(long start, long end) {
-            flushStart = Math.min(flushStart, start);
-            flushEnd = Math.max(flushEnd, end);
+            ptr = MemoryUtil.nmemAlloc(capacity);
+            if (ptr == MemoryUtil.NULL) throw new OutOfMemoryError("Allocating instance arena chunk of " + capacity + " bytes");
+            FlwMemoryTracker._allocCpuMemory(capacity);
         }
 
         private void delete() {
-            GL45C.glUnmapNamedBuffer(handle);
-            GL15C.glDeleteBuffers(handle);
-            FlwMemoryTracker._freeGpuMemory(capacity + TAIL_BYTES);
-            MemoryUtil.nmemFree(copies);
+            MemoryUtil.nmemFree(ptr);
+            FlwMemoryTracker._freeCpuMemory(capacity);
         }
     }
 
@@ -215,14 +150,6 @@ final class GlSlabArena implements SlabPageCopier {
 
         @Override
         public void flushRange(long byteOffset, long byteSize) {
-            int first = (int) (byteOffset / pageBytes);
-            int last = (int) ((byteOffset + byteSize - 1) / pageBytes);
-            for (int page = first; page <= last; page++) {
-                long slot = slots[page];
-                long start = offset(slot);
-                chunks.get(chunkIndex(slot))
-                      .markWritten(start, start + pageBytes);
-            }
         }
 
         @Override
