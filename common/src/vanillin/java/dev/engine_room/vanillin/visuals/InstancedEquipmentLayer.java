@@ -1,28 +1,20 @@
 package dev.engine_room.vanillin.visuals;
 
 import dev.engine_room.flywheel.api.instance.InstancerProvider;
-import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTree;
-import dev.engine_room.flywheel.lib.model.part.ModelTrees;
-import dev.engine_room.flywheel.lib.util.ItemFoil;
 import dev.engine_room.vanillin.visuals.LivingEntityVisual.OverlayKind;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.client.renderer.texture.OverlayTexture;
-import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.resources.model.EquipmentAssetManager;
 import net.minecraft.client.resources.model.EquipmentClientInfo;
 import net.minecraft.core.component.DataComponents;
-import net.minecraft.data.AtlasIds;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.component.DyedItemColor;
 import net.minecraft.world.item.equipment.EquipmentAsset;
 import net.minecraft.world.item.equipment.Equippable;
-import net.minecraft.world.item.equipment.trim.ArmorTrim;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
@@ -87,10 +79,6 @@ final class InstancedEquipmentLayer {
         });
     }
 
-    private static int colorForLayer(EquipmentClientInfo.Layer layer, int dyeColor) {
-        return InstancedArmorLayer.colorForLayer(layer, dyeColor);
-    }
-
     private static void flattenNamed(InstanceTree node, String name, List<InstanceTree> nodes, List<String> names) {
         nodes.add(node);
         names.add(name);
@@ -108,9 +96,10 @@ final class InstancedEquipmentLayer {
             hidden = false;
         }
         if (!ItemStack.matches(stack, item) || fallbackActive != lastFallback) {
-            rebuild(item, fallbackActive);
-            stack = item;
-            lastFallback = fallbackActive;
+            if (rebuild(item, fallbackActive)) {
+                stack = item;
+                lastFallback = fallbackActive;
+            }
         }
         if (rootOffset != null && !draws.isEmpty()) {
             root = new Matrix4f(root).mul(rootOffset);
@@ -137,11 +126,7 @@ final class InstancedEquipmentLayer {
         draws = List.of();
     }
 
-    private void rebuild(ItemStack item, boolean fallbackActive) {
-        for (Draw draw : draws) {
-            draw.tree.delete();
-        }
-        draws = List.of();
+    private boolean rebuild(ItemStack item, boolean fallbackActive) {
         Equippable equippable = item.get(DataComponents.EQUIPPABLE);
         ResourceKey<EquipmentAsset> assetId;
         ItemStack source;
@@ -152,51 +137,39 @@ final class InstancedEquipmentLayer {
             assetId = fallbackAsset;
             source = ItemStack.EMPTY;
         } else {
-            return;
+            delete();
+            return true;
         }
-        List<EquipmentClientInfo.Layer> infoLayers = assets.get(assetId).getLayers(layerType);
-        if (infoLayers.isEmpty()) {
-            return;
+        List<Draw> list = new ArrayList<>();
+        if (!InstancedArmorLayer.equipmentDraws(assets, assetId, layerType, layer, source, wearer,
+                LivingEntityVisual::equipmentMaterial,
+                (tree, color, drawBias) -> addDraw(list, tree, color, drawBias))) {
+            return false;
         }
-        int dyeColor = DyedItemColor.getOrDefault(source, 0);
-        Identifier itemId = InstancedArmorLayer.itemId(source);
-        List<Draw> list = new ArrayList<>(infoLayers.size());
-        for (EquipmentClientInfo.Layer infoLayer : infoLayers) {
-            int color = colorForLayer(infoLayer, dyeColor);
-            if (color == 0) {
-                continue;
-            }
-            Identifier texture = infoLayer.getTextureLocation(layerType);
-            EntityFeatureCompat.observeTexture(wearer, texture);
-            addDraw(list, InstancedArmorLayer.forItem(
-                    ModelTrees.of(layer, LivingEntityVisual.equipmentMaterial(texture)), itemId), color);
-        }
-        if (ItemFoil.of(source) && !list.isEmpty()) {
-            addDraw(list, InstancedArmorLayer.forItem(ModelTrees.of(layer, InstancedArmorLayer.GLINT_ARMOR), itemId),
-                    -1);
-        }
-        ArmorTrim trim = source.get(DataComponents.TRIM);
-        if (trim != null) {
-            Identifier spriteId = trim.layerAssetId(layerType.trimAssetPrefix(), assetId);
-            TextureAtlasSprite sprite = Minecraft.getInstance()
-                                                 .getAtlasManager()
-                                                 .getAtlasOrThrow(AtlasIds.ARMOR_TRIMS)
-                                                 .getSprite(spriteId);
-            addDraw(list, InstancedArmorLayer.forItem(ModelTrees.of(layer, sprite, InstancedArmorLayer.TRIM_MATERIAL),
-                    InstancedArmorLayer.trimId(trim)), -1);
-        }
-        if (crackTexture != null) {
+        if (crackTexture != null && !assets.get(assetId).getLayers(layerType).isEmpty()) {
             Identifier crack = crackTexture.apply(item);
             if (crack != null) {
+                #if MC >= 26.3
+                addDraw(list, LivingEntityVisual.overlayTree(layer,
+                        LivingEntityVisual.equipmentCrackMaterial(crack)), -1);
+                #else
                 addDraw(list, LivingEntityVisual.overlayTree(layer,
                         LivingEntityVisual.dynamicOverlayMaterial(crack, OverlayKind.TRANSLUCENT)), -1);
+                #endif
             }
         }
+        delete();
         draws = list;
+        return true;
     }
 
     private void addDraw(List<Draw> list, ModelTree modelTree, int color) {
-        InstanceTree tree = InstanceTree.create(provider, modelTree);
+        addDraw(list, modelTree, color, 0);
+    }
+
+    private void addDraw(List<Draw> list, ModelTree modelTree, int color, int drawBias) {
+        InstanceTree tree = InstanceTree.create(drawBias == 0 ? provider
+                : InstancedArmorLayer.orderedProvider(provider, drawBias), modelTree);
         List<InstanceTree> nodeList = new ArrayList<>();
         List<String> nameList = new ArrayList<>();
         flattenNamed(tree, "", nodeList, nameList);

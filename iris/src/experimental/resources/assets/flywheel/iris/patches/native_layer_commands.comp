@@ -1,0 +1,26 @@
+#version 430 core
+layout(local_size_x = 64) in;
+layout(std430, binding = 2) buffer Counts { uint count; uint overflow; uint maxLayers; uint pad; };
+layout(std430, binding = 4) writeonly buffer Commands { uint commands[]; };
+layout(std430) readonly buffer _FlwReplayGroups { uvec4 groups[]; };
+layout(std140) uniform _FlwReplayControl { uvec4 control; };
+void main() {
+    uint layer = gl_GlobalInvocationID.x;
+    if (layer >= control.x) return;
+    bool exceeded = maxLayers > control.x;
+    bool enabledLayer = layer == 0u || (overflow == 0u && !exceeded && layer < maxLayers);
+    uint base = layer * control.y;
+    commands[base] = enabledLayer ? 6u : 0u;
+    commands[base + 1u] = 1u;
+    commands[base + 2u] = 0u;
+    commands[base + 3u] = 0u;
+    commands[base + 4u] = 0u;
+    if (layer == 0u && exceeded) overflow |= 2u;
+    for (uint i = 0u; i < control.z; ++i) {
+        uvec3 size = enabledLayer ? groups[i].xyz : uvec3(0u);
+        uint offset = base + 5u + i * 3u;
+        commands[offset] = size.x;
+        commands[offset + 1u] = size.y;
+        commands[offset + 2u] = size.z;
+    }
+}

@@ -1,7 +1,7 @@
 package dev.engine_room.flywheel.backend.vk.descriptor;
 
-import com.mojang.blaze3d.vulkan.VulkanGpuSampler;
-import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuSampler;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
 import dev.engine_room.flywheel.backend.engine.BindlessSlots;
 import dev.engine_room.flywheel.backend.engine.MaterialSamplers;
 import dev.engine_room.flywheel.backend.vk.VkCaps;

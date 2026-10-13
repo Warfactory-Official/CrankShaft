@@ -1,8 +1,8 @@
 package dev.engine_room.flywheel.backend.vk.descriptor;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.vulkan.VulkanGpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuBuffer;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.buffer.VkBuffer;
 import org.lwjgl.system.MemoryStack;

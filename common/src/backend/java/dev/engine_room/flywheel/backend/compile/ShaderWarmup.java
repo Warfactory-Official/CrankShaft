@@ -9,6 +9,7 @@ import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.OitConfig;
+import dev.engine_room.flywheel.backend.SodiumClassLoadCheck;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.engine.BerFamily;
 import dev.engine_room.flywheel.backend.engine.CrumblingPipelines;
@@ -17,6 +18,9 @@ import dev.engine_room.flywheel.backend.engine.indirect.IndirectPipeline;
 import dev.engine_room.flywheel.backend.engine.indirect.InstanceTypeIds;
 import dev.engine_room.flywheel.backend.engine.indirect.MeshVisualDrawManager;
 import dev.engine_room.flywheel.backend.engine.indirect.OitPipelines;
+#if MC < 26.3
+import dev.engine_room.flywheel.backend.engine.indirect.FabulousOitPipelines;
+#endif
 import dev.engine_room.flywheel.backend.engine.instancing.InstancingPipeline;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainPipelines;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
@@ -44,6 +48,9 @@ import java.util.List;
 public final class ShaderWarmup {
     private static final List<WarmHook> HOOKS = new ArrayList<>();
     private static final List<WarmHook> VK_HOOKS = new ArrayList<>();
+    #if MC >= 26.3
+    private static final List<Runnable> NATIVE_RESOURCES = new ArrayList<>();
+    #endif
 
     private static final List<InstanceType<?>> WARM_TYPES = List.of(InstanceTypes.TRANSFORMED, InstanceTypes.POSED,
             InstanceTypes.ORIENTED, InstanceTypes.CLIP_TRANSFORMED, InstanceTypes.UV_TRANSFORMED,
@@ -78,6 +85,17 @@ public final class ShaderWarmup {
         VK_HOOKS.add(new WarmHook(feature, hook));
     }
 
+    #if MC >= 26.3
+    /** Client-init registration, pre-resource-load; declares device resources in the render-thread loading batch. */
+    public static void registerNativeResources(Runnable declarations) {
+        NATIVE_RESOURCES.add(declarations);
+    }
+
+    private static void warmNativeResources() {
+        for (Runnable declarations : NATIVE_RESOURCES) declarations.run();
+    }
+    #endif
+
     private record WarmHook(ProgramAvailability.@Nullable Feature feature, Runnable action) {
         void run() {
             if (feature == null) action.run();
@@ -87,11 +105,19 @@ public final class ShaderWarmup {
 
     public static void warm() {
         long start = System.nanoTime();
+        #if MC < 26.3
         MojImportPreprocessor.clearImportContents();
+        #endif
         int sourceHits = GeneratedSourceCache.hits;
         int sourceMisses = GeneratedSourceCache.misses;
         seedRegistrations();
-        if (!BackendManager.isBackendOn()) return;
+        if (!BackendManager.isBackendOn()) {
+            #if MC >= 26.3
+            RenderPipelineCompiler.warm(ShaderWarmup::warmNativeResources);
+            NativeOitWarmup.loadingComplete();
+            #endif
+            return;
+        }
         if (VkContext.isVulkanHost()) {
             warmVk();
         } else if (!ShadersModHelper.isShaderPackInUse()) {
@@ -101,6 +127,9 @@ public final class ShaderWarmup {
         }
         for (WarmHook hook : HOOKS) hook.run();
         if (VkContext.isVulkanHost()) VkPipelineCaches.save();
+        #if MC >= 26.3
+        NativeOitWarmup.loadingComplete();
+        #endif
         FlwPrograms.LOGGER.info("pipeline warm-up took {}ms ({} types, {} material variants, {} cached / {} generated sources)",
                 (System.nanoTime() - start) / 1_000_000, InstanceTypeIds.count(), warmMaterials().size(),
                 GeneratedSourceCache.hits - sourceHits, GeneratedSourceCache.misses - sourceMisses);
@@ -126,6 +155,13 @@ public final class ShaderWarmup {
         }
     }
 
+    #if MC >= 26.3
+    /** Material declarations for native pass preparation at loading/configuration boundaries; render thread only. */
+    public static List<Material> nativeWarmMaterials() {
+        return warmMaterials();
+    }
+    #endif
+
     private static List<Material> warmMaterials() {
         libStatics(Materials.class, Material.class);
         return ShaderWarmupRegistry.materials();
@@ -136,13 +172,19 @@ public final class ShaderWarmup {
     }
 
     private static void warmInstancing(boolean portableCoverage) {
+        #if MC >= 26.3
+        if (portableCoverage) warmNativeResources();
+        #endif
         if (portableCoverage) {
             warmWaveletFullscreen();
-            warmWaveletReplays(sodiumLoaded());
+            warmWaveletReplays(SodiumClassLoadCheck.PRESENT);
             for (InstanceType<?> type : ShaderWarmupRegistry.types()) {
                 CrumblingPipelines.pipeline(Materials.CRUMBLING, type, false);
             }
         }
+        #if MC >= 26.3
+        if (portableCoverage) NativeOitWarmup.declareSelected();
+        #endif
         List<Material> materials = warmMaterials();
         for (InstanceType<?> type : ShaderWarmupRegistry.types()) {
             for (Material material : materials) {
@@ -183,9 +225,14 @@ public final class ShaderWarmup {
         for (OitMode mode : OitMode.values()) {
             if (mode == OitMode.OFF) continue;
             OitPipelines.chunkProducer(mode);
+            #if MC >= 26.3
+            OitPipelines.chunkProducer(mode, true);
+            #endif
             for (BerFamily family : BerFamily.VALUES) OitPipelines.berProducer(family, mode);
-            OitPipelines.layerProducer(mode);
-            OitPipelines.weatherProducer(mode);
+            #if MC < 26.3
+            FabulousOitPipelines.layerProducer(mode);
+            FabulousOitPipelines.weatherProducer(mode);
+            #endif
             if (sodium) {
                 OitPipelines.chunkSodiumProducer(mode);
                 if (GlCompat.SUPPORTS_TERRAIN) {
@@ -197,7 +244,10 @@ public final class ShaderWarmup {
     }
 
     private static void warmGl() {
-        boolean sodium = sodiumLoaded();
+        #if MC >= 26.3
+        warmNativeResources();
+        #endif
+        boolean sodium = SodiumClassLoadCheck.PRESENT;
         List<OitInsertMode> insertModes = Arrays.stream(OitInsertMode.values())
                 .filter(OitConfig::supportsInsertMode).toList();
         warmWaveletFullscreen();
@@ -209,8 +259,13 @@ public final class ShaderWarmup {
             RenderPipelineCompiler.feature(ProgramAvailability.insert(mode), () -> {
                 OitPipelines.mlabResolve(mode);
                 OitPipelines.chunkMlab(mode);
+                #if MC >= 26.3
+                OitPipelines.chunkMlab(mode, true);
+                #endif
                 for (BerFamily family : BerFamily.VALUES) OitPipelines.berMlab(family, mode);
-                OitPipelines.weatherMlab(mode);
+                #if MC < 26.3
+                FabulousOitPipelines.weatherMlab(mode);
+                #endif
                 if (sodium) {
                     OitPipelines.chunkSodiumMlab(mode, false);
                     OitPipelines.chunkSodiumMlab(mode, true);
@@ -226,6 +281,9 @@ public final class ShaderWarmup {
 
         if (BackendManager.currentBackend() == Backends.INSTANCING) {
             warmInstancing(false);
+            #if MC >= 26.3
+            NativeOitWarmup.declareSelected();
+            #endif
             return;
         }
         IndirectPrograms programs = IndirectPrograms.get();
@@ -252,10 +310,13 @@ public final class ShaderWarmup {
         for (InstanceType<?> type : STANDARD_TYPES) {
             CrumblingPipelines.pipeline(Materials.CRUMBLING, type, true);
         }
-        if (GlCompat.SUPPORTS_TERRAIN_MESH && Backend.REGISTRY.getIdOrThrow(BackendManager.currentBackend())
-                                                              .getPath().equals("gl_mesh_shader")) {
+        if (GlCompat.SUPPORTS_TERRAIN_MESH
+                && Backends.GL_MESH_SHADER_ID.equals(Backend.REGISTRY.getIdOrThrow(BackendManager.currentBackend()))) {
             MeshVisualDrawManager.warmUp(MESH_VISUAL_TYPES, STANDARD_TYPES, materials);
         }
+        #if MC >= 26.3
+        NativeOitWarmup.declareSelected();
+        #endif
     }
 
     private static void warmVk() {
@@ -284,15 +345,16 @@ public final class ShaderWarmup {
                 programs.downsampleSecondPipeline();
             }
         });
+        #if MC >= 26.3
+        RenderPipelineCompiler.warm(() -> {
+            warmNativeResources();
+            if (!localRead) warmVkReplays();
+        });
+        #else
         if (!localRead) {
-            for (OitMode mode : OitMode.values()) {
-                if (mode == OitMode.OFF) continue;
-                OitPipelines.chunkProducer(mode);
-                for (BerFamily family : BerFamily.VALUES) OitPipelines.berProducer(family, mode);
-                OitPipelines.layerProducer(mode);
-                OitPipelines.weatherProducer(mode);
-            }
+            warmVkReplays();
         }
+        #endif
         jobs.add(() -> {
             oit.compositePipeline(false);
             oit.compositePipeline(true);
@@ -305,10 +367,15 @@ public final class ShaderWarmup {
                 ProgramAvailability.run(ProgramAvailability.Feature.LOCAL_READ, () -> {
                     for (OitMode mode : OitMode.values()) {
                         if (mode == OitMode.OFF) continue;
-                        oit.layerFoldedPipeline(mode);
-                        oit.weatherFoldedPipeline(mode);
+                        #if MC < 26.3
+                        oit.fabulous().layerFoldedPipeline(mode);
+                        oit.fabulous().weatherFoldedPipeline(mode);
+                        #endif
                         for (BerFamily family : BerFamily.VALUES) oit.berFoldedPipeline(family, mode);
                         oit.chunkFoldedPipeline(mode);
+                        #if MC >= 26.3
+                        oit.chunkFoldedPipeline(mode, true);
+                        #endif
                     }
                 });
             }
@@ -316,12 +383,17 @@ public final class ShaderWarmup {
                 ProgramAvailability.run(ProgramAvailability.insert(mode), () -> {
                     oit.mlabResolvePipeline(mode);
                     oit.chunkMlabPipeline(mode);
+                    #if MC >= 26.3
+                    oit.chunkMlabPipeline(mode, true);
+                    #endif
                     for (BerFamily family : BerFamily.VALUES) oit.berMlabPipeline(family, mode);
-                    oit.weatherMlabPipeline(mode);
+                    #if MC < 26.3
+                    oit.fabulous().weatherMlabPipeline(mode);
+                    #endif
                 });
             }
         });
-        if (sodiumLoaded()) jobs.add(() -> {
+        if (SodiumClassLoadCheck.PRESENT) jobs.add(() -> {
             VkTerrainPrograms terrain = programs.terrain();
             if (programs.usesGpuTerrain()) {
                 ProgramAvailability.run(ProgramAvailability.Feature.OPAQUE_TERRAIN, () -> {
@@ -379,8 +451,8 @@ public final class ShaderWarmup {
             }
         });
         if (VkCaps.MESH_SHADER_NEGOTIATED && ProgramAvailability.allows(ProgramAvailability.Feature.MESH)
-                && Backend.REGISTRY.getIdOrThrow(BackendManager.currentBackend())
-                                   .getPath().equals("vk_mesh_shader")) jobs.add(() -> ProgramAvailability.run(
+                && Backends.VK_MESH_SHADER_ID.equals(Backend.REGISTRY.getIdOrThrow(
+                        BackendManager.currentBackend()))) jobs.add(() -> ProgramAvailability.run(
                 ProgramAvailability.Feature.MESH, () -> {
             VkMeshVisualPipelines mesh = programs.meshVisual();
             mesh.builderPipeline();
@@ -412,6 +484,24 @@ public final class ShaderWarmup {
         }));
         for (WarmHook hook : VK_HOOKS) jobs.add(hook::run);
         VkCompilationTasks.run(jobs);
+        #if MC >= 26.3
+        NativeOitWarmup.declareSelected();
+        #endif
+    }
+
+    private static void warmVkReplays() {
+        for (OitMode mode : OitMode.values()) {
+            if (mode == OitMode.OFF) continue;
+            OitPipelines.chunkProducer(mode);
+            #if MC >= 26.3
+            OitPipelines.chunkProducer(mode, true);
+            #endif
+            for (BerFamily family : BerFamily.VALUES) OitPipelines.berProducer(family, mode);
+            #if MC < 26.3
+            FabulousOitPipelines.layerProducer(mode);
+            FabulousOitPipelines.weatherProducer(mode);
+            #endif
+        }
     }
 
     private static void warmVkTerrainProducers(VkTerrainPrograms terrain, boolean localRead,
@@ -440,16 +530,7 @@ public final class ShaderWarmup {
             VkPrograms programs = VkPrograms.get();
             if (programs != null) VkPrograms.rejectFeature(feature);
         } else {
-            RenderSystem.getDevice().clearPipelineCache();
-        }
-    }
-
-    private static boolean sodiumLoaded() {
-        try {
-            Class.forName("net.caffeinemc.mods.sodium.client.SodiumClientMod");
-            return true;
-        } catch (ClassNotFoundException e) {
-            return false;
+            RenderPipelineCompiler.clearCache();
         }
     }
 }

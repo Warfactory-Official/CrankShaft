@@ -1,9 +1,9 @@
 package dev.engine_room.flywheel.iris.compile;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.GlTexture;
-import com.mojang.blaze3d.pipeline.ColorTargetState;
-import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL30C;

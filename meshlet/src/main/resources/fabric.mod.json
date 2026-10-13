@@ -7,6 +7,6 @@
   "license": "LGPL-3.0-only",
   "environment": "client",
   "depends": {
-    "minecraft": "*"
+    "minecraft": "${minecraft_fabric_range}"
   }
 }

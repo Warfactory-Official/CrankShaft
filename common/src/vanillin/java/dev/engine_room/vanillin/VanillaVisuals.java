@@ -6,6 +6,7 @@ import dev.engine_room.flywheel.api.material.CardinalLightingMode;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.api.material.WriteMask;
+import dev.engine_room.flywheel.compat.lib.PoseStackOps;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.model.PackIdentity;
@@ -108,7 +109,11 @@ import net.minecraft.world.entity.animal.pig.Pig;
 import net.minecraft.world.entity.animal.pig.PigVariant;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.decoration.ItemFrame;
+#if MC >= 26.3
+import net.minecraft.world.entity.monster.Enderman;
+#else
 import net.minecraft.world.entity.monster.EnderMan;
+#endif
 import net.minecraft.world.entity.monster.Guardian;
 import net.minecraft.world.entity.monster.cubemob.AbstractCubeMob;
 import net.minecraft.world.entity.npc.villager.VillagerData;
@@ -205,7 +210,11 @@ public class VanillaVisuals {
             .translate(0.25F, 0.1875F, 0.25F)
             .scale(-0.5F, -0.5F, 0.5F)
             .rotateY((float) Math.toRadians(90.0));
+    #if MC >= 26.3
+    private static final Function<LivingEntity, BlockState> ENDERMAN_CARRIED = e -> ((Enderman) e).getCarriedBlock();
+    #else
     private static final Function<LivingEntity, BlockState> ENDERMAN_CARRIED = e -> ((EnderMan) e).getCarriedBlock();
+    #endif
     private static final LivingEntityVisual.RootScale CUBE_SCALE = (state, pose) -> {
         SlimeRenderState s = (SlimeRenderState) state;
         float size = s.size;
@@ -230,27 +239,27 @@ public class VanillaVisuals {
     private static final LivingEntityVisual.Rotations SQUID_ROTATIONS = (pose, state, bodyRot, entityScale) -> {
         SquidRenderState s = (SquidRenderState) state;
         pose.translate(0.0F, s.isBaby ? 0.25F : 0.5F, 0.0F);
-        pose.mulPose(Axis.YP.rotationDegrees(180.0F - bodyRot));
-        pose.mulPose(Axis.XP.rotationDegrees(s.xBodyRot));
-        pose.mulPose(Axis.YP.rotationDegrees(s.zBodyRot));
+        PoseStackOps.rotateDegrees(pose, Axis.YP, 180.0F - bodyRot);
+        PoseStackOps.rotateDegrees(pose, Axis.XP, s.xBodyRot);
+        PoseStackOps.rotateDegrees(pose, Axis.YP, s.zBodyRot);
         pose.translate(0.0F, s.isBaby ? -0.6F : -1.2F, 0.0F);
     };
     private static final LivingEntityVisual.Rotations COD_ROTATIONS = (pose, state, bodyRot, entityScale) -> {
         LivingEntityVisual.baseRotations(pose, state, bodyRot, entityScale, 90.0F);
-        pose.mulPose(Axis.YP.rotationDegrees(4.3F * Mth.sin(0.6F * state.ageInTicks)));
+        PoseStackOps.rotateDegrees(pose, Axis.YP, 4.3F * Mth.sin(0.6F * state.ageInTicks));
         if (!state.isInWater) {
             pose.translate(0.1F, 0.1F, -0.1F);
-            pose.mulPose(Axis.ZP.rotationDegrees(90.0F));
+            PoseStackOps.rotateDegrees(pose, Axis.ZP, 90.0F);
         }
     };
     private static final LivingEntityVisual.Rotations SALMON_ROTATIONS = (pose, state, bodyRot, entityScale) -> {
         LivingEntityVisual.baseRotations(pose, state, bodyRot, entityScale, 90.0F);
         float amplitude = state.isInWater ? 1.0F : 1.3F;
         float rate = state.isInWater ? 1.0F : 1.7F;
-        pose.mulPose(Axis.YP.rotationDegrees(amplitude * 4.3F * Mth.sin(rate * 0.6F * state.ageInTicks)));
+        PoseStackOps.rotateDegrees(pose, Axis.YP, amplitude * 4.3F * Mth.sin(rate * 0.6F * state.ageInTicks));
         if (!state.isInWater) {
             pose.translate(0.2F, 0.1F, 0.0F);
-            pose.mulPose(Axis.ZP.rotationDegrees(90.0F));
+            PoseStackOps.rotateDegrees(pose, Axis.ZP, 90.0F);
         }
     };
     private static final LivingEntityVisual.Config SALMON_SMALL_CFG = salmonCfg(ModelLayers.SALMON_SMALL);
@@ -258,10 +267,10 @@ public class VanillaVisuals {
     private static final LivingEntityVisual.Config SALMON_LARGE_CFG = salmonCfg(ModelLayers.SALMON_LARGE);
     private static final LivingEntityVisual.Rotations TROPICAL_ROTATIONS = (pose, state, bodyRot, entityScale) -> {
         LivingEntityVisual.baseRotations(pose, state, bodyRot, entityScale, 90.0F);
-        pose.mulPose(Axis.YP.rotationDegrees(4.3F * Mth.sin(0.6F * state.ageInTicks)));
+        PoseStackOps.rotateDegrees(pose, Axis.YP, 4.3F * Mth.sin(0.6F * state.ageInTicks));
         if (!state.isInWater) {
             pose.translate(0.2F, 0.1F, 0.0F);
-            pose.mulPose(Axis.ZP.rotationDegrees(90.0F));
+            PoseStackOps.rotateDegrees(pose, Axis.ZP, 90.0F);
         }
     };
     private static final Map<TropicalFish.Pattern, Identifier> TROPICAL_PATTERNS = new EnumMap<>(
@@ -303,7 +312,7 @@ public class VanillaVisuals {
         if (!(state.walkAnimationSpeed < 0.01)) {
             float wp = state.walkAnimationPos + 6.0F;
             float triangleWave = (Math.abs(wp % 13.0F - 6.5F) - 3.25F) / 3.25F;
-            pose.mulPose(Axis.ZP.rotationDegrees(6.5F * triangleWave));
+            PoseStackOps.rotateDegrees(pose, Axis.ZP, 6.5F * triangleWave);
         }
     };
     private static final Identifier CREEPER_SWIRL_TEX = Identifier.withDefaultNamespace(
@@ -364,7 +373,7 @@ public class VanillaVisuals {
         float lie = s.lieDownAmount;
         if (lie > 0.0F) {
             pose.translate(0.4F * lie, 0.15F * lie, 0.1F * lie);
-            pose.mulPose(Axis.ZP.rotationDegrees(Mth.rotLerp(lie, 0.0F, 90.0F)));
+            PoseStackOps.rotateDegrees(pose, Axis.ZP, Mth.rotLerp(lie, 0.0F, 90.0F));
             if (s.isLyingOnTopOfSleepingPlayer) {
                 pose.translate(0.15F * lie, 0.0F, 0.0F);
             }
@@ -397,7 +406,7 @@ public class VanillaVisuals {
     };
     private static final LivingEntityVisual.Rotations PHANTOM_ROTATIONS = (pose, state, bodyRot, entityScale) -> {
         LivingEntityVisual.baseRotations(pose, state, bodyRot, entityScale, 90.0F);
-        pose.mulPose(Axis.XP.rotationDegrees(state.xRot));
+        PoseStackOps.rotateDegrees(pose, Axis.XP, state.xRot);
     };
     private static final LivingEntityVisual.ItemPose WITCH_NOSE = (model, state) -> {
         PoseStack ps = new PoseStack();
@@ -407,17 +416,17 @@ public class VanillaVisuals {
         head.translateAndRotate(ps);
         head.getChild("nose").translateAndRotate(ps);
         ps.translate(0.0625F, 0.25F, 0.0F);
-        ps.mulPose(Axis.ZP.rotationDegrees(180.0F));
-        ps.mulPose(Axis.XP.rotationDegrees(140.0F));
-        ps.mulPose(Axis.ZP.rotationDegrees(10.0F));
-        ps.mulPose(Axis.XP.rotationDegrees(180.0F));
+        PoseStackOps.rotateDegrees(ps, Axis.ZP, 180.0F);
+        PoseStackOps.rotateDegrees(ps, Axis.XP, 140.0F);
+        PoseStackOps.rotateDegrees(ps, Axis.ZP, 10.0F);
+        PoseStackOps.rotateDegrees(ps, Axis.XP, 180.0F);
         return new Matrix4f(ps.last().pose());
     };
     private static final LivingEntityVisual.Rotations FOX_ROTATIONS = (pose, state, bodyRot, entityScale) -> {
         LivingEntityVisual.baseRotations(pose, state, bodyRot, entityScale, 90.0F);
         FoxRenderState s = (FoxRenderState) state;
         if (s.isPouncing || s.isFaceplanted) {
-            pose.mulPose(Axis.XP.rotationDegrees(-s.xRot));
+            PoseStackOps.rotateDegrees(pose, Axis.XP, -s.xRot);
         }
     };
     private static final LivingEntityVisual.ItemPose FOX_MOUTH = (model, state) -> {
@@ -428,17 +437,17 @@ public class VanillaVisuals {
         if (s.isBaby) {
             ps.scale(0.75F, 0.75F, 0.75F);
         }
-        ps.mulPose(Axis.ZP.rotation(s.headRollAngle));
-        ps.mulPose(Axis.YP.rotationDegrees(s.yRot));
-        ps.mulPose(Axis.XP.rotationDegrees(s.xRot));
+        PoseStackOps.rotateRadians(ps, Axis.ZP, s.headRollAngle);
+        PoseStackOps.rotateDegrees(ps, Axis.YP, s.yRot);
+        PoseStackOps.rotateDegrees(ps, Axis.XP, s.xRot);
         if (s.isBaby) {
             ps.translate(s.isSleeping ? 0.4F : 0.06F, 0.26F, s.isSleeping ? 0.15F : -0.5F);
         } else {
             ps.translate(s.isSleeping ? 0.46F : 0.06F, s.isSleeping ? 0.26F : 0.27F, s.isSleeping ? 0.22F : -0.5F);
         }
-        ps.mulPose(Axis.XP.rotationDegrees(90.0F));
+        PoseStackOps.rotateDegrees(ps, Axis.XP, 90.0F);
         if (s.isSleeping) {
-            ps.mulPose(Axis.ZP.rotationDegrees(90.0F));
+            PoseStackOps.rotateDegrees(ps, Axis.ZP, 90.0F);
         }
         return new Matrix4f(ps.last().pose());
     };
@@ -453,30 +462,30 @@ public class VanillaVisuals {
             if (p < 8.0F) {
                 float a = pandaRollAngle(90.0F * p / 7.0F, 90.0F * n / 7.0F, n, t, 8.0F);
                 pose.translate(0.0F, (y + 0.2F) * (a / 90.0F), 0.0F);
-                pose.mulPose(Axis.XP.rotationDegrees(-a));
+                PoseStackOps.rotateDegrees(pose, Axis.XP, -a);
             } else if (p < 16.0F) {
                 float a = pandaRollAngle(90.0F + 90.0F * (p - 8.0F) / 7.0F, 90.0F + 90.0F * (n - 8.0F) / 7.0F, n, t,
                         16.0F);
                 pose.translate(0.0F, y + 0.2F + (y - 0.2F) * (a - 90.0F) / 90.0F, 0.0F);
-                pose.mulPose(Axis.XP.rotationDegrees(-a));
+                PoseStackOps.rotateDegrees(pose, Axis.XP, -a);
             } else if (p < 24.0F) {
                 float a = pandaRollAngle(180.0F + 90.0F * (p - 16.0F) / 7.0F, 180.0F + 90.0F * (n - 16.0F) / 7.0F, n, t,
                         24.0F);
                 pose.translate(0.0F, y + y * (270.0F - a) / 90.0F, 0.0F);
-                pose.mulPose(Axis.XP.rotationDegrees(-a));
+                PoseStackOps.rotateDegrees(pose, Axis.XP, -a);
             } else if (p < 32) {
                 float a = pandaRollAngle(270.0F + 90.0F * (p - 24.0F) / 7.0F, 270.0F + 90.0F * (n - 24.0F) / 7.0F, n, t,
                         32.0F);
                 pose.translate(0.0F, y * ((360.0F - a) / 90.0F), 0.0F);
-                pose.mulPose(Axis.XP.rotationDegrees(-a));
+                PoseStackOps.rotateDegrees(pose, Axis.XP, -a);
             }
         }
         if (s.sitAmount > 0.0F) {
             pose.translate(0.0F, 0.8F * s.sitAmount, 0.0F);
-            pose.mulPose(Axis.XP.rotationDegrees(Mth.lerp(s.sitAmount, s.xRot, s.xRot + 90.0F)));
+            PoseStackOps.rotateDegrees(pose, Axis.XP, Mth.lerp(s.sitAmount, s.xRot, s.xRot + 90.0F));
             pose.translate(0.0F, -1.0F * s.sitAmount, 0.0F);
             if (s.isScared) {
-                pose.mulPose(Axis.YP.rotationDegrees((float) (Math.cos(s.ageInTicks * 1.25F) * Math.PI * 0.05F)));
+                PoseStackOps.rotateDegrees(pose, Axis.YP, (float) (Math.cos(s.ageInTicks * 1.25F) * Math.PI * 0.05F));
                 if (s.isBaby) {
                     pose.translate(0.0F, 0.8F, 0.55F);
                 }
@@ -485,7 +494,7 @@ public class VanillaVisuals {
         if (s.lieOnBackAmount > 0.0F) {
             float y = s.isBaby ? 0.5F : 1.3F;
             pose.translate(0.0F, y * s.lieOnBackAmount, 0.0F);
-            pose.mulPose(Axis.XP.rotationDegrees(Mth.lerp(s.lieOnBackAmount, s.xRot, s.xRot + 180.0F)));
+            PoseStackOps.rotateDegrees(pose, Axis.XP, Mth.lerp(s.lieOnBackAmount, s.xRot, s.xRot + 180.0F));
         }
     };
     private static final LivingEntityVisual.ItemPose PANDA_HELD = (model, state) -> {
@@ -541,10 +550,10 @@ public class VanillaVisuals {
         default -> null;
     };
     private static final LivingEntityVisual.Rotations ARMOR_STAND_ROTATIONS = (pose, state, bodyRot, entityScale) -> {
-        pose.mulPose(Axis.YP.rotationDegrees(180.0F - bodyRot));
+        PoseStackOps.rotateDegrees(pose, Axis.YP, 180.0F - bodyRot);
         float wiggle = ((ArmorStandRenderState) state).wiggle;
         if (wiggle < 5.0F) {
-            pose.mulPose(Axis.YP.rotationDegrees(Mth.sin(wiggle / 1.5F * (float) Math.PI) * 3.0F));
+            PoseStackOps.rotateDegrees(pose, Axis.YP, Mth.sin(wiggle / 1.5F * (float) Math.PI) * 3.0F);
         }
     };
     private static final LivingEntityVisual.Config ARMOR_STAND_CFG = armorStandCfg(ModelLayers.ARMOR_STAND,

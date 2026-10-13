@@ -7,16 +7,34 @@ plugins {
 
 val quickPlay: String? = providers.gradleProperty("quickPlay").orNull
 val vulkan = providers.gradleProperty("vulkan").isPresent
-val iris = providers.gradleProperty("iris").isPresent
+val experimentalIris = minecraftVersion == "26.3" && providers.gradleProperty("iris.experimental").isPresent
+val iris = providers.gradleProperty("iris").isPresent || experimentalIris
+
+if (experimentalIris) {
+    tasks.matching { it.name.startsWith("run") }.configureEach {
+        doFirst {
+            check(providers.gradleProperty("iris.experimental.neoforgeJar").isPresent) {
+                "The public experimental Iris reference is Fabric-only; set -Piris.experimental.neoforgeJar=<NeoForge build> for this run"
+            }
+        }
+    }
+}
+
+evaluationDependsOn(siblingProjectPath("common"))
+
+val sodiumNeoforgeImplementation = neoforgeSodiumImplementation()
 
 val sourcesJar = tasks.register<Jar>("sourcesJar") {
     archiveClassifier = "sources"
+    manifest.attributes("Source-Dialect" to "Tenon")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     for (set in listOf("main", "api", "lib", "backend")) {
-        from(project(":common").file("src/$set/java"))
-        from(file("src/$set/java"))
+        from(project(siblingProjectPath("common")).sourceSets[set].allJava)
+        from(sourceSets[set].allJava)
     }
 }
+tenon.sourcesJar(sourcesJar, sourceSets["main"])
+tenon.accessorMixins(tasks.named<Jar>("jar"), sourceSets["main"])
 
 publishing {
     publications {
@@ -34,53 +52,62 @@ base {
     archivesName = "crankshaft-neoforge"
 }
 
-evaluationDependsOn(":vanillinNeoForge")
-
-repositories {
-    mavenLocal()
-    maven("https://maven.neoforged.net/releases/")
-    maven("https://maven.caffeinemc.net/releases/")
-}
+evaluationDependsOn(siblingProjectPath("vanillinNeoForge"))
 
 val commonMainJava: Configuration = configurations.create("commonMainJava") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 val commonApiJava: Configuration = configurations.create("commonApiJava") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 val commonLibJava: Configuration = configurations.create("commonLibJava") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 val commonBackendJava: Configuration = configurations.create("commonBackendJava") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 val commonModResources: Configuration = configurations.create("commonModResources") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 
 dependencies {
-    commonMainJava(project(path = ":common", configuration = "commonMainJava"))
-    commonApiJava(project(path = ":common", configuration = "commonApiJava"))
-    commonLibJava(project(path = ":common", configuration = "commonLibJava"))
-    commonBackendJava(project(path = ":common", configuration = "commonBackendJava"))
+    commonMainJava(project(path = siblingProjectPath("common"), configuration = "commonMainJava"))
+    commonApiJava(project(path = siblingProjectPath("common"), configuration = "commonApiJava"))
+    commonLibJava(project(path = siblingProjectPath("common"), configuration = "commonLibJava"))
+    commonBackendJava(project(path = siblingProjectPath("common"), configuration = "commonBackendJava"))
 
-    commonModResources(project(path = ":common", configuration = "commonMainResources"))
-    commonModResources(project(path = ":common", configuration = "commonApiResources"))
-    commonModResources(project(path = ":common", configuration = "commonLibResources"))
-    commonModResources(project(path = ":common", configuration = "commonBackendResources"))
+    commonModResources(project(path = siblingProjectPath("common"), configuration = "commonMainResources"))
+    commonModResources(project(path = siblingProjectPath("common"), configuration = "commonApiResources"))
+    commonModResources(project(path = siblingProjectPath("common"), configuration = "commonLibResources"))
+    commonModResources(project(path = siblingProjectPath("common"), configuration = "commonBackendResources"))
 
     compileOnly("net.caffeinemc:sodium-neoforge-api:${sodiumVersion}")
+    // Shared class metadata contains Fabric's CLASS-retained Environment annotation.
+    compileOnly("net.fabricmc:fabric-loader:${fabricLoaderVersion}") { isTransitive = false }
+    compileOnly(sodiumNeoforgeImplementation)
+    compileOnly("maven.modrinth:lambdynamiclights:$lambDynLightsVersion") { isTransitive = false }
+    compileOnly("maven.modrinth:polytone:$polytoneCompileVersion") { isTransitive = false }
+    compileOnly(nestedModLibraries("maven.modrinth:polytone:$polytoneCompileVersion", "codecui"))
+    compileOnly(nestedModLibraries("maven.modrinth:lambdynamiclights:$lambDynLightsVersion",
+        "lambdynamiclights-api", "spruceui", "yumi-mc-foundation"))
 
-    jarJar(project(":vanillinNeoForge"))
+    jarJar(project(siblingProjectPath("vanillinNeoForge")))
 
-    jarJar(project(":meshlet"))
+    jarJar(project(siblingProjectPath("meshlet")))
 
-    jarJar(project(":iris"))
+    jarJar(project(path = siblingProjectPath("iris"), configuration = "neoforgeRuntimeElements"))
 
     if (project.hasProperty("sodium") || iris) {
         runtimeOnly("net.caffeinemc:sodium-neoforge:${sodiumVersion}")
     }
-    if (iris) {
+    if (experimentalIris) {
+        runtimeOnly(files(providers.gradleProperty("iris.experimental.neoforgeJar").map { rootProject.file(it) }))
+    } else if (iris) {
         runtimeOnly("maven.modrinth:iris:${irisVersion}-neoforge")
     }
 }
@@ -103,15 +130,17 @@ neoForge {
     runs {
         create("client") {
             client()
-            ideName = "NeoForge/Client"
+            ideName = "NeoForge/$minecraftVersion/Client"
             quickPlay?.let { programArguments.addAll("--quickPlaySingleplayer", it) }
             if (vulkan) {
                 programArguments.addAll("--graphicsBackend", "vulkan")
             }
-            // Iris 1.11.4 swaps in 1-entry vertex format binding arrays; IDE-only GlCommandEncoder.validateDraw
-            // indexes 16 => AIOOBE on the first Iris-mapped draw (also with flywheel:off).
+            // Iris custom passes replace native shader bindings; NeoForge's IDE validation still checks the
+            // placeholder pipeline. The 26.3 frontend renamed the dev-only validation switch.
             if (iris) {
-                jvmArguments.add("-Dneoforge.disableGlValidation=true")
+                val validationProperty =
+                    if (minecraftVersion == "26.2") "disableGlValidation" else "disableBlaze3DValidation"
+                jvmArguments.add("-Dneoforge.$validationProperty=true")
             }
         }
     }
@@ -122,14 +151,12 @@ neoForge {
             sourceSet(sourceSets["api"])
             sourceSet(sourceSets["lib"])
             sourceSet(sourceSets["backend"])
-            sourceSet(project(":common").sourceSets["main"])
-            sourceSet(project(":common").sourceSets["api"])
-            sourceSet(project(":common").sourceSets["lib"])
-            sourceSet(project(":common").sourceSets["backend"])
+            sourceSet(project(siblingProjectPath("common")).sourceSets["api"])
+            sourceSet(project(siblingProjectPath("common")).sourceSets["lib"])
         }
         create("vanillate") {
-            sourceSet(project(":vanillinNeoForge").sourceSets["main"])
-            sourceSet(project(":common").sourceSets["vanillin"])
+            sourceSet(project(siblingProjectPath("vanillinNeoForge")).sourceSets["main"])
+            sourceSet(project(siblingProjectPath("common")).sourceSets["vanillin"])
         }
     }
 }
@@ -139,8 +166,8 @@ neoForge.runs.named("client") {
 }
 
 dependencies {
-    runtimeOnly(project(":meshlet"))
-    runtimeOnly(project(":iris"))
+    runtimeOnly(project(siblingProjectPath("meshlet")))
+    runtimeOnly(project(path = siblingProjectPath("iris"), configuration = "neoforgeRuntimeElements"))
 }
 
 sourceSets {
@@ -160,7 +187,11 @@ sourceSets {
     backend.runtimeClasspath += common + api.output + lib.output
 
     main.compileClasspath += common + api.output + lib.output + backend.output
-    main.runtimeClasspath += common + api.output + lib.output + backend.output
+    main.runtimeClasspath += files(commonApiJava, commonLibJava) + api.output + lib.output + backend.output
+}
+
+tenon.sourceSet(sourceSets["main"]) {
+    access.mixinInputs.from(commonMainJava, commonBackendJava)
 }
 
 tasks {
@@ -173,7 +204,7 @@ tasks {
         from(sourceSets["lib"].output)
         from(sourceSets["backend"].output)
 
-        destinationDirectory.set(file(rootProject.layout.buildDirectory).resolve("mods"))
+        destinationDirectory.set(file(rootProject.layout.buildDirectory).resolve("mods/$minecraftVersion"))
     }
 
     processResources {

@@ -2,15 +2,11 @@ package dev.engine_room.flywheel.impl;
 
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.backend.compile.FlwProgramsReloader;
-import dev.engine_room.flywheel.impl.compat.DistantHorizonsCompat;
-import dev.engine_room.flywheel.impl.compat.LambDynLightsCompat;
 import dev.engine_room.flywheel.impl.event.RenderContextImpl;
 import dev.engine_room.flywheel.impl.test.OitDemoRegistration;
 import dev.engine_room.flywheel.impl.test.OitDemoVisual;
 import dev.engine_room.flywheel.impl.visualization.VisualizationEventHandler;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
-import dev.engine_room.flywheel.lib.instance.InstanceTypes;
-import dev.engine_room.flywheel.lib.material.Materials;
 import dev.engine_room.flywheel.lib.model.baked.PartialModelEventHandler;
 import dev.engine_room.flywheel.lib.visualization.SimpleBlockEntityVisualizer;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -49,15 +45,13 @@ import java.util.SortedSet;
 @Mod(value = Flywheel.MOD_ID, dist = Dist.CLIENT)
 public final class FlywheelNeoForge {
     public FlywheelNeoForge(IEventBus modEventBus, ModContainer modContainer) {
+        #if MC >= 26.3
+        FlwImplXplatImpl.registerNativeVulkanFactories();
+        #endif
         NeoForgeFlwConfig.INSTANCE.registerSpecs(modContainer);
         modEventBus.addListener((ModConfigEvent.Loading e) -> NeoForgeFlwConfig.INSTANCE.syncOitToRuntime());
         modEventBus.addListener((ModConfigEvent.Reloading e) -> NeoForgeFlwConfig.INSTANCE.syncOitToRuntime());
-        BackendManagerImpl.init();
-        LambDynLightsCompat.init();
-        DistantHorizonsCompat.init();
-        InstanceTypes.TRANSFORMED.hashCode();
-        Materials.SOLID_BLOCK.hashCode();
-        FlwImpl.freezeRegistries();
+        FlwImpl.init();
 
         if (!FMLEnvironment.isProduction()) {
             OitDemoRegistration.register(modEventBus);
@@ -112,6 +106,8 @@ public final class FlywheelNeoForge {
             }
         });
 
+        // 26.3: LevelRendererSolidPassMixin -> LevelRenderPassScope.afterSolid.
+        #if MC < 26.3
         gameEventBus.addListener((RenderLevelStageEvent.AfterOpaqueFeatures e) -> {
             Minecraft mc = Minecraft.getInstance();
             VisualizationManagerImpl manager = VisualizationManagerImpl.get(mc.level);
@@ -126,6 +122,7 @@ public final class FlywheelNeoForge {
             manager.renderDispatcher().beforeCrumbling(ctx,
                     (Long2ObjectOpenHashMap<SortedSet<BlockDestructionProgress>>) mc.level.destructionProgress());
         });
+        #endif
     }
 
     @Nullable

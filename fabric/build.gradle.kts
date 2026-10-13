@@ -8,15 +8,20 @@ plugins {
 val quickPlay: String? = providers.gradleProperty("quickPlay").orNull
 val vulkan = providers.gradleProperty("vk").isPresent
 val vulkanValidation = providers.gradleProperty("vkvalidation").isPresent
+val experimentalIris = minecraftVersion == "26.3" && providers.gradleProperty("iris.experimental").isPresent
+
+evaluationDependsOn(siblingProjectPath("common"))
 
 val sourcesJar = tasks.register<Jar>("sourcesJar") {
     archiveClassifier = "sources"
+    manifest.attributes("Source-Dialect" to "Tenon")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     for (set in listOf("main", "api", "lib", "backend")) {
-        from(project(":common").file("src/$set/java"))
-        from(file("src/$set/java"))
+        from(project(siblingProjectPath("common")).sourceSets[set].allJava)
+        from(sourceSets[set].allJava)
     }
 }
+tenon.sourcesJar(sourcesJar, sourceSets["main"])
 
 publishing {
     publications {
@@ -36,35 +41,35 @@ base {
 
 val commonMainJava: Configuration = configurations.create("commonMainJava") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 val commonApiJava: Configuration = configurations.create("commonApiJava") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 val commonLibJava: Configuration = configurations.create("commonLibJava") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 val commonBackendJava: Configuration = configurations.create("commonBackendJava") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 val commonModResources: Configuration = configurations.create("commonModResources") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 
 dependencies {
-    commonMainJava(project(path = ":common", configuration = "commonMainJava"))
-    commonApiJava(project(path = ":common", configuration = "commonApiJava"))
-    commonLibJava(project(path = ":common", configuration = "commonLibJava"))
-    commonBackendJava(project(path = ":common", configuration = "commonBackendJava"))
+    commonMainJava(project(path = siblingProjectPath("common"), configuration = "commonMainJava"))
+    commonApiJava(project(path = siblingProjectPath("common"), configuration = "commonApiJava"))
+    commonLibJava(project(path = siblingProjectPath("common"), configuration = "commonLibJava"))
+    commonBackendJava(project(path = siblingProjectPath("common"), configuration = "commonBackendJava"))
 
-    commonModResources(project(path = ":common", configuration = "commonMainResources"))
-    commonModResources(project(path = ":common", configuration = "commonApiResources"))
-    commonModResources(project(path = ":common", configuration = "commonLibResources"))
-    commonModResources(project(path = ":common", configuration = "commonBackendResources"))
-}
-
-repositories {
-    mavenLocal()
-    maven("https://maven.caffeinemc.net/releases/")
+    commonModResources(project(path = siblingProjectPath("common"), configuration = "commonMainResources"))
+    commonModResources(project(path = siblingProjectPath("common"), configuration = "commonApiResources"))
+    commonModResources(project(path = siblingProjectPath("common"), configuration = "commonLibResources"))
+    commonModResources(project(path = siblingProjectPath("common"), configuration = "commonBackendResources"))
 }
 
 sourceSets {
@@ -102,22 +107,24 @@ dependencies {
 
     implementation("net.fabricmc.fabric-api:fabric-api:${fabricApiVersion}")
 
-    include(project(":vanillinFabric"))
+    include(project(siblingProjectPath("vanillinFabric")))
 
-    include(project(":meshlet"))
+    include(project(siblingProjectPath("meshlet")))
 
-    include(project(":iris"))
+    include(project(siblingProjectPath("iris")))
 
-    localRuntime(project(":vanillinFabric"))
+    localRuntime(project(siblingProjectPath("vanillinFabric")))
 
-    localRuntime(project(":meshlet"))
+    localRuntime(project(siblingProjectPath("meshlet")))
 
-    localRuntime(project(":iris"))
+    localRuntime(project(siblingProjectPath("iris")))
 
-    if (project.hasProperty("sodium") || project.hasProperty("iris")) {
+    if (project.hasProperty("sodium") || project.hasProperty("iris") || experimentalIris) {
         localRuntime("net.caffeinemc:sodium-fabric:${sodiumVersion}")
     }
-    if (project.hasProperty("iris")) {
+    if (experimentalIris) {
+        localRuntime(project(path = siblingProjectPath("iris"), configuration = "experimentalIrisReference"))
+    } else if (project.hasProperty("iris")) {
         localRuntime("maven.modrinth:iris:${irisVersion}-fabric")
     }
 }
@@ -132,7 +139,7 @@ loom {
     runs {
         named("client") {
             client()
-            displayName = "Fabric/Client"
+            displayName = "Fabric/$minecraftVersion/Client"
             generateRunConfig = true
             runDirectory = file("run")
             quickPlay?.let { programArguments.addAll("--quickPlaySingleplayer", it) }
@@ -156,7 +163,7 @@ tasks {
         from(sourceSets["lib"].output)
         from(sourceSets["backend"].output)
 
-        destinationDirectory.set(file(rootProject.layout.buildDirectory).resolve("mods"))
+        destinationDirectory.set(file(rootProject.layout.buildDirectory).resolve("mods/$minecraftVersion"))
     }
 
     processResources {

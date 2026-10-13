@@ -1,25 +1,25 @@
 package dev.engine_room.flywheel.iris.compile.patches;
 
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.opengl.GlBuffer;
-import com.mojang.blaze3d.opengl.GlConst;
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.GlTexture;
+import dev.engine_room.flywheel.iris.mixin.CompositePassAccessor;
+import dev.engine_room.flywheel.iris.mixin.IrisRenderingPipelineAccessor;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.backend.opengl.GlBuffer;
+import com.mojang.renderpearl.backend.opengl.GlConst;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
-import dev.engine_room.flywheel.iris.engine.DeferredCompositePass;
+import net.irisshaders.iris.mixinterface.CustomPass;
 import dev.engine_room.flywheel.iris.engine.DeferredReplayPlan;
 import dev.engine_room.flywheel.iris.engine.DeferredReplayResources;
 import dev.engine_room.flywheel.iris.engine.DeferredReplayShaders;
-import dev.engine_room.flywheel.iris.mixin.IrisRenderingPipelineAccessor;
 import net.irisshaders.iris.gl.image.GlImage;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.targets.RenderTargets;
 import net.irisshaders.iris.uniforms.SystemTimeUniforms;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.*;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -27,10 +27,10 @@ import java.util.List;
 final class IterationReplayResources implements DeferredReplayResources {
     private static final int FIRST_TEXTURE = 10;
     private final RenderTargets targets;
-    private final DeferredCompositePass first;
-    private final DeferredCompositePass last;
-    private final DeferredCompositePass refraction;
-    private final DeferredCompositePass diffuseLast;
+    private final CustomPass first;
+    private final CustomPass last;
+    private final CustomPass refraction;
+    private final CustomPass diffuseLast;
     private final boolean[] canonicalAlt = new boolean[4];
     private final int[] custom = new int[3];
     private final GlImage[] customImages = new GlImage[3];
@@ -61,28 +61,28 @@ final class IterationReplayResources implements DeferredReplayResources {
 
     private IterationReplayResources(
             IrisRenderingPipeline pipeline,
-            DeferredCompositePass first,
-            DeferredCompositePass last,
-            DeferredCompositePass refraction,
+            CustomPass first,
+            CustomPass last,
+            CustomPass refraction,
             List<?> passes) {
-        var accessor = (IrisRenderingPipelineAccessor) pipeline;
-        targets = accessor.flywheel$renderTargets();
+        var accessor = pipeline;
+        targets = ((IrisRenderingPipelineAccessor) accessor).flywheel$renderTargets();
         this.first = first;
         this.last = last;
         this.refraction = refraction;
         diffuseLast =
                 passes.stream()
-                      .map(DeferredCompositePass.class::cast)
-                      .filter(pass -> pass.flywheel$name().equals("composite19"))
+                      .map(CustomPass.class::cast)
+                      .filter(pass -> ((CompositePassAccessor) pass).flywheel$name().equals("composite19"))
                       .findFirst()
                       .orElseThrow();
-        var finalRead = ((DeferredCompositePass) passes.getLast()).flywheel$readAlt();
+        var finalRead = ((CompositePassAccessor) passes.getLast()).flywheel$readAlt();
         for (int i = 0; i < 4; i++) canonicalAlt[i] = finalRead.contains(9 + i);
         String[] names = {"depthtexS", "waterDepth2D", "prevDepth2D"};
         for (int i = 0; i < names.length; i++) {
             String name = names[i];
             customImages[i] =
-                    accessor.flywheel$customImages().stream()
+                    ((IrisRenderingPipelineAccessor) accessor).flywheel$customImages().stream()
                             .filter(image -> name.equals(image.getSamplerName()))
                             .findFirst()
                             .orElseThrow();
@@ -91,10 +91,10 @@ final class IterationReplayResources implements DeferredReplayResources {
 
     static @Nullable DeferredReplayPlan plan(IrisRenderingPipeline pipeline, List<?> passes) {
         var stages = new ArrayList<DeferredReplayPlan.Stage>();
-        DeferredCompositePass after = null, refraction = null;
+        CustomPass after = null, refraction = null;
         for (Object entry : passes) {
-            DeferredCompositePass pass = (DeferredCompositePass) entry;
-            String name = pass.flywheel$name();
+            CustomPass pass = (CustomPass) entry;
+            String name = ((CompositePassAccessor) pass).flywheel$name();
             if (!name.matches("composite[0-9]+")) continue;
             int number = Integer.parseInt(name.substring(9));
             if (number >= 5 && number <= 50) stages.add(new DeferredReplayPlan.Stage(pass, false));
@@ -102,7 +102,7 @@ final class IterationReplayResources implements DeferredReplayResources {
             if (number == 51) after = pass;
         }
         if (stages.isEmpty()) return null;
-        if (!stages.getFirst().pass().flywheel$name().equals("composite5")
+        if (!((CompositePassAccessor) stages.getFirst().pass()).flywheel$name().equals("composite5")
                 || refraction == null
                 || after == null)
             throw new IllegalStateException("Iteration replay stages changed");
@@ -276,8 +276,8 @@ final class IterationReplayResources implements DeferredReplayResources {
         return alt ? targets.get(buffer).getAltTexture() : targets.get(buffer).getMainTexture();
     }
 
-    private int read(DeferredCompositePass pass, int buffer) {
-        return texture(buffer, pass.flywheel$readAlt().contains(buffer));
+    private int read(CustomPass pass, int buffer) {
+        return texture(buffer, ((CompositePassAccessor) pass).flywheel$readAlt().contains(buffer));
     }
 
     @Override
@@ -382,12 +382,12 @@ final class IterationReplayResources implements DeferredReplayResources {
             GL45C.glNamedFramebufferTexture(
                     lightingFbo,
                     GL30C.GL_COLOR_ATTACHMENT0,
-                    texture(6, !first.flywheel$readAlt().contains(6)),
+                    texture(6, !((CompositePassAccessor) first).flywheel$readAlt().contains(6)),
                     0);
             GL45C.glNamedFramebufferTexture(
                     lightingFbo,
                     GL30C.GL_COLOR_ATTACHMENT1,
-                    texture(0, !first.flywheel$readAlt().contains(0)),
+                    texture(0, !((CompositePassAccessor) first).flywheel$readAlt().contains(0)),
                     0);
             GL45C.glNamedFramebufferTexture(
                     materialFbo, GL30C.GL_COLOR_ATTACHMENT7, read(first, 6), 0);
@@ -469,7 +469,7 @@ final class IterationReplayResources implements DeferredReplayResources {
     }
 
     @Override
-    public void beforePass(DeferredCompositePass pass, int layer) {
+    public void beforePass(CustomPass pass, int layer) {
         if (pass != refraction) return;
         bind(0, background);
         state(backdropFbo, backdrop, layer, false);
@@ -477,7 +477,7 @@ final class IterationReplayResources implements DeferredReplayResources {
     }
 
     @Override
-    public void bindGraphicsResources(DeferredCompositePass pass, int layer) {
+    public void bindGraphicsResources(CustomPass pass, int layer) {
         GL42C.glBindImageTexture(7, layerNodes, 0, false, 0, GL15C.GL_READ_ONLY, GL30C.GL_R32UI);
     }
 
@@ -496,10 +496,10 @@ final class IterationReplayResources implements DeferredReplayResources {
     }
 
     @Override
-    public void afterPass(DeferredCompositePass pass, int layer) {
+    public void afterPass(CustomPass pass, int layer) {
         if (pass == diffuseLast) {
             barrier();
-            bind(0, pass.flywheel$framebuffer().getColorAttachment(0));
+            bind(0, ((CompositePassAccessor) pass).flywheel$framebuffer().getColorAttachment(0));
             bind(1, read(pass, 0));
             state(diffuseFbo, diffuseSave, layer, false);
             draw(layer);

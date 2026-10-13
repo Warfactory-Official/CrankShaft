@@ -14,8 +14,8 @@ import org.spongepowered.asm.mixin.injection.At;
 abstract class GuiMixin {
     @WrapOperation(method = "extractRenderState", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/gui/screens/Overlay;extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;IIF)V"))
-    private void flw$warmupSplash(Overlay overlay, GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a,
-                                  Operation<Void> original) {
+    private void flywheel$warmupSplash(Overlay overlay, GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a,
+                                       Operation<Void> original) {
         if (!ShaderWarmupSplash.extract(graphics)) original.call(overlay, graphics, mouseX, mouseY, a);
     }
 }

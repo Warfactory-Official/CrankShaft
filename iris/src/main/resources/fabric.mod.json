@@ -10,9 +10,9 @@
     "flywheel.iris.mixins.json"
   ],
   "depends": {
-    "minecraft": "*"
+    "minecraft": "${minecraft_fabric_range}"
   },
   "breaks": {
-    "iris": "<1.11.4"
+    "iris": "<${iris_minimum}"
   }
 }

@@ -4,7 +4,7 @@
 
 #moj_import <minecraft:fog.glsl>
 #moj_import <minecraft:globals.glsl>
-#moj_import <minecraft:chunksection.glsl>
+#include "flywheel:terrain/chunk_section.glsl"
 #moj_import <minecraft:projection.glsl>
 
 #ifdef _FLW_VK_BDA

@@ -28,10 +28,17 @@ public final class LevelUniforms extends UniformWriter {
         float partialTick = context.partialTick();
         Camera camera = context.camera();
 
+        #if MC >= 26.3
+        var skyColor = camera.attributeProbe().getValue(EnvironmentAttributes.SKY_COLOR, partialTick);
+        var cloudColor = camera.attributeProbe().getValue(EnvironmentAttributes.CLOUD_COLOR, partialTick);
+        ptr = writeVec4(ptr, skyColor.x(), skyColor.y(), skyColor.z(), 1f);
+        ptr = writeVec4(ptr, cloudColor.x(), cloudColor.y(), cloudColor.z(), cloudColor.w());
+        #else
         int skyColor = camera.attributeProbe().getValue(EnvironmentAttributes.SKY_COLOR, partialTick);
         int cloudColor = camera.attributeProbe().getValue(EnvironmentAttributes.CLOUD_COLOR, partialTick);
         ptr = writeVec4(ptr, ARGB.redFloat(skyColor), ARGB.greenFloat(skyColor), ARGB.blueFloat(skyColor), 1f);
         ptr = writeVec4(ptr, ARGB.redFloat(cloudColor), ARGB.greenFloat(cloudColor), ARGB.blueFloat(cloudColor), 1f);
+        #endif
 
         ptr = writeVec3(ptr, LIGHT0_DIRECTION);
         ptr = writeVec3(ptr, LIGHT1_DIRECTION);

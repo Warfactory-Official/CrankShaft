@@ -15,13 +15,3 @@ publishing {
         }
     }
 }
-
-tasks {
-    processResources {
-        inputs.property("version", version)
-
-        filesMatching(listOf("fabric.mod.json", "META-INF/neoforge.mods.toml", "pack.mcmeta")) {
-            expand(mapOf("version" to inputs.properties["version"]))
-        }
-    }
-}

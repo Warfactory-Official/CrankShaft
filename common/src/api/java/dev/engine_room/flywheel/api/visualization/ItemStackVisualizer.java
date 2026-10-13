@@ -13,6 +13,14 @@ import org.jspecify.annotations.Nullable;
  */
 public interface ItemStackVisualizer {
     /**
+     * Called on the host's extraction/update threads before creating or keeping a visual. False leaves the
+     * host's other render paths eligible.
+     */
+    default boolean supports(ItemStack stack, ItemDisplayContext displayContext, @Nullable ItemOwner owner) {
+        return true;
+    }
+
+    /**
      * Called by the host, on the host's threads.
      *
      * @param ctx   the host's context; instances belong to the host.

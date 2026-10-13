@@ -1,12 +1,11 @@
 package dev.engine_room.flywheel.backend.engine.terrain;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.vulkan.VulkanRenderPass;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
@@ -16,10 +15,16 @@ import dev.engine_room.flywheel.backend.engine.SodiumTerrainOitReplay;
 import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
 import dev.engine_room.flywheel.backend.engine.indirect.VkFoldedOitReplay;
 import dev.engine_room.flywheel.backend.engine.indirect.VkMlabBuffers;
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.engine.indirect.VkNativeOitPass;
+#endif
 import dev.engine_room.flywheel.backend.vk.VkCmd;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorWriter;
 import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline;
+import dev.engine_room.flywheel.compat.backend.UniformData;
+import dev.engine_room.flywheel.compat.backend.UniformStorage;
+import dev.engine_room.flywheel.compat.backend.UniformStorageOps;
 import net.caffeinemc.mods.sodium.client.model.quad.properties.ModelQuadFacing;
 import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
 import net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionManager;
@@ -28,7 +33,6 @@ import net.caffeinemc.mods.sodium.client.render.chunk.data.SectionRenderDataUnsa
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRenderPasses;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.DynamicUniformStorage;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.util.Mth;
 import net.minecraft.util.Util;
@@ -53,15 +57,15 @@ final class VkTerrainClassicDrawManager implements TerrainDispatcher, SodiumTerr
     private final Map<RenderRegion, FadeTimes> fades = new WeakHashMap<>();
     private final SharedQuadIndexBuffer sharedIndices =
             new SharedQuadIndexBuffer(SharedQuadIndexBuffer.IndexFormat.INTEGER);
-    private final DynamicUniformStorage<RegionOrigin> origins;
-    private final DynamicUniformStorage<ChunkSection> sections;
+    private final UniformStorage<RegionOrigin> origins;
+    private final UniformStorage<ChunkSection> sections;
     private boolean captured;
 
     VkTerrainClassicDrawManager(VkPrograms programs) {
         this.programs = programs;
-        origins = new DynamicUniformStorage<>("flywheel:vk_classic_origins", 16, 256);
+        origins = UniformStorageOps.create("flywheel:vk_classic_origins", 16, 256);
         try {
-            sections = new DynamicUniformStorage<>("flywheel:vk_classic_sections", 96, 256);
+            sections = UniformStorageOps.create("flywheel:vk_classic_sections", 96, 256);
         } catch (BackendUnavailableException e) {
             origins.close();
             throw e;
@@ -172,7 +176,7 @@ final class VkTerrainClassicDrawManager implements TerrainDispatcher, SodiumTerr
     public void replay(RenderPass pass, OitMode mode, OitFramebuffer framebuffer, GpuTextureView lightmapView,
                        GpuTextureView blueNoiseView, GpuSampler clampLinear, GpuSampler oitSampler,
                        GpuSampler noiseSampler) {
-        replayFoldedOrUnfolded(((VulkanRenderPass) pass.backend).commandBuffer, mode, framebuffer, lightmapView,
+        replayFoldedOrUnfolded(VkContext.renderPass(pass).commandBuffer, mode, framebuffer, lightmapView,
                 blueNoiseView, clampLinear, oitSampler, noiseSampler, false);
     }
 
@@ -191,7 +195,8 @@ final class VkTerrainClassicDrawManager implements TerrainDispatcher, SodiumTerr
             return;
         }
         VkGraphicsPipeline pipeline = programs.terrain().classicTranslucentProducerPipeline(mode, folded);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS,
+                #if MC >= 26.3 VkNativeOitPass.enginePipeline(pipeline) #else pipeline.handle() #endif);
         writeCommon(lightmapView, clampLinear);
         if (mode != OitMode.DEPTH_RANGE) {
             long view = VkContext.imageView(framebuffer.depthBoundsView());
@@ -222,7 +227,8 @@ final class VkTerrainClassicDrawManager implements TerrainDispatcher, SodiumTerr
             return;
         }
         VkGraphicsPipeline pipeline = programs.terrain().classicTranslucentMlabPipeline(mode);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS,
+                #if MC >= 26.3 VkNativeOitPass.enginePipeline(pipeline) #else pipeline.handle() #endif);
         writeCommon(lightmapView, clampLinear);
         mlab.bind(writer);
         submit(cmd, pipeline);
@@ -291,14 +297,14 @@ final class VkTerrainClassicDrawManager implements TerrainDispatcher, SodiumTerr
                                GpuBufferSlice origin, GpuBufferSlice chunk) {
     }
 
-    private record RegionOrigin(int x, int y, int z) implements DynamicUniformStorage.DynamicUniform {
+    private record RegionOrigin(int x, int y, int z) implements UniformData {
         @Override
         public void write(ByteBuffer buffer) {
             buffer.putInt(x).putInt(y).putInt(z).putInt(0);
         }
     }
 
-    private record ChunkSection(Matrix4fc modelView, float visibility) implements DynamicUniformStorage.DynamicUniform {
+    private record ChunkSection(Matrix4fc modelView, float visibility) implements UniformData {
         @Override
         public void write(ByteBuffer buffer) {
             modelView.get(0, buffer);

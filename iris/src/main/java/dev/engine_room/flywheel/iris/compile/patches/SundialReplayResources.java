@@ -1,16 +1,16 @@
 package dev.engine_room.flywheel.iris.compile.patches;
 
+import dev.engine_room.flywheel.iris.mixin.CompositePassAccessor;
 import com.google.common.primitives.Ints;
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.GlTexture;
-import dev.engine_room.flywheel.iris.engine.DeferredCompositePass;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
+import net.irisshaders.iris.mixinterface.CustomPass;
 import dev.engine_room.flywheel.iris.engine.DeferredReplayPlan;
 import dev.engine_room.flywheel.iris.engine.DeferredReplayResources;
 import dev.engine_room.flywheel.iris.engine.DeferredReplayShaders;
 import net.irisshaders.iris.targets.RenderTargets;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.*;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -20,7 +20,7 @@ final class SundialReplayResources implements DeferredReplayResources {
     private static final int FIRST_TEXTURE = 10;
     private final RenderTargets targets;
     private final Set<Integer> readAlt;
-    private final DeferredCompositePass last;
+    private final CustomPass last;
     private final int lastColorSlot;
     private final int[] saved = new int[7];
     private int width;
@@ -43,27 +43,27 @@ final class SundialReplayResources implements DeferredReplayResources {
     private int savedWeather;
     private int layerNodes;
 
-    private SundialReplayResources(RenderTargets targets, DeferredCompositePass first, DeferredCompositePass last) {
+    private SundialReplayResources(RenderTargets targets, CustomPass first, CustomPass last) {
         this.targets = targets;
-        readAlt = first.flywheel$readAlt();
+        readAlt = ((CompositePassAccessor) first).flywheel$readAlt();
         this.last = last;
-        lastColorSlot = Ints.indexOf(last.flywheel$drawBuffers(), 5);
+        lastColorSlot = Ints.indexOf(((CompositePassAccessor) last).flywheel$drawBuffers(), 5);
         assert lastColorSlot >= 0;
     }
 
     static @Nullable DeferredReplayPlan plan(RenderTargets targets, List<?> passes) {
         var stages = new ArrayList<DeferredReplayPlan.Stage>();
-        DeferredCompositePass after = null;
+        CustomPass after = null;
         for (Object entry : passes) {
-            DeferredCompositePass pass = (DeferredCompositePass) entry;
-            String name = pass.flywheel$name();
+            CustomPass pass = (CustomPass) entry;
+            String name = ((CompositePassAccessor) pass).flywheel$name();
             if (!name.matches("composite[0-9]+")) continue;
             int index = Integer.parseInt(name.substring("composite".length()));
             if (index >= 1 && index <= 6) stages.add(new DeferredReplayPlan.Stage(pass, false));
             else if (index > 6 && after == null) after = pass;
         }
         if (stages.isEmpty()) return null;
-        if (!stages.getFirst().pass().flywheel$name().equals("composite1")) {
+        if (!((CompositePassAccessor) stages.getFirst().pass()).flywheel$name().equals("composite1")) {
             throw new IllegalStateException("Sundial replay entry changed");
         }
         return new DeferredReplayPlan(stages.toArray(DeferredReplayPlan.Stage[]::new), after,
@@ -185,7 +185,7 @@ final class SundialReplayResources implements DeferredReplayResources {
         GL45C.glNamedFramebufferTexture(copyFbo, GL30C.GL_COLOR_ATTACHMENT0, saved[4], 0);
         GL45C.glNamedFramebufferTexture(copyFbo, GL30C.GL_COLOR_ATTACHMENT1, color(4), 0);
         GL45C.glNamedFramebufferTexture(depthFbo, GL30C.GL_DEPTH_ATTACHMENT, opaqueDepth, 0);
-        resolvedColor = last.flywheel$framebuffer().getColorAttachment(lastColorSlot);
+        resolvedColor = ((CompositePassAccessor) last).flywheel$framebuffer().getColorAttachment(lastColorSlot);
         copyColor = resolvedColor != color;
         GL45C.glNamedFramebufferTexture(depthFbo, GL30C.GL_COLOR_ATTACHMENT0, copyColor ? color : 0, 0);
         GL45C.glNamedFramebufferDrawBuffer(depthFbo, copyColor ? GL30C.GL_COLOR_ATTACHMENT0 : GL11C.GL_NONE);
@@ -234,7 +234,7 @@ final class SundialReplayResources implements DeferredReplayResources {
     }
 
     @Override
-    public void bindGraphicsResources(DeferredCompositePass pass, int layer) {
+    public void bindGraphicsResources(CustomPass pass, int layer) {
         GL42C.glBindImageTexture(7, layerNodes, 0, false, 0, GL15C.GL_READ_ONLY, GL30C.GL_R32UI);
     }
 

@@ -1,6 +1,6 @@
 package dev.engine_room.flywheel.iris.engine;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.glsl.GlslVersion;

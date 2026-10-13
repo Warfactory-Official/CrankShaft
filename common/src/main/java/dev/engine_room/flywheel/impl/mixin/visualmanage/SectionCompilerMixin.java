@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(SectionCompiler.class)
 abstract class SectionCompilerMixin {
     @Inject(method = "handleBlockEntity", at = @At("HEAD"), cancellable = true, require = 1)
-    private void flw$tryAddBlockEntity(@Coerce Object results, BlockEntity blockEntity, CallbackInfo ci) {
+    private void flywheel$tryAddBlockEntity(@Coerce Object results, BlockEntity blockEntity, CallbackInfo ci) {
         if (VisualizationHelper.tryAddBlockEntity(blockEntity)) {
             ci.cancel();
         }

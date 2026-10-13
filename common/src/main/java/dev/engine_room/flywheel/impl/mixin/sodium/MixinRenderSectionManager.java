@@ -22,15 +22,14 @@ public class MixinRenderSectionManager {
         if (!TerrainCullGate.shouldCancelSodiumCull()) {
             if (flywheel$cancelledLastCall) {
                 flywheel$cancelledLastCall = false;
-                ((RenderSectionManagerAccessor) (Object) this).flywheel$setNeedsRenderListUpdate(true);
+                ((RenderSectionManagerAccessor) this).flywheel$setNeedsRenderListUpdate(true);
             }
             return;
         }
         flywheel$cancelledLastCall = true;
-        RenderSectionManagerAccessor self = (RenderSectionManagerAccessor) (Object) this;
-        self.flywheel$setRenderLists(SortedRenderLists.empty());
-        self.flywheel$setNeedsRenderListUpdate(false);
-        self.flywheel$setCameraChanged(false);
+        ((RenderSectionManagerAccessor) this).flywheel$setRenderLists(SortedRenderLists.empty());
+        ((RenderSectionManagerAccessor) this).flywheel$setNeedsRenderListUpdate(false);
+        ((RenderSectionManagerAccessor) this).flywheel$setCameraChanged(false);
         ci.cancel();
     }
 }

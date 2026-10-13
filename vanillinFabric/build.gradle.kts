@@ -8,27 +8,29 @@ base {
     archivesName = "vanillate-fabric"
 }
 
-repositories {
-    maven("https://maven.caffeinemc.net/releases/")
-}
-
 val commonMainJava: Configuration = configurations.create("commonMainJava") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 val commonApiJava: Configuration = configurations.create("commonApiJava") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 val commonLibJava: Configuration = configurations.create("commonLibJava") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 val commonBackendJava: Configuration = configurations.create("commonBackendJava") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 val commonVanillinJava: Configuration = configurations.create("commonVanillinJava") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 val commonVanillinResources: Configuration = configurations.create("commonVanillinResources") {
     isCanBeResolved = true
+    isCanBeConsumed = false
 }
 
 dependencies {
@@ -40,13 +42,13 @@ dependencies {
 
     compileOnly("net.caffeinemc:sodium-fabric-api:${sodiumVersion}")
 
-    commonMainJava(project(path = ":common", configuration = "commonMainJava"))
-    commonApiJava(project(path = ":common", configuration = "commonApiJava"))
-    commonLibJava(project(path = ":common", configuration = "commonLibJava"))
-    commonBackendJava(project(path = ":common", configuration = "commonBackendJava"))
-    commonVanillinJava(project(path = ":common", configuration = "commonVanillinJava"))
+    commonMainJava(project(path = siblingProjectPath("common"), configuration = "commonMainJava"))
+    commonApiJava(project(path = siblingProjectPath("common"), configuration = "commonApiJava"))
+    commonLibJava(project(path = siblingProjectPath("common"), configuration = "commonLibJava"))
+    commonBackendJava(project(path = siblingProjectPath("common"), configuration = "commonBackendJava"))
+    commonVanillinJava(project(path = siblingProjectPath("common"), configuration = "commonVanillinJava"))
 
-    commonVanillinResources(project(path = ":common", configuration = "commonVanillinResources"))
+    commonVanillinResources(project(path = siblingProjectPath("common"), configuration = "commonVanillinResources"))
 }
 
 sourceSets {
@@ -74,7 +76,7 @@ tasks {
     jar {
         from(commonVanillinJava)
 
-        destinationDirectory.set(file(rootProject.layout.buildDirectory).resolve("mods"))
+        destinationDirectory.set(file(rootProject.layout.buildDirectory).resolve("mods/$minecraftVersion"))
     }
 
     processResources {

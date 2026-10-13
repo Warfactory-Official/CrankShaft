@@ -1,6 +1,6 @@
 package dev.engine_room.flywheel.backend.gl;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import org.lwjgl.opengl.GL13;
 
 public enum GlTextureUnit {

@@ -8,13 +8,18 @@ import java.util.List;
 import java.util.Set;
 
 public final class IrisMixinPlugin implements IMixinConfigPlugin {
+    private static final Set<String> SHARED_MIXINS = Set.of(
+            "BlendModeOverrideAccessor", "CommonUniformsMixin", "EntityConversionMixin", "IncludeGraphMixin",
+            "IrisRenderingPipelineAccessor", "ProgramFallbackResolverAccessor", "ProgramSetMixin", "ProgramSourceMixin",
+            "ShaderPackMixin", "ShaderPackSourceNamesMixin", "VisualizationManagerMixin");
     // Resource lookup: classloading Iris here would run before its own mixin plugin.
     static final boolean IRIS_PRESENT = IrisMixinPlugin.class.getClassLoader()
                                                              .getResource("net/irisshaders/iris/Iris.class") != null;
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
-        return IRIS_PRESENT;
+        return IRIS_PRESENT && (!IrisRuntime.EXPERIMENTAL
+                || SHARED_MIXINS.contains(mixinClassName.substring(mixinClassName.lastIndexOf('.') + 1)));
     }
 
     @Override

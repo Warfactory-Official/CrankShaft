@@ -1,23 +1,21 @@
 package dev.engine_room.flywheel.backend.engine.indirect;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.systems.CommandEncoder;
-import com.mojang.blaze3d.systems.RenderPass;
-import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.vulkan.VulkanGpuTexture;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.Samplers;
 import dev.engine_room.flywheel.backend.compile.OitMode;
-import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.gl.GlLayerTexture;
 import dev.engine_room.flywheel.backend.vk.VkContext;
-import dev.engine_room.flywheel.backend.vk.VkLayerTextureView;
+import dev.engine_room.flywheel.compat.backend.RenderPassOps;
 import dev.engine_room.flywheel.lib.memory.FlwMemoryTracker;
 import net.minecraft.client.Minecraft;
 import org.joml.Vector4f;
@@ -42,8 +40,9 @@ public class OitFramebuffer {
     private GpuTexture depthBounds;
     private GpuTexture accumulate;
     private int glCoefficientsArrayId;
-    private GpuTexture coefficientsArray;
     private GpuTextureView depthBoundsView;
+    // Borrowed until the level frame completes; the native opacity-cull pass owns this view.
+    private GpuTextureView nativeDepthBoundsView;
     private GpuTextureView accumulateView;
     private GpuTexture emission;
     private GpuTextureView emissionView;
@@ -52,6 +51,7 @@ public class OitFramebuffer {
     private GpuTextureView nearestDepthView;
     private long nearestDepthBytes;
 
+    #if MC < 26.3
     private GpuTexture cloudsColor;
     private GpuTexture cloudsDepth;
     private GpuTextureView cloudsColorView;
@@ -63,6 +63,7 @@ public class OitFramebuffer {
     private GpuTextureView weatherColorView;
     private GpuTextureView weatherDepthView;
     private long weatherBytes;
+    #endif
 
     private int lastWidth = -1;
     private int lastHeight = -1;
@@ -83,12 +84,14 @@ public class OitFramebuffer {
     }
 
     public void prepare() {
+        nativeDepthBoundsView = null;
         RenderTarget target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         maybeResize(target.width, target.height);
         ensureChainTargets();
     }
 
-    public void prepareLayersOnly() {
+    public void prepareSize() {
+        nativeDepthBoundsView = null;
         RenderTarget target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         maybeResize(target.width, target.height);
     }
@@ -98,7 +101,11 @@ public class OitFramebuffer {
     }
 
     public GpuTextureView depthBoundsView() {
-        return depthBoundsView;
+        return nativeDepthBoundsView != null ? nativeDepthBoundsView : depthBoundsView;
+    }
+
+    public void useDepthBounds(GpuTextureView view) {
+        nativeDepthBoundsView = view;
     }
 
     public GpuTextureView coefficientsView(int layer) {
@@ -110,8 +117,8 @@ public class OitFramebuffer {
         if (mode == OitMode.DEPTH_RANGE) {
             return;
         }
-        pass.bindTexture("_flw_depthRange", depthBoundsView, oitSampler);
-        pass.bindTexture("_flw_blueNoise", blueNoiseView, noiseSampler);
+        pass.setUniform("_flw_depthRange", depthBoundsView(), oitSampler);
+        pass.setUniform("_flw_blueNoise", blueNoiseView, noiseSampler);
         if (mode == OitMode.EVALUATE) {
             bindCoefficients(pass, oitSampler);
         }
@@ -122,10 +129,10 @@ public class OitFramebuffer {
             bindCoefficientsArrayRaw();
             return;
         }
-        pass.bindTexture("_flw_coefficients0", coefficientsView[0], sampler);
-        pass.bindTexture("_flw_coefficients1", coefficientsView[1], sampler);
-        pass.bindTexture("_flw_coefficients2", coefficientsView[2], sampler);
-        pass.bindTexture("_flw_coefficients3", coefficientsView[3], sampler);
+        pass.setUniform("_flw_coefficients0", coefficientsView[0], sampler);
+        pass.setUniform("_flw_coefficients1", coefficientsView[1], sampler);
+        pass.setUniform("_flw_coefficients2", coefficientsView[2], sampler);
+        pass.setUniform("_flw_coefficients3", coefficientsView[3], sampler);
     }
 
     public void bindCoefficientsArrayRaw() {
@@ -172,6 +179,7 @@ public class OitFramebuffer {
         FlwMemoryTracker._allocGpuMemory(emissionBytes);
     }
 
+    #if MC < 26.3
     public void prepareCloudsLayer() {
         if (cloudsColor != null) {
             return;
@@ -200,11 +208,12 @@ public class OitFramebuffer {
     }
 
     public RenderPassDescriptor cloudsLayerDescriptor() {
-        return RenderPassDescriptor.create(() -> "flywheel:oit/clouds_layer")
-                                   .withColorAttachment(cloudsColorView,
-                                           Optional.<Vector4fc>of(new Vector4f(0.0f, 0.0f, 0.0f, 0.0f)))
-                                   .withDepthAttachment(cloudsDepthView, OptionalDouble.empty())
-                                   .withRenderArea(fullArea());
+        return RenderPassOps.builder(() -> "flywheel:oit/clouds_layer")
+                            .withColorAttachment(cloudsColorView,
+                                    Optional.<Vector4fc>of(new Vector4f(0.0f, 0.0f, 0.0f, 0.0f)))
+                            .withDepthAttachment(cloudsDepthView, OptionalDouble.empty())
+                            .withRenderArea(fullArea())
+                            .build();
     }
 
     public void prepareWeatherLayer() {
@@ -235,46 +244,52 @@ public class OitFramebuffer {
     }
 
     public RenderPassDescriptor weatherLayerDescriptor() {
-        return RenderPassDescriptor.create(() -> "flywheel:oit/weather_layer")
-                                   .withColorAttachment(weatherColorView,
-                                           Optional.<Vector4fc>of(new Vector4f(0.0f, 0.0f, 0.0f, 0.0f)))
-                                   .withDepthAttachment(weatherDepthView, OptionalDouble.empty())
-                                   .withRenderArea(fullArea());
+        return RenderPassOps.builder(() -> "flywheel:oit/weather_layer")
+                            .withColorAttachment(weatherColorView,
+                                    Optional.<Vector4fc>of(new Vector4f(0.0f, 0.0f, 0.0f, 0.0f)))
+                            .withDepthAttachment(weatherDepthView, OptionalDouble.empty())
+                            .withRenderArea(fullArea())
+                            .build();
     }
+    #endif
 
     public RenderPassDescriptor depthRangeDescriptor(GpuTextureView mainDepth, float far) {
-        return RenderPassDescriptor.create(() -> "flywheel:oit/depth_range")
-                                   .withColorAttachment(depthBoundsView,
-                                           Optional.<Vector4fc>of(new Vector4f(-far, -far, 0.0f, 0.0f)))
-                                   .withDepthAttachment(mainDepth, OptionalDouble.empty())
-                                   .withRenderArea(fullArea());
+        return RenderPassOps.builder(() -> "flywheel:oit/depth_range")
+                            .withColorAttachment(depthBoundsView,
+                                    Optional.<Vector4fc>of(new Vector4f(-far, -far, 0.0f, 0.0f)))
+                            .withDepthAttachment(mainDepth, OptionalDouble.empty())
+                            .withRenderArea(fullArea())
+                            .build();
     }
 
     public RenderPassDescriptor coefficientsDescriptor(GpuTextureView mainDepth) {
         Optional<Vector4fc> zero = Optional.<Vector4fc>of(new Vector4f(0.0f, 0.0f, 0.0f, 0.0f));
-        return RenderPassDescriptor.create(() -> "flywheel:oit/coefficients")
-                                   .withColorAttachment(coefficientsView[0], zero)
-                                   .withColorAttachment(coefficientsView[1], zero)
-                                   .withColorAttachment(coefficientsView[2], zero)
-                                   .withColorAttachment(coefficientsView[3], zero)
-                                   .withDepthAttachment(mainDepth, OptionalDouble.empty())
-                                   .withRenderArea(fullArea());
+        return RenderPassOps.builder(() -> "flywheel:oit/coefficients")
+                            .withColorAttachment(coefficientsView[0], zero)
+                            .withColorAttachment(coefficientsView[1], zero)
+                            .withColorAttachment(coefficientsView[2], zero)
+                            .withColorAttachment(coefficientsView[3], zero)
+                            .withDepthAttachment(mainDepth, OptionalDouble.empty())
+                            .withRenderArea(fullArea())
+                            .build();
     }
 
     public RenderPassDescriptor accumulateDescriptor(GpuTextureView mainDepth) {
-        return RenderPassDescriptor.create(() -> "flywheel:oit/accumulate")
-                                   .withColorAttachment(accumulateView,
-                                           Optional.<Vector4fc>of(new Vector4f(0.0f, 0.0f, 0.0f, 0.0f)))
-                                   .withDepthAttachment(mainDepth, OptionalDouble.empty())
-                                   .withRenderArea(fullArea());
+        return RenderPassOps.builder(() -> "flywheel:oit/accumulate")
+                            .withColorAttachment(accumulateView,
+                                    Optional.<Vector4fc>of(new Vector4f(0.0f, 0.0f, 0.0f, 0.0f)))
+                            .withDepthAttachment(mainDepth, OptionalDouble.empty())
+                            .withRenderArea(fullArea())
+                            .build();
     }
 
     public RenderPassDescriptor emissionDescriptor(GpuTextureView mainDepth) {
-        return RenderPassDescriptor.create(() -> "flywheel:oit/emission")
-                                   .withColorAttachment(emissionView,
-                                           Optional.<Vector4fc>of(new Vector4f(0.0f, 0.0f, 0.0f, 0.0f)))
-                                   .withDepthAttachment(mainDepth, OptionalDouble.empty())
-                                   .withRenderArea(fullArea());
+        return RenderPassOps.builder(() -> "flywheel:oit/emission")
+                            .withColorAttachment(emissionView,
+                                    Optional.<Vector4fc>of(new Vector4f(0.0f, 0.0f, 0.0f, 0.0f)))
+                            .withDepthAttachment(mainDepth, OptionalDouble.empty())
+                            .withRenderArea(fullArea())
+                            .build();
     }
 
     private RenderPass.RenderArea fullArea() {
@@ -302,14 +317,7 @@ public class OitFramebuffer {
         depthBounds = device.createTexture(() -> "flywheel:oit/depth_bounds", USAGE, DEPTH_BOUNDS_FORMAT, lastWidth,
                 lastHeight, 1, 1);
         depthBoundsView = device.createTextureView(depthBounds);
-        boolean vulkan = VkContext.isVulkanHost();
-        if (vulkan && VkPrograms.get().localRead()) {
-            coefficientsArray = new VulkanGpuTexture(VkContext.device(), USAGE, "flywheel:oit/coefficients",
-                    COEFFICIENTS_FORMAT, lastWidth, lastHeight, 4, 1);
-            for (int i = 0; i < 4; i++) {
-                coefficientsView[i] = VkLayerTextureView.create(coefficientsArray, i);
-            }
-        } else if (!vulkan && OitConfig.coefficientArray()) {
+        if (!VkContext.isVulkanHost() && OitConfig.coefficientArray()) {
             glCoefficientsArrayId = createGlCoefficientsArray(lastWidth, lastHeight);
             for (int i = 0; i < 4; i++) {
                 int viewId = GlStateManager._genTexture();
@@ -335,6 +343,7 @@ public class OitFramebuffer {
     }
 
     private void deleteChainTargets() {
+        nativeDepthBoundsView = null;
         if (depthBoundsView != null) {
             depthBoundsView.close();
             depthBoundsView = null;
@@ -352,10 +361,6 @@ public class OitFramebuffer {
                 coefficients[i].close();
                 coefficients[i] = null;
             }
-        }
-        if (coefficientsArray != null) {
-            coefficientsArray.close();
-            coefficientsArray = null;
         }
         if (glCoefficientsArrayId != 0) {
             GlStateManager._deleteTexture(glCoefficientsArrayId);
@@ -395,6 +400,7 @@ public class OitFramebuffer {
         }
         FlwMemoryTracker._freeGpuMemory(nearestDepthBytes);
         nearestDepthBytes = 0;
+        #if MC < 26.3
         if (cloudsColorView != null) {
             cloudsColorView.close();
             cloudsColorView = null;
@@ -432,5 +438,6 @@ public class OitFramebuffer {
         }
         FlwMemoryTracker._freeGpuMemory(weatherBytes);
         weatherBytes = 0;
+        #endif
     }
 }

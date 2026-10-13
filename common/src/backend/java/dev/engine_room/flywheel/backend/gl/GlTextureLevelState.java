@@ -1,7 +1,7 @@
 package dev.engine_room.flywheel.backend.gl;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL12C;
 
@@ -12,21 +12,21 @@ import org.lwjgl.opengl.GL12C;
  */
 public interface GlTextureLevelState {
     static boolean shouldApplyBase(GlTexture texture, int value) {
-        GlTextureLevelState state = (GlTextureLevelState) (Object) texture;
-        if (state.flw$lastBase() == value) {
+        GlTextureLevelState state = (GlTextureLevelState) texture;
+        if (state.flywheel$lastBase() == value) {
             return false;
         }
-        state.flw$lastBase(value);
+        state.flywheel$lastBase(value);
         return true;
     }
 
     static boolean shouldApplyMax(GlTexture texture, int value) {
-        GlTextureLevelState state = (GlTextureLevelState) (Object) texture;
-        int last = state.flw$lastMax();
+        GlTextureLevelState state = (GlTextureLevelState) texture;
+        int last = state.flywheel$lastMax();
         if (last == Integer.MIN_VALUE) {
             last = texture.getMipLevels() - 1;
         }
-        state.flw$lastMax(value);
+        state.flywheel$lastMax(value);
         return last != value;
     }
 
@@ -39,11 +39,11 @@ public interface GlTextureLevelState {
         }
     }
 
-    int flw$lastBase();
+    int flywheel$lastBase();
 
-    void flw$lastBase(int value);
+    void flywheel$lastBase(int value);
 
-    int flw$lastMax();
+    int flywheel$lastMax();
 
-    void flw$lastMax(int value);
+    void flywheel$lastMax(int value);
 }

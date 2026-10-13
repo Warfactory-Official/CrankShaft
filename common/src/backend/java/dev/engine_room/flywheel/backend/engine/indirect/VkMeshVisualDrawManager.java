@@ -1,16 +1,15 @@
 package dev.engine_room.flywheel.backend.engine.indirect;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.textures.FilterMode;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.backend.compile.*;
 import dev.engine_room.flywheel.backend.engine.MaterialEncoder;
 import dev.engine_room.flywheel.backend.engine.MaterialSamplers;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
-import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkCmd;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.buffer.VkBuffer;
@@ -217,11 +216,11 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
             VkMeshPipeline pipeline = meshVisualPipelines().oitPipeline(multiDraw.type(), multiDraw.material(),
                     multiDraw.embedded(), mode, programs.depthFormat(), folded);
             if (pipeline != lastPipeline) {
-                bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
+                bindGraphicsPipeline(cmd, oitPipeline(pipeline), pipeline.layout());
                 lastPipeline = pipeline;
             }
             writeMeshVisualCommon(fs, in, pyramidSampler);
-            writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms());
+            writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms()).uniform(22, f.renderOriginSlice());
             if (needsColor) {
                 Material material = multiDraw.material();
                 if (!bindless) {
@@ -231,7 +230,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
                     writer.sampler(15, f.blueNoiseView(), f.blueNoiseSampler());
                 }
                 writeLight(fs);
-                writer.uniform(18, f.fog()).uniform(19, f.lights()).uniform(22, f.renderOriginSlice());
+                writer.uniform(18, f.fog()).uniform(19, f.lights());
                 VkWaveletOitChain.writeOitReads(writer, f, mode, folded);
             }
             writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
@@ -266,7 +265,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
             VkMeshPipeline pipeline = meshVisualPipelines().mlabPipeline(multiDraw.type(), multiDraw.material(),
                     multiDraw.embedded(), oitMode, programs.depthFormat());
             if (pipeline != lastPipeline) {
-                bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
+                bindGraphicsPipeline(cmd, oitPipeline(pipeline), pipeline.layout());
                 lastPipeline = pipeline;
             }
             writeMeshVisualCommon(fs, in, pyramidSampler);

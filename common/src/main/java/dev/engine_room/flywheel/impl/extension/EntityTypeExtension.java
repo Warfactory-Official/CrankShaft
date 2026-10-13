@@ -6,7 +6,7 @@ import org.jspecify.annotations.Nullable;
 
 public interface EntityTypeExtension<T extends Entity> {
     @Nullable
-    EntityVisualizer<? super T> flw$getVisualizer();
+    EntityVisualizer<? super T> flywheel$getVisualizer();
 
-    void flw$setVisualizer(@Nullable EntityVisualizer<? super T> visualizer);
+    void flywheel$setVisualizer(@Nullable EntityVisualizer<? super T> visualizer);
 }

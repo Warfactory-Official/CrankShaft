@@ -1,9 +1,9 @@
 package dev.engine_room.flywheel.backend.engine;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.AddressMode;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.AddressMode;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuSampler;
 
 import dev.engine_room.flywheel.api.material.Material;
 import net.minecraft.client.renderer.texture.TextureAtlas;

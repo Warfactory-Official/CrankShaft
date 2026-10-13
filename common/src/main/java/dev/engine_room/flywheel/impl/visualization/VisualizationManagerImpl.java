@@ -1,6 +1,14 @@
 package dev.engine_room.flywheel.impl.visualization;
 
-import com.mojang.blaze3d.textures.GpuSampler;
+import dev.engine_room.flywheel.impl.mixin.sodium.RenderSectionManagerAccessor;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+#if MC >= 26.3
+import dev.engine_room.flywheel.api.backend.Backend;
+import dev.engine_room.flywheel.backend.compile.NativeOitWarmup;
+import dev.engine_room.flywheel.backend.compile.VkPrograms;
+import dev.engine_room.flywheel.backend.engine.indirect.VkNativeOitPass;
+import dev.engine_room.flywheel.backend.vk.VkContext;
+#endif
 import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.backend.RenderContext;
@@ -12,6 +20,7 @@ import dev.engine_room.flywheel.api.visual.Effect;
 import dev.engine_room.flywheel.api.visual.TickableVisual;
 import dev.engine_room.flywheel.api.visualization.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
+import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.TerrainMode;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
@@ -20,7 +29,6 @@ import dev.engine_room.flywheel.backend.engine.terrain.TerrainDispatchers;
 import dev.engine_room.flywheel.impl.*;
 import dev.engine_room.flywheel.impl.compat.SodiumCompat;
 import dev.engine_room.flywheel.impl.extension.LevelExtension;
-import dev.engine_room.flywheel.impl.mixin.sodium.RenderSectionManagerAccessor;
 import dev.engine_room.flywheel.impl.sodium.TerrainCullGate;
 import dev.engine_room.flywheel.impl.task.Flag;
 import dev.engine_room.flywheel.impl.task.FlwTaskExecutor;
@@ -56,7 +64,6 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
 import org.jspecify.annotations.Nullable;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -68,6 +75,25 @@ import java.util.SortedSet;
 public class VisualizationManagerImpl implements VisualizationManager {
     private static final LevelAttached<VisualizationManagerImpl> MANAGERS = new LevelAttached<>(
             VisualizationManagerImpl::new, VisualizationManagerImpl::delete);
+
+    #if MC >= 26.3
+
+    static {
+        NativeOitWarmup.registerOwnerPreparation(VisualizationManagerImpl::prepareNativeVkMeshOwner);
+    }
+
+    private static void prepareNativeVkMeshOwner() {
+        Minecraft mc = Minecraft.getInstance();
+        if (!VkContext.isVulkanHost() || !VkNativeOitPass.fused(VkPrograms.get()) || mc.level == null
+                || !mc.options.improvedTransparency().get()
+                || !Backends.VK_MESH_SHADER_ID.equals(Backend.REGISTRY.getIdOrThrow(BackendManager.currentBackend()))) {
+            return;
+        }
+        // 26.3: resource reload and transparency changes discard the old manager. Prepare its replacement before
+        // the enclosing selected compilation; the constructor's nested warm request joins that boundary.
+        getOrThrow(mc.level).lateInit();
+    }
+    #endif
 
     private final TaskExecutorImpl taskExecutor;
     private final DistanceUpdateLimiterImpl frameLimiter;
@@ -88,6 +114,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
     @Nullable
     private RenderContext lastFrameCtx;
 
+    #if MC < 26.3
     private boolean oitDeferred;
     private boolean oitDeferredSodium;
     @Nullable
@@ -104,6 +131,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
     private double deferredSodiumY;
     private double deferredSodiumZ;
     private boolean runningDeferredFallback;
+    #endif
 
     private VisualizationManagerImpl(LevelAccessor level) {
         this.level = level;
@@ -271,45 +299,75 @@ public class VisualizationManagerImpl implements VisualizationManager {
     }
 
     private boolean renderOit(RenderContext context, @Nullable ChunkSectionsToRender chunks,
-                              @Nullable BerTranslucentCapture ber, @Nullable SodiumTerrainOitReplay terrain,
-                              @Nullable FabulousCaptures fabulous) {
+                              @Nullable BerTranslucentCapture ber,
+                              #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
+                              @Nullable SodiumTerrainOitReplay terrain) {
         Engine engine = lateInit().engine;
         if (engine instanceof EngineImpl impl) {
-            return impl.renderOit(context, chunks, ber, terrain, fabulous);
+            return impl.renderOit(context, chunks, ber, #if MC < 26.3 fabulous, #endif terrain);
         }
         engine.renderOit(context);
         return false;
     }
 
+    #if MC < 26.3
+    private boolean renderOit(RenderContext context, @Nullable ChunkSectionsToRender chunks,
+                              @Nullable BerTranslucentCapture ber, @Nullable SodiumTerrainOitReplay terrain) {
+        return renderOit(context, chunks, ber, null, terrain);
+    }
+    #endif
+
     private boolean runOitChain(RenderContext ctx, @Nullable ChunkSectionsToRender chunks,
                                 @Nullable SodiumTerrainOitReplay terrain, boolean rotateTerrainRing) {
+        #if MC < 26.3
         FabulousCaptures fabulous = FabulousReroute.capture(ctx);
+        #endif
         boolean composited;
         try {
-            composited = renderOit(ctx, chunks, berTranslucent, terrain, fabulous);
+            composited = renderOit(ctx, chunks, berTranslucent, #if MC < 26.3 fabulous, #endif terrain);
         } finally {
             berTranslucent.clear();
             if (rotateTerrainRing && terrainDrawDispatcher != null) {
                 terrainDrawDispatcher.endFrame();
             }
         }
+        #if MC < 26.3
         FabulousReroute.onComposited(composited);
+        #endif
         return composited;
     }
+
+    #if MC >= 26.3
+    /** Prepared native producers stay live until the chain completes; only this boundary rotates the terrain ring. */
+    public boolean renderNativeTranslucentOit(NativeOitReplay replay) {
+        boolean sodium = SodiumCompat.ACTIVE;
+        SodiumTerrainOitReplay terrain = sodium && BackendConfig.INSTANCE.terrainMode().compositesTranslucent()
+                && terrainDrawDispatcher != null ? terrainDrawDispatcher.translucentOitReplay() : null;
+        replay.setTerrain(terrain);
+        try {
+            return ((EngineImpl) lateInit().engine).renderNativeOit(replay);
+        } finally {
+            replay.setTerrain(null);
+            berTranslucent.clear();
+            if (sodium && terrainDrawDispatcher != null) terrainDrawDispatcher.endFrame();
+        }
+    }
+    #endif
 
     /**
      * Vanilla translucent-seam entry: {@code true} iff the engine composited or the chain deferred.
      */
     public boolean renderTranslucentOit(@Nullable ChunkSectionsToRender chunks, @Nullable GpuSampler sampler) {
-        if (runningDeferredFallback) {
-            return false;
-        }
         RenderContext ctx = lastFrameCtx;
         if (ctx == null) {
             return false;
         }
         if (isShaderPackGuest()) {
-            renderOit(ctx, null, null, null, null);
+            renderOit(ctx, null, null, null);
+            return false;
+        }
+        #if MC < 26.3
+        if (runningDeferredFallback) {
             return false;
         }
         if (FabulousLayerTargets.windowOpen()) {
@@ -320,6 +378,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
             deferredTerrain = null;
             return true;
         }
+        #endif
         if (!BackendConfig.INSTANCE.terrainMode().compositesTranslucent()) {
             runOitChain(ctx, null, null, false);
             return false;
@@ -332,9 +391,6 @@ public class VisualizationManagerImpl implements VisualizationManager {
      */
     public boolean renderTranslucentOitSodium(SodiumWorldRenderer renderer, ChunkRenderMatrices matrices,
                                               double x, double y, double z, GpuSampler sampler) {
-        if (runningDeferredFallback) {
-            return false;
-        }
         RenderContext ctx = lastFrameCtx;
         if (ctx == null) {
             return false;
@@ -344,7 +400,11 @@ public class VisualizationManagerImpl implements VisualizationManager {
             // both; without terrain it stays out and Sodium draws its own sorted translucent.
             SodiumTerrainOitReplay guestTerrain = GuestTerrainGate.ownsTerrain() && terrainDrawDispatcher != null
                     ? terrainDrawDispatcher.translucentOitReplay() : null;
-            return renderOit(ctx, null, null, guestTerrain, null);
+            return renderOit(ctx, null, null, guestTerrain);
+        }
+        #if MC < 26.3
+        if (runningDeferredFallback) {
+            return false;
         }
         if (FabulousLayerTargets.windowOpen()) {
             oitDeferred = true;
@@ -361,6 +421,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
             // Sodium's own draw would NPE.
             return true;
         }
+        #endif
         if (!BackendConfig.INSTANCE.terrainMode().compositesTranslucent()) {
             runOitChain(ctx, null, null, true);
             return false;
@@ -372,6 +433,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
         return engineOwnsTerrain && composited;
     }
 
+    #if MC < 26.3
     /**
      * @return whether a deferred chain ran.
      */
@@ -421,6 +483,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
         }
         return true;
     }
+    #endif
 
     /**
      * Iris shadow-pass terrain seam: {@code true} iff the engine drew it (so Sodium's own draw is cancelled).
@@ -597,7 +660,9 @@ public class VisualizationManagerImpl implements VisualizationManager {
             terrainDrawDispatcher.delete();
             terrainDrawDispatcher = null;
         }
+        #if MC < 26.3
         FabulousLayerTargets.delete();
+        #endif
     }
 
     /**
@@ -712,7 +777,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
 
         @Override
         public void afterTranslucent(RenderContext ctx) {
-            renderOit(ctx, null, null, null, null);
+            renderOit(ctx, null, null, null);
         }
 
         @Override

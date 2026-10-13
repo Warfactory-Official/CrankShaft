@@ -9,8 +9,6 @@ base {
     archivesName = "crankshaft-common"
 }
 
-val NEOFORGE_MIXIN = "0.17.3+mixin.0.8.7"
-
 sourceSets {
     val main = getByName("main")
     val api = create("api")
@@ -62,54 +60,46 @@ fun nestedJars(notation: String, vararg names: String): Set<File> {
     return zipTree(jar.singleFile).matching { names.forEach { include("META-INF/jars/$it-*.jar") } }.files
 }
 
-repositories {
-    mavenLocal()
-    maven("https://maven.caffeinemc.net/releases/")
-}
-
 dependencies {
     minecraft("com.mojang:minecraft:${minecraftVersion}")
 
     compileOnly("net.caffeinemc:sodium-fabric-api:${sodiumVersion}")
     compileOnly("net.caffeinemc:sodium-fabric:${sodiumVersion}")
-    compileOnly("maven.modrinth:voxy:${voxyVersion}")
+    compileOnly("maven.modrinth:voxy:${voxyCompileVersion}")
     compileOnly("maven.modrinth:distanthorizons:${distantHorizonsVersion}") { isTransitive = false }
     compileOnly("maven.modrinth:entityculling:${entityCullingVersion}") { isTransitive = false }
     compileOnly("maven.modrinth:lambdynamiclights:${lambDynLightsVersion}") { isTransitive = false }
     compileOnly("maven.modrinth:entitytexturefeatures:${etfVersion}") { isTransitive = false }
     compileOnly("maven.modrinth:entity-model-features:${emfVersion}") { isTransitive = false }
-    compileOnly("maven.modrinth:polytone:${polytoneVersion}") { isTransitive = false }
+    compileOnly("maven.modrinth:polytone:${polytoneCompileVersion}") { isTransitive = false }
     compileOnly("maven.modrinth:vitrail-shaders:${vitrailVersion}") { isTransitive = false }
     // Jar-in-jar'd libraries their APIs expose: Polytone's content managers -> codecui; LambDynamicLights -> its
     // behavior API, SpruceUI and Yumi supertypes.
-    compileOnly(files(provider { nestedJars("maven.modrinth:polytone:${polytoneVersion}", "codecui") }))
+    compileOnly(files(provider { nestedJars("maven.modrinth:polytone:${polytoneCompileVersion}", "codecui") }))
     compileOnly(files(provider {
-        nestedJars(
-            "maven.modrinth:lambdynamiclights:${lambDynLightsVersion}", "lambdynamiclights-api", "spruceui",
-            "yumi-mc-foundation"
-        )
+        nestedJars("maven.modrinth:lambdynamiclights:${lambDynLightsVersion}", "lambdynamiclights-api", "spruceui",
+                "yumi-mc-foundation")
     }))
 
-    compileOnly("io.github.llamalad7:mixinextras-common:0.5.4")
-    annotationProcessor("io.github.llamalad7:mixinextras-common:0.5.4")
+    compileOnly("io.github.llamalad7:mixinextras-common:${mixinExtrasVersion}")
+    annotationProcessor("io.github.llamalad7:mixinextras-common:${mixinExtrasVersion}")
 
-    compileOnly("net.fabricmc:sponge-mixin:$NEOFORGE_MIXIN")
+    compileOnly("net.fabricmc:sponge-mixin:${mixinVersion}")
     compileOnly("net.fabricmc:fabric-loader:${fabricLoaderVersion}")
 }
 
-// Shared bytecode runs on NeoForge's Mixin 0.17.3 + MixinExtras 0.5.4: compiling against 0.17.4 encodes
-// @Redirect/@ModifyArg `at` as an array, which that runtime cannot read. Loom adds the loader's Mixin as a
-// first-level loaderLibraries dependency, so only a resolution rule overrides it.
+// Shared bytecode follows each version's NeoForge Mixin runtime. Loom adds Fabric's Mixin as a
+// first-level loaderLibraries dependency, so a resolution rule must override it.
 configurations.named("compileClasspath") {
     resolutionStrategy.eachDependency {
         if (requested.group == "net.fabricmc" && requested.name == "sponge-mixin") {
-            useVersion(NEOFORGE_MIXIN)
+            useVersion(mixinVersion)
         }
     }
 }
 
 loom {
-    accessWidenerPath.set(file("crankshaft.accesswidener"))
+    accessWidenerPath.set(versionedModuleFile("crankshaft.accesswidener"))
 
     mixin {
         useLegacyMixinAp = false
@@ -118,7 +108,7 @@ loom {
 
 fun exportSourceSetJava(name: String, sourceSet: SourceSet) {
     val configuration = configurations.create("${name}Java") {
-        isCanBeResolved = true
+        isCanBeResolved = false
         isCanBeConsumed = true
     }
 
@@ -130,7 +120,7 @@ fun exportSourceSetJava(name: String, sourceSet: SourceSet) {
 
 fun exportSourceSetSources(name: String, sourceSet: SourceSet) {
     val configuration = configurations.create("${name}Sources") {
-        isCanBeResolved = true
+        isCanBeResolved = false
         isCanBeConsumed = true
     }
 
@@ -145,7 +135,7 @@ fun exportSourceSetSources(name: String, sourceSet: SourceSet) {
 
 fun exportSourceSetResources(name: String, sourceSet: SourceSet) {
     val configuration = configurations.create("${name}Resources") {
-        isCanBeResolved = true
+        isCanBeResolved = false
         isCanBeConsumed = true
     }
 

@@ -1,5 +1,7 @@
 package dev.engine_room.flywheel.iris.engine;
 
+import net.irisshaders.iris.mixinterface.CustomPass;
+
 import net.irisshaders.iris.gl.program.ComputeProgram;
 
 /**
@@ -60,16 +62,16 @@ public interface DeferredReplayResources extends AutoCloseable {
 
     void advance(int layer, int indexType, long drawOffset);
 
-    default void beforePass(DeferredCompositePass pass, int layer) {
+    default void beforePass(CustomPass pass, int layer) {
     }
 
-    default void afterPass(DeferredCompositePass pass, int layer) {
+    default void afterPass(CustomPass pass, int layer) {
     }
 
     default void bindComputeResources(ComputeProgram program, int layer) {
     }
 
-    default void bindGraphicsResources(DeferredCompositePass pass, int layer) {
+    default void bindGraphicsResources(CustomPass pass, int layer) {
     }
 
     void restore();

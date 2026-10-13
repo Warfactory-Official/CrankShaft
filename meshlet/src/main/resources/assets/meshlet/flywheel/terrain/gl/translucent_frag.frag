@@ -204,7 +204,8 @@ void main() {
             FogRenderDistanceStart, FogRenderDistanceEnd, FogColor);
     _flw_mlabInsert(color, gl_FragCoord.z);
 #elif defined(_FLW_DEPTH_RANGE)
-    _flw_depthRange_out = vec4(-linearDepth + 1e-5, linearDepth + 1e-2, gl_FragCoord.z, 0.0);
+    _flw_depthRange_out = vec4(-linearDepth + 1e-5, linearDepth + 1e-2, gl_FragCoord.z,
+            color.a > 0.99 ? gl_FragCoord.z : 0.0);
 #else
     color = apply_fog(color, v_in.fog.x, v_in.fog.y,
             FogEnvironmentalStart, FogEnvironmentalEnd,

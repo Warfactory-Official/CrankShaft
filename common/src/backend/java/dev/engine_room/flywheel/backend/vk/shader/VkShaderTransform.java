@@ -1,5 +1,10 @@
 package dev.engine_room.flywheel.backend.vk.shader;
 
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.compile.NativeShaderPreprocessor;
+import org.lwjgl.util.shaderc.Shaderc;
+#endif
+
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -21,6 +26,9 @@ public final class VkShaderTransform {
             Map.entry("_FlwRenderOrigin", 22),
             Map.entry("_FlwEmbedDraw", 23),
             Map.entry("ChunkSection", 21),
+            #if MC >= 26.3
+            Map.entry("TerrainUniform", 42),
+            #endif
             Map.entry("_FlwFrameUniforms", 16),
             Map.entry("_FlwLineFrameUniforms", 41),
             Map.entry("_FlwOptionsUniforms", 17),
@@ -53,7 +61,8 @@ public final class VkShaderTransform {
             Map.entry("_flw_emission", 38),
             Map.entry("_flw_mlabNearest", 39));
     private static final Map<String, Integer> VERTEX_INPUT_LOCATIONS = Map.of(
-            "Position", 0, "Color", 1, "UV0", 2, "UV1", 3, "UV2", 4, "Normal", 5);
+            "Position", 0, "Color", 1, "UV0", 2, "UV1", 3, "UV2", 4, "Normal", 5,
+            "ChunkPosition", 6, "ChunkVisibility", 7);
     private static final Map<String, Integer> VARYING_LOCATIONS = Map.ofEntries(
             Map.entry("vertexColor", 0),
             Map.entry("texCoord0", 1),
@@ -66,6 +75,7 @@ public final class VkShaderTransform {
             Map.entry("_flw_packedMaterial", 8),
             Map.entry("flw_oitViewZ", 9),
             Map.entry("_flw_clipData", 10),
+            Map.entry("_flw_ids", 11),
             Map.entry("_flw_crumblingTexCoord", 12),
             Map.entry("flw_chunkVisibility", 13),
             Map.entry("_flw_texIndex", 14),
@@ -84,8 +94,9 @@ public final class VkShaderTransform {
             "(?:layout\\(\\s*std140\\s*(?:,\\s*binding\\s*=\\s*\\w+\\s*)?\\)\\s+)?uniform\\s+(\\w+)\\s*\\{");
     private static final Pattern SAMPLER_DECL = Pattern.compile(
             "(?:layout\\([^)]*\\)\\s+)?uniform\\s+sampler2D\\s+(\\w+)\\s*;");
+    // shaderc can serialize a component's first declaration after a preceding semicolon.
     private static final Pattern INTERFACE_VAR = Pattern.compile(
-            "(?m)^(\\s*)(flat\\s+)?(in|out)\\s+(\\w+)\\s+(\\w+)\\s*;");
+            "(?m)(?:^|(?<=;))(\\s*)(flat\\s+)?(in|out)\\s+(\\w+)\\s+(\\w+)\\s*;");
     private static final Pattern IMAGE_LAYOUT = Pattern.compile("layout\\(\\s*binding\\s*=\\s*(\\d+)\\s*,\\s*r32f");
     private static final Pattern BARE_UNIFORM = Pattern.compile(
             "(?m)^[ \\t]*uniform\\s+(uint|int|float)\\s+(\\w+)\\s*;[ \\t]*$");
@@ -95,7 +106,16 @@ public final class VkShaderTransform {
     }
 
     public static String toVulkan(String glsl, Stage stage) {
+        #if MC >= 26.3
+        String out = NativeShaderPreprocessor.preprocessKind(glsl, "flywheel:vulkan/" + stage.name().toLowerCase(),
+                switch (stage) {
+                    case VERTEX -> Shaderc.shaderc_vertex_shader;
+                    case FRAGMENT -> Shaderc.shaderc_fragment_shader;
+                    case COMPUTE -> Shaderc.shaderc_compute_shader;
+                }, Map.of());
+        #else
         String out = glsl;
+        #endif
 
         out = VERSION_LINE.matcher(out).replaceFirst("#version 460");
         out = EXTENSION_LINE.matcher(out).replaceAll("");

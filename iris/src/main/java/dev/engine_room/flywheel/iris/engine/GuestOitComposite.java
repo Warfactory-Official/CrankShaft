@@ -1,14 +1,12 @@
 package dev.engine_room.flywheel.iris.engine;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import dev.engine_room.flywheel.compat.backend.RenderPassOps;
 import dev.engine_room.flywheel.iris.compile.GuestPipelines;
 import net.minecraft.client.Minecraft;
-
-import java.util.Optional;
-import java.util.OptionalDouble;
 
 final class GuestOitComposite {
     private GuestOitComposite() {
@@ -24,11 +22,13 @@ final class GuestOitComposite {
         }
         try (RenderPass pass = RenderSystem.getDevice()
                                            .createCommandEncoder()
-                                           .createRenderPass(() -> label, colorView, Optional.empty(), depthView,
-                                                   OptionalDouble.empty())) {
-            pass.setPipeline(GuestPipelines.oitComposite(shadow));
+                                           .createRenderPass(RenderPassOps.builder(() -> label)
+                                                                          .withColorAttachment(colorView)
+                                                                          .withDepthAttachment(depthView)
+                                                                          .build())) {
+            pass.setRenderPipeline(GuestPipelines.oitComposite(shadow));
             pass.draw(3, 1, 0, 0);
-            pass.setPipeline(GuestPipelines.oitDepth(shadow));
+            pass.setRenderPipeline(GuestPipelines.oitDepth(shadow));
             pass.draw(3, 1, 0, 0);
         }
     }

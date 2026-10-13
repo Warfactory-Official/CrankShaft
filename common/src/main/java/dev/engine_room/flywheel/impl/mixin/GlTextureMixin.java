@@ -1,6 +1,6 @@
 package dev.engine_room.flywheel.impl.mixin;
 
-import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
 import dev.engine_room.flywheel.backend.gl.GlTextureLevelState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -10,27 +10,27 @@ abstract class GlTextureMixin implements GlTextureLevelState {
     // GL defaults BASE_LEVEL to 0; MAX_LEVEL is set to mips-1 at creation -- MIN_VALUE marks "creation state",
     // resolved lazily against getMipLevels() by the encoder mixin.
     @Unique
-    private int flw$base = 0;
+    private int flywheel$base = 0;
     @Unique
-    private int flw$max = Integer.MIN_VALUE;
+    private int flywheel$max = Integer.MIN_VALUE;
 
     @Override
-    public int flw$lastBase() {
-        return flw$base;
+    public int flywheel$lastBase() {
+        return flywheel$base;
     }
 
     @Override
-    public void flw$lastBase(int value) {
-        flw$base = value;
+    public void flywheel$lastBase(int value) {
+        flywheel$base = value;
     }
 
     @Override
-    public int flw$lastMax() {
-        return flw$max;
+    public int flywheel$lastMax() {
+        return flywheel$max;
     }
 
     @Override
-    public void flw$lastMax(int value) {
-        flw$max = value;
+    public void flywheel$lastMax(int value) {
+        flywheel$max = value;
     }
 }

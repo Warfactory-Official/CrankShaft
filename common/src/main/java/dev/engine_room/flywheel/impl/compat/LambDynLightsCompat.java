@@ -1,7 +1,7 @@
 package dev.engine_room.flywheel.impl.compat;
 
-import dev.engine_room.flywheel.backend.engine.DynamicLights;
 import dev.engine_room.flywheel.impl.mixin.LambDynLightsAccessor;
+import dev.engine_room.flywheel.backend.engine.DynamicLights;
 import dev.lambdaurora.lambdynlights.LambDynLights;
 import dev.lambdaurora.lambdynlights.api.behavior.BeaconLightBehavior;
 import dev.lambdaurora.lambdynlights.api.behavior.DynamicLightBehavior;
@@ -33,7 +33,7 @@ public final class LambDynLightsCompat {
             if (!lamb.config.getDynamicLightsMode().isEnabled()) {
                 return;
             }
-            for (DynamicLightSource source : ((LambDynLightsAccessor) (Object) lamb).flywheel$dynamicLightSources()) {
+            for (DynamicLightSource source : ((LambDynLightsAccessor) lamb).flywheel$dynamicLightSources()) {
                 if (source instanceof EntityDynamicLightSource entity && entity.isDynamicLightEnabled()) {
                     int luminance = entity.getLuminance();
                     if (luminance > 0) {

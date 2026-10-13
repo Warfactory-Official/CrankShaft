@@ -1,7 +1,7 @@
 package dev.engine_room.flywheel.backend.engine;
 
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.renderpearl.api.vertex.VertexFormat;
 
 /**
  * The captured vanilla translucent rendertype families with a matching OIT producer variant. Each family

@@ -5,10 +5,8 @@
   "compatibilityLevel": "JAVA_25",
   "client": [
     "LevelExtractorMixin",
-    "LevelRendererMixin",
     "MinecraftMixin",
-    "SystemReportMixin",
-    "WeatherEffectRendererMixin"
+    "SystemReportMixin"
   ],
   "injectors": {
     "defaultRequire": 1

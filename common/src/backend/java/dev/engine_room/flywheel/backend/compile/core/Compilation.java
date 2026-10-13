@@ -1,6 +1,10 @@
 package dev.engine_room.flywheel.backend.compile.core;
 
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.compile.NativeShaderPreprocessor;
+import net.minecraft.client.renderer.ShaderDefines;
+#endif
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.gl.shader.GlShader;
 import dev.engine_room.flywheel.backend.gl.shader.ShaderType;
@@ -56,8 +60,14 @@ public class Compilation {
     }
 
     public ShaderResult compile(ShaderType shaderType, String name) {
+        #if MC >= 26.3
+        var source =
+                NativeShaderPreprocessor.preprocess(assembledSource(), name, shaderType.glEnum, ShaderDefines.EMPTY);
+        int handle = GL20.glCreateShader(shaderType.glEnum);
+        #else
         int handle = GL20.glCreateShader(shaderType.glEnum);
         var source = assembledSource();
+        #endif
 
         GlCompat.safeShaderSource(handle, source);
         GL20.glCompileShader(handle);
@@ -123,7 +133,11 @@ public class Compilation {
     }
 
     public void mojImport(String module) {
+        #if MC >= 26.3
+        mojImports.add("#include <" + module + ">");
+        #else
         mojImports.add("#moj_import <" + module + ">");
+        #endif
     }
 
     public void polyfillFmaIfMissing() {
@@ -139,6 +153,10 @@ public class Compilation {
 
     public void appendComponent(SourceComponent component) {
         var source = component.source();
+        #if MC >= 26.3
+        // 26.3: keep conditional vanilla imports in place for the native stage preprocessor.
+        source = source.replace("#moj_import", "#include");
+        #endif
 
         if (source.contains("#extension")) {
             StringBuilder body = new StringBuilder();

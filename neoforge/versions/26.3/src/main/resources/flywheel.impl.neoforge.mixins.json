@@ -1,0 +1,8 @@
+{
+  "client": [
+    "VulkanStencilCommandEncoderMixin",
+    "VulkanStencilPipelineMixin",
+    "VulkanStencilRenderPassMixin",
+    "VulkanStencilTextureLayoutMixin"
+  ]
+}

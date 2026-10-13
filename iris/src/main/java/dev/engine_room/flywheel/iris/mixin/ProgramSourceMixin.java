@@ -1,6 +1,5 @@
 package dev.engine_room.flywheel.iris.mixin;
 
-import dev.engine_room.flywheel.iris.compile.ContractProgramSet;
 import net.irisshaders.iris.shaderpack.programs.ProgramSet;
 import net.irisshaders.iris.shaderpack.programs.ProgramSource;
 import org.spongepowered.asm.mixin.Final;
@@ -24,7 +23,7 @@ abstract class ProgramSourceMixin {
     // Original sources remain visible while ProgramSet discovers render-target formats and program directives.
     @Inject(method = "getFragmentSource", at = @At("RETURN"), cancellable = true)
     private void flywheel$adaptDeferred(CallbackInfoReturnable<Optional<String>> cir) {
-        String patched = ((ContractProgramSet) parent).flywheel$patchedFragment(name);
+        String patched = parent.flywheel$patchedFragment(name);
         if (patched != null) cir.setReturnValue(Optional.of(patched));
     }
 }

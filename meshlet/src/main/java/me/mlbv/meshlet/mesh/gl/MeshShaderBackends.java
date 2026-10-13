@@ -2,7 +2,6 @@
 // Copyright (C) 2026 movblock
 package me.mlbv.meshlet.mesh.gl;
 
-import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.FlwBackend;
@@ -19,7 +18,6 @@ import dev.engine_room.flywheel.impl.compat.SodiumCompat;
 import dev.engine_room.flywheel.lib.backend.SimpleBackend;
 import dev.engine_room.flywheel.lib.util.ShadersModHelper;
 import net.minecraft.client.Minecraft;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.LevelAccessor;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.GL;
@@ -42,7 +40,7 @@ public final class MeshShaderBackends {
                             .priority(PRIORITY)
                             .supported(MeshShaderBackends::isSupported)
                             .gpuDriven(true)
-                            .register(Identifier.fromNamespaceAndPath(Flywheel.ID, "gl_mesh_shader"));
+                            .register(Backends.GL_MESH_SHADER_ID);
     }
 
     private static void warmUp() {
@@ -66,7 +64,7 @@ public final class MeshShaderBackends {
         boolean indirectLoaded = IndirectPrograms.allLoaded();
         // Sodium is mandatory: the terrain tier consumes Sodium's live geometry arena and the rasterizers reference
         // its classes -- without it createEngine() would NoClassDefFoundError, so never select this backend.
-        boolean sodium = SodiumCompat.isSodiumActive();
+        boolean sodium = SodiumCompat.ACTIVE;
         FlwBackend.LOGGER.info(
                 "[gl_mesh] isSupported: SUPPORTS_TERRAIN_MESH={} fnPtr={} allLoaded={} sodium={} | IndirectPrograms.CL={} id={}",
                 meshSupport, fnPtr, indirectLoaded, sodium, IndirectPrograms.class.getClassLoader(),

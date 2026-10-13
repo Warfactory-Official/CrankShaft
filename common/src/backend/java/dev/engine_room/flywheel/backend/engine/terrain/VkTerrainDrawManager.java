@@ -1,18 +1,17 @@
 package dev.engine_room.flywheel.backend.engine.terrain;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.systems.CommandEncoder;
-import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.vulkan.VulkanGpuBuffer;
-import com.mojang.blaze3d.vulkan.VulkanGpuSampler;
-import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
-import com.mojang.blaze3d.vulkan.VulkanRenderPass;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuBuffer;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuSampler;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
@@ -522,7 +521,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         FlwPassBarrier.expectFramebufferProducer();
         try (RenderPass pass = encoder.createRenderPass(() -> "flywheel:vk/terrain", colorView, Optional.empty(),
                 depthView, OptionalDouble.empty())) {
-            VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
+            VkCommandBuffer cmd = VkContext.renderPass(pass).commandBuffer;
             VkCmd.setViewportScissor(cmd, width, height);
             VkContext.pushLabel(cmd, "flywheel:vk/terrain/mdi");
             drawCommandStream(cmd, f, solidBatch, temporal, parity);
@@ -551,7 +550,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         FlwPassBarrier.expectFramebufferProducer();
         try (RenderPass pass = encoder.createRenderPass(() -> "flywheel:vk/terrain/mesh", colorView, Optional.empty(),
                 depthView, OptionalDouble.empty())) {
-            VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
+            VkCommandBuffer cmd = VkContext.renderPass(pass).commandBuffer;
             VkCmd.setViewportScissor(cmd, width, height);
             VkContext.pushLabel(cmd, "flywheel:vk/terrain/mesh");
             if (solidBatch.count > 0) {

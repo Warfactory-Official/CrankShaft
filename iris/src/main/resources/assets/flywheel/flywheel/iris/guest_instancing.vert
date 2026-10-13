@@ -5,14 +5,37 @@ layout(std140) uniform _FlwEmbed {
 };
 #endif
 
+#ifdef _FLW_GUEST_STORAGE_INSTANCES
+layout(std140) uniform _FlwGuestInstanceRange {
+    uvec4 _flw_guestInstanceRange;
+};
+#endif
+
 #ifdef _FLW_INSTANCING_SELECTOR
 layout(std140) uniform _FlwInstanceSelector {
     ivec4 _flw_instanceSelector;
 };
 #endif
 
+#ifdef _FLW_GUEST_VISIBLE_INSTANCES
+layout(std430, binding = 1) readonly buffer _FlwVisibleInstances {
+    uint _flw_visibleInstances[];
+};
+#endif
+
 void _flw_guestVertex() {
-    #ifdef _FLW_INSTANCING_SELECTOR
+    #ifdef _FLW_GUEST_STORAGE_INSTANCES
+    uint instanceIndex = uint(gl_InstanceID);
+    #ifdef _FLW_CRUMBLING
+    instanceIndex += uint(gl_BaseInstanceARB);
+    #elif defined(_FLW_GUEST_VISIBLE_INSTANCES)
+    uint instanceOffset = _flw_visibleInstances[_flw_guestInstanceRange.y + instanceIndex];
+    #endif
+    #if !defined(_FLW_GUEST_VISIBLE_INSTANCES) || defined(_FLW_CRUMBLING)
+    uint instanceOffset = _flw_guestInstanceRange.x + instanceIndex * _FLW_GUEST_INSTANCE_UINTS;
+    #endif
+    FlwInstance instance = _flw_unpackInstance(instanceOffset);
+    #elif defined(_FLW_INSTANCING_SELECTOR)
     FlwInstance instance = _flw_unpackInstance(_flw_instanceSelector.x + gl_InstanceID);
     #elif defined(_FLW_CRUMBLING)
     FlwInstance instance = _flw_unpackInstance(gl_BaseInstanceARB + gl_InstanceID);

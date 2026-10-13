@@ -1,11 +1,14 @@
 package dev.engine_room.flywheel.backend.engine;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.pipeline.*;
-import com.mojang.blaze3d.platform.BlendFactor;
-import com.mojang.blaze3d.shaders.ShaderSource;
-import com.mojang.blaze3d.shaders.UniformType;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
+import com.mojang.renderpearl.api.pipeline.BlendFactor;
+import com.mojang.renderpearl.api.pipeline.BlendFunction;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.pipeline.UniformType;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.DepthTest;
 import dev.engine_room.flywheel.api.material.Material;
@@ -17,6 +20,7 @@ import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.engine.instancing.InstancingDrawSelector;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
+import dev.engine_room.flywheel.compat.backend.PipelineShaderSource;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
@@ -36,7 +40,7 @@ public final class CrumblingPipelines {
     // id maps back to its (indirect, smoothness) for the (id, type)-keyed ShaderSource. Render-thread only.
     private static final Map<Identifier, InstanceType<?>> TYPE_BY_VERTEX_ID = new HashMap<>();
     private static final Map<Identifier, FragmentKey> FRAGMENT_KEY = new HashMap<>();
-    private static final ShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
+    private static final PipelineShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
         case VERTEX -> {
             InstanceType<?> instanceType = TYPE_BY_VERTEX_ID.get(id);
             boolean debug = id.getPath().endsWith("_debug");
@@ -118,10 +122,10 @@ public final class CrumblingPipelines {
     // light SSBOs (the encoder owns no SSBO bindings), so only the samplers + the two UBOs ride the bind group.
     private static BindGroupLayout bindGroup(boolean indirect) {
         BindGroupLayout.Builder b = BindGroupLayout.builder()
-                                                   .withSampler("Sampler0")
-                                                   .withSampler("Sampler1")
-                                                   .withSampler("Sampler2")
-                                                   .withSampler("_flw_crumblingTex");
+                                                   .withImageSampler("Sampler0")
+                                                   .withImageSampler("Sampler1")
+                                                   .withImageSampler("Sampler2")
+                                                   .withImageSampler("_flw_crumblingTex");
         if (!indirect) {
             b = b.withUniform("_flw_instances", UniformType.TEXEL_BUFFER, GpuFormat.RGBA32_UINT)
                  .withUniform("_flw_lightLut", UniformType.TEXEL_BUFFER, GpuFormat.R32_UINT)

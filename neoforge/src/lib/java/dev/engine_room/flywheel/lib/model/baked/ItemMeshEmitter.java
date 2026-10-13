@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
+import com.mojang.blaze3d.vertex.PoseStack;
 import dev.engine_room.flywheel.lib.util.AnimatedSprites;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -12,8 +13,6 @@ import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.client.model.quad.BakedNormals;
-import org.joml.Matrix3fc;
-import org.joml.Matrix4fc;
 import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
@@ -31,10 +30,10 @@ final class ItemMeshEmitter {
     private final Vector3f scratchPos = new Vector3f();
     private final Vector3f scratchNormal = new Vector3f();
 
-    void accept(Matrix4fc pose, Matrix3fc normalMatrix, BakedQuad quad, int tint) {
+    void accept(PoseStack.Pose pose, BakedQuad quad, int tint) {
         AnimatedSprites.add(quad.materialInfo().sprite());
         // Flat face-direction normal, used as the fallback where a vertex leaves its baked normal unspecified.
-        normalMatrix.transform(quad.direction().getUnitVec3f(), scratchNormal).normalize();
+        pose.transformNormal(quad.direction().getUnitVec3f(), scratchNormal);
         float fnx = scratchNormal.x;
         float fny = scratchNormal.y;
         float fnz = scratchNormal.z;
@@ -49,7 +48,7 @@ final class ItemMeshEmitter {
         int light = emission == 0 ? 0 : LightCoordsUtil.pack(emission, emission);
 
         for (int vertex = 0; vertex < BakedQuad.VERTEX_COUNT; vertex++) {
-            pose.transformPosition(quad.position(vertex), scratchPos);
+            pose.pose().transformPosition(quad.position(vertex), scratchPos);
             long packedUv = quad.packedUV(vertex);
 
             positions.add(scratchPos.x);
@@ -65,9 +64,7 @@ final class ItemMeshEmitter {
                 normals.add(fny);
                 normals.add(fnz);
             } else {
-                scratchNormal.set(BakedNormals.unpackX(packedNormal), BakedNormals.unpackY(packedNormal),
-                        BakedNormals.unpackZ(packedNormal));
-                normalMatrix.transform(scratchNormal).normalize();
+                BakedNormals.unpack(packedNormal, scratchNormal).mul(pose.normal());
                 normals.add(scratchNormal.x);
                 normals.add(scratchNormal.y);
                 normals.add(scratchNormal.z);

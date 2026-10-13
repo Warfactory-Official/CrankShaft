@@ -1,5 +1,11 @@
 package dev.engine_room.flywheel.impl.compat;
 
+#if MC >= 26.3
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import dev.engine_room.flywheel.impl.extension.SodiumChunkSectionExtension;
+import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
+import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
+#endif
 import dev.engine_room.flywheel.api.visualization.BlockEntityVisualizer;
 import dev.engine_room.flywheel.impl.FlwImpl;
 import dev.engine_room.flywheel.lib.util.AnimatedSprites;
@@ -24,15 +30,29 @@ public final class SodiumCompat {
     private SodiumCompat() {
     }
 
-    public static boolean isSodiumActive() {
-        return ACTIVE;
-    }
-
     public static void markAnimatedSprites() {
         if (ACTIVE) {
             Internals.markAnimatedSprites();
         }
     }
+
+    #if MC >= 26.3
+    /** Render thread; producers require a closed host pass, while mode OFF only withdraws the CPU registry. */
+    public static void renderOpaqueTerrain(VisualizationManagerImpl manager, ChunkSectionsToRender chunks) {
+        ((SodiumChunkSectionExtension) chunks).flywheel$prepareOpaque(manager);
+    }
+
+    /** Iris's shadow carrier owns a distinct supplied pass and its shadow-scoped Sodium uniforms. */
+    public static void renderShadowTerrain(VisualizationManagerImpl manager, ChunkSectionsToRender chunks) {
+        ((SodiumChunkSectionExtension) chunks).flywheel$prepareShadow(manager);
+    }
+
+    /** Render thread, with the host pass closed; the manager rotates the terrain ring after this replay. */
+    public static void renderTranslucentTerrain(VisualizationManagerImpl manager, ChunkSectionsToRender chunks,
+                                               GpuSampler sampler) {
+        ((SodiumChunkSectionExtension) chunks).flywheel$renderTranslucent(manager, sampler);
+    }
+    #endif
 
     @Nullable
     public static <T extends BlockEntity> Object onSetBlockEntityVisualizer(BlockEntityType<T> type,

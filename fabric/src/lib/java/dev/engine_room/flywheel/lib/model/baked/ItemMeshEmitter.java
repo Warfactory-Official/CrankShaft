@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
+import com.mojang.blaze3d.vertex.PoseStack;
 import dev.engine_room.flywheel.lib.util.AnimatedSprites;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -12,8 +13,6 @@ import net.minecraft.util.ARGB;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.state.BlockState;
-import org.joml.Matrix3fc;
-import org.joml.Matrix4fc;
 import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
@@ -31,16 +30,16 @@ final class ItemMeshEmitter {
     private final Vector3f scratchPos = new Vector3f();
     private final Vector3f scratchNormal = new Vector3f();
 
-    void accept(Matrix4fc pose, Matrix3fc normalMatrix, BakedQuad quad, int tint) {
+    void accept(PoseStack.Pose pose, BakedQuad quad, int tint) {
         AnimatedSprites.add(quad.materialInfo().sprite());
-        normalMatrix.transform(quad.direction().getUnitVec3f(), scratchNormal).normalize();
+        pose.transformNormal(quad.direction().getUnitVec3f(), scratchNormal);
         // Per-quad light emission; the vertex shader's max(meshLight, instanceLight) then mirrors vanilla's
         // LightCoordsUtil.lightCoordsWithEmission (max in both halves).
         int emission = quad.materialInfo().lightEmission();
         int light = emission == 0 ? 0 : LightCoordsUtil.pack(emission, emission);
 
         for (int vertex = 0; vertex < BakedQuad.VERTEX_COUNT; vertex++) {
-            pose.transformPosition(quad.position(vertex), scratchPos);
+            pose.pose().transformPosition(quad.position(vertex), scratchPos);
             long packedUv = quad.packedUV(vertex);
 
             positions.add(scratchPos.x);
@@ -60,11 +59,11 @@ final class ItemMeshEmitter {
         }
     }
 
-    void accept(Matrix4fc pose, Matrix3fc normalMatrix, QuadView quad, int tint) {
+    void accept(PoseStack.Pose pose, QuadView quad, int tint) {
         AnimatedSprites.add(FabricMeshEmitter.sprite(quad));
         int light = quad.emissive() ? LightCoordsUtil.FULL_BRIGHT : -1;
         for (int vertex = 0; vertex < BakedQuad.VERTEX_COUNT; vertex++) {
-            pose.transformPosition(quad.x(vertex), quad.y(vertex), quad.z(vertex), scratchPos);
+            pose.pose().transformPosition(quad.x(vertex), quad.y(vertex), quad.z(vertex), scratchPos);
             positions.add(scratchPos.x);
             positions.add(scratchPos.y);
             positions.add(scratchPos.z);
@@ -73,11 +72,10 @@ final class ItemMeshEmitter {
             uvs.add(quad.v(vertex));
 
             if (quad.hasNormal(vertex)) {
-                normalMatrix.transform(quad.normalX(vertex), quad.normalY(vertex), quad.normalZ(vertex), scratchNormal);
+                pose.transformNormal(quad.normalX(vertex), quad.normalY(vertex), quad.normalZ(vertex), scratchNormal);
             } else {
-                normalMatrix.transform(quad.faceNormal(), scratchNormal);
+                pose.transformNormal(quad.faceNormal(), scratchNormal);
             }
-            scratchNormal.normalize();
             normals.add(scratchNormal.x);
             normals.add(scratchNormal.y);
             normals.add(scratchNormal.z);

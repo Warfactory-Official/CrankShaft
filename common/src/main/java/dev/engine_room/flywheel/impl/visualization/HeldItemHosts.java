@@ -7,7 +7,6 @@ import dev.engine_room.flywheel.api.visual.EffectVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
 import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
-import dev.engine_room.flywheel.impl.mixin.LivingEntityRendererInvoker;
 import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import dev.engine_room.flywheel.lib.visual.AbstractVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
@@ -46,20 +45,22 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class HeldItemHosts {
     private static final RendererReloadCache<Boolean, Map<LivingEntity, Host>> HOSTS = new RendererReloadCache<>(
-            $ -> new ConcurrentHashMap<>());
+            _ -> new ConcurrentHashMap<>());
     private static final int EXPIRY_FRAMES = 40;
 
     private HeldItemHosts() {
     }
 
-    // LevelExtractor.extractEntity's dispatcher call, serial or on ConcurrentExtraction's workers.
+    // Level-visible entity extraction, serial or on ConcurrentExtraction's workers.
     @SuppressWarnings({"unchecked", "rawtypes"})
     public static void extract(Entity extracted, EntityRenderState extractedState) {
         if (!(extracted instanceof LivingEntity entity) || !(extractedState instanceof ArmedEntityRenderState state)) {
             return;
         }
-        boolean right = ItemStackSlot.isVisualized(state.rightHandItemStack);
-        boolean left = ItemStackSlot.isVisualized(state.leftHandItemStack);
+        boolean right = ItemStackSlot.isVisualized(state.rightHandItemStack, ItemDisplayContext.THIRD_PERSON_RIGHT_HAND,
+                entity);
+        boolean left =
+                ItemStackSlot.isVisualized(state.leftHandItemStack, ItemDisplayContext.THIRD_PERSON_LEFT_HAND, entity);
         if (!right && !left) {
             return;
         }
@@ -99,8 +100,7 @@ public final class HeldItemHosts {
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static Snapshot pose(LivingEntityRenderer renderer, ArmedEntityRenderState state, boolean right,
                                  boolean left) {
-        LivingEntityRendererInvoker invoker = (LivingEntityRendererInvoker) renderer;
-        if (!invoker.flywheel$shouldRenderLayers(state)) {
+        if (!renderer.shouldRenderLayers(state)) {
             return new Snapshot(state.x, state.y, state.z, null, ItemStack.EMPTY, null, ItemStack.EMPTY, 0);
         }
         PoseStack ps = new PoseStack();
@@ -113,9 +113,9 @@ public final class HeldItemHosts {
         }
         float scale = state.scale;
         ps.scale(scale, scale, scale);
-        invoker.flywheel$setupRotations(state, ps, state.bodyRot, scale);
+        renderer.setupRotations(state, ps, state.bodyRot, scale);
         ps.scale(-1.0F, -1.0F, 1.0F);
-        invoker.flywheel$scale(state, ps);
+        renderer.scale(state, ps);
         ps.translate(0.0F, -1.501F, 0.0F);
         EntityModel model = renderer.getModel();
         Matrix4f rightPose = null;

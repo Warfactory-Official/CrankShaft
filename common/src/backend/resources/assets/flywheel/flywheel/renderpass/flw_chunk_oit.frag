@@ -32,7 +32,8 @@ void main() {
 
     #ifdef _FLW_DEPTH_RANGE_LITE
 
-    if (flw_sampleAtlas(Sampler0, texCoord0).a * flw_vertexAlpha < 0.1) {
+    float alpha = flw_sampleAtlas(Sampler0, texCoord0).a * flw_vertexAlpha;
+    if (alpha < 0.1) {
         discard;
     }
 
@@ -40,7 +41,8 @@ void main() {
 
     vec4 color = flw_sampleAtlas(Sampler0, texCoord0) * vertexColor;
     color = mix(FogColor * vec4(1.0, 1.0, 1.0, color.a), color, flw_chunkVisibility);
-    if (color.a < 0.1) {
+    float alpha = color.a;
+    if (alpha < 0.1) {
         discard;
     }
 
@@ -48,7 +50,7 @@ void main() {
 
     #ifdef _FLW_DEPTH_RANGE
 
-    _flw_writeDepthRange(linearDepth, gl_FragCoord.z);
+    _flw_writeDepthRange(linearDepth, gl_FragCoord.z, alpha);
 
     #else
 

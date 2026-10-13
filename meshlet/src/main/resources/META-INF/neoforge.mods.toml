@@ -12,11 +12,11 @@ displayTest = "IGNORE_ALL_VERSION"
 [[dependencies.flywheel_mesh]]
 modId = "minecraft"
 type = "required"
-versionRange = "[0,)"
+versionRange = "${minecraft_neoforge_range}"
 side = "CLIENT"
 
 [[dependencies.flywheel_mesh]]
 modId = "neoforge"
 type = "required"
-versionRange = "[0,)"
+versionRange = "${neoforge_range}"
 side = "CLIENT"

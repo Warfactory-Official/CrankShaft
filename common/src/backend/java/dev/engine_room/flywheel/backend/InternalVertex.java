@@ -1,7 +1,7 @@
 package dev.engine_room.flywheel.backend;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.vertex.VertexFormat;
 
 import dev.engine_room.flywheel.api.layout.FloatRepr;
 import dev.engine_room.flywheel.api.layout.Layout;

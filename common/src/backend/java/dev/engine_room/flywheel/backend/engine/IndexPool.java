@@ -1,6 +1,6 @@
 package dev.engine_room.flywheel.backend.engine;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.engine_room.flywheel.api.model.IndexSequence;
 import dev.engine_room.flywheel.lib.memory.MemoryBlock;

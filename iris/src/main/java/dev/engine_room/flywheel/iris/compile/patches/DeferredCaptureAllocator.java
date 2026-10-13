@@ -1,6 +1,8 @@
 package dev.engine_room.flywheel.iris.compile.patches;
 
 import dev.engine_room.flywheel.backend.gl.GlCompat;
+import dev.engine_room.flywheel.backend.vk.VkCaps;
+import dev.engine_room.flywheel.backend.vk.VkContext;
 import io.github.douira.glsl_transformer.ast.node.TranslationUnit;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.FunctionDefinition;
 import io.github.douira.glsl_transformer.ast.transform.ASTInjectionPoint;
@@ -11,11 +13,19 @@ final class DeferredCaptureAllocator {
     }
 
     static void coalesce(TranslationUnit tree, ASTParser parser) {
-        var caps = GlCompat.CAPABILITIES;
-        if (!caps.GL_ARB_shader_ballot || !caps.GL_ARB_gpu_shader_int64) return;
-        tree.parseAndInjectNodes(parser, ASTInjectionPoint.BEFORE_DECLARATIONS,
-                "#extension GL_ARB_shader_ballot : require\n",
-                "#extension GL_ARB_gpu_shader_int64 : require\n");
+        boolean vulkan = VkContext.isVulkanHost();
+        if (vulkan) {
+            if (!VkCaps.FRAGMENT_SUBGROUP_BALLOT) return;
+            tree.parseAndInjectNodes(parser, ASTInjectionPoint.BEFORE_DECLARATIONS,
+                    "#extension GL_KHR_shader_subgroup_basic : require\n",
+                    "#extension GL_KHR_shader_subgroup_ballot : require\n");
+        } else {
+            var caps = GlCompat.CAPABILITIES;
+            if (!caps.GL_ARB_shader_ballot || !caps.GL_ARB_gpu_shader_int64) return;
+            tree.parseAndInjectNodes(parser, ASTInjectionPoint.BEFORE_DECLARATIONS,
+                    "#extension GL_ARB_shader_ballot : require\n",
+                    "#extension GL_ARB_gpu_shader_int64 : require\n");
+        }
         // The root index still holds the injected library's detached originals; only the tree's own definition counts.
         var allocators = tree.getChildren().stream().filter(FunctionDefinition.class::isInstance)
                              .map(FunctionDefinition.class::cast)
@@ -25,7 +35,15 @@ final class DeferredCaptureAllocator {
         if (allocators.size() != 1)
             throw new IllegalStateException("Expected one flw_reserveSlots definition, found " + allocators.size());
         var allocator = allocators.getFirst();
-        allocator.getBody().replaceByAndDelete(parser.parseStatement(tree.getRoot(), """
+        allocator.getBody().replaceByAndDelete(parser.parseStatement(tree.getRoot(), vulkan ? """
+                {
+                    uvec4 lanes = subgroupBallot(true);
+                    uint base = 0u;
+                    if (subgroupElect()) base = atomicAdd(flw_count, slots * subgroupBallotBitCount(lanes));
+                    base = subgroupBroadcastFirst(base);
+                    return base + slots * subgroupBallotExclusiveBitCount(lanes);
+                }
+                """ : """
                 {
                     uint64_t lanes = ballotARB(true);
                     uvec2 words = unpackUint2x32(lanes);

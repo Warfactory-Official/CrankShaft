@@ -4,8 +4,7 @@ import com.google.common.collect.ImmutableList;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
-import dev.engine_room.flywheel.iris.compile.ContractProgramSet;
-import dev.engine_room.flywheel.iris.engine.DeferredCompositePass;
+import net.irisshaders.iris.mixinterface.CustomPass;
 import dev.engine_room.flywheel.iris.engine.DeferredOitRenderer;
 import net.irisshaders.iris.pipeline.CompositeRenderer;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
@@ -45,12 +44,12 @@ abstract class CompositeRendererMixin {
             target = "Lcom/google/common/collect/ImmutableList;get(I)Ljava/lang/Object;"))
     private Object flywheel$beginCompositePass(ImmutableList<?> list, int index, Operation<Object> original) {
         Object entry = original.call(list, index);
-        DeferredCompositePass current = (DeferredCompositePass) entry;
+        CustomPass current = (CustomPass) entry;
         if (!flywheel$checked) {
             flywheel$checked = true;
             if (pipeline instanceof IrisRenderingPipeline iris) {
                 var resolver = ((IrisRenderingPipelineAccessor) iris).flywheel$resolver();
-                var programs = (ContractProgramSet) ((ProgramFallbackResolverAccessor) resolver).flywheel$programs();
+                var programs = ((ProgramFallbackResolverAccessor) resolver).flywheel$programs();
                 if (programs.flywheel$deferredOit() != null) {
                     var plan = programs.flywheel$deferredOit().replayPlan(iris, passes);
                     if (plan != null) {

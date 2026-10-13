@@ -1,11 +1,13 @@
+// SPDX-License-Identifier: MIT OR LGPL-3.0-only
+// Copyright (C) 2026 movblock
 package me.mlbv.meshlet.mesh.gl;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import dev.engine_room.flywheel.backend.Samplers;
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
@@ -16,6 +18,7 @@ import dev.engine_room.flywheel.backend.gl.buffer.GlBufferType;
 import dev.engine_room.flywheel.backend.gl.buffer.GlBufferUsage;
 import dev.engine_room.flywheel.backend.gl.buffer.GlResidentBuffer;
 import dev.engine_room.flywheel.backend.gl.shader.MeshGlPrograms;
+import dev.engine_room.flywheel.compat.backend.RenderPassOps;
 import dev.engine_room.flywheel.iris.compile.GuestPipelines;
 import dev.engine_room.flywheel.iris.compile.GuestProgram;
 import dev.engine_room.flywheel.lib.memory.MemoryBlock;
@@ -31,8 +34,10 @@ import org.lwjgl.opengl.*;
 import org.lwjgl.system.MemoryUtil;
 
 import java.util.List;
+#if MC < 26.3
 import java.util.Optional;
 import java.util.OptionalDouble;
+#endif
 
 final class IrisTerrainRasterizer {
     private static final boolean CULL = !Boolean.getBoolean("crankshaft.iris.mesh.cullOff");
@@ -69,7 +74,7 @@ final class IrisTerrainRasterizer {
         RenderPipeline pipeline = oit ? TerrainPipelines.translucentOit(passIndex - 2)
                 : shadow ? TerrainPipelines.shadow(passIndex == 1)
                 : passIndex == 0 ? TerrainPipelines.solid() : TerrainPipelines.cutout();
-        GuestProgram program = (GuestProgram) GuestPipelines.compiled(pipeline).program();
+        GuestProgram program = GuestPipelines.program(pipeline);
         if (!oit && !shadow) {
             if (dispatcher.boundPhase == 2 && !program.meshTaskRecovery()) return;
             GuestTerrainGate.meshNeedsRecovery |= program.meshTaskRecovery();
@@ -147,17 +152,25 @@ final class IrisTerrainRasterizer {
         Minecraft mc = Minecraft.getInstance();
         program.meshCommands(commands.handle(), counts.handle(), runs, runCount);
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                #if MC < 26.3
+                // 26.2: The overload supplies carrier bounds; Iris retains its actual shadow viewport and framebuffer.
                 () -> "flywheel:iris/mesh_terrain", target.getColorTextureView(), Optional.empty(),
                 target.getDepthTextureView(), OptionalDouble.empty())) {
+                #else
+                RenderPassOps.builder(() -> "flywheel:iris/mesh_terrain")
+                             .withColorAttachment(target.getColorTextureView())
+                             .withDepthAttachment(target.getDepthTextureView())
+                             .build())) {
+                #endif
+            pass.setRenderPipeline(pipeline);
             dispatcher.bindGuestUniforms(pass, shadow ? ShadowRenderer.MODELVIEW
                     : CapturedRenderingState.INSTANCE.getGbufferModelView());
-            pass.bindTexture("Sampler0",
+            pass.setUniform("Sampler0",
                     mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView(),
                     TerrainAtlasFilter.sampler());
-            pass.bindTexture("Sampler2", mc.gameRenderer.lightmap(),
+            pass.setUniform("Sampler2", mc.gameRenderer.lightmap(),
                     RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
             pass.setVertexBuffer(0, buffers[0].slice());
-            pass.setPipeline(pipeline);
             pass.draw(3, 1, 0, 0);
         }
     }

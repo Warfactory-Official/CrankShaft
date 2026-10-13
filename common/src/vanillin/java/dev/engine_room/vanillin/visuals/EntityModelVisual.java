@@ -1,7 +1,7 @@
 package dev.engine_room.vanillin.visuals;
 
-import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visualization.ConcurrentRenderStateExtraction;

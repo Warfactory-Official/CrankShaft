@@ -1,6 +1,8 @@
 package dev.engine_room.flywheel.backend.engine;
 
+import dev.engine_room.flywheel.api.material.DepthTest;
 import dev.engine_room.flywheel.api.material.Material;
+import dev.engine_room.flywheel.api.material.Transparency;
 import org.jspecify.annotations.Nullable;
 
 import java.util.Comparator;
@@ -11,8 +13,23 @@ public final class MaterialRenderState {
      * {@link #compare} minus the texture/blur/mipmap keys, so pipeline-equal draws sort adjacent.
      */
     public static final Comparator<Material> PIPELINE_COMPARATOR = MaterialRenderState::pipelineCompare;
+    public static final float POLYGON_OFFSET_UNITS = 10.0f;
 
     private MaterialRenderState() {
+    }
+
+    /**
+     * Slope factor paired with {@link #POLYGON_OFFSET_UNITS}. Positive offset wins {@code GREATER_THAN_OR_EQUAL} under
+     * reversed-Z (26.2 feeds it straight to {@code glPolygonOffset}). OPAQUE units-only: slope terms beat real
+     * geometry at grazing angles; non-opaque shadow decals keep the slope.
+     */
+    public static float polygonOffsetSlope(Transparency transparency, DepthTest depthTest) {
+        return transparency != Transparency.OPAQUE
+                #if MC >= 26.3
+                // 26.3: EQUAL glint = opaque equipment's units-only bias.
+                && !(transparency == Transparency.GLINT && depthTest == DepthTest.EQUAL)
+                #endif
+                ? 1.0f : 0.0f;
     }
 
     public static boolean materialEquals(Material lhs, Material rhs) {

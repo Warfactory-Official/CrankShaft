@@ -54,54 +54,78 @@ abstract class LevelExtractorMixin {
     private LevelRenderer levelRenderer;
 
     @Inject(method = "extractVisibleEntities", at = @At("HEAD"), require = 1)
-    private void flw$clearOutlineSubmits(CallbackInfo ci) {
+    private void flywheel$clearOutlineSubmits(CallbackInfo ci) {
         EntityOutlineSubmits.clear();
     }
 
     @Inject(method = "extract", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/extract/LevelExtractor;extractVisibleEntities(Lnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/culling/Frustum;Lnet/minecraft/client/DeltaTracker;Lnet/minecraft/client/renderer/state/level/LevelRenderState;)V"), require = 1)
-    private void flw$beginConcurrentExtraction(CallbackInfo ci) {
+    private void flywheel$beginConcurrentExtraction(CallbackInfo ci) {
         ConcurrentExtraction.begin();
     }
 
     // Not the loops' RETURNs: Sodium and others cancel or replace the block entity loop.
     @Inject(method = "extract", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/extract/LevelExtractor;extractBlockOutline(Lnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/state/level/LevelRenderState;)V"), require = 1)
-    private void flw$endConcurrentExtraction(CallbackInfo ci) {
+    private void flywheel$endConcurrentExtraction(CallbackInfo ci) {
         ConcurrentExtraction.end(levelRenderer.entityRenderDispatcher());
     }
 
     // Inside extractEntity: hooks on it still run here (e.g. a HEAD cull returning its own state).
     @WrapOperation(method = "extractEntity(Lnet/minecraft/world/entity/Entity;F)Lnet/minecraft/client/renderer/entity/state/EntityRenderState;", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;extractEntity(Lnet/minecraft/world/entity/Entity;F)Lnet/minecraft/client/renderer/entity/state/EntityRenderState;"), require = 1)
-    private EntityRenderState flw$deferEntity(EntityRenderDispatcher dispatcher, Entity entity, float partialTick,
-                                              Operation<EntityRenderState> original) {
+    private EntityRenderState flywheel$deferEntity(EntityRenderDispatcher dispatcher, Entity entity, float partialTick,
+                                                   Operation<EntityRenderState> original) {
         if (ConcurrentExtraction.deferEntity(dispatcher, entity, partialTick)) {
             return ConcurrentExtraction.PENDING;
         }
         EntityRenderState state = original.call(dispatcher, entity, partialTick);
+        #if MC < 26.3
         HeldItemHosts.extract(entity, state);
+        #endif
         return state;
     }
 
     @WrapOperation(method = "extractVisibleEntities", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/extract/LevelExtractor;extractEntity(Lnet/minecraft/world/entity/Entity;F)Lnet/minecraft/client/renderer/entity/state/EntityRenderState;"), require = 1)
-    private EntityRenderState flw$slotDeferredEntity(LevelExtractor self, Entity entity, float partialTick,
-                                                     Operation<EntityRenderState> original,
-                                                     @Local(argsOnly = true) LevelRenderState output) {
+    private EntityRenderState flywheel$slotDeferredEntity(LevelExtractor self, Entity entity, float partialTick,
+                                                          Operation<EntityRenderState> original,
+                                                          @Local(argsOnly = true) LevelRenderState output) {
         EntityRenderState state = original.call(self, entity, partialTick);
+        #if MC >= 26.3
+        if (state == ConcurrentExtraction.PENDING) {
+            ConcurrentExtraction.slotEntity(output.entityRenderStates);
+        } else {
+            // 26.3: PlayerRenderState's first-person snapshot also calls extractEntity; only this loop submits
+            // to the level.
+            HeldItemHosts.extract(entity, state);
+        }
+        #else
         if (state == ConcurrentExtraction.PENDING) {
             ConcurrentExtraction.slotEntity(output.entityRenderStates);
         }
+        #endif
         return state;
     }
 
+    #if MC >= 26.3
+    @WrapOperation(method = "extractVisibleEntities",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/extract/LevelExtractor;isEntityVisible(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/client/renderer/culling/Frustum;DDDFJ)Z"),
+            require = 1)
+    #else
     @WrapOperation(method = "extractVisibleEntities", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/extract/LevelExtractor;isEntityVisible(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/client/renderer/culling/Frustum;DDD)Z"), require = 1)
-    private boolean flw$skipVisualizedEntity(LevelExtractor self, Entity entity, Frustum frustum, double camX,
-                                             double camY, double camZ, Operation<Boolean> original,
-                                             @Local(argsOnly = true) Camera camera,
-                                             @Local(argsOnly = true) DeltaTracker deltaTracker) {
+    #endif
+    private boolean flywheel$skipVisualizedEntity(LevelExtractor self, Entity entity, Frustum frustum, double camX,
+                                                  double camY, double camZ,
+                                                  #if MC >= 26.3
+                                                  float partialTick, long chunkFadeDuration,
+                                                  #endif
+                                                  Operation<Boolean> original,
+                                                  @Local(argsOnly = true) Camera camera,
+                                                  @Local(argsOnly = true) DeltaTracker deltaTracker) {
         if (VisualizationManager.supportsVisualization(entity.level()) && VisualizationHelper.skipVanillaRender(
                 entity)) {
             boolean glowing = minecraft.shouldEntityAppearGlowing(entity);
-            boolean visible = (glowing || EntityCullingCompat.ACTIVE) && original.call(self, entity, frustum, camX,
-                    camY, camZ);
+            boolean visible = (glowing || EntityCullingCompat.ACTIVE)
+                    && original.call(self, entity, frustum, camX, camY, camZ
+                    #if MC >= 26.3 , partialTick, chunkFadeDuration #endif);
             if (visible) {
                 EntityCullingCompat.markVisible(entity);
             }
@@ -112,17 +136,20 @@ abstract class LevelExtractorMixin {
                     entity.yOld = entity.getY();
                     entity.zOld = entity.getZ();
                 }
+                #if MC < 26.3
                 float partialTick = deltaTracker.getGameTimeDeltaPartialTick(
                         !minecraft.level.tickRateManager().isEntityFrozen(entity));
+                #endif
                 EntityOutlineSubmits.record(levelRenderer.entityRenderDispatcher().extractEntity(entity, partialTick));
             }
             return false;
         }
-        return original.call(self, entity, frustum, camX, camY, camZ);
+        return original.call(self, entity, frustum, camX, camY, camZ
+                #if MC >= 26.3 , partialTick, chunkFadeDuration #endif);
     }
 
     @Inject(method = "allChanged", at = @At("HEAD"), require = 1)
-    private void flw$onAllChanged(CallbackInfo ci) {
+    private void flywheel$onAllChanged(CallbackInfo ci) {
         ClientLevel level = this.level;
         if (level == null) {
             return;
@@ -135,7 +162,7 @@ abstract class LevelExtractorMixin {
     }
 
     @Inject(method = "setBlockDirty(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/world/level/block/state/BlockState;)V", at = @At("TAIL"), require = 1)
-    private void flw$checkUpdate(BlockPos pos, BlockState oldState, BlockState newState, CallbackInfo ci) {
+    private void flywheel$checkUpdate(BlockPos pos, BlockState oldState, BlockState newState, CallbackInfo ci) {
         VisualizationManager manager = VisualizationManager.get(level);
         if (manager == null) {
             return;

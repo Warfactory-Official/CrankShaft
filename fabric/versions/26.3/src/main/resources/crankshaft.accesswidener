@@ -1,0 +1,93 @@
+accessWidener v1 official
+accessible field net/minecraft/world/entity/monster/zombie/ZombieVillager DATA_CONVERTING_ID Lnet/minecraft/network/syncher/EntityDataAccessor;
+accessible field net/minecraft/client/renderer/oit/OitRenderPassProvider$Parameters depthTextureView Lcom/mojang/renderpearl/api/textures/GpuTextureView;
+accessible field net/minecraft/client/Minecraft sdlEventHandler Lcom/mojang/blaze3d/platform/SDLEventHandler;
+accessible field net/minecraft/client/resources/model/ModelBakery BREAKING_LOCATIONS Ljava/util/List;
+accessible field com/mojang/renderpearl/backend/opengl/GlCommandEncoder lastPipeline Lcom/mojang/renderpearl/backend/opengl/GlRenderPipeline;
+mutable field com/mojang/renderpearl/backend/opengl/GlCommandEncoder lastPipeline Lcom/mojang/renderpearl/backend/opengl/GlRenderPipeline;
+accessible field com/mojang/blaze3d/systems/RenderSystem currentPipelineCache Lcom/mojang/blaze3d/pipeline/PipelineCache;
+accessible method com/mojang/renderpearl/backend/opengl/GlProgram <init> (ILjava/lang/String;)V
+accessible field com/mojang/renderpearl/backend/opengl/GlProgram uniforms Ljava/util/List;
+accessible method com/mojang/renderpearl/backend/opengl/GlRenderPipeline <init> (Lcom/mojang/renderpearl/backend/opengl/GlDevice;Lcom/mojang/renderpearl/backend/api/BackendRenderPipeline$CreateInfo;Lcom/mojang/renderpearl/backend/opengl/GlProgram;Lcom/mojang/renderpearl/backend/opengl/VertexArray;)V
+accessible field net/minecraft/client/renderer/chunk/RenderSectionRegion level Lnet/minecraft/client/multiplayer/ClientLevel;
+
+accessible field net/minecraft/client/renderer/RenderPipelines MATRICES_FOG_LIGHT_DIR_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
+accessible field net/minecraft/client/renderer/item/ItemStackRenderState layers [Lnet/minecraft/client/renderer/item/ItemStackRenderState$LayerRenderState;
+accessible field net/minecraft/client/renderer/item/ItemStackRenderState activeLayerCount I
+accessible field net/minecraft/client/renderer/item/ItemStackRenderState$LayerRenderState foilType Lnet/minecraft/client/renderer/item/ItemStackRenderState$FoilType;
+accessible field net/minecraft/client/renderer/item/ItemStackRenderState$LayerRenderState specialRenderer Lnet/minecraft/client/renderer/special/SpecialModelRenderer;
+accessible method net/minecraft/client/renderer/item/ItemStackRenderState$LayerRenderState applyTransform (Lcom/mojang/blaze3d/vertex/PoseStack$Pose;)V
+accessible field net/minecraft/client/renderer/blockentity/SkullBlockRenderer SKIN_BY_TYPE Ljava/util/Map;
+accessible field net/minecraft/client/renderer/item/ConditionalItemModel property Lnet/minecraft/client/renderer/item/properties/conditional/ItemModelPropertyTest;
+accessible field net/minecraft/client/renderer/item/SelectItemModel property Lnet/minecraft/client/renderer/item/properties/select/SelectItemModelProperty;
+accessible field net/minecraft/client/renderer/item/RangeSelectItemModel property Lnet/minecraft/client/renderer/item/properties/numeric/RangeSelectItemModelProperty;
+accessible field net/minecraft/client/model/geom/ModelPart children Ljava/util/Map;
+accessible method net/minecraft/client/model/geom/ModelPart compile (Lcom/mojang/blaze3d/vertex/PoseStack$Pose;Lcom/mojang/blaze3d/vertex/VertexConsumer;III)V
+accessible field net/minecraft/client/renderer/entity/EntityRenderer shadowRadius F
+accessible field net/minecraft/client/renderer/entity/EntityRenderDispatcher equipmentAssets Lnet/minecraft/client/resources/model/EquipmentAssetManager;
+accessible field net/minecraft/commands/synchronization/ArgumentTypeInfos BY_CLASS Ljava/util/Map;
+accessible class net/minecraft/world/item/CreativeModeTab$Output
+mutable field net/minecraft/client/gui/components/debug/DebugScreenEntries PROFILES Ljava/util/Map;
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager BLEND Lcom/mojang/renderpearl/backend/opengl/GlStateManager$BlendState;
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager DEPTH Lcom/mojang/renderpearl/backend/opengl/GlStateManager$DepthState;
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager CULL Lcom/mojang/renderpearl/backend/opengl/GlStateManager$CullState;
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager POLY_OFFSET Lcom/mojang/renderpearl/backend/opengl/GlStateManager$PolygonOffsetState;
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager COLOR_LOGIC Lcom/mojang/renderpearl/backend/opengl/GlStateManager$ColorLogicState;
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager SCISSOR Lcom/mojang/renderpearl/backend/opengl/GlStateManager$ScissorState;
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager activeTexture I
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager TEXTURES [Lcom/mojang/renderpearl/backend/opengl/GlStateManager$TextureState;
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager COLOR_MASK [I
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager readFbo I
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager writeFbo I
+accessible class com/mojang/renderpearl/backend/opengl/GlStateManager$BlendState
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$BlendState srcRgb I
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$BlendState dstRgb I
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$BlendState modeRgb I
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$BlendState srcAlpha I
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$BlendState dstAlpha I
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$BlendState modeAlpha I
+accessible class com/mojang/renderpearl/backend/opengl/GlStateManager$BooleanState
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$BooleanState enabled Z
+accessible class com/mojang/renderpearl/backend/opengl/GlStateManager$ColorLogicState
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$ColorLogicState enable Lcom/mojang/renderpearl/backend/opengl/GlStateManager$BooleanState;
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$ColorLogicState op I
+accessible class com/mojang/renderpearl/backend/opengl/GlStateManager$CullState
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$CullState enable Lcom/mojang/renderpearl/backend/opengl/GlStateManager$BooleanState;
+accessible class com/mojang/renderpearl/backend/opengl/GlStateManager$DepthState
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$DepthState mode Lcom/mojang/renderpearl/backend/opengl/GlStateManager$BooleanState;
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$DepthState mask Z
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$DepthState func I
+accessible class com/mojang/renderpearl/backend/opengl/GlStateManager$PolygonOffsetState
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$PolygonOffsetState fill Lcom/mojang/renderpearl/backend/opengl/GlStateManager$BooleanState;
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$PolygonOffsetState factor F
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$PolygonOffsetState units F
+accessible class com/mojang/renderpearl/backend/opengl/GlStateManager$ScissorState
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$ScissorState mode Lcom/mojang/renderpearl/backend/opengl/GlStateManager$BooleanState;
+accessible class com/mojang/renderpearl/backend/opengl/GlStateManager$TextureState
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager$TextureState binding I
+accessible field com/mojang/renderpearl/backend/vulkan/VulkanRenderPass commandBuffer Lorg/lwjgl/vulkan/VkCommandBuffer;
+accessible field com/mojang/renderpearl/backend/vulkan/VulkanCommandEncoder currentSubmitIndex J
+accessible field com/mojang/renderpearl/backend/vulkan/VulkanCommandEncoder checkpointStorage Lcom/mojang/renderpearl/backend/vulkan/checkpoints/CheckpointExtension$CheckpointStorage;
+accessible method com/mojang/renderpearl/backend/vulkan/VulkanCommandEncoder commandBuffer ()Lorg/lwjgl/vulkan/VkCommandBuffer;
+accessible field com/mojang/renderpearl/backend/vulkan/VulkanCommandEncoder currentRenderPass Lcom/mojang/renderpearl/backend/vulkan/VulkanRenderPass;
+accessible class com/mojang/renderpearl/backend/opengl/GlDevice
+accessible class com/mojang/renderpearl/backend/opengl/GlCommandEncoder
+accessible field com/mojang/renderpearl/backend/opengl/GlCommandEncoder lastProgram Lcom/mojang/renderpearl/backend/opengl/GlProgram;
+mutable field com/mojang/renderpearl/backend/opengl/GlCommandEncoder lastProgram Lcom/mojang/renderpearl/backend/opengl/GlProgram;
+accessible field net/minecraft/client/renderer/LevelRenderer chunkLayerSampler Lcom/mojang/renderpearl/api/textures/GpuSampler;
+accessible field net/minecraft/client/renderer/item/ItemStackRenderState$LayerRenderState quads Lnet/minecraft/client/resources/model/geometry/ItemQuads;
+accessible field com/mojang/renderpearl/backend/opengl/GlStateManager BLEND_ENABLE [Z
+accessible field com/mojang/renderpearl/frontend/FrontendGpuDevice backend Lcom/mojang/renderpearl/backend/api/GpuDeviceBackend;
+accessible field com/mojang/renderpearl/frontend/FrontendRenderPass backend Lcom/mojang/renderpearl/backend/api/RenderPassBackend;
+accessible method net/minecraft/client/renderer/chunk/ChunkSectionsToRender render (Lnet/minecraft/client/renderer/chunk/ChunkSectionLayer;Lcom/mojang/renderpearl/api/commands/RenderPass;Lcom/mojang/renderpearl/api/buffers/GpuBuffer;Lcom/mojang/renderpearl/api/pipeline/IndexType;Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)V
+accessible method net/minecraft/client/renderer/chunk/ChunkSectionsToRender$DrawSeparate render (Lnet/minecraft/client/renderer/chunk/ChunkSectionLayer;Lcom/mojang/renderpearl/api/commands/RenderPass;Lcom/mojang/renderpearl/api/buffers/GpuBuffer;Lcom/mojang/renderpearl/api/pipeline/IndexType;Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)V
+accessible method net/minecraft/client/renderer/chunk/ChunkSectionsToRender$DrawIndirect render (Lnet/minecraft/client/renderer/chunk/ChunkSectionLayer;Lcom/mojang/renderpearl/api/commands/RenderPass;Lcom/mojang/renderpearl/api/buffers/GpuBuffer;Lcom/mojang/renderpearl/api/pipeline/IndexType;Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)V
+accessible field net/minecraft/client/renderer/chunk/ChunkSectionsToRender maxIndicesRequired I
+accessible field net/minecraft/client/renderer/chunk/ChunkSectionsToRender terrainTransformUBO Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;
+accessible field net/minecraft/client/renderer/chunk/ChunkSectionsToRender$DrawSeparate drawsPerLayer Ljava/util/Map;
+accessible field net/minecraft/client/renderer/chunk/ChunkSectionsToRender$DrawSeparate chunkSectionInfos [Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;
+accessible field net/minecraft/client/renderer/chunk/ChunkSectionsToRender$DrawIndirect drawGroupsPerLayer Ljava/util/EnumMap;
+accessible field net/minecraft/client/renderer/chunk/ChunkSectionsToRender$DrawIndirect chunkSectionInfos Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;
+accessible method net/minecraft/client/renderer/entity/LivingEntityRenderer setupRotations (Lnet/minecraft/client/renderer/entity/state/LivingEntityRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;FF)V
+accessible method net/minecraft/client/renderer/entity/LivingEntityRenderer scale (Lnet/minecraft/client/renderer/entity/state/LivingEntityRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;)V
+accessible method net/minecraft/client/renderer/entity/LivingEntityRenderer shouldRenderLayers (Lnet/minecraft/client/renderer/entity/state/LivingEntityRenderState;)Z

@@ -1,6 +1,11 @@
 package dev.engine_room.flywheel.impl.mixin.sodium;
 
-import com.mojang.blaze3d.textures.GpuSampler;
+#if MC >= 26.3
+import com.mojang.renderpearl.api.commands.RenderPass;
+import dev.engine_room.flywheel.impl.event.LevelRenderPassScope;
+import net.minecraft.client.renderer.oit.OitStage;
+#endif
+import com.mojang.renderpearl.api.textures.GpuSampler;
 import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.impl.compat.LodCompat;
 import dev.engine_room.flywheel.impl.compat.SodiumCompat;
@@ -36,16 +41,32 @@ public class MixinSodiumWorldRenderer {
     private FogParameters lastFogParameters;
 
     @Inject(method = "drawChunkLayer", at = @At("HEAD"), cancellable = true, require = 1)
-    private void flywheel$routeTerrainToEngine(ChunkSectionLayerGroup group, ChunkRenderMatrices matrices,
+    private void flywheel$routeTerrainToEngine(
+                                               #if MC >= 26.3
+                                               RenderPass renderPass,
+                                               #endif
+                                               ChunkSectionLayerGroup group, ChunkRenderMatrices matrices,
                                                double x, double y, double z, GpuSampler terrainSampler,
+                                               #if MC >= 26.3
+                                               @Nullable OitStage stage,
+                                               #endif
                                                CallbackInfo ci) {
-        if (!SodiumCompat.isSodiumActive()) {
+        if (!SodiumCompat.ACTIVE) {
             return;
         }
+        #if MC < 26.3
+        if (group == ChunkSectionLayerGroup.TRANSLUCENT) {
+            LodCompat.captureTerrainDepth(1);
+        }
+        #endif
         var manager = VisualizationManagerImpl.get(this.level);
         if (manager == null) {
             return;
         }
+        #if MC >= 26.3
+        // 26.3: the LevelRenderer carrier boundary owns classic replay and propagates the resumed host pass.
+        LevelRenderPassScope.requireSupported(manager);
+        #else
         if (GuestTerrainGate.enabled()) {
             CameraTransform camera = new CameraTransform(x, y, z);
             GuestTerrainGate.setSodiumCamera(camera.intX, camera.intY, camera.intZ, camera.fracX, camera.fracY,
@@ -53,7 +74,7 @@ public class MixinSodiumWorldRenderer {
         }
 
         if (group == ChunkSectionLayerGroup.OPAQUE) {
-            var sectionManager = ((SodiumWorldRendererAccessor) (Object) this).flywheel$getRenderSectionManager();
+            var sectionManager = ((SodiumWorldRendererAccessor) this).flywheel$getRenderSectionManager();
             if (sectionManager == null) {
                 return;
             }
@@ -87,20 +108,22 @@ public class MixinSodiumWorldRenderer {
             return;
         }
 
-        LodCompat.captureTerrainDepth(1);
         if (manager.renderTranslucentOitSodium((SodiumWorldRenderer) (Object) this, matrices, x, y, z,
                 terrainSampler)) {
             LodCompat.captureTerrainDepth(2);
             ci.cancel();
         }
+        #endif
     }
 
+    #if MC < 26.3
     @Inject(method = "drawChunkLayer", at = @At("RETURN"), require = 1)
     private void flywheel$captureTranslucentTerrain(ChunkSectionLayerGroup group, ChunkRenderMatrices matrices,
                                                    double x, double y, double z, GpuSampler terrainSampler,
                                                    CallbackInfo ci) {
-        if (group == ChunkSectionLayerGroup.TRANSLUCENT && SodiumCompat.isSodiumActive()) {
+        if (group == ChunkSectionLayerGroup.TRANSLUCENT && SodiumCompat.ACTIVE) {
             LodCompat.captureTerrainDepth(2);
         }
     }
+    #endif
 }

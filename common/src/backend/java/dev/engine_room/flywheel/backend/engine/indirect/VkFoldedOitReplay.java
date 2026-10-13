@@ -1,7 +1,7 @@
 package dev.engine_room.flywheel.backend.engine.indirect;
 
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import org.lwjgl.vulkan.VkCommandBuffer;
 

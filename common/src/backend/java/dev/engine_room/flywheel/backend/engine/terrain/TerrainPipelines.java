@@ -1,18 +1,22 @@
 package dev.engine_room.flywheel.backend.engine.terrain;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.pipeline.*;
-import com.mojang.blaze3d.platform.BlendFactor;
-import com.mojang.blaze3d.platform.BlendOp;
-import com.mojang.blaze3d.platform.CompareOp;
-import com.mojang.blaze3d.shaders.ShaderSource;
-import com.mojang.blaze3d.shaders.UniformType;
-import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
+import com.mojang.renderpearl.api.pipeline.BlendFactor;
+import com.mojang.renderpearl.api.pipeline.BlendFunction;
+import com.mojang.renderpearl.api.pipeline.BlendOp;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.pipeline.UniformType;
+import com.mojang.renderpearl.api.vertex.VertexFormat;
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
+import dev.engine_room.flywheel.compat.backend.PipelineShaderSource;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.resources.Identifier;
@@ -48,7 +52,7 @@ public final class TerrainPipelines {
                                                                                 BindGroupLayouts.PROJECTION)
                                                                         .buildSnippet();
 
-    private static final ShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
+    private static final PipelineShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
         case VERTEX -> assembleVertex(ctx -> ctx.requireExtension("GL_ARB_shader_draw_parameters"));
         case FRAGMENT -> assembleFragment(id.equals(CUTOUT_FRAGMENT) || id.equals(CUTOUT_FRAGMENT_LINEAR),
                 id.equals(SOLID_FRAGMENT_LINEAR) || id.equals(CUTOUT_FRAGMENT_LINEAR));
@@ -185,6 +189,10 @@ public final class TerrainPipelines {
                              // its own pipeline identities, so this guest must select the forward comparison.
                              .withDepthStencilState(
                                      new DepthStencilState(CompareOp.LESS_THAN_OR_EQUAL, true, 0.0f, 0.0f))
+                             #if MC >= 26.3
+                             .withColorTargetState(new ColorTargetState(Optional.empty(),
+                                     GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_ALL))
+                             #endif
                              .withCull(false)
                              .withBindGroupLayout(BindGroupLayouts.CHUNK_SECTION)
                              .withBindGroupLayout(samplerLayout().build())
@@ -193,8 +201,8 @@ public final class TerrainPipelines {
 
     private static BindGroupLayout.Builder samplerLayout() {
         BindGroupLayout.Builder samplerLayout = BindGroupLayout.builder()
-                                                               .withSampler("Sampler0")
-                                                               .withSampler("Sampler2");
+                                                               .withImageSampler("Sampler0")
+                                                               .withImageSampler("Sampler2");
         if (GuestTerrainGate.enabled()) {
             // A shaderpack's Sodium-patched terrain program reads these two exactly as Sodium's own program does,
             // so they are declared on the pipeline and fed with setUniform rather than bound by hand.
@@ -223,6 +231,11 @@ public final class TerrainPipelines {
                              // T2's HiZ pyramid reads this depth.
                              .withDepthStencilState(
                                      new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, true, 0.0f, 0.0f))
+                             #if MC >= 26.3
+                             // 26.3: Renderpearl requires an explicit state for the single color attachment.
+                             .withColorTargetState(new ColorTargetState(Optional.empty(),
+                                     GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_ALL))
+                             #endif
                              .withCull(true)
                              .withBindGroupLayout(BindGroupLayouts.CHUNK_SECTION)
                              .withBindGroupLayout(samplers)

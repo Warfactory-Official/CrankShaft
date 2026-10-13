@@ -1,20 +1,19 @@
 package dev.engine_room.flywheel.backend.engine.instancing;
 
-import com.mojang.blaze3d.IndexType;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.opengl.GlBuffer;
-import com.mojang.blaze3d.opengl.GlRenderPipeline;
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.Uniform;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.systems.CommandEncoder;
-import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.pipeline.IndexType;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.opengl.GlBuffer;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.Uniform;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
@@ -24,7 +23,9 @@ import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.backend.BackendDebugFlags;
 import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
 import dev.engine_room.flywheel.backend.compile.OitMode;
+import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.engine.*;
+import dev.engine_room.flywheel.backend.engine.NativeOitReplay;
 import dev.engine_room.flywheel.backend.engine.embed.EmbeddedEnvironment;
 import dev.engine_room.flywheel.backend.engine.embed.Environment;
 import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
@@ -179,7 +180,22 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
     @Override
     public boolean renderOit(LightStorage lightStorage, EnvironmentStorage environmentStorage,
                              @Nullable ChunkSectionsToRender chunks, @Nullable BerTranslucentCapture ber,
-                             @Nullable SodiumTerrainOitReplay terrain, @Nullable FabulousCaptures fabulous) {
+                             #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
+                             @Nullable SodiumTerrainOitReplay terrain) {
+        return renderOitFrame(lightStorage, environmentStorage, chunks, ber, #if MC < 26.3 fabulous, #endif terrain,
+                null);
+    }
+
+    @Override
+    public boolean renderNativeOit(LightStorage lightStorage, EnvironmentStorage environmentStorage,
+                                    NativeOitReplay replay) {
+        return renderOitFrame(lightStorage, environmentStorage, null, null, #if MC < 26.3 null, #endif null, replay);
+    }
+
+    private boolean renderOitFrame(LightStorage lightStorage, EnvironmentStorage environmentStorage,
+                                   @Nullable ChunkSectionsToRender chunks, @Nullable BerTranslucentCapture ber,
+                                   #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
+                                   @Nullable SodiumTerrainOitReplay terrain, @Nullable NativeOitReplay nativeReplay) {
         if (BackendDebugFlags.SKIP_OIT) {
             return false;
         }
@@ -195,7 +211,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         };
         return oitChain.render(renderModelView, meshPool.vertexBuffer(), meshPool.indexBuffer(),
                 !oitDraws.isEmpty() || !oitAdditiveDraws.isEmpty(), !oitAdditiveDraws.isEmpty(), prePass, chunks, ber,
-                terrain, fabulous, this::submitOitInstances);
+                #if MC < 26.3 fabulous, #endif terrain, nativeReplay, this::submitOitInstances);
     }
 
     protected void submitPass(String label, List<InstancedDraw> list, Matrix4fc modelView,
@@ -238,8 +254,8 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             pass.setVertexBuffer(0, vertexBuffer.slice());
             meshPool.bindExtras(pass);
             pass.setIndexBuffer(indexBuffer, IndexType.INT);
-            pass.bindTexture("Sampler1", overlayView, lightOverlaySampler);
-            pass.bindTexture("Sampler2", lightmapView, lightOverlaySampler);
+            pass.setUniform("Sampler1", overlayView, lightOverlaySampler);
+            pass.setUniform("Sampler2", lightmapView, lightOverlaySampler);
             bindLight(pass);
 
             drawRuns(pass, list, pipelineFor, textureManager);
@@ -282,7 +298,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
 
             boolean prime = false;
             if (pipeline != lastPipeline) {
-                pass.setPipeline(pipeline);
+                pass.setRenderPipeline(pipeline);
                 lastPipeline = pipeline;
                 prime = true;
             }
@@ -291,7 +307,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                 if (!material.texture().equals(lastTexture) || sampler != lastSampler) {
                     lastTexture = material.texture();
                     lastSampler = sampler;
-                    pass.bindTexture("Sampler0", textureManager.getTexture(lastTexture).getTextureView(), sampler);
+                    pass.setUniform("Sampler0", textureManager.getTexture(lastTexture).getTextureView(), sampler);
                     prime = true;
                 }
             }
@@ -304,8 +320,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                     pass.setUniform("_FlwEmbed", embedSlice);
                 }
                 pass.drawIndexed(0, 0, 0, 0, 0);
-                uniforms = ((GlRenderPipeline) RenderSystem.getDevice().precompilePipeline(pipeline)).program()
-                                                                                                     .getUniforms();
+                uniforms = RenderPipelineCompiler.uniforms(pipeline);
             }
 
             GlStateManager._activeTexture(
@@ -348,7 +363,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             }
             boolean prime = false;
             if (pipeline != lastPipeline) {
-                pass.setPipeline(pipeline);
+                pass.setRenderPipeline(pipeline);
                 lastPipeline = pipeline;
                 prime = true;
             }
@@ -357,7 +372,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                 if (!material.texture().equals(lastTexture) || sampler != lastSampler) {
                     lastTexture = material.texture();
                     lastSampler = sampler;
-                    pass.bindTexture("Sampler0", textureManager.getTexture(lastTexture).getTextureView(), sampler);
+                    pass.setUniform("Sampler0", textureManager.getTexture(lastTexture).getTextureView(), sampler);
                     prime = true;
                 }
             }
@@ -374,8 +389,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                         pass.setUniform("_FlwEmbed", embedSlice);
                     }
                     pass.drawIndexed(0, 0, 0, 0, 0);
-                    uniforms = ((GlRenderPipeline) RenderSystem.getDevice().precompilePipeline(pipeline)).program()
-                            .getUniforms();
+                    uniforms = RenderPipelineCompiler.uniforms(pipeline);
                     prime = false;
                 }
                 GlStateManager._activeTexture(
@@ -453,6 +467,10 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                         .meshes();
         for (int i = 0; i < meshes.size(); i++) {
             var entry = meshes.get(i);
+            #if MC >= 26.3
+            // 26.3: first lookup may upload; instancer initialization runs before any render pass.
+            Minecraft.getInstance().getTextureManager().getTexture(entry.material().texture());
+            #endif
             var mesh = meshPool.alloc(entry.mesh());
 
             GroupKey<?> groupKey = new GroupKey<>(key.type(), key.environment());
@@ -507,8 +525,8 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         }
 
         for (var byProgress : byType.values()) {
-            for (var pairs : byProgress.values()) {
-                for (var pair : pairs) {
+            for (var progressEntry : byProgress.int2ObjectEntrySet()) {
+                for (var pair : progressEntry.getValue()) {
                     pair.getFirst()
                         .prepareInstanceTexels();
                 }
@@ -541,8 +559,8 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             pass.setVertexBuffer(0, vertexBuffer.slice());
             meshPool.bindExtras(pass);
             pass.setIndexBuffer(indexBuffer, IndexType.INT);
-            pass.bindTexture("Sampler1", overlayView, lightOverlaySampler);
-            pass.bindTexture("Sampler2", lightmapView, lightOverlaySampler);
+            pass.setUniform("Sampler1", overlayView, lightOverlaySampler);
+            pass.setUniform("Sampler2", lightmapView, lightOverlaySampler);
             bindLight(pass);
 
             for (var groupEntry : byType.entrySet()) {
@@ -554,7 +572,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                     GpuTextureView crackView = textureManager.getTexture(
                                                                      ModelBakery.BREAKING_LOCATIONS.get(progressEntry.getIntKey()))
                                                              .getTextureView();
-                    pass.bindTexture("_flw_crumblingTex", crackView, crackSampler);
+                    pass.setUniform("_flw_crumblingTex", crackView, crackSampler);
 
                     for (var pair : progressEntry.getValue()) {
                         InstancedInstancer<?> instancer = pair.getFirst();
@@ -573,11 +591,11 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                                 continue;
                             }
                             CommonCrumbling.applyCrumblingProperties(crumblingMaterial, draw.material());
-                            pass.setPipeline(crumblingPipelineFor(crumblingMaterial, instanceType));
+                            pass.setRenderPipeline(crumblingPipelineFor(crumblingMaterial, instanceType));
 
                             AbstractTexture atlas = textureManager.getTexture(draw.material()
                                                                                   .texture());
-                            pass.bindTexture("Sampler0", atlas.getTextureView(), atlasSampler);
+                            pass.setUniform("Sampler0", atlas.getTextureView(), atlasSampler);
                             pass.setUniform("_flw_instances", texels.slice());
                             pass.setUniform("_FlwInstanceDraw",
                                     renderPassUniforms.material(MaterialEncoder.packProperties(crumblingMaterial)));

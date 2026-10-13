@@ -1,30 +1,38 @@
 package dev.engine_room.flywheel.backend.engine.indirect;
 
-import com.mojang.blaze3d.IndexType;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.systems.CommandEncoder;
-import com.mojang.blaze3d.systems.RenderPass;
-import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.vulkan.VulkanRenderPass;
+#if MC < 26.3
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.pipeline.IndexType;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import dev.engine_room.flywheel.backend.OitConfig;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.texture.AbstractTexture;
+import net.minecraft.client.renderer.texture.TextureManager;
+#endif
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
+#if MC >= 26.3
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanConst;
+#endif
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.compile.VkOitPipelines;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.*;
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.engine.ChunkReplayData;
+#endif
 import dev.engine_room.flywheel.backend.vk.FlwPassBarrier;
 import dev.engine_room.flywheel.backend.vk.VkContext;
+import dev.engine_room.flywheel.backend.vk.descriptor.VkBindlessTable;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorWriter;
 import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.StagedVertexBuffer;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
-import net.minecraft.client.renderer.texture.AbstractTexture;
-import net.minecraft.client.renderer.texture.TextureManager;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 
@@ -78,42 +86,80 @@ final class VkWaveletOitChain extends VkOitChain {
         }
     }
 
-    void render(CommandEncoder encoder, VkOitRenderer.OitFrame frame, VkOitRenderer.OitReplay replay,
-                long vertexVk, long indexVk, int width, int height, boolean hasInstanceOit, boolean hasAdditive,
-                GpuTextureView depthView, float far, RenderPassDescriptor compositeDescriptor, boolean folded) {
-        if (folded) {
-            foldedProducers(frame, replay, vertexVk, indexVk, width, height, hasInstanceOit, depthView, far);
+    void render(VkOitRenderer.ChainInputs in, boolean hasAdditive, boolean folded) {
+        VkOitRenderer.OitFrame frame = in.frame();
+        NativeOitReplay nativeReplay = in.nativeReplay();
+        if (folded && nativeReplay != null) {
+            frame = nativeFoldedProducers(in, nativeReplay);
+        } else if (folded) {
+            foldedProducers(in);
         } else {
-            producerPass(encoder, framebuffer.depthRangeDescriptor(depthView, far), OitMode.DEPTH_RANGE, frame, replay,
-                    vertexVk, indexVk, width, height, hasInstanceOit);
-            producerPass(encoder, framebuffer.coefficientsDescriptor(depthView), OitMode.GENERATE_COEFFICIENTS, frame,
-                    replay, vertexVk, indexVk, width, height, hasInstanceOit);
-            producerPass(encoder, framebuffer.accumulateDescriptor(depthView), OitMode.EVALUATE, frame, replay,
-                    vertexVk, indexVk, width, height, hasInstanceOit);
+            RenderPassDescriptor depthRange = framebuffer.depthRangeDescriptor(in.depthView(), in.far());
+            producerPass(in, depthRange, OitMode.DEPTH_RANGE, frame);
+            if (nativeReplay != null) {
+                nativeReplay.replayWavelet(depthRange, OitMode.DEPTH_RANGE, false, framebuffer, in.nativeFrame());
+                frame = withCulledBounds(frame);
+            }
+            RenderPassDescriptor coefficients = framebuffer.coefficientsDescriptor(in.depthView());
+            producerPass(in, coefficients, OitMode.GENERATE_COEFFICIENTS, frame);
+            if (nativeReplay != null) {
+                nativeReplay.replayWavelet(coefficients, OitMode.GENERATE_COEFFICIENTS, false, framebuffer,
+                        in.nativeFrame());
+            }
+            RenderPassDescriptor accumulate = framebuffer.accumulateDescriptor(in.depthView());
+            producerPass(in, accumulate, OitMode.EVALUATE, frame);
+            if (nativeReplay != null) {
+                nativeReplay.replayWavelet(accumulate, OitMode.EVALUATE, false, framebuffer, in.nativeFrame());
+            }
+        }
+        if (nativeReplay != null) {
+            hasAdditive |= nativeReplay.hasAdditive();
         }
         if (hasAdditive) {
-            emissionPass(encoder, framebuffer.emissionDescriptor(depthView), frame, vertexVk, indexVk, width, height);
+            framebuffer.prepareEmission();
+            emissionPass(in, framebuffer.emissionDescriptor(in.depthView()), frame, folded);
         }
-        compositePass(encoder, compositeDescriptor, m.programs.oit().compositePipeline(hasAdditive), frame, width,
-                height, hasAdditive);
+        compositePass(in.encoder(), in.compositeDescriptor(), m.programs.oit().compositePipeline(hasAdditive), frame,
+                in.width(), in.height(), hasAdditive);
         if (hasAdditive) {
-            emissionComposite(encoder, compositeDescriptor, frame, width, height);
+            emissionComposite(in.encoder(), in.compositeDescriptor(), frame, in.width(), in.height());
         }
     }
 
-    private void emissionPass(CommandEncoder encoder, RenderPassDescriptor descriptor, VkOitRenderer.OitFrame frame,
-                              long vertexVk, long indexVk, int width, int height) {
+    private void emissionPass(VkOitRenderer.ChainInputs in, RenderPassDescriptor descriptor,
+                              VkOitRenderer.OitFrame frame, boolean fused) {
+        NativeOitReplay nativeReplay = in.nativeReplay();
+        #if MC >= 26.3
+        if (fused && nativeReplay != null) {
+            var targets = nativeReplay.vulkanTargets(framebuffer, false);
+            GpuTextureView mainDepth = targets.mainDepth();
+            VkNativeOitPass.getEmission(VulkanConst.toVk(mainDepth.texture().getFormat())).record(targets,
+                    nativeReplay.vulkanBackendFactory(), false, mainDepth.getWidth(0), mainDepth.getHeight(0), 0.0f,
+                    owner -> {
+                        if (in.hasInstanceOit() && owner.phase() == VkNativeOitPass.Phase.EMISSION_MAIN) {
+                            bindInstances(owner.commandBuffer(), in.vertexVk(), in.indexVk());
+                            m.drawOitProducerGeometry(owner.commandBuffer(), OitMode.EVALUATE, frame, false, true);
+                        }
+                        nativeReplay.replayVulkanCategory(owner, null, null, framebuffer, in.nativeFrame());
+                    });
+            return;
+        }
+        #endif
         FlwPassBarrier.expectFramebufferSample();
-        try (RenderPass pass = encoder.createRenderPass(descriptor)) {
-            VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
-            setViewportScissor(cmd, width, height);
+        try (RenderPass pass = in.encoder().createRenderPass(descriptor)) {
+            VkCommandBuffer cmd = VkContext.renderPass(pass).commandBuffer;
+            setViewportScissor(cmd, in.width(), in.height());
             VkContext.pushLabel(cmd, "flywheel:vk/oit/producer/emission");
-            VK12.vkCmdBindIndexBuffer(cmd, indexVk, 0L, VK12.VK_INDEX_TYPE_UINT32);
-            bindVertexBuffer(cmd, vertexVk);
-            m.drawOitProducerGeometry(cmd, OitMode.EVALUATE, frame, false, true);
+            if (in.hasInstanceOit()) {
+                bindInstances(cmd, in.vertexVk(), in.indexVk());
+                m.drawOitProducerGeometry(cmd, OitMode.EVALUATE, frame, false, true);
+            }
             VkContext.popLabel(cmd);
         } finally {
             FlwPassBarrier.clear();
+        }
+        if (nativeReplay != null) {
+            nativeReplay.replayWavelet(descriptor, OitMode.EVALUATE, true, framebuffer, in.nativeFrame());
         }
     }
 
@@ -121,7 +167,7 @@ final class VkWaveletOitChain extends VkOitChain {
                                    VkOitRenderer.OitFrame frame, int width, int height) {
         FlwPassBarrier.expectFramebufferProducer();
         try (RenderPass pass = encoder.createRenderPass(descriptor)) {
-            VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
+            VkCommandBuffer cmd = VkContext.renderPass(pass).commandBuffer;
             setViewportScissor(cmd, width, height);
             VkContext.pushLabel(cmd, "flywheel:vk/oit/emission_composite");
             VkGraphicsPipeline pipeline = m.programs.oit().emissionPipeline();
@@ -136,25 +182,27 @@ final class VkWaveletOitChain extends VkOitChain {
         }
     }
 
-    private void producerPass(CommandEncoder encoder, RenderPassDescriptor descriptor, OitMode mode,
-                              VkOitRenderer.OitFrame frame,
-                              VkOitRenderer.OitReplay replay, long vertexVk, long indexVk, int width, int height,
-                              boolean hasInstanceOit) {
+    private void producerPass(VkOitRenderer.ChainInputs in, RenderPassDescriptor descriptor, OitMode mode,
+                              VkOitRenderer.OitFrame frame) {
+        VkOitRenderer.OitReplay replay = in.replay();
         FlwPassBarrier.expectFramebufferSample();
-        try (RenderPass pass = encoder.createRenderPass(descriptor)) {
-            VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
-            setViewportScissor(cmd, width, height);
+        try (RenderPass pass = in.encoder().createRenderPass(descriptor)) {
+            VkCommandBuffer cmd = VkContext.renderPass(pass).commandBuffer;
+            setViewportScissor(cmd, in.width(), in.height());
             VkContext.pushLabel(cmd, "flywheel:vk/oit/producer/" + mode.name);
             try {
-                if (hasInstanceOit) {
-                    VK12.vkCmdBindIndexBuffer(cmd, indexVk, 0L, VK12.VK_INDEX_TYPE_UINT32);
-                    bindVertexBuffer(cmd, vertexVk);
+                if (in.hasInstanceOit()) {
+                    bindInstances(cmd, in.vertexVk(), in.indexVk());
                     m.drawOitProducerGeometry(cmd, mode, frame, false, false);
                 }
 
                 boolean hasBer = replay.ber() != null && !replay.ber().isEmpty();
+                boolean replays = replay.chunks() != null || replay.terrain() != null || hasBer;
+                #if MC < 26.3
                 boolean hasFabulous = replay.fabulous() != null && replay.fabulous().hasAny();
-                if (replay.chunks() != null || replay.terrain() != null || hasBer || hasFabulous) {
+                replays |= hasFabulous;
+                #endif
+                if (replays) {
                     RenderSystem.bindDefaultUniforms(pass);
                     pass.setUniform("DynamicTransforms", replay.dynamicTransforms());
                     if (replay.chunks() != null) {
@@ -178,6 +226,7 @@ final class VkWaveletOitChain extends VkOitChain {
                                 replay.oitSampler(), replay.noiseSampler());
                         VkContext.popLabel(cmd);
                     }
+                    #if MC < 26.3
                     if (hasFabulous) {
                         FabulousCaptures fab = replay.fabulous();
                         if (fab.hasClouds()) {
@@ -217,6 +266,7 @@ final class VkWaveletOitChain extends VkOitChain {
                             VkContext.popLabel(cmd);
                         }
                     }
+                    #endif
                 }
             } finally {
                 VkContext.popLabel(cmd);
@@ -230,7 +280,7 @@ final class VkWaveletOitChain extends VkOitChain {
                                VkOitRenderer.OitFrame frame, int width, int height, boolean emission) {
         FlwPassBarrier.expectFramebufferProducer();
         try (RenderPass pass = encoder.createRenderPass(descriptor)) {
-            VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
+            VkCommandBuffer cmd = VkContext.renderPass(pass).commandBuffer;
             setViewportScissor(cmd, width, height);
             VkContext.pushLabel(cmd, "flywheel:vk/oit/composite");
             VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
@@ -256,9 +306,11 @@ final class VkWaveletOitChain extends VkOitChain {
         }
     }
 
-    private void foldedProducers(VkOitRenderer.OitFrame frame, VkOitRenderer.OitReplay replay, long vertexVk,
-                                 long indexVk,
-                                 int width, int height, boolean hasInstanceOit, GpuTextureView depthView, float far) {
+    private void foldedProducers(VkOitRenderer.ChainInputs in) {
+        VkOitRenderer.OitFrame frame = in.frame();
+        int width = in.width();
+        int height = in.height();
+        float far = in.far();
         VkCommandBuffer cmd = VkContext.beginCommands();
         VkContext.pushLabel(cmd, "flywheel:vk/oit/folded");
         memoryBarrier(cmd,
@@ -288,7 +340,7 @@ final class VkWaveletOitChain extends VkOitChain {
             rendering.renderArea().extent().set(width, height);
             rendering.layerCount(1)
                      .pColorAttachments(color);
-            VkContext.attachDepth(stack, rendering, depthView);
+            VkContext.attachDepth(stack, rendering, in.depthView());
             KHRDynamicRendering.vkCmdBeginRenderingKHR(cmd, rendering);
 
             VkRenderingInputAttachmentIndexInfoKHR inputIndices = VkRenderingInputAttachmentIndexInfoKHR.calloc(stack)
@@ -301,15 +353,15 @@ final class VkWaveletOitChain extends VkOitChain {
         setViewportScissor(cmd, width, height);
 
         VkContext.pushLabel(cmd, "flywheel:vk/oit/folded/stage/depth_range");
-        foldedStage(cmd, OitMode.DEPTH_RANGE, frame, replay, hasInstanceOit, vertexVk, indexVk);
+        foldedStage(cmd, OitMode.DEPTH_RANGE, in);
         VkContext.popLabel(cmd);
         byRegionBarrier(cmd);
         VkContext.pushLabel(cmd, "flywheel:vk/oit/folded/stage/coefficients");
-        foldedStage(cmd, OitMode.GENERATE_COEFFICIENTS, frame, replay, hasInstanceOit, vertexVk, indexVk);
+        foldedStage(cmd, OitMode.GENERATE_COEFFICIENTS, in);
         VkContext.popLabel(cmd);
         byRegionBarrier(cmd);
         VkContext.pushLabel(cmd, "flywheel:vk/oit/folded/stage/evaluate");
-        foldedStage(cmd, OitMode.EVALUATE, frame, replay, hasInstanceOit, vertexVk, indexVk);
+        foldedStage(cmd, OitMode.EVALUATE, in);
         VkContext.popLabel(cmd);
 
         KHRDynamicRendering.vkCmdEndRenderingKHR(cmd);
@@ -322,13 +374,40 @@ final class VkWaveletOitChain extends VkOitChain {
         VkContext.submitCommands(cmd);
     }
 
-    private void foldedStage(VkCommandBuffer cmd, OitMode mode, VkOitRenderer.OitFrame frame,
-                             VkOitRenderer.OitReplay replay,
-                             boolean hasInstanceOit, long vertexVk, long indexVk) {
+    private VkOitRenderer.OitFrame nativeFoldedProducers(VkOitRenderer.ChainInputs in, NativeOitReplay replay) {
+        #if MC >= 26.3
+        var targets = replay.vulkanTargets(framebuffer, false);
+        VkOitRenderer.OitFrame[] frame = {in.frame()};
+        VkNativeOitPass.get(VkNativeOitPass.spec(targets, false)).record(targets, replay.vulkanBackendFactory(), false,
+                in.width(), in.height(), in.far(), owner -> {
+                    var phase = owner.phase();
+                    if (in.hasInstanceOit() && phase.main()) {
+                        bindInstances(owner.commandBuffer(), in.vertexVk(), in.indexVk());
+                        m.drawOitProducerGeometry(owner.commandBuffer(), phase.mode(), frame[0], true, false);
+                    }
+                    replay.replayVulkanCategory(owner, null, null, framebuffer, in.nativeFrame());
+                    if (phase == VkNativeOitPass.Phase.CULL_BOUNDS) frame[0] = withCulledBounds(frame[0]);
+                });
+        return frame[0];
+        #else
+        throw new UnsupportedOperationException("Native OIT categories require Minecraft 26.3");
+        #endif
+    }
+
+    private VkOitRenderer.OitFrame withCulledBounds(VkOitRenderer.OitFrame frame) {
+        VkOitRenderer.OitFrame culled = frame.withDepthBounds(VkContext.imageView(framebuffer.depthBoundsView()));
+        if (VkPrograms.bindlessTexturesEnabled()) {
+            VkBindlessTable.setReserved(VkBindlessTable.SLOT_DEPTH_RANGE, culled.depthRangeView(), culled.oitSampler());
+        }
+        return culled;
+    }
+
+    private void foldedStage(VkCommandBuffer cmd, OitMode mode, VkOitRenderer.ChainInputs in) {
+        VkOitRenderer.OitFrame frame = in.frame();
+        VkOitRenderer.OitReplay replay = in.replay();
         setFoldedLocations(cmd, mode);
-        if (hasInstanceOit) {
-            VK12.vkCmdBindIndexBuffer(cmd, indexVk, 0L, VK12.VK_INDEX_TYPE_UINT32);
-            bindVertexBuffer(cmd, vertexVk);
+        if (in.hasInstanceOit()) {
+            bindInstances(cmd, in.vertexVk(), in.indexVk());
             m.drawOitProducerGeometry(cmd, mode, frame, true, false);
         }
         if (replay.terrain() instanceof VkFoldedOitReplay terrain) {
@@ -341,9 +420,11 @@ final class VkWaveletOitChain extends VkOitChain {
         if (replay.ber() != null && !replay.ber().isEmpty()) {
             foldedBer(cmd, mode, frame, replay.ber());
         }
+        #if MC < 26.3
         if (replay.fabulous() != null && replay.fabulous().hasAny()) {
             foldedFabulous(cmd, mode, frame, replay.fabulous());
         }
+        #endif
     }
 
     private void writeFoldedExtraReads(OitMode mode, VkOitRenderer.OitFrame frame) {
@@ -358,6 +439,35 @@ final class VkWaveletOitChain extends VkOitChain {
 
     private void foldedChunks(VkCommandBuffer cmd, OitMode mode, VkOitRenderer.OitFrame frame,
                               ChunkSectionsToRender chunks) {
+        #if MC >= 26.3
+        if (chunks instanceof ChunkSectionsToRender.DrawIndirect indirect) {
+            if (indirect.drawGroupsPerLayer.get(ChunkSectionLayer.TRANSLUCENT).isEmpty()) return;
+            VkContext.pushLabel(cmd, "flywheel:vk/oit/chunk_indirect/" + mode.name);
+            VkGraphicsPipeline pipeline = m.programs.oit().chunkFoldedPipeline(mode, true);
+            VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+            writeIndirectChunkUniforms(frame, indirect, VkContext.imageView(ChunkReplayData.textureView()));
+            if (mode != OitMode.DEPTH_RANGE) writeFoldedExtraReads(mode, frame);
+            m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            drawIndirectChunks(cmd, indirect, chunkSharedIndexBuffer(chunks));
+            VkContext.popLabel(cmd);
+            return;
+        }
+        var draws = ChunkReplayData.separateDraws(chunks);
+        if (draws.isEmpty()) return;
+        VkContext.pushLabel(cmd, "flywheel:vk/oit/chunk/" + mode.name);
+        VkGraphicsPipeline pipeline = m.programs.oit().chunkFoldedPipeline(mode);
+        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+        boolean nonDepthRange = mode != OitMode.DEPTH_RANGE;
+        long atlasView = VkContext.imageView(ChunkReplayData.textureView());
+        long sharedIndexBuffer = chunkSharedIndexBuffer(chunks);
+        for (var draw : draws) {
+            bindChunkDraw(cmd, frame, chunks, atlasView, sharedIndexBuffer, draw);
+            if (nonDepthRange) writeFoldedExtraReads(mode, frame);
+            m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            VK12.vkCmdDrawIndexed(cmd, draw.indexCount(), 1, draw.firstIndex(), draw.baseVertex(), 0);
+        }
+        VkContext.popLabel(cmd);
+        #else
         var drawGroup = chunks.drawGroupsPerLayer().get(ChunkSectionLayer.TRANSLUCENT);
         if (drawGroup == null || drawGroup.isEmpty()) {
             return;
@@ -379,6 +489,7 @@ final class VkWaveletOitChain extends VkOitChain {
             }
         }
         VkContext.popLabel(cmd);
+        #endif
     }
 
     private void foldedBer(VkCommandBuffer cmd, OitMode mode, VkOitRenderer.OitFrame frame, BerTranslucentCapture ber) {
@@ -404,11 +515,12 @@ final class VkWaveletOitChain extends VkOitChain {
         VkContext.popLabel(cmd);
     }
 
+    #if MC < 26.3
     private void foldedFabulous(VkCommandBuffer cmd, OitMode mode, VkOitRenderer.OitFrame frame, FabulousCaptures fab) {
         VkContext.pushLabel(cmd, "flywheel:vk/oit/fabulous/" + mode.name);
         boolean nonDepthRange = mode != OitMode.DEPTH_RANGE;
         if (fab.hasClouds() || fab.hasItemLayer() || fab.hasParticleLayer()) {
-            VkGraphicsPipeline pipeline = m.programs.oit().layerFoldedPipeline(mode);
+            VkGraphicsPipeline pipeline = m.programs.oit().fabulous().layerFoldedPipeline(mode);
             VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
             if (fab.hasClouds()) {
                 drawFoldedLayer(cmd, mode, frame, pipeline, nonDepthRange,
@@ -428,13 +540,13 @@ final class VkWaveletOitChain extends VkOitChain {
         }
         if (fab.hasWeather()) {
             if (!OitConfig.exactFabulous()) {
-                VkGraphicsPipeline pipeline = m.programs.oit().layerFoldedPipeline(mode);
+                VkGraphicsPipeline pipeline = m.programs.oit().fabulous().layerFoldedPipeline(mode);
                 VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
                 drawFoldedLayer(cmd, mode, frame, pipeline, nonDepthRange,
                         VkContext.imageView(framebuffer.weatherColorView()),
                         VkContext.imageView(framebuffer.weatherDepthView()));
             } else {
-                VkGraphicsPipeline pipeline = m.programs.oit().weatherFoldedPipeline(mode);
+                VkGraphicsPipeline pipeline = m.programs.oit().fabulous().weatherFoldedPipeline(mode);
                 VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
                 bindVertexBuffer(cmd, VkContext.buffer(fab.weatherVertices));
                 RenderSystem.AutoStorageIndexBuffer indices = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS);
@@ -483,4 +595,5 @@ final class VkWaveletOitChain extends VkOitChain {
         m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
         VK12.vkCmdDrawIndexed(cmd, columnCount * 6, 1, startColumn * 6, 0, 0);
     }
+    #endif
 }

@@ -1,9 +1,9 @@
 package dev.engine_room.flywheel.backend.gl;
 
-import com.mojang.blaze3d.opengl.GlSampler;
-import com.mojang.blaze3d.opengl.GlTexture;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.backend.opengl.GlSampler;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
 import dev.engine_room.flywheel.backend.engine.BindlessSlots;
 import dev.engine_room.flywheel.backend.engine.MaterialSamplers;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;

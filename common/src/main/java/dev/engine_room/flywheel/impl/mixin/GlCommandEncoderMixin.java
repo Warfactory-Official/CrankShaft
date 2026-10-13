@@ -1,9 +1,9 @@
 package dev.engine_room.flywheel.impl.mixin;
 
 import com.llamalad7.mixinextras.sugar.Local;
-import com.mojang.blaze3d.opengl.GlCommandEncoder;
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.renderpearl.backend.opengl.GlCommandEncoder;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
 import dev.engine_room.flywheel.backend.gl.GlTextureLevelState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -14,8 +14,13 @@ abstract class GlCommandEncoderMixin {
     private static final int GL_TEXTURE_BASE_LEVEL = 33084;
     private static final int GL_TEXTURE_MAX_LEVEL = 33085;
 
+    #if MC >= 26.3
+    @Redirect(method = "setupDraw", at = @At(value = "INVOKE",
+            target = "Lcom/mojang/renderpearl/backend/opengl/GlStateManager;_texParameter(III)V"))
+    #else
     @Redirect(method = "trySetup", at = @At(value = "INVOKE",
             target = "Lcom/mojang/blaze3d/opengl/GlStateManager;_texParameter(III)V"))
+    #endif
     private void flywheel$dedupMipLevels(int target, int pname, int value, @Local GlTexture texture) {
         if (pname == GL_TEXTURE_BASE_LEVEL && !GlTextureLevelState.shouldApplyBase(texture, value)) {
             return;

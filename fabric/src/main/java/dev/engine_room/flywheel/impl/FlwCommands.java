@@ -165,7 +165,7 @@ public final class FlwCommands {
                                                        }))
                                    .then(ClientCommands.literal("opaque")
                                                        .executes(context -> {
-                                                           if (!SodiumCompat.isSodiumActive()) {
+                                                           if (!SodiumCompat.ACTIVE) {
                                                                context.getSource().sendError(Component.literal(
                                                                        "terrain opaque requires Sodium "
                                                                                + "(opaque MDI takeover reads Sodium's live geometry arena). Not applied."));
@@ -180,7 +180,7 @@ public final class FlwCommands {
                                                        }))
                                    .then(ClientCommands.literal("full")
                                                        .executes(context -> {
-                                                           if (!SodiumCompat.isSodiumActive()) {
+                                                           if (!SodiumCompat.ACTIVE) {
                                                                context.getSource().sendError(
                                                                        Component.literal("terrain full requires Sodium "
                                                                                + "(opaque MDI takeover reads Sodium's live geometry arena). Not applied."));
@@ -239,6 +239,7 @@ public final class FlwCommands {
                                    context.getSource().sendFeedback(Component.literal(OitConfig.status()));
                                    return Command.SINGLE_SUCCESS;
                                }));
+        #if MC < 26.3
         oit.then(ClientCommands.literal("exactweather")
                                .then(ClientCommands.argument("value", BoolArgumentType.bool())
                                                    .executes(context -> {
@@ -248,6 +249,7 @@ public final class FlwCommands {
                                                               .sendFeedback(Component.literal(OitConfig.status()));
                                                        return Command.SINGLE_SUCCESS;
                                                    })));
+        #endif
         return oit;
     }
 
@@ -390,6 +392,7 @@ public final class FlwCommands {
                                                          return Command.SINGLE_SUCCESS;
                                                      })));
 
+        #if MC < 26.3
         debug.then(ClientCommands.literal("fabulousLayers")
                                  .then(ClientCommands.literal("on")
                                                      .executes(context -> {
@@ -405,6 +408,7 @@ public final class FlwCommands {
                                                                  "Raw item/particle layer overlay: OFF"));
                                                          return Command.SINGLE_SUCCESS;
                                                      })));
+        #endif
 
         debug.then(ClientCommands.literal("sodiumCull")
                                  .then(ClientCommands.literal("on")

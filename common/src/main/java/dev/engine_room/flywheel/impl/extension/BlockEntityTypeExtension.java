@@ -6,7 +6,7 @@ import org.jspecify.annotations.Nullable;
 
 public interface BlockEntityTypeExtension<T extends BlockEntity> {
     @Nullable
-    BlockEntityVisualizer<? super T> flw$getVisualizer();
+    BlockEntityVisualizer<? super T> flywheel$getVisualizer();
 
-    void flw$setVisualizer(@Nullable BlockEntityVisualizer<? super T> visualizer);
+    void flywheel$setVisualizer(@Nullable BlockEntityVisualizer<? super T> visualizer);
 }

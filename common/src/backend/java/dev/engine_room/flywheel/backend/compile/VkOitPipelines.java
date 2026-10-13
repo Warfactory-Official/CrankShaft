@@ -18,7 +18,7 @@ import java.util.List;
 import static dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout.*;
 
 /**
- * The VK twin of the GL {@code OitPipelines}: the non-uber OIT producers (layer/weather/ber/chunk), the resolve,
+ * The VK twin of the GL {@code OitPipelines}: the non-uber OIT producers (ber/chunk), the resolve,
  * and the shared OIT pipeline-config vocabulary.
  */
 public final class VkOitPipelines {
@@ -32,13 +32,12 @@ public final class VkOitPipelines {
     private static final VkGraphicsPipeline.Blend REPLACE = new VkGraphicsPipeline.Blend(false, 0, 0, 0, 0, 0, 0,
             VkGraphicsPipeline.COLOR_WRITE_RGBA);
     static final VkGraphicsPipeline.Blend[] MLAB_NO_BLEND = new VkGraphicsPipeline.Blend[0];
-    private final VkGraphicsPipeline[] layerFolded = new VkGraphicsPipeline[OitMode.values().length];
-    private final VkGraphicsPipeline[] weatherFolded = new VkGraphicsPipeline[OitMode.values().length];
     private final VkGraphicsPipeline[][] berFolded = new VkGraphicsPipeline[BerFamily.VALUES.length][OitMode.values().length];
     private final VkGraphicsPipeline[][] chunkFolded = new VkGraphicsPipeline[2][OitMode.values().length];
-    private final VkGraphicsPipeline[] weatherMlab = new VkGraphicsPipeline[OitInsertMode.values().length];
+    private final VkGraphicsPipeline[][] chunkFoldedMultidraw = new VkGraphicsPipeline[2][OitMode.values().length];
     private final VkGraphicsPipeline[][] berMlab = new VkGraphicsPipeline[BerFamily.VALUES.length][OitInsertMode.values().length];
     private final VkGraphicsPipeline[][] chunkMlab = new VkGraphicsPipeline[2][OitInsertMode.values().length];
+    private final VkGraphicsPipeline[][] chunkMlabMultidraw = new VkGraphicsPipeline[2][OitInsertMode.values().length];
     private final VkGraphicsPipeline[] mlabResolve = new VkGraphicsPipeline[OitInsertMode.values().length];
     @Nullable
     private VkGraphicsPipeline composite;
@@ -51,10 +50,23 @@ public final class VkOitPipelines {
     @Nullable
     private VkGraphicsPipeline depth;
     private final int depthFormat;
+    #if MC < 26.3
+    @Nullable
+    private VkFabulousOitPipelines fabulous;
+    #endif
 
     VkOitPipelines(int depthFormat) {
         this.depthFormat = depthFormat;
     }
+
+    #if MC < 26.3
+    public VkFabulousOitPipelines fabulous() {
+        if (fabulous == null) {
+            fabulous = new VkFabulousOitPipelines(depthFormat);
+        }
+        return fabulous;
+    }
+    #endif
 
     static VkGraphicsPipeline.Config oitProducerConfig(OitMode mode, int depthFormat) {
         int ge = VK12.VK_COMPARE_OP_GREATER_OR_EQUAL;
@@ -119,7 +131,7 @@ public final class VkOitPipelines {
         }
     }
 
-    private static void foldedExtraBindings(List<Binding> b, OitMode mode) {
+    static void foldedExtraBindings(List<Binding> b, OitMode mode) {
         if (mode != OitMode.DEPTH_RANGE) {
             b.add(new Binding(14, TYPE_INPUT_ATTACHMENT, STAGE_FRAGMENT));
             b.add(new Binding(15, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
@@ -138,31 +150,6 @@ public final class VkOitPipelines {
         for (int i = 24; i <= 27; i++) {
             b.add(new Binding(i, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
         }
-        return b;
-    }
-
-    private static List<Binding> layerFoldedBindings(OitMode mode) {
-        List<Binding> b = new ArrayList<>();
-        b.add(new Binding(29, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
-        b.add(new Binding(30, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
-        foldedExtraBindings(b, mode);
-        return b;
-    }
-
-    private static List<Binding> weatherFoldedBindings(OitMode mode) {
-        List<Binding> b = weatherBindings();
-        foldedExtraBindings(b, mode);
-        return b;
-    }
-
-    private static List<Binding> weatherBindings() {
-        List<Binding> b = new ArrayList<>();
-        int vsfs = STAGE_VERTEX | STAGE_FRAGMENT;
-        b.add(new Binding(10, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
-        b.add(new Binding(12, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_VERTEX));
-        b.add(new Binding(16, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
-        b.add(new Binding(17, TYPE_UNIFORM_BUFFER, vsfs));
-        b.add(new Binding(18, TYPE_UNIFORM_BUFFER, vsfs));
         return b;
     }
 
@@ -202,13 +189,13 @@ public final class VkOitPipelines {
         return b;
     }
 
-    private static List<Binding> chunkFoldedBindings(OitMode mode) {
-        List<Binding> b = chunkBindings();
+    private static List<Binding> chunkFoldedBindings(OitMode mode, boolean multidraw) {
+        List<Binding> b = chunkBindings(multidraw);
         foldedExtraBindings(b, mode);
         return b;
     }
 
-    private static List<Binding> chunkBindings() {
+    private static List<Binding> chunkBindings(boolean multidraw) {
         List<Binding> b = new ArrayList<>();
         int vsfs = STAGE_VERTEX | STAGE_FRAGMENT;
         b.add(new Binding(10, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
@@ -216,11 +203,14 @@ public final class VkOitPipelines {
         b.add(new Binding(16, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
         b.add(new Binding(18, TYPE_UNIFORM_BUFFER, vsfs));
         b.add(new Binding(20, TYPE_UNIFORM_BUFFER, vsfs));
-        b.add(new Binding(21, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
+        if (!multidraw) b.add(new Binding(21, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
+        #if MC >= 26.3
+        b.add(new Binding(42, TYPE_UNIFORM_BUFFER, STAGE_VERTEX));
+        #endif
         return b;
     }
 
-    private static void destroyModules(long... modules) {
+    static void destroyModules(long... modules) {
         VkDevice device = VkContext.vkDevice();
         for (long module : modules) {
             if (module != 0L) {
@@ -373,78 +363,6 @@ public final class VkOitPipelines {
         return mlabNearestDepth;
     }
 
-    public VkGraphicsPipeline layerFoldedPipeline(OitMode mode) {
-        VkGraphicsPipeline p = layerFolded[mode.ordinal()];
-        if (p == null) {
-            String fsGl = RenderPassShaders.assembleLayerOitFragment(mode, VkPrograms.LOCAL_READ);
-            long vs = 0;
-            long fs = 0;
-            VkDescriptorLayout layout = null;
-            try {
-                vs = VkShaderCompiler.compileModule("layer_fullscreen",
-                        VkShaderTransform.toVulkan(RenderPassShaders.fullscreenVertex(),
-                                VkShaderTransform.Stage.VERTEX), VkShaderCompiler.KIND_VERTEX);
-                fs = VkShaderCompiler.compileModule("layer_oit" + mode.name,
-                        VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT),
-                        VkShaderCompiler.KIND_FRAGMENT);
-                VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(mode),
-                        true, false,
-                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_NONE,
-                        depthFormat)
-                        .withLocalRead(foldedLocations(mode), FOLDED_INPUT_INDICES);
-                layout = new VkDescriptorLayout(layerFoldedBindings(mode), 0, 0);
-                p = new VkGraphicsPipeline(layout, vs, fs, config);
-            } catch (Throwable t) {
-                if (layout != null) {
-                    layout.delete();
-                }
-                destroyModules(vs, fs);
-                if (t instanceof BackendUnavailableException failure) {
-                    throw VkPrograms.tagged(ProgramAvailability.Feature.LOCAL_READ, failure);
-                }
-                throw t;
-            }
-            layerFolded[mode.ordinal()] = p;
-        }
-        return p;
-    }
-
-    public VkGraphicsPipeline weatherFoldedPipeline(OitMode mode) {
-        VkGraphicsPipeline p = weatherFolded[mode.ordinal()];
-        if (p == null) {
-            String fsGl = RenderPassShaders.assembleWeatherOitFragment(mode, VkPrograms.LOCAL_READ);
-            long vs = 0;
-            long fs = 0;
-            VkDescriptorLayout layout = null;
-            try {
-                vs = VkShaderCompiler.compileModule("weather_oit_vertex",
-                        VkShaderTransform.toVulkan(RenderPassShaders.assembleWeatherOitVertex(),
-                                VkShaderTransform.Stage.VERTEX), VkShaderCompiler.KIND_VERTEX);
-                fs = VkShaderCompiler.compileModule("weather_oit" + mode.name,
-                        VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT),
-                        VkShaderCompiler.KIND_FRAGMENT);
-                VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(mode),
-                        true, false,
-                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.PARTICLE, VK12.VK_CULL_MODE_NONE,
-                        depthFormat)
-                        .withLocalRead(foldedLocations(mode), FOLDED_INPUT_INDICES);
-                layout = new VkDescriptorLayout(weatherFoldedBindings(mode), 0, 0);
-                p = new VkGraphicsPipeline(layout, vs, fs, config);
-            } catch (Throwable t) {
-                if (layout != null) {
-                    layout.delete();
-                }
-                destroyModules(vs, fs);
-                if (t instanceof BackendUnavailableException failure) {
-                    throw VkPrograms.tagged(ProgramAvailability.Feature.LOCAL_READ, failure);
-                }
-                throw t;
-            }
-            weatherFolded[mode.ordinal()] = p;
-        }
-        return p;
-    }
-
     public VkGraphicsPipeline berFoldedPipeline(BerFamily family, OitMode mode) {
         VkGraphicsPipeline p = berFolded[family.ordinal()][mode.ordinal()];
         if (p == null) {
@@ -481,26 +399,32 @@ public final class VkOitPipelines {
     }
 
     public VkGraphicsPipeline chunkFoldedPipeline(OitMode mode) {
+        return chunkFoldedPipeline(mode, false);
+    }
+
+    public VkGraphicsPipeline chunkFoldedPipeline(OitMode mode, boolean multidraw) {
         int lin = TerrainAtlasFilter.linear() ? 1 : 0;
-        VkGraphicsPipeline p = chunkFolded[lin][mode.ordinal()];
+        VkGraphicsPipeline[][] cache = multidraw ? chunkFoldedMultidraw : chunkFolded;
+        VkGraphicsPipeline p = cache[lin][mode.ordinal()];
         if (p == null) {
             String fsGl = RenderPassShaders.assembleChunkOitFragment(mode, lin == 1, VkPrograms.LOCAL_READ);
             long vs = 0;
             long fs = 0;
             VkDescriptorLayout layout = null;
             try {
-                vs = VkShaderCompiler.compileModule("chunk_oit_block",
-                        VkShaderTransform.toVulkan(RenderPassShaders.assembleChunkOitVertex(),
+                vs = VkShaderCompiler.compileModule("chunk_oit_block" + (multidraw ? "_multidraw" : ""),
+                        VkShaderTransform.toVulkan(RenderPassShaders.assembleChunkOitVertex(multidraw),
                                 VkShaderTransform.Stage.VERTEX), VkShaderCompiler.KIND_VERTEX);
                 fs = VkShaderCompiler.compileModule("chunk_oit_block" + mode.name,
                         VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT),
                         VkShaderCompiler.KIND_FRAGMENT);
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(mode),
                         true, false,
-                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.BLOCK,
+                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL,
+                        multidraw ? VkGraphicsPipeline.Vertex.BLOCK_MULTIDRAW : VkGraphicsPipeline.Vertex.BLOCK,
                         VK12.VK_CULL_MODE_BACK_BIT, depthFormat)
                         .withLocalRead(foldedLocations(mode), FOLDED_INPUT_INDICES);
-                layout = new VkDescriptorLayout(chunkFoldedBindings(mode), 0, 0);
+                layout = new VkDescriptorLayout(chunkFoldedBindings(mode, multidraw), 0, 0);
                 p = new VkGraphicsPipeline(layout, vs, fs, config);
             } catch (Throwable t) {
                 if (layout != null) {
@@ -512,43 +436,9 @@ public final class VkOitPipelines {
                 }
                 throw t;
             }
-            chunkFolded[lin][mode.ordinal()] = p;
+            cache[lin][mode.ordinal()] = p;
         }
         return p;
-    }
-
-    public VkGraphicsPipeline weatherMlabPipeline(OitInsertMode oitMode) {
-        if (weatherMlab[oitMode.ordinal()] == null) {
-            long vs = 0;
-            long fs = 0;
-            VkDescriptorLayout layout = null;
-            try {
-                vs = VkShaderCompiler.compileModule("weather_oit_vertex",
-                        VkShaderTransform.toVulkan(RenderPassShaders.assembleWeatherOitVertex(),
-                                VkShaderTransform.Stage.VERTEX), VkShaderCompiler.KIND_VERTEX);
-                fs = VkShaderCompiler.compileModule("weather_mlab_" + oitMode,
-                        VkShaderTransform.toVulkan(RenderPassShaders.assembleWeatherMlabFragment(oitMode),
-                                VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
-                VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(MLAB_NO_COLOR, MLAB_NO_BLEND, true,
-                        false,
-                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.PARTICLE, VK12.VK_CULL_MODE_NONE,
-                        depthFormat);
-                List<Binding> b = weatherBindings();
-                mlabBindings(b, oitMode);
-                layout = new VkDescriptorLayout(b, 0, 0);
-                weatherMlab[oitMode.ordinal()] = new VkGraphicsPipeline(layout, vs, fs, config);
-            } catch (Throwable t) {
-                if (layout != null) {
-                    layout.delete();
-                }
-                destroyModules(vs, fs);
-                if (t instanceof BackendUnavailableException failure) {
-                    throw VkPrograms.tagged(ProgramAvailability.insert(oitMode), failure);
-                }
-                throw t;
-            }
-        }
-        return weatherMlab[oitMode.ordinal()];
     }
 
     public VkGraphicsPipeline berMlabPipeline(BerFamily family, OitInsertMode oitMode) {
@@ -585,24 +475,30 @@ public final class VkOitPipelines {
     }
 
     public VkGraphicsPipeline chunkMlabPipeline(OitInsertMode oitMode) {
+        return chunkMlabPipeline(oitMode, false);
+    }
+
+    public VkGraphicsPipeline chunkMlabPipeline(OitInsertMode oitMode, boolean multidraw) {
         int lin = TerrainAtlasFilter.linear() ? 1 : 0;
-        VkGraphicsPipeline p = chunkMlab[lin][oitMode.ordinal()];
+        VkGraphicsPipeline[][] cache = multidraw ? chunkMlabMultidraw : chunkMlab;
+        VkGraphicsPipeline p = cache[lin][oitMode.ordinal()];
         if (p == null) {
             long vs = 0;
             long fs = 0;
             VkDescriptorLayout layout = null;
             try {
-                vs = VkShaderCompiler.compileModule("chunk_oit_block",
-                        VkShaderTransform.toVulkan(RenderPassShaders.assembleChunkOitVertex(),
+                vs = VkShaderCompiler.compileModule("chunk_oit_block" + (multidraw ? "_multidraw" : ""),
+                        VkShaderTransform.toVulkan(RenderPassShaders.assembleChunkOitVertex(multidraw),
                                 VkShaderTransform.Stage.VERTEX), VkShaderCompiler.KIND_VERTEX);
                 fs = VkShaderCompiler.compileModule("chunk_mlab_block_" + oitMode,
                         VkShaderTransform.toVulkan(RenderPassShaders.assembleChunkMlabFragment(oitMode, lin == 1),
                                 VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(MLAB_NO_COLOR, MLAB_NO_BLEND, true,
                         false,
-                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.BLOCK,
+                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL,
+                        multidraw ? VkGraphicsPipeline.Vertex.BLOCK_MULTIDRAW : VkGraphicsPipeline.Vertex.BLOCK,
                         VK12.VK_CULL_MODE_BACK_BIT, depthFormat);
-                List<Binding> b = chunkBindings();
+                List<Binding> b = chunkBindings(multidraw);
                 mlabBindings(b, oitMode);
                 layout = new VkDescriptorLayout(b, 0, 0);
                 p = new VkGraphicsPipeline(layout, vs, fs, config);
@@ -616,7 +512,7 @@ public final class VkOitPipelines {
                 }
                 throw t;
             }
-            chunkMlab[lin][oitMode.ordinal()] = p;
+            cache[lin][oitMode.ordinal()] = p;
         }
         return p;
     }
@@ -686,16 +582,11 @@ public final class VkOitPipelines {
             depth.delete();
             depth = null;
         }
-        for (int i = 0; i < layerFolded.length; i++) {
-            if (layerFolded[i] != null) {
-                layerFolded[i].delete();
-                layerFolded[i] = null;
-            }
-            if (weatherFolded[i] != null) {
-                weatherFolded[i].delete();
-                weatherFolded[i] = null;
-            }
+        #if MC < 26.3
+        if (fabulous != null) {
+            fabulous.delete();
         }
+        #endif
         for (VkGraphicsPipeline[] perFamily : berFolded) {
             for (int i = 0; i < perFamily.length; i++) {
                 if (perFamily[i] != null) {
@@ -704,26 +595,10 @@ public final class VkOitPipelines {
                 }
             }
         }
-        for (int lin = 0; lin < 2; lin++) {
-            for (int i = 0; i < chunkFolded[lin].length; i++) {
-                if (chunkFolded[lin][i] != null) {
-                    chunkFolded[lin][i].delete();
-                    chunkFolded[lin][i] = null;
-                }
-            }
-            for (int m = 0; m < chunkMlab[lin].length; m++) {
-                if (chunkMlab[lin][m] != null) {
-                    chunkMlab[lin][m].delete();
-                    chunkMlab[lin][m] = null;
-                }
-            }
-        }
-        for (int m = 0; m < weatherMlab.length; m++) {
-            if (weatherMlab[m] != null) {
-                weatherMlab[m].delete();
-                weatherMlab[m] = null;
-            }
-        }
+        deleteChunkPipelines(chunkFolded);
+        deleteChunkPipelines(chunkFoldedMultidraw);
+        deleteChunkPipelines(chunkMlab);
+        deleteChunkPipelines(chunkMlabMultidraw);
         for (int m = 0; m < mlabResolve.length; m++) {
             if (mlabResolve[m] != null) {
                 mlabResolve[m].delete();
@@ -735,6 +610,17 @@ public final class VkOitPipelines {
                 if (perFamily[m] != null) {
                     perFamily[m].delete();
                     perFamily[m] = null;
+                }
+            }
+        }
+    }
+
+    private static void deleteChunkPipelines(VkGraphicsPipeline[][] pipelines) {
+        for (VkGraphicsPipeline[] variants : pipelines) {
+            for (int i = 0; i < variants.length; i++) {
+                if (variants[i] != null) {
+                    variants[i].delete();
+                    variants[i] = null;
                 }
             }
         }

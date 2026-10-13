@@ -13,6 +13,11 @@ import dev.engine_room.flywheel.lib.task.ForEachPlan;
 import dev.engine_room.flywheel.lib.util.Pair;
 import it.unimi.dsi.fastutil.ints.Int2ObjectArrayMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+#if MC >= 26.3
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.texture.TextureManager;
+import net.minecraft.client.resources.model.ModelBakery;
+#endif
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.core.Vec3i;
 import org.joml.Matrix4fc;
@@ -117,6 +122,15 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
                       .add(Pair.of(instancer, impl));
             }
         }
+        #if MC >= 26.3
+        // 26.3: first lookup may upload; resolve selected crack stages before callers open their pass.
+        TextureManager textures = Minecraft.getInstance().getTextureManager();
+        for (var byProgress : byType.values()) {
+            for (int progress : byProgress.keySet()) {
+                textures.getTexture(ModelBakery.BREAKING_LOCATIONS.get(progress));
+            }
+        }
+        #endif
         return byType;
     }
 
@@ -155,8 +169,14 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
 
     public boolean renderOit(LightStorage lightStorage, EnvironmentStorage environmentStorage,
                              @Nullable ChunkSectionsToRender chunks, @Nullable BerTranslucentCapture ber,
-                             @Nullable SodiumTerrainOitReplay terrain, @Nullable FabulousCaptures fabulous) {
+                             #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
+                             @Nullable SodiumTerrainOitReplay terrain) {
         return false;
+    }
+
+    public boolean renderNativeOit(LightStorage lightStorage, EnvironmentStorage environmentStorage,
+                                    NativeOitReplay replay) {
+        throw new UnsupportedOperationException("This backend has no native translucent producer bridge");
     }
 
     /**

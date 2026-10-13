@@ -3,9 +3,14 @@
 
 package me.mlbv.meshlet.mesh.vk;
 
-import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.backend.Backends;
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.compile.NativeOitWarmup;
+import dev.engine_room.flywheel.backend.compile.NativeVkEngineWarmup;
+import dev.engine_room.flywheel.backend.compile.OitInsertMode;
+import dev.engine_room.flywheel.backend.engine.indirect.VkNativeOitPass;
+#endif
 import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
@@ -16,8 +21,8 @@ import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.impl.compat.SodiumCompat;
 import dev.engine_room.flywheel.lib.backend.SimpleBackend;
+import dev.engine_room.flywheel.lib.util.ShadersModHelper;
 import net.minecraft.client.Minecraft;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.LevelAccessor;
 import org.jspecify.annotations.Nullable;
 
@@ -30,12 +35,15 @@ public final class VkMeshShaderBackends {
 
     private static Backend register() {
         ShaderWarmup.registerVk(ProgramAvailability.Feature.MESH, VkMeshShaderBackends::warmUp);
+        #if MC >= 26.3
+        NativeVkEngineWarmup.registerTerrain(VkMeshShaderBackends::warmNativeTerrain);
+        #endif
         return SimpleBackend.builder()
                             .engineFactory(VkMeshShaderBackends::createEngine)
                             .priority(PRIORITY)
                             .supported(VkMeshShaderBackends::isSupported)
                             .gpuDriven(true)
-                            .register(Identifier.fromNamespaceAndPath(Flywheel.ID, "vk_mesh_shader"));
+                            .register(Backends.VK_MESH_SHADER_ID);
     }
 
     private static void warmUp() {
@@ -50,13 +58,21 @@ public final class VkMeshShaderBackends {
         }
     }
 
+    #if MC >= 26.3
+    private static void warmNativeTerrain(VkNativeOitPass pass, @Nullable OitInsertMode insert) {
+        MeshEngine owner = MeshEngine.terrainOwner;
+        if (owner != null) owner.pipelines.warmNative(pass, insert);
+    }
+    #endif
+
     private static boolean isSupported() {
         VkPrograms programs = VkPrograms.get();
         return VkContext.isVulkanHost()
+                && !ShadersModHelper.isShaderPackInUse()
                 && VkCaps.MESH_SHADER_NEGOTIATED
                 && ProgramAvailability.allows(ProgramAvailability.Feature.MESH)
                 && programs != null && programs.instanceRoute() == VkPrograms.InstanceRoute.INDIRECT
-                && SodiumCompat.isSodiumActive();
+                && SodiumCompat.ACTIVE;
     }
 
     private static EngineImpl createEngine(LevelAccessor level) {
@@ -77,6 +93,10 @@ public final class VkMeshShaderBackends {
                 terrainOwner = this;
                 VkTerrainDrawManager.setMeshDrawStrategy(rasterizer);
                 VkTerrainDrawManager.setTranslucentMeshDrawStrategy(translucentRasterizer);
+                #if MC >= 26.3
+                // The live owner's PSO variants must exist before its first native producer bind.
+                NativeOitWarmup.configurationChanged();
+                #endif
             }
         }
 

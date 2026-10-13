@@ -13,7 +13,7 @@ public interface TerrainDispatcher {
                             @Nullable Collection<RenderRegion> selfEnum);
 
     /**
-     * Iris shadow-pass terrain; only the GL tier can host a shaderpack guest, so the Vulkan one never draws it.
+     * Returns false to leave shadow terrain with the pack's renderer.
      */
     default boolean drawShadowTerrain(ChunkRenderMatrices matrices, RenderSectionManager manager) {
         return false;

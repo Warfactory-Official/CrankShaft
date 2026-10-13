@@ -1,6 +1,8 @@
 package dev.engine_room.flywheel.iris.compile.patches;
 
 import dev.engine_room.flywheel.backend.gl.GlCompat;
+import dev.engine_room.flywheel.backend.vk.VkContext;
+import dev.engine_room.flywheel.iris.IrisRuntime;
 import dev.engine_room.flywheel.iris.compile.ContractProgram;
 import dev.engine_room.flywheel.iris.engine.DeferredReplayPlan;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
@@ -13,9 +15,11 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.IntStream;
 
 public enum DeferredOitProfile {
     SUNDIAL(new SundialDeferredAdapter()),
@@ -32,6 +36,8 @@ public enum DeferredOitProfile {
     }
 
     public static boolean enabled() {
+        if (IrisRuntime.EXPERIMENTAL && VkContext.isVulkanHost())
+            return Boolean.parseBoolean(System.getProperty("crankshaft.iris.oit.deferred", "true"));
         var caps = GlCompat.CAPABILITIES;
         return Boolean.parseBoolean(System.getProperty("crankshaft.iris.oit.deferred", "true")) && caps != null
                 && caps.glDispatchCompute != 0 && caps.glDrawElementsIndirect != 0
@@ -52,11 +58,13 @@ public enum DeferredOitProfile {
     }
 
     public String storageProperties() {
-        return adapter.storageProperties();
+        return adapter.storageProperties() + (IrisRuntime.EXPERIMENTAL ? "\nbufferObject.3 = 16\nbufferObject.4 = 256\n" : "");
     }
 
     public int[] storageBindings() {
-        return adapter.storageBindings();
+        if (!IrisRuntime.EXPERIMENTAL) return adapter.storageBindings();
+        return IntStream.concat(Arrays.stream(adapter.storageBindings()),
+                IntStream.of(3, 4)).distinct().toArray();
     }
 
     public boolean capturesTerrain() {
@@ -76,7 +84,8 @@ public enum DeferredOitProfile {
     }
 
     public boolean available() {
-        return this != ITERATION || Boolean.parseBoolean(System.getProperty("crankshaft.iris.oit.iteration", "true"));
+        return this != ITERATION || !IrisRuntime.EXPERIMENTAL
+                && Boolean.parseBoolean(System.getProperty("crankshaft.iris.oit.iteration", "true"));
     }
 
 }

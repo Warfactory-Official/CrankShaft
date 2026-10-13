@@ -1,5 +1,12 @@
 // Colorwheel wavelet OIT: rank-parametric (count = 2^(rank+1)), coefficient sets in RGBA16F array layers.
 
+#ifdef _FLW_GUEST_FLAT_COEFFICIENTS
+#define _FLW_COEFFICIENT_TYPE int
+vec4 _flw_oitReadLayer(int set, int layer);
+#else
+#define _FLW_COEFFICIENT_TYPE sampler2DArray
+#endif
+
 const float _FLW_GUEST_OIT_NOISE = 0.07;
 
 uniform sampler2D _flw_depthRange;
@@ -43,11 +50,15 @@ void _flw_oitAddTransmittance(inout vec4[4] coefficients, float transmittance, f
     _flw_oitAddAbsorbance(coefficients, -log(max(transmittance, 0.00001)), depth, rank);
 }
 
-float _flw_oitCoefficient(sampler2DArray coefficients, int index) {
+float _flw_oitCoefficient(_FLW_COEFFICIENT_TYPE coefficients, int index) {
+    #ifdef _FLW_GUEST_FLAT_COEFFICIENTS
+    return _flw_oitReadLayer(coefficients, index >> 2)[index & 3];
+    #else
     return texelFetch(coefficients, ivec3(gl_FragCoord.xy, index >> 2), 0)[index & 3];
+    #endif
 }
 
-float _flw_oitTotalAbsorbance(sampler2DArray coefficients, int rank) {
+float _flw_oitTotalAbsorbance(_FLW_COEFFICIENT_TYPE coefficients, int rank) {
     int count = 1 << (rank + 1);
 
     float scale = _flw_oitCoefficient(coefficients, count - 1);
@@ -71,7 +82,7 @@ float _flw_oitTotalAbsorbance(sampler2DArray coefficients, int rank) {
 }
 
 // Undoes this fragment's own absorbance event before sampling (self-occlusion).
-float _flw_oitSignalCorrectedAbsorbance(sampler2DArray coefficients, float depth, float signal, int rank) {
+float _flw_oitSignalCorrectedAbsorbance(_FLW_COEFFICIENT_TYPE coefficients, float depth, float signal, int rank) {
     int count = 1 << (rank + 1);
 
     float scale = _flw_oitCoefficient(coefficients, count - 1);
@@ -124,12 +135,12 @@ float _flw_oitSignalCorrectedAbsorbance(sampler2DArray coefficients, float depth
     return mix(a, b, t);
 }
 
-float _flw_oitTotalTransmittance(sampler2DArray coefficients, int rank) {
+float _flw_oitTotalTransmittance(_FLW_COEFFICIENT_TYPE coefficients, int rank) {
     return clamp(exp(-_flw_oitTotalAbsorbance(coefficients, rank)), 0., 1.);
 }
 
 // Port: Colorwheel passes the transmittance as the absorbance signal => alpha -> 1 fragments occlude themselves.
-float _flw_oitSignalCorrectedTransmittance(sampler2DArray coefficients, float depth, float transmittance, int rank) {
+float _flw_oitSignalCorrectedTransmittance(_FLW_COEFFICIENT_TYPE coefficients, float depth, float transmittance, int rank) {
     return clamp(exp(-_flw_oitSignalCorrectedAbsorbance(coefficients, depth,
             -log(max(transmittance, 0.00001)), rank)), 0., 1.);
 }

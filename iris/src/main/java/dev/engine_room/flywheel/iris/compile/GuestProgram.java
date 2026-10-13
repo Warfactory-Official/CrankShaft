@@ -1,15 +1,26 @@
 package dev.engine_room.flywheel.iris.compile;
 
+import dev.engine_room.flywheel.iris.mixin.CustomUniformsAccessor;
 import com.google.common.collect.ImmutableSet;
-import com.mojang.blaze3d.opengl.*;
-import com.mojang.blaze3d.pipeline.BindGroupLayout;
-import com.mojang.blaze3d.shaders.UniformType;
-import com.mojang.blaze3d.textures.GpuTextureView;
+#if MC < 26.3
+import com.mojang.blaze3d.opengl.GlRenderPass.TextureViewAndSampler;
+#endif
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
+import com.mojang.renderpearl.api.pipeline.UniformType;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+#if MC >= 26.3
+import com.mojang.renderpearl.backend.opengl.GlProgram;
+import com.mojang.renderpearl.util.TextureViewAndSampler;
+#else
+import com.mojang.blaze3d.opengl.GlProgram;
+#endif
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
+import com.mojang.renderpearl.backend.opengl.Uniform;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.glsl.GlslVersion;
-import dev.engine_room.flywheel.iris.mixin.CustomUniformsAccessor;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.blending.AlphaTest;
 import net.irisshaders.iris.gl.blending.BlendModeOverride;
@@ -23,6 +34,9 @@ import net.irisshaders.iris.gl.sampler.SamplerLimits;
 import net.irisshaders.iris.gl.state.FogMode;
 import net.irisshaders.iris.helpers.MatrixUtils;
 import net.irisshaders.iris.mixin.GlStateManagerAccessor;
+#if MC >= 26.3
+import net.irisshaders.iris.mixinterface.GlProgramBindings;
+#endif
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.pipeline.programs.IrisProgram;
 import net.irisshaders.iris.shadows.ShadowRenderer;
@@ -35,15 +49,17 @@ import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.*;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
-/** Iris {@code trySetup} tail calls {@link #iris$setupState}; render thread only. */
-public final class GuestProgram extends GlProgram implements IrisProgram {
+/**
+ * Iris invokes {@link #iris$setupState} when installing a guest program for a native draw.
+ */
+public final class GuestProgram extends GlProgram implements IrisProgram #if MC >= 26.3 , GlProgramBindings #endif {
+    // Iris binds its external samplers (albedo/overlay/lightmap) to these units by name.
     private static final String[] FIXED_SAMPLERS = {"Sampler0", "Sampler1", "Sampler2"};
     private static final int[] GRAYSCALE_SWIZZLE = {GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_RED};
     private static final Map<String, String> IRIS_BLOCKS = Map.of(
@@ -56,6 +72,11 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
 
     private final IrisRenderingPipeline parent;
     private final boolean shadow;
+    #if MC >= 26.3
+    private final Map<String, Uniform> namedUniforms = new HashMap<>();
+    private final List<BindGroupLayout.UniformDescription> uniformDescriptions;
+    private final int albedoUniformIndex;
+    #endif
     private final ProgramUniforms uniforms;
     private final ProgramSamplers samplers;
     private final ProgramImages images;
@@ -100,6 +121,17 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
         this.bufferBlendOverrides = bufferBlendOverrides;
         this.alphaReference = alphaTest.reference();
 
+        #if MC >= 26.3
+        uniformDescriptions = List.copyOf(BindGroupLayout.flattenUniforms(layouts));
+        int albedoIndex = -1;
+        for (int index = 0; index < uniformDescriptions.size(); index++) {
+            if (uniformDescriptions.get(index).name().equals("Sampler0")) {
+                albedoIndex = index;
+                break;
+            }
+        }
+        albedoUniformIndex = albedoIndex;
+        #endif
         rawTextureBaseUnit = bindLayouts(layouts, albedoFromCrumbling);
         int reservedUnits = rawTextureBaseUnit + rawTextures.size();
 
@@ -150,6 +182,78 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
                 GRAYSCALE_SWIZZLE);
     }
 
+    /**
+     * Samplers take units 0..2 then the rest, texel buffers follow; every layout entry registers even when the linked
+     * program dropped it: the draw loop addresses entries by name (26.2) / flattened layout index (26.3). Returns the
+     * unit count.
+     */
+    #if MC >= 26.3
+    private int bindLayouts(List<BindGroupLayout> layouts, boolean albedoFromCrumbling) {
+        int programId = getProgramId();
+        GlStateManager._glUseProgram(programId);
+        List<String> samplerNames = uniformDescriptions.stream()
+                .filter(description -> description.type() == UniformType.COMBINED_IMAGE_SAMPLER)
+                .map(BindGroupLayout.UniformDescription::name).toList();
+        int nextUnit = 0;
+        for (String fixed : FIXED_SAMPLERS) {
+            int unit = nextUnit++;
+            if (albedoFromCrumbling && fixed.equals("Sampler0")) continue;
+            if (samplerNames.contains(fixed)) {
+                assignSampler(programId, fixed, unit);
+                namedUniforms.put(fixed, new Uniform.Sampler(unit));
+            }
+        }
+        for (String sampler : samplerNames) {
+            if (namedUniforms.containsKey(sampler) || List.of(FIXED_SAMPLERS).contains(sampler)) continue;
+            int unit = albedoFromCrumbling && sampler.equals("_flw_crumblingTex") ? 0 : nextUnit++;
+            assignSampler(programId, albedoFromCrumbling && sampler.equals("_flw_crumblingTex") ? "Sampler0" : sampler,
+                    unit);
+            namedUniforms.put(sampler, new Uniform.Sampler(unit));
+        }
+        int nextUbo = 0;
+        for (BindGroupLayout.UniformDescription description : uniformDescriptions) {
+            String name = description.name();
+            Uniform uniform;
+            if (description.type() == UniformType.COMBINED_IMAGE_SAMPLER) {
+                uniform = namedUniforms.get(name);
+            } else if (description.type() == UniformType.UNIFORM_BUFFER) {
+                int binding = nextUbo++;
+                int index = iris$getBlockIndex(programId, name);
+                if (index != GL31C.GL_INVALID_INDEX) GL31C.glUniformBlockBinding(programId, index, binding);
+                uniform = new Uniform.Ubo(binding);
+                namedUniforms.put(name, uniform);
+            } else {
+                assignSampler(programId, name, nextUnit);
+                uniform = new Uniform.Utb(nextUnit++, description.gpuFormat());
+                namedUniforms.put(name, uniform);
+            }
+            super.uniforms.add(uniform);
+        }
+        GlStateManager._glUseProgram(0);
+        return nextUnit;
+    }
+
+    private static void assignSampler(int program, String name, int unit) {
+        GlStateManager._glUniform1i(GlStateManager._glGetUniformLocation(program, name), unit);
+    }
+
+    @Override
+    public void iris$setupBindings(List<BindGroupLayout.UniformDescription> descriptions, int pushConstantsSize) {
+        // Compat with Iris: bindings are installed once at link time; each sharing pipeline is checked at registration.
+        // Iris's vanilla binding policy would replace the engine's UBOs and texel buffers with null entries.
+        if (pushConstantsSize != 0 || descriptions.size() != uniformDescriptions.size()) {
+            throw new IllegalStateException("Guest pipeline changed its registered binding contract: "
+                    + getDebugLabel());
+        }
+    }
+
+    Map<String, Uniform> namedUniforms(List<BindGroupLayout> layouts) {
+        if (!uniformDescriptions.equals(BindGroupLayout.flattenUniforms(layouts))) {
+            throw new IllegalStateException("Guest program reused with a different uniform layout: " + getDebugLabel());
+        }
+        return namedUniforms;
+    }
+    #else
     private int bindLayouts(List<BindGroupLayout> layouts, boolean albedoFromCrumbling) {
         Map<String, Uniform> byName = uniformsByName;
         int programId = getProgramId();
@@ -194,10 +298,15 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
         }
         return nextUnit;
     }
+    #endif
 
     @Override
-    public void iris$setupState(HashMap<String, GlRenderPass.TextureViewAndSampler> passSamplers,
+    #if MC >= 26.3
+    public void iris$setupState(List<BindGroupLayout.UniformDescription> descriptions) {
+    #else
+    public void iris$setupState(HashMap<String, TextureViewAndSampler> passSamplers,
                                 @Nullable GpuTextureView albedoTex) {
+    #endif
         DepthColorStorage.unlockDepthColor();
         CapturedRenderingState.INSTANCE.setCurrentAlphaTest(alphaReference);
         GlStateManager._glUseProgram(getProgramId());
@@ -239,12 +348,23 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
         bufferBlendOverrides.forEach(BufferBlendOverride::apply);
 
         target.bind(parent.isBeforeTranslucent);
+        #if MC < 26.3
         if (grayscaleAlbedo) grayscaleAlbedo(albedoTex);
+        #endif
     }
 
     void useGrayscaleAlbedo() {
         grayscaleAlbedo = true;
     }
+
+    #if MC >= 26.3
+    /** After native texture binding, before a draw; font atlases expose coverage in their red channel. */
+    public void setupAlbedo(List<?> boundUniforms) {
+        if (grayscaleAlbedo) {
+            grayscaleAlbedo(((TextureViewAndSampler) boundUniforms.get(albedoUniformIndex)).view());
+        }
+    }
+    #endif
 
     private void bindRawTextures() {
         if (rawTextures.isEmpty()) {
@@ -283,6 +403,10 @@ public final class GuestProgram extends GlProgram implements IrisProgram {
         meshTaskRecovery = taskRecovery;
         meshCompactSafe = compactSafe;
         meshCommandBaseLocation = GlStateManager._glGetUniformLocation(getProgramId(), "_flw_commandBase");
+    }
+
+    boolean shadow() {
+        return shadow;
     }
 
     public int meshQuads() {

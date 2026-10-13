@@ -1,8 +1,8 @@
 package dev.engine_room.flywheel.iris.compile.patches;
 
+import dev.engine_room.flywheel.iris.mixin.IrisRenderingPipelineAccessor;
 import dev.engine_room.flywheel.iris.compile.ContractProgram;
 import dev.engine_room.flywheel.iris.engine.DeferredReplayPlan;
-import dev.engine_room.flywheel.iris.mixin.IrisRenderingPipelineAccessor;
 import net.irisshaders.iris.gl.texture.InternalTextureFormat;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.shaderpack.include.AbsolutePackPath;
@@ -12,7 +12,6 @@ import net.irisshaders.iris.shaderpack.programs.ComputeSource;
 import net.irisshaders.iris.shaderpack.programs.ProgramSet;
 import net.irisshaders.iris.shaderpack.programs.ProgramSource;
 import org.jspecify.annotations.Nullable;
-
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;

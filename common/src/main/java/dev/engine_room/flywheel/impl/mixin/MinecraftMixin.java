@@ -22,7 +22,7 @@ abstract class MinecraftMixin extends ReentrantBlockableEventLoop<Runnable> {
     }
 
     @Inject(method = "onResourceLoadFinished", at = @At("HEAD"))
-    private void flw$warmVisualShaders(CallbackInfo ci) {
+    private void flywheel$warmVisualShaders(CallbackInfo ci) {
         try {
             ShaderWarmupSplash.run(() -> {
                 for (;;) {

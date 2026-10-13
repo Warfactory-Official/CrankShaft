@@ -1,5 +1,7 @@
 package dev.engine_room.flywheel.iris.engine;
 
+import net.irisshaders.iris.mixinterface.CustomPass;
+
 import org.jspecify.annotations.Nullable;
 
 import java.util.List;
@@ -16,7 +18,7 @@ import java.util.List;
  * sorting. A tile-masked stage must cover the full replay viewport.
  * Pack-owned shaders/resources remain responsible for material interpretation and temporal-history isolation.
  */
-public record DeferredReplayPlan(Stage[] stages, @Nullable DeferredCompositePass after, Storage storage,
+public record DeferredReplayPlan(Stage[] stages, @Nullable CustomPass after, Storage storage,
                                  int tileRadius, DeferredReplayResources resources) {
     public DeferredReplayPlan {
         stages = stages.clone();
@@ -49,7 +51,7 @@ public record DeferredReplayPlan(Stage[] stages, @Nullable DeferredCompositePass
         }
     }
 
-    public record Stage(DeferredCompositePass pass, boolean tileMasked) {
+    public record Stage(CustomPass pass, boolean tileMasked) {
     }
 
     public record Storage(int nodesBinding, int countsBinding, int tilesBinding, int commandsBinding,

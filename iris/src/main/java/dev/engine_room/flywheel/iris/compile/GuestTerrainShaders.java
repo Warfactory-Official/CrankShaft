@@ -7,11 +7,13 @@ import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import io.github.douira.glsl_transformer.ast.node.TranslationUnit;
+import io.github.douira.glsl_transformer.ast.node.declaration.InterfaceBlockDeclaration;
 import io.github.douira.glsl_transformer.ast.node.declaration.TypeAndInitDeclaration;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.DeclarationExternalDeclaration;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.ExternalDeclaration;
 import io.github.douira.glsl_transformer.ast.node.type.qualifier.StorageQualifier;
 import io.github.douira.glsl_transformer.ast.node.type.qualifier.TypeQualifier;
+import io.github.douira.glsl_transformer.ast.print.ASTPrinter;
 import io.github.douira.glsl_transformer.ast.query.Root;
 import io.github.douira.glsl_transformer.ast.transform.JobParameters;
 import io.github.douira.glsl_transformer.ast.transform.SingleASTTransformer;
@@ -20,6 +22,9 @@ import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.pipeline.transform.PatchShaderType;
 import net.irisshaders.iris.pipeline.transform.TransformPatcher;
 import net.irisshaders.iris.shaderpack.programs.ProgramSource;
+#if MC >= 26.3
+import net.irisshaders.iris.shaderpack.texture.TextureStage;
+#endif
 import org.jspecify.annotations.Nullable;
 
 import java.util.*;
@@ -36,6 +41,20 @@ import java.util.regex.Pattern;
  * the prologue fills from the engine's region buffer.
  */
 final class GuestTerrainShaders {
+    #if MC >= 26.3
+    // 26.3: a synthetic native UBO keeps its members private; the patched pack already owns its global identifiers.
+    static final String GLOBALS_BLOCK = """
+            layout(std140) uniform iris_Globals {
+                ivec3 CameraBlockPos;
+                float GlintAlpha;
+                vec3 CameraOffset;
+                float GameTime;
+                vec2 ScreenSize;
+                int MenuBlurRadius;
+                int UseRgss;
+            } _flw_terrainGlobals;
+            """;
+    #else
     static final String GLOBALS_BLOCK = """
             layout(std140) uniform iris_Globals {
                 ivec3 CameraBlockPos;
@@ -47,8 +66,12 @@ final class GuestTerrainShaders {
                 int UseRgss;
             };
             """;
+    #endif
     // Sodium's clock and section timestamps share a per-region epoch, including across one MDI call.
-    private static final List<String> REGION_UNIFORMS = List.of("u_RegionOffset", "u_RegionID", "u_CurrentTime");
+    static final String REGION_OFFSET = #if MC >= 26.3 "iris_RegionOffset" #else "u_RegionOffset" #endif;
+    static final String REGION_ID = #if MC >= 26.3 "iris_RegionID" #else "u_RegionID" #endif;
+    static final String REGION_TIME = #if MC >= 26.3 "iris_CurrentTime" #else "u_CurrentTime" #endif;
+    static final List<String> REGION_UNIFORMS = List.of(REGION_OFFSET, REGION_ID, REGION_TIME);
     private static final Pattern VERSION_LINE = Pattern.compile("#version\\s+(\\d+)[^\\n]*\\n");
     static final String REGION_TIME_BLOCK = """
             layout(std430, binding = %d) restrict readonly buffer _flw_RegionTimeBuf {
@@ -67,13 +90,11 @@ final class GuestTerrainShaders {
             };
             """;
 
-    // Only the uniforms this Iris build actually injected are assigned; u_RegionOffset is the load-bearing one.
-    private static final Map<String, String> REGION_ASSIGNMENTS = Map.of("u_RegionOffset",
-            "u_RegionOffset = vec3(_flw_regionOrigin * 16 - _flw_sodiumCameraInt) - _flw_sodiumCameraFrac;",
-            "u_RegionID",
-            "u_RegionID = _flw_region.z;",
-            "u_CurrentTime",
-            "u_CurrentTime = _flw_regionTime[gl_BaseInstanceARB];");
+    // Only the uniforms this Iris build actually injected are assigned; the region offset is load-bearing.
+    private static final Map<String, String> REGION_ASSIGNMENTS = Map.of(REGION_OFFSET,
+            REGION_OFFSET + " = vec3(_flw_regionOrigin * 16 - _flw_sodiumCameraInt) - _flw_sodiumCameraFrac;",
+            REGION_ID, REGION_ID + " = _flw_region.z;",
+            REGION_TIME, REGION_TIME + " = _flw_regionTime[gl_BaseInstanceARB];");
 
     private static final SingleASTTransformer<JobParameters> TRANSFORMER = GuestShaders.versionedTransformer();
 
@@ -140,7 +161,11 @@ final class GuestTerrainShaders {
         return TransformPatcher.patchSodium(source.getName(), source.getVertexSource().orElseThrow(),
                 source.getGeometrySource().orElse(null), source.getTessControlSource().orElse(null),
                 source.getTessEvalSource().orElse(null), source.getFragmentSource().orElseThrow(), alpha,
-                pipeline.getTextureMap(), shadow);
+                pipeline.getTextureMap(),
+                #if MC >= 26.3
+                pipeline.getTextureOverrides(TextureStage.GBUFFERS_AND_SHADOW),
+                #endif
+                shadow);
     }
 
     static Stages build(IrisRenderingPipeline pipeline, ProgramSource source, AlphaTest alpha, boolean shadow) {
@@ -187,14 +212,38 @@ final class GuestTerrainShaders {
         parts.add(new ShaderAssembly.RawSource("pack terrain vertex", body));
         if (!body.contains(IRIS_GLOBALS)) parts.add(new ShaderAssembly.RawSource("terrain globals", GLOBALS_BLOCK));
         parts.add(new ShaderAssembly.RawSource("terrain region bridge", PROLOGUE_HEAD));
-        if (demoted.contains("u_CurrentTime"))
+        if (demoted.contains(REGION_TIME)) {
             parts.add(new ShaderAssembly.RawSource("terrain region clock", REGION_TIME_BLOCK));
+        }
         if (oit) parts.add(new ShaderAssembly.RawSource("terrain view depth", "out float _flw_oitViewZ;\n"));
         parts.add(new ShaderAssembly.RawSource("terrain entry", main.toString()));
         return ShaderAssembly.assemble(ctx -> ctx.requireExtension("GL_ARB_shader_draw_parameters"), parts);
     }
 
+    #if MC >= 26.3
+    static void unpackSodiumRegionBlock(SingleASTTransformer<JobParameters> parser, TranslationUnit tree) {
+        for (var external : List.copyOf(tree.getChildren())) {
+            if (!(external instanceof DeclarationExternalDeclaration declaration)
+                    || !(declaration.getDeclaration() instanceof InterfaceBlockDeclaration block)
+                    || !block.getBlockName().getName().equals("iris_SodiumPushConstants")) continue;
+            if (block.getVariableName() != null || block.getArraySpecifier() != null) {
+                throw new IllegalStateException("Instanced Sodium region block cannot span engine regions");
+            }
+            // 26.3: Iris's per-draw UBO becomes per-region globals in the existing MDI and mesh bridges.
+            int position = tree.getChildren().indexOf(external);
+            for (var member : block.getStructBody().getMembers()) {
+                tree.getChildren().add(position++, parser.parseExternalDeclaration(tree.getRoot(),
+                        "uniform " + ASTPrinter.printSimple(member)));
+            }
+            external.detachAndDelete();
+        }
+    }
+    #endif
+
     private static void demoteRegionUniforms(TranslationUnit tree, Root root) {
+        #if MC >= 26.3
+        unpackSodiumRegionBlock(TRANSFORMER, tree);
+        #endif
         List<String> demoted = new ArrayList<>();
         for (ExternalDeclaration external : tree.getChildren()) {
             if (!(external instanceof DeclarationExternalDeclaration declaration)
@@ -215,8 +264,8 @@ final class GuestTerrainShaders {
                 demoted.add(name);
             }
         }
-        if (!demoted.contains("u_RegionOffset")) {
-            throw new IllegalStateException("Sodium patch declared no u_RegionOffset uniform to bridge");
+        if (!demoted.contains(REGION_OFFSET)) {
+            throw new IllegalStateException("Sodium patch declared no " + REGION_OFFSET + " uniform to bridge");
         }
         lastDemoted = demoted;
         root.rename("main", "_flw_irisMain");

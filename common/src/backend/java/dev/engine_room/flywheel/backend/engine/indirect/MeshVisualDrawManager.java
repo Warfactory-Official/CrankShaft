@@ -1,18 +1,18 @@
 package dev.engine_room.flywheel.backend.engine.indirect;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.opengl.GlBuffer;
-import com.mojang.blaze3d.opengl.GlSampler;
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.GlTexture;
-import com.mojang.blaze3d.pipeline.ColorTargetState;
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.systems.CommandEncoder;
-import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.opengl.GlBuffer;
+import com.mojang.renderpearl.backend.opengl.GlSampler;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.*;
@@ -81,7 +81,8 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
     }
 
     private static void applyMaterialState(Material material) {
-        switch (material.transparency()) {
+        Transparency transparency = material.transparency();
+        switch (transparency) {
             case OPAQUE -> GlStateManager._disableBlend(0);
             case ADDITIVE -> {
                 GlStateManager._enableBlend(0);
@@ -106,7 +107,8 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                         GL11C.GL_ONE, GL11C.GL_ZERO);
             }
         }
-        GlStateManager._depthFunc(depthFunc(material.depthTest()));
+        DepthTest depthTest = material.depthTest();
+        GlStateManager._depthFunc(depthFunc(depthTest));
         GlStateManager._depthMask(material.writeMask()
                                           .depth());
         GlStateManager._colorMask(material.writeMask()
@@ -117,7 +119,8 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
             GlStateManager._disableCull();
         }
         if (material.polygonOffset()) {
-            GlStateManager._polygonOffset(material.transparency() == Transparency.OPAQUE ? 0.0f : 1.0f, 10.0f);
+            GlStateManager._polygonOffset(MaterialRenderState.polygonOffsetSlope(transparency, depthTest),
+                    MaterialRenderState.POLYGON_OFFSET_UNITS);
             GlStateManager._enablePolygonOffset();
         } else {
             GlStateManager._disablePolygonOffset();

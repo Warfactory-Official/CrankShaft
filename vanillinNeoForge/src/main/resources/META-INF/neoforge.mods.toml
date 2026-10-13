@@ -13,13 +13,13 @@ displayTest = "IGNORE_ALL_VERSION"
 [[dependencies.vanillate]]
 modId = "minecraft"
 type = "required"
-versionRange = "[26.2,26.3)"
+versionRange = "${minecraft_neoforge_range}"
 side = "CLIENT"
 
 [[dependencies.vanillate]]
 modId = "neoforge"
 type = "required"
-versionRange = "[26.2.0.7-beta,26.3)"
+versionRange = "${neoforge_range}"
 side = "CLIENT"
 
 # Vanillate is a content addon: it registers visualizers into the CrankShaft engine, which must be present.

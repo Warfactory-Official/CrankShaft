@@ -1,8 +1,9 @@
 package dev.engine_room.flywheel.backend.engine.terrain;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.opengl.GlBuffer;
-import com.mojang.blaze3d.vulkan.VulkanGpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.backend.opengl.GlBuffer;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuBuffer;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.lib.memory.MemoryBlock;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -51,7 +52,7 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
     private final Long2LongMap activeFadeDuration = new Long2LongOpenHashMap();
     private final MemoryBlock visScratch = MemoryBlock.malloc(Float.BYTES);
     private final MemoryBlock slotScratch = MemoryBlock.malloc(Integer.BYTES);
-    private int[][] presentMaskShadow = {new int[0], new int[0]};
+    private final int[][] presentMaskShadow = {new int[0], new int[0]};
     private int presentMaskRegionCap = 0;
     private long sectionVisBufferSize = 0;
     private long translucentSectionDataMirrorBytes = 0;
@@ -66,11 +67,11 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
     private int[] originChunkZ = new int[0];
     private boolean[] live = new boolean[0];
     private int[] geometryHandle = new int[0];
-    private int[][] regionMaxIndexCount = {new int[0], new int[0]};
+    private final int[][] regionMaxIndexCount = {new int[0], new int[0]};
     // Slot bits [regionId * REGION_SIZE + s]: may be nonzero. Clear only dirty slots: refeeds re-clear every empty
     // pass (~6k redundant GL clears/s in flight). Translucent cull decodes all 256 slots ungated => never skip a
     // dirty clear.
-    private long[][] sectionDataDirty = {new long[0], new long[0]};
+    private final long[][] sectionDataDirty = {new long[0], new long[0]};
     private long[] translucentDataDirty = new long[0];
     // Hooks mark, flush feeds once: each defrag/transfer notify re-marks (up to 3 region notifies/move), ~19x uploads.
     private @Nullable RenderRegion[] pendingRegion = new RenderRegion[0];
@@ -81,12 +82,12 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
 
     public TerrainSectionRegistry(TerrainResidentBuffers buffers) {
         this.buffers = buffers;
-        this.sectionDataMirrors = new TerrainResidentBuffer[]{buffers.createMirror(
+        sectionDataMirrors = new TerrainResidentBuffer[]{buffers.createMirror(
                 SECTION_DATA_STRIDE), buffers.createMirror(SECTION_DATA_STRIDE)};
-        this.presentMaskBuffers = new TerrainResidentBuffer[]{buffers.createDynamic(), buffers.createDynamic()};
-        this.sectionVisBuffers = new TerrainResidentBuffer[]{buffers.createDynamic(), buffers.createDynamic()};
-        this.translucentSectionDataMirror = buffers.createMirror(SECTION_DATA_STRIDE);
-        this.translucentVisBuffer = buffers.createDynamic();
+        presentMaskBuffers = new TerrainResidentBuffer[]{buffers.createDynamic(), buffers.createDynamic()};
+        sectionVisBuffers = new TerrainResidentBuffer[]{buffers.createDynamic(), buffers.createDynamic()};
+        translucentSectionDataMirror = buffers.createMirror(SECTION_DATA_STRIDE);
+        translucentVisBuffer = buffers.createDynamic();
         TerrainSectionListener.attach(this);
     }
 
@@ -161,7 +162,7 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
     }
 
     public void setRegionFreedListener(IntConsumer listener) {
-        this.regionFreedListener = listener;
+        regionFreedListener = listener;
     }
 
     public void onSectionMeshed(int regionId, int originX, int originY, int originZ, int localIndex,
@@ -179,11 +180,11 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
             dropActiveFade(regionId, localIndex);
         }
 
-        this.originChunkX[regionId] = originX;
-        this.originChunkY[regionId] = originY;
-        this.originChunkZ[regionId] = originZ;
+        originChunkX[regionId] = originX;
+        originChunkY[regionId] = originY;
+        originChunkZ[regionId] = originZ;
         this.geometryHandle[regionId] = geometryHandle;
-        this.live[regionId] = true;
+        live[regionId] = true;
     }
 
     private void copyTranslucentSlot(int regionId, int s, long srcPtr) {
@@ -284,9 +285,9 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
 
     public void noteRegionIdentity(int regionId, int originX, int originY, int originZ, int geometryHandle) {
         ensureRegionCapacity(regionId + 1);
-        this.originChunkX[regionId] = originX;
-        this.originChunkY[regionId] = originY;
-        this.originChunkZ[regionId] = originZ;
+        originChunkX[regionId] = originX;
+        originChunkY[regionId] = originY;
+        originChunkZ[regionId] = originZ;
         this.geometryHandle[regionId] = geometryHandle;
     }
 
@@ -379,6 +380,17 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
 
     public int sectionDataHandle(int pass) {
         return sectionDataMirrors[pass].handle();
+    }
+
+    /**
+     * Resident section records for render-thread guest recording.
+     */
+    public GpuBufferSlice sectionDataSlice(int pass) {
+        return sectionDataMirrors[pass].slice();
+    }
+
+    public GpuBufferSlice translucentSectionDataSlice() {
+        return translucentSectionDataMirror.slice();
     }
 
     public long sectionDataAddress(int pass) {

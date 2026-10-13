@@ -1,15 +1,30 @@
 package dev.engine_room.flywheel.backend.vk;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.systems.GpuDevice;
-import com.mojang.blaze3d.systems.GpuDeviceBackend;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.vulkan.*;
-import com.mojang.blaze3d.vulkan.checkpoints.CheckpointExtension;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.device.GpuDevice;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.api.GpuDeviceBackend;
+import com.mojang.renderpearl.backend.vulkan.Destroyable;
+import com.mojang.renderpearl.backend.vulkan.VulkanCommandEncoder;
+import com.mojang.renderpearl.backend.vulkan.VulkanConst;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuBuffer;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuSampler;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanRenderPass;
+import com.mojang.renderpearl.backend.vulkan.checkpoints.CheckpointExtension;
+#if MC >= 26.3
+import com.mojang.renderpearl.frontend.FrontendGpuDevice;
+import com.mojang.renderpearl.frontend.FrontendRenderPass;
+#endif
 import dev.engine_room.flywheel.backend.NoiseTextures;
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
+#endif
 import dev.engine_room.flywheel.backend.compile.VkCompilationTasks;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkBindlessTable;
@@ -92,6 +107,15 @@ public final class VkContext {
         return device().createCommandEncoder();
     }
 
+    /** Render-thread access to the native pass while its host facade is open; the result cannot outlive it. */
+    public static VulkanRenderPass renderPass(RenderPass pass) {
+        #if MC >= 26.3
+        return (VulkanRenderPass) ((FrontendRenderPass) pass).backend;
+        #else
+        return (VulkanRenderPass) pass.backend;
+        #endif
+    }
+
     public static void deferDestroy(Destroyable destroyable) {
         if (VkCompilationTasks.deferCleanup(destroyable)) return;
         encoder().queueForDestroy(destroyable);
@@ -103,6 +127,9 @@ public final class VkContext {
      */
     public static void shutdown() {
         VK12.vkDeviceWaitIdle(vkDevice());
+        #if MC >= 26.3
+        RenderPipelineCompiler.reset();
+        #endif
         VkPrograms.kill();
         VkShaderCompiler.shutdown();
         VkPipelineCaches.shutdown();
@@ -161,6 +188,10 @@ public final class VkContext {
 
     private static @Nullable GpuDeviceBackend activeBackend() {
         GpuDevice device = RenderSystem.tryGetDevice();
+        #if MC >= 26.3
+        return device == null ? null : ((FrontendGpuDevice) device).backend;
+        #else
         return device == null ? null : device.backend;
+        #endif
     }
 }

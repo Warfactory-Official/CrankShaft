@@ -12,16 +12,16 @@ import org.spongepowered.asm.mixin.Unique;
 abstract class EntityTypeMixin<T extends Entity> implements EntityTypeExtension<T> {
     @Unique
     @Nullable
-    private EntityVisualizer<? super T> flw$visualizer;
+    private EntityVisualizer<? super T> flywheel$visualizer;
 
     @Override
     @Nullable
-    public EntityVisualizer<? super T> flw$getVisualizer() {
-        return flw$visualizer;
+    public EntityVisualizer<? super T> flywheel$getVisualizer() {
+        return flywheel$visualizer;
     }
 
     @Override
-    public void flw$setVisualizer(@Nullable EntityVisualizer<? super T> visualizer) {
-        flw$visualizer = visualizer;
+    public void flywheel$setVisualizer(@Nullable EntityVisualizer<? super T> visualizer) {
+        flywheel$visualizer = visualizer;
     }
 }

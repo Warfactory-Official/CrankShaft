@@ -21,6 +21,8 @@ public final class Backends {
      * Engine origin-drift radius (blocks), shared by every backend incl. the {@code :meshlet} tiers.
      */
     public static final int MAX_ORIGIN_DISTANCE = 256;
+    public static final Identifier GL_MESH_SHADER_ID = Identifier.fromNamespaceAndPath(Flywheel.ID, "gl_mesh_shader");
+    public static final Identifier VK_MESH_SHADER_ID = Identifier.fromNamespaceAndPath(Flywheel.ID, "vk_mesh_shader");
 
     /**
      * Use GPU instancing to render everything.
@@ -64,7 +66,8 @@ public final class Backends {
                                                                    MAX_ORIGIN_DISTANCE))
                                                            .priority(2000)
                                                            .supported(
-                                                                   () -> VkContext.isVulkanHost() && VkPrograms.allLoaded())
+                                                                   () -> VkContext.isVulkanHost() && VkPrograms.allLoaded()
+                                                                           && !ShadersModHelper.isShaderPackInUse())
                                                            .gpuDriven(true)
                                                            .register(Identifier.fromNamespaceAndPath(Flywheel.ID,
                                                                    "vk_indirect"));

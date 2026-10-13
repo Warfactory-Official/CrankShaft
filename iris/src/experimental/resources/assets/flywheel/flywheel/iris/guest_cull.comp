@@ -1,0 +1,53 @@
+layout(local_size_x = 64) in;
+
+layout(std140) uniform _FlwGuestCull {
+    vec4 _flw_guestPlanes[6];
+};
+
+struct _FlwGuestModel {
+    mat4 embed;
+    vec4 bounds;
+    uvec4 offsets;
+    uvec4 counts;
+};
+
+layout(std430, binding = 3) readonly buffer _FlwGuestModels {
+    _FlwGuestModel _flw_guestModels[];
+};
+
+layout(std430, binding = 1) writeonly buffer _FlwVisibleInstances {
+    uint _flw_visibleInstances[];
+};
+
+layout(std430, binding = 2) buffer _FlwGuestCommands {
+    uint _flw_guestCommands[];
+};
+
+layout(std430) readonly buffer _FlwGuestDrawIndices { uint _flw_guestDrawIndices[]; };
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    _FlwGuestModel model = _flw_guestModels[gl_WorkGroupID.y];
+    if (index >= model.counts.x) return;
+    uint instanceOffset = model.offsets.x + index * model.offsets.w;
+    FlwInstance instance = _flw_unpackInstance(instanceOffset);
+    vec3 center = model.bounds.xyz;
+    float radius = model.bounds.w;
+    flw_transformBoundingSphere(instance, center, radius);
+    center = (model.embed * vec4(center, 1.0)).xyz;
+    vec3 column0 = abs(model.embed[0].xyz);
+    vec3 column1 = abs(model.embed[1].xyz);
+    vec3 column2 = abs(model.embed[2].xyz);
+    float columnNorm = max(dot(column0, vec3(1.0)), max(dot(column1, vec3(1.0)), dot(column2, vec3(1.0))));
+    vec3 rows = column0 + column1 + column2;
+    radius *= sqrt(columnNorm * max(rows.x, max(rows.y, rows.z)));
+    for (int plane = 0; plane < 6; plane++) {
+        if (dot(_flw_guestPlanes[plane], vec4(center, 1.0)) < -radius) return;
+    }
+    uint commandBase = _flw_guestDrawIndices[model.offsets.z] * 12u;
+    uint outputIndex = atomicAdd(_flw_guestCommands[commandBase + 1u], 1u);
+    _flw_visibleInstances[model.offsets.y + outputIndex] = instanceOffset;
+    for (uint draw = 1u; draw < model.counts.y; draw++) {
+        atomicAdd(_flw_guestCommands[_flw_guestDrawIndices[model.offsets.z + draw] * 12u + 1u], 1u);
+    }
+}

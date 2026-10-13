@@ -19,7 +19,7 @@ abstract class LevelChunkMixin {
 
     @Inject(method = "setBlockEntity(Lnet/minecraft/world/level/block/entity/BlockEntity;)V",
             at = @At(value = "INVOKE_ASSIGN", target = "Ljava/util/Map;put(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"), require = 1)
-    private void flw$onBlockEntityAdded(BlockEntity blockEntity, CallbackInfo ci) {
+    private void flywheel$onBlockEntityAdded(BlockEntity blockEntity, CallbackInfo ci) {
         VisualizationManager manager = VisualizationManager.get(level);
         if (manager == null) {
             return;

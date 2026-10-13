@@ -17,13 +17,10 @@ import org.spongepowered.asm.mixin.injection.At;
 @Mixin(value = LevelExtractor.class, priority = 1001)
 abstract class LevelExtractorMixin {
     @WrapOperation(method = "extractVisibleBlockEntities(Lnet/minecraft/client/Camera;FLnet/minecraft/client/renderer/state/level/LevelRenderState;Lnet/minecraft/client/renderer/culling/Frustum;)V", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/blockentity/BlockEntityRenderDispatcher;tryExtractRenderState(Lnet/minecraft/world/level/block/entity/BlockEntity;FLnet/minecraft/client/renderer/feature/ModelFeatureRenderer$CrumblingOverlay;ZLnet/minecraft/client/renderer/culling/Frustum;)Lnet/minecraft/client/renderer/blockentity/state/BlockEntityRenderState;", ordinal = 1), require = 1)
-    private @Nullable BlockEntityRenderState flw$skipVisualizedGlobalBlockEntity(BlockEntityRenderDispatcher dispatcher,
-                                                                                 BlockEntity blockEntity,
-                                                                                 float partialTicks,
-                                                                                 ModelFeatureRenderer.@Nullable CrumblingOverlay breakProgress,
-                                                                                 boolean isGloballyRendered,
-                                                                                 @Nullable Frustum frustum,
-                                                                                 Operation<BlockEntityRenderState> original) {
+    private @Nullable BlockEntityRenderState flywheel$skipVisualizedGlobalBlockEntity(
+            BlockEntityRenderDispatcher dispatcher, BlockEntity blockEntity, float partialTicks,
+            ModelFeatureRenderer.@Nullable CrumblingOverlay breakProgress, boolean isGloballyRendered,
+            @Nullable Frustum frustum, Operation<BlockEntityRenderState> original) {
         if (VisualizationManager.supportsVisualization(blockEntity.getLevel()) && VisualizationHelper.skipVanillaRender(
                 blockEntity)) {
             return null;

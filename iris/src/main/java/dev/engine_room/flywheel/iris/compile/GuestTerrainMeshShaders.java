@@ -1,6 +1,6 @@
 package dev.engine_room.flywheel.iris.compile;
 
-import com.mojang.blaze3d.vertex.VertexFormatElement;
+import com.mojang.renderpearl.api.vertex.VertexFormatElement;
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
@@ -19,6 +19,7 @@ import io.github.douira.glsl_transformer.ast.node.type.initializer.ExpressionIni
 import io.github.douira.glsl_transformer.ast.node.type.qualifier.*;
 import io.github.douira.glsl_transformer.ast.node.type.specifier.ArraySpecifier;
 import io.github.douira.glsl_transformer.ast.node.type.specifier.TypeSpecifier;
+import io.github.douira.glsl_transformer.ast.node.type.struct.StructSpecifier;
 import io.github.douira.glsl_transformer.ast.print.ASTPrinter;
 import io.github.douira.glsl_transformer.ast.print.PrintType;
 import io.github.douira.glsl_transformer.ast.query.Root;
@@ -205,8 +206,9 @@ final class GuestTerrainMeshShaders {
         List<SourceComponent> taskParts = new ArrayList<>();
         if (taskCull) {
             taskParts.add(resource("scene.glsl"));
-            if (vertex.regions.contains("u_CurrentTime"))
+            if (vertex.regions.contains(GuestTerrainShaders.REGION_TIME)) {
                 taskParts.add(raw("task region clock", GuestTerrainShaders.REGION_TIME_BLOCK));
+            }
             taskParts.add(raw("task vertex builtins", builtins));
             if (!vertex.globals) taskParts.add(raw("task globals", GuestTerrainShaders.GLOBALS_BLOCK));
             taskParts.add(raw("task position slice", vertexBody));
@@ -221,8 +223,9 @@ final class GuestTerrainMeshShaders {
                 raw("mesh layout", "layout(local_size_x = 32) in;\nlayout(triangles, max_vertices = " + maxVertices
                         + ", max_primitives = " + maxPrimitives + ") out;\n"));
         meshParts.add(resource("scene.glsl"));
-        if (vertex.regions.contains("u_CurrentTime"))
+        if (vertex.regions.contains(GuestTerrainShaders.REGION_TIME)) {
             meshParts.add(raw("mesh region clock", GuestTerrainShaders.REGION_TIME_BLOCK));
+        }
         meshParts.add(raw("mesh interface", meshInterface.toString()));
         meshParts.add(raw("vertex builtins", builtins));
         if (!vertex.globals) meshParts.add(raw("globals", GuestTerrainShaders.GLOBALS_BLOCK));
@@ -324,8 +327,24 @@ final class GuestTerrainMeshShaders {
         return transformer;
     }
 
+    // Collect before geometry coalesces shared declarations; detached AST types retain their member shapes.
+    static void collectStructTypes(TranslationUnit tree, Stage stage) {
+        for (var external : tree.getChildren()) {
+            if (external instanceof DeclarationExternalDeclaration declaration
+                    && declaration.getDeclaration() instanceof TypeAndInitDeclaration typed
+                    && typed.getType().getTypeSpecifier() instanceof StructSpecifier struct
+                    && struct.getName() != null) {
+                stage.structTypes.put(struct.getName().getName(), struct);
+            }
+        }
+    }
+
     static void transformInterface(SingleASTTransformer<JobParameters> parser, TranslationUnit tree,
                                    Stage stage, boolean vertex) {
+        collectStructTypes(tree, stage);
+        #if MC >= 26.3
+        if (vertex) GuestTerrainShaders.unpackSodiumRegionBlock(parser, tree);
+        #endif
         stage.drawIdSensitive = tree.getRoot().identifierIndex.has("gl_DrawID") || tree.getRoot().identifierIndex.has(
                 "gl_DrawIDARB");
         stage.depthWrites = tree.getRoot().identifierIndex.has("gl_FragDepth");
@@ -363,7 +382,7 @@ final class GuestTerrainMeshShaders {
                     String selector = instance + (geometryInput ? "[_flw_gsVertex]" : "");
                     StringBuilder body = new StringBuilder();
                     for (var member : block.getStructBody().getMembers()) {
-                        String type = typeName(member.getType().getTypeSpecifier());
+                        TypeSpecifier type = member.getType().getTypeSpecifier();
                         String interpolation = interpolation(member.getType().getTypeQualifier());
                         if (interpolation.isEmpty()) interpolation = interpolation(block.getTypeQualifier());
                         for (var item : member.getDeclarators()) {
@@ -371,7 +390,7 @@ final class GuestTerrainMeshShaders {
                             varying(input ? stage.inputs : stage.outputs,
                                     instance.isEmpty() ? name : selector + '.' + name,
                                     type, block.getBlockName().getName() + '.' + name, interpolation,
-                                    arrays(item.getArraySpecifier(),
+                                    stage.structTypes, arrays(item.getArraySpecifier(),
                                             member.getType().getTypeSpecifier().getArraySpecifier()));
                         }
                         if (member.getType().getTypeQualifier() != null) member.getType().setTypeQualifier(null);
@@ -421,12 +440,11 @@ final class GuestTerrainMeshShaders {
                         }
                         String original = stage.geometry && name.startsWith(GuestGeometryStage.PREFIX)
                                 ? name.substring(GuestGeometryStage.PREFIX.length()) : name;
-                        varying(input ? stage.inputs : stage.outputs, access, type, key(qualifiers, original),
-                                interpolation(qualifiers), array);
+                        varying(input ? stage.inputs : stage.outputs, access, typed.getType().getTypeSpecifier(),
+                                key(qualifiers, original), interpolation(qualifiers), stage.structTypes, array);
                     }
                 }
-                if (vertex && uniform && (name.equals("u_RegionOffset") || name.equals("u_RegionID") || name.equals(
-                        "u_CurrentTime"))) {
+                if (vertex && uniform && GuestTerrainShaders.REGION_UNIFORMS.contains(name)) {
                     stage.regions.add(name);
                     typed.getType().setTypeQualifier(null);
                 }
@@ -482,8 +500,9 @@ final class GuestTerrainMeshShaders {
         return result.toString();
     }
 
-    private static void varying(List<Varying> target, String name, String type, String key,
-                                String interpolation, @Nullable ArraySpecifier array) {
+    private static void varying(List<Varying> target, String name, TypeSpecifier type, String key,
+                                String interpolation, Map<String, StructSpecifier> structs,
+                                @Nullable ArraySpecifier array) {
         if (array != null && !array.getDimensions().isEmpty()) {
             var dimension = array.getDimensions().getFirst();
             if (!(dimension instanceof LiteralExpression literal) || literal.getInteger() <= 0 || literal.getInteger() > 256) {
@@ -491,17 +510,32 @@ final class GuestTerrainMeshShaders {
             }
             ArraySpecifier rest = tail(array);
             for (int i = 0; i < literal.getInteger(); i++) {
-                varying(target, name + '[' + i + ']', type, key + '[' + i + ']', interpolation, rest);
+                varying(target, name + '[' + i + ']', type, key + '[' + i + ']', interpolation, structs, rest);
             }
-        } else if (type.matches("mat[234](x[234])?")) {
-            int columns = type.charAt(3) - '0';
-            int rows = type.charAt(type.length() - 1) - '0';
+            return;
+        }
+        String typeName = typeName(type);
+        StructSpecifier struct = type instanceof StructSpecifier inline ? inline : structs.get(typeName);
+        if (struct != null) {
+            for (var member : struct.getStructBody().getMembers()) {
+                TypeSpecifier memberType = member.getType().getTypeSpecifier();
+                String memberInterpolation = interpolation(member.getType().getTypeQualifier());
+                if (memberInterpolation.isEmpty()) memberInterpolation = interpolation;
+                for (var item : member.getDeclarators()) {
+                    String field = '.' + item.getName().getName();
+                    varying(target, name + field, memberType, key + field, memberInterpolation, structs,
+                            arrays(item.getArraySpecifier(), memberType.getArraySpecifier()));
+                }
+            }
+        } else if (typeName.matches("mat[234](x[234])?")) {
+            int columns = typeName.charAt(3) - '0';
+            int rows = typeName.charAt(typeName.length() - 1) - '0';
             for (int column = 0; column < columns; column++) {
                 target.add(
                         new Varying(name + '[' + column + ']', "vec" + rows, key + '[' + column + ']', interpolation));
             }
         } else {
-            target.add(new Varying(name, type, key, interpolation));
+            target.add(new Varying(name, typeName, key, interpolation));
         }
     }
 
@@ -620,10 +654,12 @@ final class GuestTerrainMeshShaders {
            .append("    ivec3 origin = _flw_unpackRegionOrigin(region);\n");
         for (String region : vertex.regions) {
             out.append(switch (region) {
-                case "u_RegionOffset" ->
-                        "    u_RegionOffset = vec3(origin * 16 - _flw_sodiumCameraInt) - _flw_sodiumCameraFrac;\n";
-                case "u_RegionID" -> "    u_RegionID = region.z;\n";
-                case "u_CurrentTime" -> "    u_CurrentTime = _flw_regionTime[_flw_regionSlot];\n";
+                case GuestTerrainShaders.REGION_OFFSET ->
+                        "    " + GuestTerrainShaders.REGION_OFFSET
+                                + " = vec3(origin * 16 - _flw_sodiumCameraInt) - _flw_sodiumCameraFrac;\n";
+                case GuestTerrainShaders.REGION_ID -> "    " + GuestTerrainShaders.REGION_ID + " = region.z;\n";
+                case GuestTerrainShaders.REGION_TIME ->
+                        "    " + GuestTerrainShaders.REGION_TIME + " = _flw_regionTime[_flw_regionSlot];\n";
                 default -> throw new IllegalStateException(region);
             });
         }
@@ -643,6 +679,7 @@ final class GuestTerrainMeshShaders {
         final List<Varying> outputs = new ArrayList<>();
         final List<String> initializers = new ArrayList<>();
         final List<String> regions = new ArrayList<>();
+        final Map<String, StructSpecifier> structTypes = new HashMap<>();
         boolean globals;
         boolean sideEffects;
         boolean resourceReads;

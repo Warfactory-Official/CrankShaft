@@ -1,6 +1,6 @@
 package dev.engine_room.flywheel.backend.vk;
 
-import com.mojang.blaze3d.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
 import dev.engine_room.flywheel.backend.GpuTimer;
 import dev.engine_room.flywheel.backend.util.GpuTimerReport;
 import org.lwjgl.system.MemoryStack;

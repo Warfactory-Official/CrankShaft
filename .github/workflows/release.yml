@@ -31,47 +31,64 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: 9.5.0
-          # Releases consume the cache populated by build.yml on 26.2 pushes;
+          # Releases consume the cache populated by build.yml on multiversion pushes;
           # they should not write back into the shared cache.
           cache-read-only: true
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      # The tag names the coordinate, but gradle.properties decides it. If the two disagree the run publishes
-      # something the tag does not describe, so this fails instead of guessing which side is right.
-      - name: Verify tag matches gradle.properties
-        shell: bash
+      - name: Verify tag and select Minecraft version
+        id: release
+        shell: python
         run: |
-          set -euo pipefail
-          read_prop() {
-            grep -E "^\s*$1\s*=" gradle.properties | sed -E "s/^\s*$1\s*=\s*//; s/\r$//" | xargs || true
-          }
-          MOD_VERSION=$(read_prop mod_version)
-          MC_VERSION=$(read_prop minecraft_version)
-          if [[ -z "${MOD_VERSION}" ]]; then
-            echo "::error::mod_version is empty or missing in gradle.properties"; exit 1
-          fi
-          if [[ -z "${MC_VERSION}" ]]; then
-            echo "::error::minecraft_version is empty or missing in gradle.properties"; exit 1
-          fi
-          EXPECTED="v${MOD_VERSION}+mc${MC_VERSION}"
-          if [[ "${GITHUB_REF_NAME}" != "${EXPECTED}" ]]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match gradle.properties, which builds ${EXPECTED}. Bump mod_version or retag; do not publish a coordinate the tag does not name."
-            exit 1
-          fi
-          echo "Publishing dev.engine_room:crankshaft:${MOD_VERSION}+mc${MC_VERSION}"
+          import os
+          import re
+          from pathlib import Path
+
+          def fail(message):
+              raise SystemExit(f"::error::{message}")
+
+          def read_property(path, name):
+              values = [line.split("=", 1)[1].strip() for line in path.read_text().splitlines()
+                        if re.match(rf"^\s*{re.escape(name)}\s*=", line)]
+              if len(values) != 1 or not values[0]:
+                  fail(f"{name} must occur once and be nonempty in {path}")
+              return values[0]
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          match = re.fullmatch(r"v([^+]+)\+mc([^+]+)", tag)
+          if not match:
+              fail(f"Tag {tag} must have the form v<mod-version>+mc<minecraft-version>")
+          tagged_mod_version, mc_version = match.groups()
+          profiles = {path.parent.name: path for path in Path("versions").glob("*/gradle.properties")}
+          if mc_version not in profiles:
+              fail(f"Minecraft {mc_version} has no supported version profile")
+          mod_version = read_property(Path("gradle.properties"), "mod_version")
+          profile_version = read_property(profiles[mc_version], "minecraft_version")
+          if tagged_mod_version != mod_version or mc_version != profile_version:
+              fail(f"Tag {tag} does not match v{mod_version}+mc{profile_version}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"mc_version={mc_version}\n")
+          print(f"Publishing Minecraft {mc_version}, mod version {mod_version}")
 
       - name: Publish CrankShaft to Maven (warfactory)
         env:
           MAVEN_USER: ${{ secrets.MAVEN_USER }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
           MAVEN_URL: https://repo.warfactory.co/releases
+          MC_VERSION: ${{ steps.release.outputs.mc_version }}
         run: |
           ./gradlew \
             -Pbuild.release \
-            :fabric:publishMavenJarPublicationToWarfactoryRepository \
-            :neoforge:publishMavenJarPublicationToWarfactoryRepository \
+            ":fabric:${MC_VERSION}:publishMavenJarPublicationToWarfactoryRepository" \
+            ":neoforge:${MC_VERSION}:publishMavenJarPublicationToWarfactoryRepository" \
             --no-daemon \
             --stacktrace
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ github.ref_name }}-jars
+          path: build/mods/${{ steps.release.outputs.mc_version }}/*.jar
+          if-no-files-found: error

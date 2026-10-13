@@ -14,16 +14,20 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jspecify.annotations.Nullable;
 
 public class BlockOitDemoGlass extends BaseEntityBlock {
+    #if MC < 26.3
     public static final MapCodec<BlockOitDemoGlass> CODEC = simpleCodec(BlockOitDemoGlass::new);
+    #endif
 
     public BlockOitDemoGlass(BlockBehaviour.Properties properties) {
         super(properties);
     }
 
+    #if MC < 26.3
     @Override
     protected MapCodec<? extends BaseEntityBlock> codec() {
         return CODEC;
     }
+    #endif
 
     @Override
     public @Nullable BlockEntity newBlockEntity(BlockPos pos, BlockState state) {

@@ -16,8 +16,8 @@ abstract class DhApiTerrainDataRepoMixin {
     // Read on the calling thread; the repository opens a connection per thread.
     @WrapOperation(method = "getTerrainDataColumnArray", at = @At(value = "INVOKE",
             target = "Lcom/seibel/distanthorizons/core/file/fullDatafile/V2/FullDataSourceProviderV2;getAsync(J)Ljava/util/concurrent/CompletableFuture;"))
-    private static CompletableFuture<FullDataSourceV2> flw$readOnCaller(FullDataSourceProviderV2 provider, long pos,
-                                                                         Operation<CompletableFuture<FullDataSourceV2>> original) {
+    private static CompletableFuture<FullDataSourceV2> flywheel$readOnCaller(
+            FullDataSourceProviderV2 provider, long pos, Operation<CompletableFuture<FullDataSourceV2>> original) {
         return CompletableFuture.completedFuture(provider.get(pos));
     }
 }

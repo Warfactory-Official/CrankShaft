@@ -1,10 +1,9 @@
 package dev.engine_room.flywheel.backend.compile;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vulkan.Destroyable;
+import com.mojang.renderpearl.backend.vulkan.Destroyable;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.FlwBackend;
-import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkPipelineCaches;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkBindlessTable;
 import dev.engine_room.flywheel.backend.vk.shader.VkShaderCompiler;

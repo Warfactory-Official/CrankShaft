@@ -1,0 +1,22 @@
+// Shared sources use native 26.3 imports. Earlier nodes relocate imports before Java resolves them.
+// Descriptors, strings and changed API shapes remain explicitly versioned in Java.
+#if MC < 26.3
+package com.mojang.renderpearl.backend.opengl -> com.mojang.blaze3d.opengl;
+package com.mojang.renderpearl.backend.vulkan -> com.mojang.blaze3d.vulkan;
+package com.mojang.renderpearl.backend.api -> com.mojang.blaze3d.systems;
+package com.mojang.renderpearl.api.commands -> com.mojang.blaze3d.systems;
+package com.mojang.renderpearl.api.device -> com.mojang.blaze3d.systems;
+package com.mojang.renderpearl.api.buffers -> com.mojang.blaze3d.buffers;
+package com.mojang.renderpearl.api.textures -> com.mojang.blaze3d.textures;
+package com.mojang.renderpearl.api.vertex -> com.mojang.blaze3d.vertex;
+package com.mojang.renderpearl.api.pipeline -> com.mojang.blaze3d.pipeline;
+package com.mojang.renderpearl.api -> com.mojang.blaze3d;
+
+type com.mojang.renderpearl.api.pipeline.CompareOp -> com.mojang.blaze3d.platform.CompareOp;
+type com.mojang.renderpearl.api.pipeline.BlendFactor -> com.mojang.blaze3d.platform.BlendFactor;
+type com.mojang.renderpearl.api.pipeline.BlendOp -> com.mojang.blaze3d.platform.BlendOp;
+type com.mojang.renderpearl.api.pipeline.IndexType -> com.mojang.blaze3d.IndexType;
+type com.mojang.renderpearl.api.pipeline.PrimitiveTopology -> com.mojang.blaze3d.PrimitiveTopology;
+type com.mojang.renderpearl.api.pipeline.ShaderSource -> com.mojang.blaze3d.shaders.ShaderSource;
+type com.mojang.renderpearl.api.pipeline.UniformType -> com.mojang.blaze3d.shaders.UniformType;
+#endif

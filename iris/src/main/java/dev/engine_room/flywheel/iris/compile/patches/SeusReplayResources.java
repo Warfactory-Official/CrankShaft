@@ -2,13 +2,13 @@ package dev.engine_room.flywheel.iris.compile.patches;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.primitives.Ints;
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.GlTexture;
-import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
-import dev.engine_room.flywheel.iris.engine.DeferredCompositePass;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
 import dev.engine_room.flywheel.iris.engine.DeferredReplayPlan;
 import dev.engine_room.flywheel.iris.engine.DeferredReplayResources;
 import dev.engine_room.flywheel.iris.engine.DeferredReplayShaders;
+import dev.engine_room.flywheel.iris.mixin.CompositePassAccessor;
+import net.irisshaders.iris.mixinterface.CustomPass;
 import net.irisshaders.iris.targets.RenderTargets;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.*;
@@ -18,12 +18,14 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
-/** SEUS material and lighting banks share a texture; replay preserves both quadrants independently. */
+/**
+ * SEUS material/lighting share a texture; replay preserves both quadrants.
+ */
 final class SeusReplayResources implements DeferredReplayResources {
     private static final int FIRST_TEXTURE = 10;
     private final RenderTargets targets;
     private final ImmutableSet<Integer> readAlt;
-    private final DeferredCompositePass last;
+    private final CustomPass last;
     private final int[] snapshotIndices;
     private final int[] inputs;
     private final boolean motion;
@@ -40,10 +42,10 @@ final class SeusReplayResources implements DeferredReplayResources {
     private boolean borrowedDepth;
     private long textureBytes;
 
-    private SeusReplayResources(RenderTargets targets, DeferredCompositePass first, DeferredCompositePass last,
+    private SeusReplayResources(RenderTargets targets, CustomPass first, CustomPass last,
                                 boolean motion, boolean restoreColor0) {
         this.targets = targets;
-        readAlt = first.flywheel$readAlt();
+        readAlt = ((CompositePassAccessor) first).flywheel$readAlt();
         this.last = last;
         this.motion = motion;
         this.restoreColor0 = restoreColor0;
@@ -58,63 +60,71 @@ final class SeusReplayResources implements DeferredReplayResources {
         if (motion) snapshotIndices[motionSlot] = 8;
         inputs = new int[snapshotIndices.length];
         saved = new int[snapshotIndices.length];
-        lastColorSlot = Ints.indexOf(last.flywheel$drawBuffers(), 1);
+        lastColorSlot = Ints.indexOf(((CompositePassAccessor) last).flywheel$drawBuffers(), 1);
         if (lastColorSlot < 0) throw new IllegalStateException("SEUS material exit does not write color");
     }
 
     static @Nullable DeferredReplayPlan plan(RenderTargets targets, List<?> passes, boolean motion) {
         var stages = new ArrayList<DeferredReplayPlan.Stage>();
-        DeferredCompositePass after = null;
+        CustomPass after = null;
         for (Object entry : passes) {
-            DeferredCompositePass pass = (DeferredCompositePass) entry;
-            String name = pass.flywheel$name();
+            CustomPass pass = (CustomPass) entry;
+            String name = ((CompositePassAccessor) pass).flywheel$name();
             if (name.equals("composite")) stages.add(new DeferredReplayPlan.Stage(pass, false));
             else if (name.matches("composite[1-4]")) stages.add(new DeferredReplayPlan.Stage(pass, false));
             else if (!stages.isEmpty() && after == null) after = pass;
         }
         if (stages.isEmpty()) return null;
-        if (stages.size() != 5 || !stages.getFirst().pass().flywheel$name().equals("composite"))
+        if (stages.size() != 5 || !((CompositePassAccessor) stages.getFirst().pass()).flywheel$name()
+                                                                                     .equals("composite"))
             throw new IllegalStateException("SEUS material replay stages changed");
-        boolean restoreColor0 = stages.stream().anyMatch(stage -> Ints.contains(stage.pass().flywheel$drawBuffers(), 0)
-                || Arrays.stream(stage.pass().flywheel$computes()).anyMatch(Objects::nonNull));
+        boolean restoreColor0 = stages.stream().anyMatch(
+                stage -> Ints.contains(((CompositePassAccessor) stage.pass()).flywheel$drawBuffers(), 0)
+                        || Arrays.stream(((CompositePassAccessor) stage.pass()).flywheel$computes())
+                                 .anyMatch(Objects::nonNull));
         return new DeferredReplayPlan(stages.toArray(DeferredReplayPlan.Stage[]::new), after,
                 new DeferredReplayPlan.Storage(1, 2, 3, 4, 16, 1 << 16, 1 << 18, 16, 4), 0,
-                new SeusReplayResources(targets, stages.getFirst().pass(), stages.getLast().pass(), motion, restoreColor0));
+                new SeusReplayResources(targets, stages.getFirst().pass(), stages.getLast().pass(), motion,
+                        restoreColor0));
+    }
+
+    private static void sampler(int program, String name, int unit) {
+        GL41C.glProgramUniform1i(program, GL20C.glGetUniformLocation(program, name), FIRST_TEXTURE + unit);
+    }
+
+    private static void bind(int unit, int texture) {
+        GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + FIRST_TEXTURE + unit);
+        GlStateManager._bindTexture(texture);
+        GL33C.glBindSampler(FIRST_TEXTURE + unit, 0);
+    }
+
+    private static void complete(int fbo) {
+        int status = GL45C.glCheckNamedFramebufferStatus(fbo, GL30C.GL_FRAMEBUFFER);
+        if (status != GL30C.GL_FRAMEBUFFER_COMPLETE)
+            throw new IllegalStateException("SEUS replay framebuffer: " + status);
     }
 
     @Override
-    public int width() { return targets.getCurrentWidth(); }
+    public int width() {
+        return targets.getCurrentWidth();
+    }
 
     @Override
-    public int height() { return targets.getCurrentHeight(); }
+    public int height() {
+        return targets.getCurrentHeight();
+    }
 
     @Override
-    public boolean preservesViewport() { return true; }
+    public boolean preservesViewport() {
+        return true;
+    }
 
     private void compileSort() {
         if (sortProgram != 0) return;
-        String sort = DeferredOitProfile.resource("layer_sort.glsl")
-                .replace("flw_nodes[flw_node * 2u + 1u].w = floatBitsToUint(transparentDensity);", "")
-                .replace("_FLW_VISIBILITY_BODY", "if (uintBitsToFloat(flw_nodes[flw_node].y) < flw_opaqueDepth) ++flw_visible;")
-                .replace("_FLW_SORT_PIXEL", "pixel")
-                .replace("_FLW_SORT_COUNTS_LAYERS", "true")
-                .replace("_FLW_SORT_LAYER_BIAS", "0u")
-                .replace("flw_length + 0u", "flw_visible")
-                .replace(" * 2u", "");
-        sortProgram = DeferredReplayShaders.compute("seus_sort.comp", compilation -> {
-            // HRR 3 uses the final word for motion, so every bit participates in an equal-depth tie.
-            String storage = DeferredOitProfile.resource("layer_storage.glsl")
-                    .replace("return (a.w & FLW_LAYER_UNLIT) <= (b.w & FLW_LAYER_UNLIT);", "return a.w <= b.w;");
-            compilation.appendComponent(new ShaderAssembly.RawSource("seus_sort_storage",
-                    "uniform vec2 screenSize;\nuniform sampler2D opaqueDepth;\n" + storage));
-            compilation.appendComponent(new ShaderAssembly.RawSource("seus_sort_lists",
-                    "void flw_sortSeus(uvec2 pixel) {\nuint flw_visible = 0u;\n"
-                            + "float flw_opaqueDepth = 1.0 - texelFetch(opaqueDepth, ivec2(pixel), 0).r;\n"
-                            + sort + "\n}"));
-        });
+        sortProgram = DeferredReplayShaders.compute("seus_sort.comp", SeusReplayShaders::sort);
         sampler(sortProgram, "opaqueDepth", 0);
         sortSizeLocation = GL20C.glGetUniformLocation(sortProgram, "screenSize");
-        GL45C.glProgramUniform1i(sortProgram, GL20C.glGetUniformLocation(sortProgram, "flw_oitActive"), 1);
+        GL41C.glProgramUniform1i(sortProgram, GL20C.glGetUniformLocation(sortProgram, "flw_oitActive"), 1);
     }
 
     private void compileReplay() {
@@ -141,13 +151,13 @@ final class SeusReplayResources implements DeferredReplayResources {
     @Override
     public void prepareCapture() {
         compileSort();
-        GL43C.glMemoryBarrier(GL43C.GL_SHADER_STORAGE_BARRIER_BIT);
+        GL42C.glMemoryBarrier(GL43C.GL_SHADER_STORAGE_BARRIER_BIT);
         // Native textured effects are captured before Iris copies this frame's opaque depth.
         bind(0, ((GlTexture) targets.getDepthTextureNoTranslucents()).glId());
         GlStateManager._glUseProgram(sortProgram);
         int w = width(), h = height();
         if (sortWidth != w || sortHeight != h) {
-            GL45C.glProgramUniform2f(sortProgram, sortSizeLocation, w, h);
+            GL41C.glProgramUniform2f(sortProgram, sortSizeLocation, w, h);
             sortWidth = w;
             sortHeight = h;
         }
@@ -173,7 +183,7 @@ final class SeusReplayResources implements DeferredReplayResources {
             release();
             width = w;
             height = h;
-            GL45C.glProgramUniform1i(materialProgram, widthLocation, width);
+            GL41C.glProgramUniform1i(materialProgram, widthLocation, width);
             depth = currentDepth;
             opaqueDepth = currentOpaque;
             restoreFbo = GL45C.glCreateFramebuffers();
@@ -193,7 +203,8 @@ final class SeusReplayResources implements DeferredReplayResources {
                 saved[i] = texture(format, inputs[i]);
             }
             savedDepth = texture(GL45C.glGetTextureLevelParameteri(depth, 0, GL11C.GL_TEXTURE_INTERNAL_FORMAT), depth);
-            savedOpaque = texture(GL45C.glGetTextureLevelParameteri(opaqueDepth, 0, GL11C.GL_TEXTURE_INTERNAL_FORMAT), opaqueDepth);
+            savedOpaque = texture(GL45C.glGetTextureLevelParameteri(opaqueDepth, 0, GL11C.GL_TEXTURE_INTERNAL_FORMAT),
+                    opaqueDepth);
             backColor = texture(targets.get(1).getInternalFormat().getGlFormat(), color(1));
             layerNodes = texture(GL30C.GL_R32UI, 0);
             int[] restoreInputs = restoreColor0 ? new int[]{0, 1, reflectionSlot, reflectionSlot + 1}
@@ -259,14 +270,14 @@ final class SeusReplayResources implements DeferredReplayResources {
         GlStateManager._depthFunc(GL11C.GL_ALWAYS);
         GlStateManager._depthMask(true);
         GlStateManager._glUseProgram(materialProgram);
-        GL45C.glProgramUniform1i(materialProgram, layerLocation, layer);
+        GL41C.glProgramUniform1i(materialProgram, layerLocation, layer);
         GL40C.glDrawElementsIndirect(GL11C.GL_TRIANGLES, type, offset);
     }
 
     @Override
     public void advance(int layer, int type, long offset) {
         bind(0, depth);
-        bind(1, last.flywheel$framebuffer().getColorAttachment(lastColorSlot));
+        bind(1, ((CompositePassAccessor) last).flywheel$framebuffer().getColorAttachment(lastColorSlot));
         GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, advanceFbo);
         GlStateManager._enableDepthTest();
         GlStateManager._depthFunc(GL11C.GL_ALWAYS);
@@ -304,24 +315,10 @@ final class SeusReplayResources implements DeferredReplayResources {
                 to, GL11C.GL_TEXTURE_2D, 0, 0, 0, 0, width, height, 1);
     }
 
-    private static void sampler(int program, String name, int unit) {
-        GL45C.glProgramUniform1i(program, GL20C.glGetUniformLocation(program, name), FIRST_TEXTURE + unit);
-    }
-
-    private static void bind(int unit, int texture) {
-        GlStateManager._activeTexture(GL20C.GL_TEXTURE0 + FIRST_TEXTURE + unit);
-        GlStateManager._bindTexture(texture);
-        GL33C.glBindSampler(FIRST_TEXTURE + unit, 0);
-    }
-
-    private static void complete(int fbo) {
-        int status = GL45C.glCheckNamedFramebufferStatus(fbo, GL30C.GL_FRAMEBUFFER);
-        if (status != GL30C.GL_FRAMEBUFFER_COMPLETE)
-            throw new IllegalStateException("SEUS replay framebuffer: " + status);
-    }
-
     @Override
-    public long allocatedBytes() { return textureBytes; }
+    public long allocatedBytes() {
+        return textureBytes;
+    }
 
     @Override
     public void release() {

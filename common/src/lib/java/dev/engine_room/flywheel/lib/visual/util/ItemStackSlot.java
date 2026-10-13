@@ -32,19 +32,24 @@ public final class ItemStackSlot {
     private boolean animated;
 
     public static boolean isVisualized(ItemStack stack) {
-        return !stack.isEmpty() && VisualizerRegistry.getVisualizer(stack.getItem()) != null;
+        return isVisualized(stack, ItemDisplayContext.NONE, null);
+    }
+
+    public static boolean isVisualized(ItemStack stack, ItemDisplayContext displayContext, @Nullable ItemOwner owner) {
+        ItemStackVisualizer visualizer = stack.isEmpty() ? null : VisualizerRegistry.getVisualizer(stack.getItem());
+        return visualizer != null && visualizer.supports(stack, displayContext, owner);
     }
 
     /**
      * @param pose where vanilla submits the stack's {@code ItemStackRenderState}: before the item model's display
      *             transform.
-     * @return {@code false}, deleting any visual, when the item has no visualizer.
+     * @return {@code false}, deleting any visual, when the stack has no supported visualizer in this context.
      */
     public boolean draw(VisualizationContext ctx, ItemStack stack, ItemDisplayContext displayContext,
                         @Nullable ItemOwner owner, int seed, Matrix4fc pose, int light, int overlay,
                         float partialTick) {
         ItemStackVisualizer visualizer = stack.isEmpty() ? null : VisualizerRegistry.getVisualizer(stack.getItem());
-        if (visualizer == null) {
+        if (visualizer == null || !visualizer.supports(stack, displayContext, owner)) {
             delete();
             return false;
         }

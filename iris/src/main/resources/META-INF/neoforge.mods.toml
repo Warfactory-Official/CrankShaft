@@ -9,24 +9,27 @@ displayName = "CrankShaft Iris"
 description = "Iris shaderpack guest backends for CrankShaft."
 displayTest = "IGNORE_ALL_VERSION"
 
+[[accessTransformers]]
+file = "META-INF/tenon-access-compileNeoforgeJava.cfg"
+
 [[mixins]]
 config = "flywheel.iris.mixins.json"
 
 [[dependencies.flywheel_iris]]
 modId = "minecraft"
 type = "required"
-versionRange = "[0,)"
+versionRange = "${minecraft_neoforge_range}"
 side = "CLIENT"
 
 [[dependencies.flywheel_iris]]
 modId = "neoforge"
 type = "required"
-versionRange = "[0,)"
+versionRange = "${neoforge_range}"
 side = "CLIENT"
 
 [[dependencies.flywheel_iris]]
 modId = "iris"
 type = "optional"
-versionRange = "[1.11.4,)"
+versionRange = "${iris_neoforge_range}"
 ordering = "AFTER"
 side = "CLIENT"

@@ -1,20 +1,22 @@
 package dev.engine_room.flywheel.impl.compat;
 
-import com.mojang.blaze3d.opengl.GlTextureView;
+#if MC < 26.3
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import dev.engine_room.flywheel.api.lod.LodSurface;
-import me.cortex.voxy.client.config.VoxyConfig;
+import com.mojang.renderpearl.backend.opengl.GlTextureView;
 import me.cortex.voxy.client.core.IVoxyRenderSystemHolder;
 import me.cortex.voxy.client.core.VoxyRenderSystem;
 import me.cortex.voxy.client.core.rendering.Viewport;
 import me.cortex.voxy.client.core.util.IrisUtil;
+import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
+import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRenderPasses;
+import net.caffeinemc.mods.sodium.client.util.FogParameters;
+#endif
+import dev.engine_room.flywheel.api.lod.LodSurface;
+import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.common.world.WorldEngine;
 import me.cortex.voxy.common.world.WorldSection;
 import me.cortex.voxy.common.world.other.Mapper;
 import me.cortex.voxy.commonImpl.WorldIdentifier;
-import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
-import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRenderPasses;
-import net.caffeinemc.mods.sodium.client.util.FogParameters;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.util.Util;
 import net.minecraft.world.level.Level;
@@ -32,12 +34,24 @@ public final class VoxyCompat {
     private VoxyCompat() {
     }
 
+    public static void init() {
+        #if MC >= 26.3
+        // TODO: no Voxy build targets Renderpearl.
+        if (ACTIVE) {
+            throw new IllegalStateException(
+                    "CrankShaft 26.3 does not support Voxy until a Voxy build targets Renderpearl");
+        }
+        #endif
+    }
+
+    #if MC < 26.3
     public static void renderInPlaceOfCutout(ChunkRenderMatrices matrices, FogParameters fog, double x, double y,
                                              double z) {
         if (ACTIVE) {
             Internals.renderOpaque(matrices, fog, x, y, z);
         }
     }
+    #endif
 
     public static int distance() {
         return ACTIVE ? Internals.distance() : 0;
@@ -56,6 +70,7 @@ public final class VoxyCompat {
             return config.isRenderingEnabled() ? Math.round(config.sectionRenderDistance * 32 * 16) : 0;
         }
 
+        #if MC < 26.3
         static void renderOpaque(ChunkRenderMatrices matrices, FogParameters fog, double x, double y, double z) {
             VoxyRenderSystem renderer = IVoxyRenderSystemHolder.getNullable();
             if (renderer == null) {
@@ -73,6 +88,7 @@ public final class VoxyCompat {
             renderer.renderOpaque(viewport, ((GlTextureView) target.getDepthTextureView()).glId(),
                     ((GlTextureView) target.getColorTextureView()).glId());
         }
+        #endif
     }
 
     private static final class Heights {

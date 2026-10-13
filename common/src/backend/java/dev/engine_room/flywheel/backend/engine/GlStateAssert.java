@@ -1,6 +1,6 @@
 package dev.engine_room.flywheel.backend.engine;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import org.lwjgl.opengl.*;
 import org.lwjgl.system.MemoryStack;
@@ -30,9 +30,18 @@ public final class GlStateAssert {
     public static int assertRenderState(String label) {
         int mismatches = 0;
 
-        // ---- Blend (index 0; func/equation are not exposed per-index without GL40) ----
+        // ---- Blend (the function/equation cache remains shared across attachments) ----
+        #if MC >= 26.3
+        GlStateManager.BlendState blend = GlStateManager.BLEND;
+        for (int i = 0; i < GlStateManager.BLEND_ENABLE.length; i++) {
+            mismatches += checkBool(label, "BLEND_ENABLE[" + i + "]", GlStateManager.BLEND_ENABLE[i],
+                    GL30.glIsEnabledi(GL11.GL_BLEND, i));
+        }
+        #else
         GlStateManager.BlendState blend = GlStateManager.BLEND[0];
         mismatches += checkBool(label, "BLEND[0].mode.enabled", blend.mode.enabled, GL11.glIsEnabled(GL11.GL_BLEND));
+        // 26.2: BLEND[1-7] cache bits are vestigial; only BLEND[0] tracks the global GL_BLEND capability.
+        #endif
         mismatches += checkInt(label, "BLEND[0].srcRgb", blend.srcRgb, GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB));
         mismatches += checkInt(label, "BLEND[0].dstRgb", blend.dstRgb, GL11.glGetInteger(GL14.GL_BLEND_DST_RGB));
         mismatches += checkInt(label, "BLEND[0].srcAlpha", blend.srcAlpha, GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA));
@@ -40,11 +49,6 @@ public final class GlStateAssert {
         mismatches += checkInt(label, "BLEND[0].modeRgb", blend.modeRgb, GL11.glGetInteger(GL20.GL_BLEND_EQUATION_RGB));
         mismatches += checkInt(label, "BLEND[0].modeAlpha", blend.modeAlpha,
                 GL11.glGetInteger(GL20.GL_BLEND_EQUATION_ALPHA));
-
-        // NOTE: GlStateManager models blend GLOBALLY -- every BLEND[i].mode wraps the single GL_BLEND cap, and only
-        // BLEND[0] is actually maintained (e.g. Mojang's _disableBlend(0)). The BLEND[1-7] cache bits are vestigial,
-        // so comparing them to per-attachment glIsEnabledi is a false positive (cache=false vs GL=true whenever
-        // global blend is on). Only BLEND[0] vs the global GL_BLEND (checked above) is meaningful.
 
         // ---- Depth ----
         GlStateManager.DepthState depth = GlStateManager.DEPTH;

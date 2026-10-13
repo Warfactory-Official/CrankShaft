@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.api.material.DepthTest;
 import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
+import dev.engine_room.flywheel.backend.engine.MaterialRenderState;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.VkPipelineCaches;
@@ -13,6 +14,8 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 
 import java.nio.LongBuffer;
+import java.util.IdentityHashMap;
+import java.util.Map;
 
 public final class VkGraphicsPipeline {
     public static final int COLOR_WRITE_RGBA = VK10.VK_COLOR_COMPONENT_R_BIT | VK10.VK_COLOR_COMPONENT_G_BIT
@@ -26,13 +29,20 @@ public final class VkGraphicsPipeline {
     private final long vertexModule;
     private final long fragmentModule;
     private final long pipeline;
+    private final Config config;
+    private final Map<Subpass, Long> subpassPipelines = new IdentityHashMap<>();
 
     public VkGraphicsPipeline(VkDescriptorLayout layout, long vertexModule, long fragmentModule, Config config) {
-        preflight(config);
         this.layout = layout;
         this.vertexModule = vertexModule;
         this.fragmentModule = fragmentModule;
+        this.config = config;
+        pipeline = createPipeline(layout, vertexModule, fragmentModule, config, 0L, 0);
+    }
 
+    private static long createPipeline(VkDescriptorLayout layout, long vertexModule, long fragmentModule,
+                                       Config config, long renderPass, int subpass) {
+        preflight(config);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkPipelineShaderStageCreateInfo.Buffer stages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
             stages.get(0).sType$Default().stage(VK10.VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule)
@@ -89,15 +99,24 @@ public final class VkGraphicsPipeline {
                 attrs.get(5).location(5).binding(0).format(VK10.VK_FORMAT_R8G8B8A8_SNORM).offset(32);
 
                 vertexInput.pVertexBindingDescriptions(binding).pVertexAttributeDescriptions(attrs);
-            } else if (config.vertex() == Vertex.BLOCK) {
-                VkVertexInputBindingDescription.Buffer binding = VkVertexInputBindingDescription.calloc(1, stack);
+            } else if (config.vertex() == Vertex.BLOCK || config.vertex() == Vertex.BLOCK_MULTIDRAW) {
+                boolean multidraw = config.vertex() == Vertex.BLOCK_MULTIDRAW;
+                VkVertexInputBindingDescription.Buffer binding =
+                        VkVertexInputBindingDescription.calloc(multidraw ? 2 : 1, stack);
                 binding.get(0).binding(0).stride(BLOCK_STRIDE).inputRate(VK10.VK_VERTEX_INPUT_RATE_VERTEX);
 
-                VkVertexInputAttributeDescription.Buffer attrs = VkVertexInputAttributeDescription.calloc(4, stack);
+                VkVertexInputAttributeDescription.Buffer attrs =
+                        VkVertexInputAttributeDescription.calloc(multidraw ? 6 : 4, stack);
                 attrs.get(0).location(0).binding(0).format(VK10.VK_FORMAT_R32G32B32_SFLOAT).offset(0);
                 attrs.get(1).location(1).binding(0).format(VK10.VK_FORMAT_R8G8B8A8_UNORM).offset(12);
                 attrs.get(2).location(2).binding(0).format(VK10.VK_FORMAT_R32G32_SFLOAT).offset(16);
                 attrs.get(3).location(4).binding(0).format(VK10.VK_FORMAT_R16G16_SINT).offset(24);
+                if (multidraw) {
+                    // Port: vanilla's prepared firstInstance selects one 16-byte section record per command.
+                    binding.get(1).binding(1).stride(16).inputRate(VK10.VK_VERTEX_INPUT_RATE_INSTANCE);
+                    attrs.get(4).location(6).binding(1).format(VK10.VK_FORMAT_R32G32B32_SINT).offset(0);
+                    attrs.get(5).location(7).binding(1).format(VK10.VK_FORMAT_R32_SFLOAT).offset(12);
+                }
 
                 vertexInput.pVertexBindingDescriptions(binding).pVertexAttributeDescriptions(attrs);
             }
@@ -108,146 +127,77 @@ public final class VkGraphicsPipeline {
                                                                                                          .topology(
                                                                                                                  VK10.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 
-            VkPipelineViewportStateCreateInfo viewport = VkPipelineViewportStateCreateInfo.calloc(stack)
-                                                                                          .sType$Default()
-                                                                                          .viewportCount(1)
-                                                                                          .scissorCount(1);
-
-            VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
-                                                                                                  .sType$Default()
-                                                                                                  .polygonMode(
-                                                                                                          VK10.VK_POLYGON_MODE_FILL)
-                                                                                                  .cullMode(
-                                                                                                          config.cullMode())
-                                                                                                  .frontFace(
-                                                                                                          VK10.VK_FRONT_FACE_CLOCKWISE)
-                                                                                                  .lineWidth(1.0F)
-                                                                                                  .depthBiasEnable(
-                                                                                                          config.depthBiasConstant() != 0.0F || config.depthBiasSlope() != 0.0F)
-                                                                                                  .depthBiasConstantFactor(
-                                                                                                          config.depthBiasConstant())
-                                                                                                  .depthBiasSlopeFactor(
-                                                                                                          config.depthBiasSlope())
-                                                                                                  .depthBiasClamp(0.0F);
-
-            VkPipelineMultisampleStateCreateInfo multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
-                                                                                                   .sType$Default()
-                                                                                                   .rasterizationSamples(
-                                                                                                           VK10.VK_SAMPLE_COUNT_1_BIT);
-
-            VkPipelineDepthStencilStateCreateInfo depth = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
-                                                                                               .sType$Default()
-                                                                                               .depthTestEnable(
-                                                                                                       config.depthTest())
-                                                                                               .depthWriteEnable(
-                                                                                                       config.depthWrite())
-                                                                                               .depthCompareOp(
-                                                                                                       config.depthCompareOp());
-
-            int attachmentCount = config.colorFormats().length;
-            VkPipelineColorBlendAttachmentState.Buffer blendAttachment = VkPipelineColorBlendAttachmentState.calloc(
-                    attachmentCount, stack);
-            for (int i = 0; i < attachmentCount; i++) {
-                Blend b = config.blends()[i];
-                var att = blendAttachment.get(i).colorWriteMask(b.writeMask()).blendEnable(b.enable());
-                if (b.enable()) {
-                    att.srcColorBlendFactor(b.srcColor()).dstColorBlendFactor(b.dstColor()).colorBlendOp(b.colorOp())
-                       .srcAlphaBlendFactor(b.srcAlpha()).dstAlphaBlendFactor(b.dstAlpha()).alphaBlendOp(b.alphaOp());
-                }
-            }
-            VkPipelineColorBlendStateCreateInfo colorBlend = VkPipelineColorBlendStateCreateInfo.calloc(stack)
-                                                                                                .sType$Default()
-                                                                                                .pAttachments(
-                                                                                                        blendAttachment);
-
-            VkPipelineDynamicStateCreateInfo dynamic = VkPipelineDynamicStateCreateInfo.calloc(stack)
-                                                                                       .sType$Default()
-                                                                                       .pDynamicStates(stack.ints(
-                                                                                               VK10.VK_DYNAMIC_STATE_VIEWPORT,
-                                                                                               VK10.VK_DYNAMIC_STATE_SCISSOR));
-
-            VkPipelineRenderingCreateInfoKHR rendering = VkPipelineRenderingCreateInfoKHR.calloc(stack)
-                                                                                         .sType$Default()
-                                                                                         .pColorAttachmentFormats(
-                                                                                                 stack.ints(
-                                                                                                         config.colorFormats()))
-                                                                                         .depthAttachmentFormat(
-                                                                                                 config.depthFormat())
-                                                                                         .stencilAttachmentFormat(
-                                                                                                 VkContext.stencilFormat(
-                                                                                                         config.depthFormat()));
-            if (config.attachmentLocations() != null) {
-                VkRenderingInputAttachmentIndexInfoKHR inputIndices = VkRenderingInputAttachmentIndexInfoKHR.calloc(
-                                                                                                                    stack)
-                                                                                                            .sType$Default()
-                                                                                                            .pColorAttachmentInputIndices(
-                                                                                                                    stack.ints(
-                                                                                                                            config.inputAttachmentIndices()));
-                VkRenderingAttachmentLocationInfoKHR locations = VkRenderingAttachmentLocationInfoKHR.calloc(stack)
-                                                                                                     .sType$Default()
-                                                                                                     .pNext(inputIndices.address())
-                                                                                                     .pColorAttachmentLocations(
-                                                                                                             stack.ints(
-                                                                                                                     config.attachmentLocations()));
-                rendering.pNext(locations.address());
-            }
-
-            VkGraphicsPipelineCreateInfo.Buffer info = VkGraphicsPipelineCreateInfo.calloc(1, stack);
-            info.get(0)
-                .sType$Default()
-                .pNext(rendering.address())
-                .flags(layout.usesDescriptorBuffer()
-                        ? EXTDescriptorBuffer.VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT : 0)
-                .pStages(stages)
-                .pVertexInputState(vertexInput)
-                .pInputAssemblyState(inputAssembly)
-                .pViewportState(viewport)
-                .pRasterizationState(raster)
-                .pMultisampleState(multisample)
-                .pDepthStencilState(depth)
-                .pColorBlendState(colorBlend)
-                .pDynamicState(dynamic)
-                .layout(layout.pipelineLayout());
-
-            LongBuffer pPipeline = stack.callocLong(1);
-            int result = VK10.vkCreateGraphicsPipelines(VkContext.vkDevice(), VkPipelineCaches.handle(), info, null,
-                    pPipeline);
-            try {
-                VkCaps.checkPipelineResult(result, "graphics pipeline");
-            } catch (BackendUnavailableException e) {
-                if (layout.usesDescriptorBuffer() && layout.pushFallbackAvailable()) {
-                    throw new ProgramAvailability.Failure(ProgramAvailability.Feature.DESCRIPTOR_BUFFER, e);
-                }
-                throw e;
-            }
-            this.pipeline = pPipeline.get(0);
+            VkGraphicsPipelineCreateInfo.Buffer info = createInfo(stack, layout, config, stages, renderPass, subpass);
+            info.get(0).pVertexInputState(vertexInput).pInputAssemblyState(inputAssembly);
+            return create(stack, info, layout, "graphics pipeline");
         }
     }
 
-    private static void preflight(Config config) {
+    /** Stage-independent state; graphics adds vertex input and input assembly. */
+    static VkGraphicsPipelineCreateInfo.Buffer createInfo(MemoryStack stack, VkDescriptorLayout layout, Config config,
+                                                          VkPipelineShaderStageCreateInfo.Buffer stages,
+                                                          long renderPass, int subpass) {
+        VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
+                .sType$Default()
+                .polygonMode(VK10.VK_POLYGON_MODE_FILL)
+                .cullMode(config.cullMode())
+                .frontFace(VK10.VK_FRONT_FACE_CLOCKWISE)
+                .lineWidth(1.0F)
+                .depthBiasEnable(config.depthBiasConstant() != 0.0F || config.depthBiasSlope() != 0.0F)
+                .depthBiasConstantFactor(config.depthBiasConstant())
+                .depthBiasSlopeFactor(config.depthBiasSlope());
+        VkPipelineDepthStencilStateCreateInfo depth = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
+                .sType$Default()
+                .depthTestEnable(config.depthTest())
+                .depthWriteEnable(config.depthWrite())
+                .depthCompareOp(config.depthCompareOp());
+
+        VkPipelineRenderingCreateInfoKHR rendering = renderingInfo(stack, config.colorFormats(), config.depthFormat());
+        if (config.attachmentLocations() != null) {
+            VkRenderingInputAttachmentIndexInfoKHR inputIndices = VkRenderingInputAttachmentIndexInfoKHR.calloc(stack)
+                    .sType$Default().pColorAttachmentInputIndices(stack.ints(config.inputAttachmentIndices()));
+            rendering.pNext(VkRenderingAttachmentLocationInfoKHR.calloc(stack).sType$Default()
+                    .pNext(inputIndices.address())
+                    .pColorAttachmentLocations(stack.ints(config.attachmentLocations())).address());
+        }
+
+        VkGraphicsPipelineCreateInfo.Buffer info = VkGraphicsPipelineCreateInfo.calloc(1, stack);
+        info.get(0)
+            .sType$Default()
+            .pNext(renderPass == 0L ? rendering.address() : 0L)
+            .flags(layout.usesDescriptorBuffer() ? EXTDescriptorBuffer.VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT : 0)
+            .pStages(stages)
+            .pViewportState(viewportState(stack))
+            .pRasterizationState(raster)
+            .pMultisampleState(multisampleState(stack))
+            .pDepthStencilState(depth)
+            .pColorBlendState(colorBlendState(stack, config.blends()))
+            .pDynamicState(dynamicState(stack))
+            .layout(layout.pipelineLayout())
+            .renderPass(renderPass)
+            .subpass(subpass);
+        return info;
+    }
+
+    static long create(MemoryStack stack, VkGraphicsPipelineCreateInfo.Buffer info, VkDescriptorLayout layout,
+                       String operation) {
+        LongBuffer pPipeline = stack.callocLong(1);
+        int result = VK10.vkCreateGraphicsPipelines(VkContext.vkDevice(), VkPipelineCaches.handle(), info, null,
+                pPipeline);
+        try {
+            VkCaps.checkPipelineResult(result, operation);
+        } catch (BackendUnavailableException e) {
+            if (layout.usesDescriptorBuffer() && layout.pushFallbackAvailable()) {
+                throw new ProgramAvailability.Failure(ProgramAvailability.Feature.DESCRIPTOR_BUFFER, e);
+            }
+            throw e;
+        }
+        return pPipeline.get(0);
+    }
+
+    static void preflight(Config config) {
         int attachments = config.colorFormats().length;
-        if (config.blends().length != attachments) {
-            throw new IllegalArgumentException("Color formats and blend states differ in length");
-        }
-        if (attachments > VkCaps.MAX_COLOR_ATTACHMENTS) {
-            throw new BackendUnavailableException("Graphics pipeline requires " + attachments
-                    + " color attachments; device limit " + VkCaps.MAX_COLOR_ATTACHMENTS);
-        }
-        for (int i = 0; i < attachments; i++) {
-            Blend blend = config.blends()[i];
-            if (i > 0 && !VkCaps.INDEPENDENT_BLEND_NEGOTIATED && !blend.equals(config.blends()[0])) {
-                throw new BackendUnavailableException("Independent attachment blending is not enabled");
-            }
-            int format = config.colorFormats()[i];
-            if (format != VK10.VK_FORMAT_UNDEFINED) {
-                int features = VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
-                if (blend.enable()) features |= VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
-                VkCaps.requireFormat("Color attachment", format, features);
-            }
-        }
-        if (config.depthFormat() != VK10.VK_FORMAT_UNDEFINED) {
-            VkCaps.requireFormat("Depth attachment", config.depthFormat(), VK10.VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
-        }
+        requireAttachments(config.colorFormats(), config.blends(), config.depthFormat());
         if (config.attachmentLocations() != null) {
             if (config.attachmentLocations().length != attachments || config.inputAttachmentIndices() == null
                     || config.inputAttachmentIndices().length != attachments) {
@@ -257,10 +207,72 @@ public final class VkGraphicsPipeline {
                 throw new BackendUnavailableException("Dynamic rendering local read is not enabled");
             }
             requireAttachmentIndices("Output location", config.attachmentLocations(), VkCaps.MAX_COLOR_ATTACHMENTS);
-            requireAttachmentIndices("Input attachment", config.inputAttachmentIndices(), VkCaps.MAX_PER_STAGE_DESCRIPTOR_INPUT_ATTACHMENTS);
+            requireAttachmentIndices("Input attachment", config.inputAttachmentIndices(),
+                    VkCaps.MAX_PER_STAGE_DESCRIPTOR_INPUT_ATTACHMENTS);
         } else if (config.inputAttachmentIndices() != null) {
             throw new IllegalArgumentException("Input attachment indices without output locations");
         }
+    }
+
+    /** Device limits and format features; {@code VK_FORMAT_UNDEFINED} = unused color slot. */
+    public static void requireAttachments(int[] colorFormats, Blend[] blends, int depthFormat) {
+        int attachments = colorFormats.length;
+        if (blends.length != attachments) {
+            throw new IllegalArgumentException("Color formats and blend states differ in length");
+        }
+        if (attachments > VkCaps.MAX_COLOR_ATTACHMENTS) {
+            throw new BackendUnavailableException("Graphics pipeline requires " + attachments
+                    + " color attachments; device limit " + VkCaps.MAX_COLOR_ATTACHMENTS);
+        }
+        for (int i = 0; i < attachments; i++) {
+            Blend blend = blends[i];
+            if (i > 0 && !VkCaps.INDEPENDENT_BLEND_NEGOTIATED && !blend.equals(blends[0])) {
+                throw new BackendUnavailableException("Independent attachment blending is not enabled");
+            }
+            if (colorFormats[i] != VK10.VK_FORMAT_UNDEFINED) {
+                int features = VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+                if (blend.enable()) features |= VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
+                VkCaps.requireFormat("Color attachment", colorFormats[i], features);
+            }
+        }
+        if (depthFormat != VK10.VK_FORMAT_UNDEFINED) {
+            VkCaps.requireFormat("Depth attachment", depthFormat, VK10.VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+        }
+    }
+
+    public static VkPipelineViewportStateCreateInfo viewportState(MemoryStack stack) {
+        return VkPipelineViewportStateCreateInfo.calloc(stack).sType$Default().viewportCount(1).scissorCount(1);
+    }
+
+    public static VkPipelineDynamicStateCreateInfo dynamicState(MemoryStack stack) {
+        return VkPipelineDynamicStateCreateInfo.calloc(stack).sType$Default()
+                .pDynamicStates(stack.ints(VK10.VK_DYNAMIC_STATE_VIEWPORT, VK10.VK_DYNAMIC_STATE_SCISSOR));
+    }
+
+    public static VkPipelineMultisampleStateCreateInfo multisampleState(MemoryStack stack) {
+        return VkPipelineMultisampleStateCreateInfo.calloc(stack).sType$Default()
+                .rasterizationSamples(VK10.VK_SAMPLE_COUNT_1_BIT);
+    }
+
+    public static VkPipelineColorBlendStateCreateInfo colorBlendState(MemoryStack stack, Blend[] blends) {
+        VkPipelineColorBlendAttachmentState.Buffer attachments =
+                VkPipelineColorBlendAttachmentState.calloc(blends.length, stack);
+        for (int i = 0; i < blends.length; i++) {
+            Blend b = blends[i];
+            var att = attachments.get(i).colorWriteMask(b.writeMask()).blendEnable(b.enable());
+            if (b.enable()) {
+                att.srcColorBlendFactor(b.srcColor()).dstColorBlendFactor(b.dstColor()).colorBlendOp(b.colorOp())
+                   .srcAlphaBlendFactor(b.srcAlpha()).dstAlphaBlendFactor(b.dstAlpha()).alphaBlendOp(b.alphaOp());
+            }
+        }
+        return VkPipelineColorBlendStateCreateInfo.calloc(stack).sType$Default().pAttachments(attachments);
+    }
+
+    public static VkPipelineRenderingCreateInfoKHR renderingInfo(MemoryStack stack, int[] colorFormats,
+            int depthFormat) {
+        return VkPipelineRenderingCreateInfoKHR.calloc(stack).sType$Default()
+                .pColorAttachmentFormats(stack.ints(colorFormats)).depthAttachmentFormat(depthFormat)
+                .stencilAttachmentFormat(VkContext.stencilFormat(depthFormat));
     }
 
     private static void requireAttachmentIndices(String label, int[] indices, long limit) {
@@ -314,7 +326,8 @@ public final class VkGraphicsPipeline {
         return new Config(new int[]{colorFormat}, new Blend[]{blendFor(transparency, colorWrite)}, true, depthWrite,
                 compareOp(depthTest), Vertex.INTERNAL, cull ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE,
                 depthFormat,
-                polygonOffset ? 10.0F : 0.0F, polygonOffset && transparency != Transparency.OPAQUE ? 1.0F : 0.0F);
+                polygonOffset ? MaterialRenderState.POLYGON_OFFSET_UNITS : 0.0F,
+                polygonOffset ? MaterialRenderState.polygonOffsetSlope(transparency, depthTest) : 0.0F);
     }
 
     private static Blend blendFor(Transparency transparency, boolean colorWrite) {
@@ -352,6 +365,17 @@ public final class VkGraphicsPipeline {
         return pipeline;
     }
 
+    /** Render thread; the original owner retains the modules, layout and every compatible variant. */
+    public long subpassHandle(Subpass subpass) {
+        Long handle = subpassPipelines.get(subpass);
+        if (handle == null) {
+            handle = createPipeline(layout, vertexModule, fragmentModule, subpass.config(config),
+                    subpass.renderPass(), subpass.index());
+            subpassPipelines.put(subpass, handle);
+        }
+        return handle;
+    }
+
     public VkDescriptorLayout layout() {
         return layout;
     }
@@ -360,7 +384,10 @@ public final class VkGraphicsPipeline {
         long p = pipeline;
         long vs = vertexModule;
         long fs = fragmentModule;
+        long[] variants = subpassPipelines.values().stream().mapToLong(Long::longValue).toArray();
+        subpassPipelines.clear();
         VkContext.deferDestroy(() -> {
+            for (long variant : variants) VK10.vkDestroyPipeline(VkContext.vkDevice(), variant, null);
             VK10.vkDestroyPipeline(VkContext.vkDevice(), p, null);
             VK10.vkDestroyShaderModule(VkContext.vkDevice(), vs, null);
             VK10.vkDestroyShaderModule(VkContext.vkDevice(), fs, null);
@@ -368,7 +395,27 @@ public final class VkGraphicsPipeline {
         layout.delete();
     }
 
-    public enum Vertex {NONE, INTERNAL, COMPACT_CHUNK, PARTICLE, ENTITY, BLOCK}
+    public enum Vertex {NONE, INTERNAL, COMPACT_CHUNK, PARTICLE, ENTITY, BLOCK, BLOCK_MULTIDRAW}
+
+    /** A stable pass-owned key; identity distinguishes render passes even if Vulkan recycles their handles. */
+    public record Subpass(long renderPass, int index, int depthFormat, int[] colorFormats,
+                          int[] sourceColorAttachments) {
+        public Subpass {
+            colorFormats = colorFormats.clone();
+            sourceColorAttachments = sourceColorAttachments.clone();
+            if (colorFormats.length != sourceColorAttachments.length) {
+                throw new IllegalArgumentException("Subpass color formats and source mappings differ in length");
+            }
+        }
+
+        public Config config(Config source) {
+            Blend[] blends = new Blend[sourceColorAttachments.length];
+            for (int i = 0; i < blends.length; i++) blends[i] = source.blends()[sourceColorAttachments[i]];
+            return new Config(colorFormats, blends, source.depthTest(), source.depthWrite(), source.depthCompareOp(),
+                    source.vertex(), source.cullMode(), depthFormat, source.depthBiasConstant(),
+                    source.depthBiasSlope());
+        }
+    }
 
     public record Blend(boolean enable, int srcColor, int dstColor, int colorOp, int srcAlpha, int dstAlpha,
                         int alphaOp, int writeMask) {

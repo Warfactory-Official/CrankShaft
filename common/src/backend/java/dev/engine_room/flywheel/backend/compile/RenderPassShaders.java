@@ -101,9 +101,11 @@ public final class RenderPassShaders {
     private static final Identifier BLOCK_OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_block_oit.frag");
     private static final Identifier BEAM_OIT_VERTEX = ResourceUtil.rl("renderpass/beam_oit.vert");
     private static final Identifier BEAM_OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_beam_oit.frag");
+    #if MC < 26.3
     private static final Identifier LAYER_OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_layer_oit.frag");
     private static final Identifier WEATHER_OIT_VERTEX = ResourceUtil.rl("renderpass/weather_oit.vert");
     private static final Identifier WEATHER_OIT_FRAGMENT = ResourceUtil.rl("renderpass/flw_weather_oit.frag");
+    #endif
     private static final Consumer<Compilation> INDIRECT_PREAMBLE = ctx -> ctx.requireExtension(
             "GL_ARB_shader_draw_parameters");
     private static final Consumer<Compilation> INSTANCING_PREAMBLE = ctx -> {
@@ -467,17 +469,6 @@ public final class RenderPassShaders {
                 }, roots);
     }
 
-    public static String assembleWeatherMlabFragment(OitInsertMode oitMode) {
-        List<SourceComponent> roots = List.of(
-                FlwPrograms.SOURCES.get(MLAB),
-                FlwPrograms.SOURCES.get(WEATHER_OIT_FRAGMENT));
-        return assemble("weather_mlab_" + oitMode.name().toLowerCase(Locale.ROOT) + ".fsh",
-                ctx -> {
-                    mlabProducerDefines(ctx, oitMode);
-                    ctx.define("_FLW_OIT");
-                }, roots);
-    }
-
     public static String assembleMlabResolve(OitInsertMode oitMode) {
         List<SourceComponent> roots = List.of(
                 FlwPrograms.SOURCES.get(MLAB),
@@ -563,7 +554,18 @@ public final class RenderPassShaders {
     }
 
     public static String assembleChunkOitVertex() {
-        return assemble("chunk_oit.vsh", INSTANCING_PREAMBLE, List.of(FlwPrograms.SOURCES.get(CHUNK_OIT_VERTEX)));
+        return assembleChunkOitVertex(false);
+    }
+
+    public static String assembleChunkOitVertex(boolean multidraw) {
+        return assemble("chunk_oit" + (multidraw ? "_multidraw" : "") + ".vsh", ctx -> {
+            INSTANCING_PREAMBLE.accept(ctx);
+            #if MC >= 26.3
+            ctx.mojImport("minecraft:terrainglobals.glsl");
+            ctx.define("_FLW_CHUNK_VISIBLE_RANGE");
+            #endif
+            if (multidraw) ctx.define("MULTIDRAW_TERRAIN");
+        }, List.of(FlwPrograms.SOURCES.get(CHUNK_OIT_VERTEX)));
     }
 
     public static String assembleSodiumChunkOitVertex(boolean mdi, boolean fade) {
@@ -653,6 +655,18 @@ public final class RenderPassShaders {
                 berFamilyDefines(family).andThen(extra));
     }
 
+    #if MC < 26.3
+    public static String assembleWeatherMlabFragment(OitInsertMode oitMode) {
+        List<SourceComponent> roots = List.of(
+                FlwPrograms.SOURCES.get(MLAB),
+                FlwPrograms.SOURCES.get(WEATHER_OIT_FRAGMENT));
+        return assemble("weather_mlab_" + oitMode.name().toLowerCase(Locale.ROOT) + ".fsh",
+                ctx -> {
+                    mlabProducerDefines(ctx, oitMode);
+                    ctx.define("_FLW_OIT");
+                }, roots);
+    }
+
     public static String assembleLayerOitFragment(OitMode mode) {
         return assembleLayerOitFragment(mode, ShaderAssembly.NO_EXTRA);
     }
@@ -672,6 +686,7 @@ public final class RenderPassShaders {
     public static String assembleWeatherOitFragment(OitMode mode, Consumer<Compilation> extra) {
         return assembleWaveletOitFragment(WEATHER_OIT_FRAGMENT, "weather_oit", mode, extra);
     }
+    #endif
 
     private static String assembleWaveletOitFragment(Identifier body, String dumpPrefix, OitMode mode,
                                                      Consumer<Compilation> extra) {

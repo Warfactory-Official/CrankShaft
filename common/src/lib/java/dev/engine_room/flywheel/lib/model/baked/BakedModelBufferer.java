@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.lib.model.baked;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import dev.engine_room.flywheel.api.internal.DependencyInjection;
+import net.minecraft.client.renderer.Sheets;
 import net.minecraft.client.renderer.block.MovingBlockRenderState;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.client.renderer.block.model.BlockDisplayContext;
@@ -76,6 +77,24 @@ public interface BakedModelBufferer {
                 return blocksAtlas ? TRANSLUCENT_BLOCKS_ATLAS : TRANSLUCENT_ITEMS_ATLAS;
             }
             return blocksAtlas ? CUTOUT_BLOCKS_ATLAS : CUTOUT_ITEMS_ATLAS;
+        }
+
+        @Nullable
+        public static ItemMeshKey of(RenderType renderType, boolean foil) {
+            #if MC >= 26.3
+            if (foil) {
+                if (renderType == Sheets.cutoutItemGlintSheet()) return CUTOUT_ITEMS_ATLAS;
+                if (renderType == Sheets.cutoutBlockItemGlintSheet()) return CUTOUT_BLOCKS_ATLAS;
+                if (renderType == Sheets.translucentItemGlintSheet()) return TRANSLUCENT_ITEMS_ATLAS;
+                if (renderType == Sheets.translucentBlockItemGlintSheet()) return TRANSLUCENT_BLOCKS_ATLAS;
+                return null;
+            }
+            #endif
+            if (renderType == Sheets.cutoutItemSheet()) return CUTOUT_ITEMS_ATLAS;
+            if (renderType == Sheets.cutoutBlockItemSheet()) return CUTOUT_BLOCKS_ATLAS;
+            if (renderType == Sheets.translucentItemSheet()) return TRANSLUCENT_ITEMS_ATLAS;
+            if (renderType == Sheets.translucentBlockItemSheet()) return TRANSLUCENT_BLOCKS_ATLAS;
+            return null;
         }
 
         public ChunkSectionLayer layer() {

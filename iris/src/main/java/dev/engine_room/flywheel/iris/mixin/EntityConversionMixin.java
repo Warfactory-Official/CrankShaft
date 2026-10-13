@@ -21,7 +21,7 @@ abstract class EntityConversionMixin {
     private void flywheel$retagConvertingVillager(EntityDataAccessor<?> accessor, CallbackInfo ci) {
         if (!((Object) this instanceof ZombieVillager villager)
                 || !WorldRenderingSettings.INSTANCE.hasVillagerConversionId()
-                || !accessor.equals(ZombieVillagerAccessor.flywheel$convertingId())) {
+                || !accessor.equals(ZombieVillager.DATA_CONVERTING_ID)) {
             return;
         }
         VisualizationManager manager = VisualizationManager.get(villager.level());

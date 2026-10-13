@@ -1,5 +1,8 @@
 package dev.engine_room.flywheel.backend;
 
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.compile.NativeOitWarmup;
+#endif
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.engine.indirect.GlInsertOitChain;
@@ -17,7 +20,9 @@ public final class OitConfig {
     private static final int[] PRESET = {0, 0, 4, 8, 16};
     private static final int[] layers = new int[Path.values().length];
     private static volatile Path path = Path.AUTO;
+    #if MC < 26.3
     private static volatile boolean exactFabulous = false;
+    #endif
     private static Runnable saver = () -> {
     };
 
@@ -28,14 +33,23 @@ public final class OitConfig {
         saver = r;
     }
 
-    public static void loadState(Path p, int kbuffer, int mlab, int abuffer, boolean exact) {
+    public static void loadState(Path p, int kbuffer, int mlab, int abuffer #if MC < 26.3 , boolean exact #endif) {
+        #if MC >= 26.3
+        NativeOitWarmup.configure(() -> applyState(p, kbuffer, mlab, abuffer));
+        #else
+        applyState(p, kbuffer, mlab, abuffer);
+        exactFabulous = exact;
+        #endif
+    }
+
+    private static void applyState(Path p, int kbuffer, int mlab, int abuffer) {
         path = p;
         layers[Path.KBUFFER.ordinal()] = clampLayers(kbuffer);
         layers[Path.MLAB.ordinal()] = clampLayers(mlab);
         layers[Path.ABUFFER.ordinal()] = clampLayers(abuffer);
-        exactFabulous = exact;
     }
 
+    #if MC < 26.3
     public static boolean exactFabulous() {
         return exactFabulous;
     }
@@ -44,6 +58,7 @@ public final class OitConfig {
         exactFabulous = v;
         saver.run();
     }
+    #endif
 
     private static int clampLayers(int v) {
         return v <= 0 ? 0 : Math.min(MAX_LAYERS, v);
@@ -54,8 +69,15 @@ public final class OitConfig {
     }
 
     public static void setPath(Path p) {
+        #if MC >= 26.3
+        NativeOitWarmup.configure(() -> {
+            path = p;
+            saver.run();
+        });
+        #else
         path = p;
         saver.run();
+        #endif
     }
 
     private static boolean hostSupportsInterlock() {
@@ -156,7 +178,9 @@ public final class OitConfig {
                 sb.append("(preset)");
             }
         }
+        #if MC < 26.3
         sb.append(" | weather=").append(exactFabulous ? "exact" : "layered");
+        #endif
         return sb.toString();
     }
 

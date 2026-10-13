@@ -1,16 +1,14 @@
 package dev.engine_room.flywheel.backend.engine.indirect;
 
-import com.mojang.blaze3d.IndexType;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.systems.CommandEncoder;
-import com.mojang.blaze3d.systems.RenderPass;
-import com.mojang.blaze3d.systems.RenderPassDescriptor;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.vulkan.VulkanRenderPass;
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.engine.ChunkReplayData;
+#endif
+
+import dev.engine_room.flywheel.compat.backend.RenderPassOps;
+
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
@@ -23,14 +21,22 @@ import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline;
 import net.minecraft.client.renderer.StagedVertexBuffer;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
-import net.minecraft.client.renderer.texture.AbstractTexture;
-import net.minecraft.client.renderer.texture.TextureManager;
 import org.joml.Vector4f;
 import org.joml.Vector4fc;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
+
+#if MC < 26.3
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.pipeline.IndexType;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import net.minecraft.client.renderer.texture.AbstractTexture;
+import net.minecraft.client.renderer.texture.TextureManager;
+#endif
 
 import java.util.List;
 import java.util.Optional;
@@ -39,6 +45,10 @@ import java.util.OptionalDouble;
 import static dev.engine_room.flywheel.backend.vk.VkCmd.*;
 
 abstract class VkInsertOitChain extends VkOitChain {
+    #if MC >= 26.3
+    // Resolve layer composite inputs; no Fabulous layer feeds them.
+    private static final int[] LAYER_BINDINGS = {29, 30, 32, 33, 34, 35, 36, 37};
+    #endif
     final OitInsertMode mode;
 
     @Nullable
@@ -66,38 +76,34 @@ abstract class VkInsertOitChain extends VkOitChain {
         return 0;
     }
 
-    void render(CommandEncoder encoder, VkOitRenderer.OitFrame frame, @Nullable ChunkSectionsToRender chunks,
-                @Nullable BerTranslucentCapture ber, @Nullable SodiumTerrainOitReplay terrain,
-                @Nullable FabulousCaptures fabulous, GpuTextureView lightmapView, GpuSampler clampLinear,
-                long vertexVk, long indexVk, int width, int height, boolean hasInstanceOit,
-                GpuTextureView colorView, GpuTextureView depthView, RenderPassDescriptor compositeDescriptor) {
+    void render(VkOitRenderer.ChainInputs in, boolean fused) {
+        #if MC < 26.3
+        FabulousCaptures fabulous = in.replay().fabulous();
+        int layerMask = fabulous != null ? fabulous.layerMask(!OitConfig.exactFabulous()) : 0;
+        #else
+        int layerMask = 0;
+        #endif
         VkMlabBuffers mlab;
         try {
-            mlab = ensureStorage(width, height, fabulous);
+            mlab = ensureStorage(in.width(), in.height(), layerMask);
         } catch (ProgramAvailability.Failure failure) {
             throw failure;
         } catch (BackendUnavailableException failure) {
             throw new ProgramAvailability.Failure(ProgramAvailability.insert(mode), failure);
         }
-        producers(frame, chunks, ber, terrain, fabulous, lightmapView, clampLinear, vertexVk, indexVk,
-                width, height, hasInstanceOit, depthView, mlab);
+        producers(in, mlab, fused);
         framebuffer.prepareNearestDepth();
-        RenderPassDescriptor resolveDescriptor = RenderPassDescriptor.create(() -> "flywheel:vk/oit/resolve")
-                                                                     .withColorAttachment(colorView)
-                                                                     .withColorAttachment(
-                                                                             framebuffer.nearestDepthView(),
-                                                                             Optional.<Vector4fc>of(
-                                                                                     new Vector4f(-1.0f)))
-                                                                     .withDepthAttachment(depthView,
-                                                                             OptionalDouble.empty())
-                                                                     .withRenderArea(
-                                                                             new RenderPass.RenderArea(0, 0, width,
-                                                                                     height));
-        resolve(encoder, resolveDescriptor, width, height, frame, fabulous);
-        nearestDepth(encoder, compositeDescriptor, frame, width, height);
+        RenderPassDescriptor resolveDescriptor = RenderPassOps.builder(() -> "flywheel:vk/oit/resolve")
+                .withColorAttachment(in.colorView())
+                .withColorAttachment(framebuffer.nearestDepthView(), Optional.<Vector4fc>of(new Vector4f(-1.0f)))
+                .withDepthAttachment(in.depthView(), OptionalDouble.empty())
+                .withRenderArea(new RenderPass.RenderArea(0, 0, in.width(), in.height()))
+                .build();
+        resolve(in, resolveDescriptor);
+        nearestDepth(in.encoder(), in.compositeDescriptor(), in.frame(), in.width(), in.height());
     }
 
-    private VkMlabBuffers ensureStorage(int width, int height, @Nullable FabulousCaptures fabulous) {
+    private VkMlabBuffers ensureStorage(int width, int height, int layerMask) {
         long pixels = (long) width * height;
         int nodes = maxNodes(pixels);
         int layers = OitConfig.layersFor(mode);
@@ -112,7 +118,6 @@ abstract class VkInsertOitChain extends VkOitChain {
         }
         ensurePayload(pixels, layers, nodes);
 
-        int layerMask = fabulous != null ? fabulous.layerMask(!OitConfig.exactFabulous()) : 0;
         long uboPtr = ubo.mappedAddress();
         MemoryUtil.memPutInt(uboPtr, width);
         MemoryUtil.memPutInt(uboPtr + 4L, height);
@@ -122,11 +127,9 @@ abstract class VkInsertOitChain extends VkOitChain {
         return buffers();
     }
 
-    private void producers(VkOitRenderer.OitFrame frame, @Nullable ChunkSectionsToRender chunks,
-                           @Nullable BerTranslucentCapture ber, @Nullable SodiumTerrainOitReplay terrain,
-                           @Nullable FabulousCaptures fabulous, GpuTextureView lightmapView, GpuSampler clampLinear,
-                           long vertexVk, long indexVk, int width, int height, boolean hasInstanceOit,
-                           GpuTextureView depthView, VkMlabBuffers mlab) {
+    private void producers(VkOitRenderer.ChainInputs in, VkMlabBuffers mlab, boolean fused) {
+        int width = in.width();
+        int height = in.height();
         long pixels = (long) width * height;
 
         VkCommandBuffer cmd = VkContext.beginCommands();
@@ -145,36 +148,56 @@ abstract class VkInsertOitChain extends VkOitChain {
                 VK12.VK_ACCESS_TRANSFER_WRITE_BIT, VK12.VK_ACCESS_SHADER_READ_BIT | VK12.VK_ACCESS_SHADER_WRITE_BIT);
         VkContext.popLabel(cmd);
 
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkRenderingInfo rendering = VkRenderingInfo.calloc(stack).sType$Default();
-            rendering.renderArea().extent().set(width, height);
-            rendering.layerCount(1);
-            VkContext.attachDepth(stack, rendering, depthView);
-            KHRDynamicRendering.vkCmdBeginRenderingKHR(cmd, rendering);
-        }
-        setViewportScissor(cmd, width, height);
+        NativeOitReplay nativeReplay = in.nativeReplay();
+        if (fused && nativeReplay != null) {
+            nativeProducers(in, nativeReplay, mlab);
+        } else {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkRenderingInfo rendering = VkRenderingInfo.calloc(stack).sType$Default();
+                rendering.renderArea().extent().set(width, height);
+                rendering.layerCount(1);
+                VkContext.attachDepth(stack, rendering, in.depthView());
+                KHRDynamicRendering.vkCmdBeginRenderingKHR(cmd, rendering);
+            }
+            setViewportScissor(cmd, width, height);
 
-        if (hasInstanceOit) {
-            VkContext.pushLabel(cmd, "flywheel:vk/oit/mlab/instances");
-            VK12.vkCmdBindIndexBuffer(cmd, indexVk, 0L, VK12.VK_INDEX_TYPE_UINT32);
-            bindVertexBuffer(cmd, vertexVk);
-            m.drawMlabProducerGeometry(mode, cmd, frame, mlab);
-            VkContext.popLabel(cmd);
-        }
-        if (terrain instanceof VkFoldedOitReplay t) {
-            t.replayMlab(cmd, mode, mlab, lightmapView, clampLinear);
-        }
-        if (chunks != null) {
-            insertChunks(cmd, frame, chunks, mlab);
-        }
-        if (ber != null && !ber.isEmpty()) {
-            insertBer(cmd, frame, ber, mlab);
-        }
-        if (OitConfig.exactFabulous() && fabulous != null && fabulous.hasWeather()) {
-            insertWeather(cmd, frame, fabulous, mlab);
-        }
+            VkOitRenderer.OitFrame frame = in.frame();
+            VkOitRenderer.OitReplay replay = in.replay();
+            if (in.hasInstanceOit()) {
+                VkContext.pushLabel(cmd, "flywheel:vk/oit/mlab/instances");
+                bindInstances(cmd, in.vertexVk(), in.indexVk());
+                m.drawMlabProducerGeometry(mode, cmd, frame, mlab);
+                VkContext.popLabel(cmd);
+            }
+            if (replay.terrain() instanceof VkFoldedOitReplay t) {
+                t.replayMlab(cmd, mode, mlab, replay.lightmapView(), replay.loSampler());
+            }
+            if (replay.chunks() != null) {
+                insertChunks(cmd, frame, replay.chunks(), mlab);
+            }
+            if (replay.ber() != null && !replay.ber().isEmpty()) {
+                insertBer(cmd, frame, replay.ber(), mlab);
+            }
+            #if MC < 26.3
+            if (OitConfig.exactFabulous() && replay.fabulous() != null && replay.fabulous().hasWeather()) {
+                insertWeather(cmd, frame, replay.fabulous(), mlab);
+            }
+            #endif
 
-        KHRDynamicRendering.vkCmdEndRenderingKHR(cmd);
+            KHRDynamicRendering.vkCmdEndRenderingKHR(cmd);
+            if (nativeReplay != null) {
+                // Raw pass: no renderpearl post-pass barrier; native passes append to its storage.
+                memoryBarrier(cmd, VK12.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                        VK12.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                        VK12.VK_ACCESS_SHADER_WRITE_BIT,
+                        VK12.VK_ACCESS_SHADER_READ_BIT | VK12.VK_ACCESS_SHADER_WRITE_BIT);
+                nativeReplay.replayInsert(RenderPassOps.builder(() -> "flywheel:vk/oit/native_insert")
+                                .withDepthAttachment(in.depthView(), OptionalDouble.empty())
+                                .withRenderArea(new RenderPass.RenderArea(0, 0, width, height))
+                                .build(),
+                        mode, mlab, in.nativeFrame());
+            }
+        }
         VkContext.pushLabel(cmd, "flywheel:vk/oit/mlab/publish");
         memoryBarrier(cmd,
                 VK12.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK12.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
@@ -186,8 +209,52 @@ abstract class VkInsertOitChain extends VkOitChain {
         VkContext.submitCommands(cmd);
     }
 
+    private void nativeProducers(VkOitRenderer.ChainInputs in, NativeOitReplay replay, VkMlabBuffers storage) {
+        #if MC >= 26.3
+        var targets = replay.vulkanTargets(framebuffer, true);
+        VkNativeOitPass.get(VkNativeOitPass.spec(targets, true)).record(targets, replay.vulkanBackendFactory(), true,
+                in.width(), in.height(), in.far(), owner -> {
+                    if (in.hasInstanceOit() && owner.phase() == VkNativeOitPass.Phase.INSERT_MAIN) {
+                        bindInstances(owner.commandBuffer(), in.vertexVk(), in.indexVk());
+                        m.drawMlabProducerGeometry(mode, owner.commandBuffer(), in.frame(), storage);
+                    }
+                    replay.replayVulkanCategory(owner, mode, storage, framebuffer, in.nativeFrame());
+                });
+        #else
+        throw new UnsupportedOperationException("Native OIT categories require Minecraft 26.3");
+        #endif
+    }
+
     private void insertChunks(VkCommandBuffer cmd, VkOitRenderer.OitFrame frame, ChunkSectionsToRender chunks,
                               VkMlabBuffers mlab) {
+        #if MC >= 26.3
+        if (chunks instanceof ChunkSectionsToRender.DrawIndirect indirect) {
+            if (indirect.drawGroupsPerLayer.get(ChunkSectionLayer.TRANSLUCENT).isEmpty()) return;
+            VkContext.pushLabel(cmd, "flywheel:vk/oit/chunk_indirect/" + mode);
+            VkGraphicsPipeline pipeline = m.programs.oit().chunkMlabPipeline(mode, true);
+            VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+            writeIndirectChunkUniforms(frame, indirect, VkContext.imageView(ChunkReplayData.textureView()));
+            mlab.bind(m.writer);
+            m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            drawIndirectChunks(cmd, indirect, chunkSharedIndexBuffer(chunks));
+            VkContext.popLabel(cmd);
+            return;
+        }
+        var draws = ChunkReplayData.separateDraws(chunks);
+        if (draws.isEmpty()) return;
+        VkContext.pushLabel(cmd, "flywheel:vk/oit/chunk/" + mode);
+        VkGraphicsPipeline pipeline = m.programs.oit().chunkMlabPipeline(mode);
+        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+        long atlasView = VkContext.imageView(ChunkReplayData.textureView());
+        long sharedIndexBuffer = chunkSharedIndexBuffer(chunks);
+        for (var draw : draws) {
+            bindChunkDraw(cmd, frame, chunks, atlasView, sharedIndexBuffer, draw);
+            mlab.bind(m.writer);
+            m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            VK12.vkCmdDrawIndexed(cmd, draw.indexCount(), 1, draw.firstIndex(), draw.baseVertex(), 0);
+        }
+        VkContext.popLabel(cmd);
+        #else
         var drawGroup = chunks.drawGroupsPerLayer().get(ChunkSectionLayer.TRANSLUCENT);
         if (drawGroup == null || drawGroup.isEmpty()) {
             return;
@@ -206,6 +273,7 @@ abstract class VkInsertOitChain extends VkOitChain {
             }
         }
         VkContext.popLabel(cmd);
+        #endif
     }
 
     private void insertBer(VkCommandBuffer cmd, VkOitRenderer.OitFrame frame, BerTranslucentCapture ber,
@@ -229,10 +297,11 @@ abstract class VkInsertOitChain extends VkOitChain {
         VkContext.popLabel(cmd);
     }
 
+    #if MC < 26.3
     private void insertWeather(VkCommandBuffer cmd, VkOitRenderer.OitFrame frame, FabulousCaptures fab,
                                VkMlabBuffers mlab) {
         VkContext.pushLabel(cmd, "flywheel:vk/oit/fabulous/" + mode);
-        VkGraphicsPipeline pipeline = m.programs.oit().weatherMlabPipeline(mode);
+        VkGraphicsPipeline pipeline = m.programs.oit().fabulous().weatherMlabPipeline(mode);
         VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
         bindVertexBuffer(cmd, VkContext.buffer(fab.weatherVertices));
         RenderSystem.AutoStorageIndexBuffer indices = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS);
@@ -264,17 +333,20 @@ abstract class VkInsertOitChain extends VkOitChain {
         m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
         VK12.vkCmdDrawIndexed(cmd, columnCount * 6, 1, startColumn * 6, 0, 0);
     }
+    #endif
 
-    private void resolve(CommandEncoder encoder, RenderPassDescriptor descriptor, int width, int height,
-                         VkOitRenderer.OitFrame frame, @Nullable FabulousCaptures fab) {
+    private void resolve(VkOitRenderer.ChainInputs in, RenderPassDescriptor descriptor) {
+        VkOitRenderer.OitFrame frame = in.frame();
         FlwPassBarrier.expectFramebufferSample();
-        try (RenderPass pass = encoder.createRenderPass(descriptor)) {
-            VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
-            setViewportScissor(cmd, width, height);
+        try (RenderPass pass = in.encoder().createRenderPass(descriptor)) {
+            VkCommandBuffer cmd = VkContext.renderPass(pass).commandBuffer;
+            setViewportScissor(cmd, in.width(), in.height());
             VkContext.pushLabel(cmd, "flywheel:vk/oit/composite");
             VkGraphicsPipeline pipeline = m.programs.oit().mlabResolvePipeline(mode);
             VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
             long placeholder = frame.lightmapView();
+            #if MC < 26.3
+            FabulousCaptures fab = in.replay().fabulous();
             boolean clouds = fab != null && fab.hasClouds();
             boolean item = fab != null && fab.hasItemLayer();
             boolean particle = fab != null && fab.hasParticleLayer();
@@ -293,6 +365,9 @@ abstract class VkInsertOitChain extends VkOitChain {
                     frame.oitSampler());
             m.writer.sampler(37, weather ? VkContext.imageView(framebuffer.weatherDepthView()) : placeholder,
                     frame.oitSampler());
+            #else
+            for (int binding : LAYER_BINDINGS) m.writer.sampler(binding, placeholder, frame.oitSampler());
+            #endif
             buffers().bind(m.writer);
             m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
             VK12.vkCmdDraw(cmd, 3, 1, 0, 0);
@@ -306,7 +381,7 @@ abstract class VkInsertOitChain extends VkOitChain {
                               int width, int height) {
         FlwPassBarrier.expectFramebufferProducer();
         try (RenderPass pass = encoder.createRenderPass(descriptor)) {
-            VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
+            VkCommandBuffer cmd = VkContext.renderPass(pass).commandBuffer;
             setViewportScissor(cmd, width, height);
             VkContext.pushLabel(cmd, "flywheel:vk/oit/nearest_depth");
             VkGraphicsPipeline pipeline = m.programs.oit().mlabNearestDepthPipeline(mode);

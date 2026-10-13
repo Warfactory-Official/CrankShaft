@@ -80,7 +80,7 @@ public class ItemFrameVisual extends AbstractEntityVisual<ItemFrame> implements 
         if (stack.is(Items.FILLED_MAP)) {
             return false;
         }
-        if (stack.isEmpty() || ItemStackSlot.isVisualized(stack)) {
+        if (stack.isEmpty() || ItemStackSlot.isVisualized(stack, ItemDisplayContext.FIXED, entity)) {
             return true;
         }
         return ItemModels.isSupported(stack, ItemDisplayContext.FIXED, entity, entity.getId());
@@ -88,7 +88,7 @@ public class ItemFrameVisual extends AbstractEntityVisual<ItemFrame> implements 
 
     private void updateItem() {
         currentStack = entity.getItem();
-        visualized = ItemStackSlot.isVisualized(currentStack);
+        visualized = ItemStackSlot.isVisualized(currentStack, ItemDisplayContext.FIXED, entity);
         if (visualized) {
             if (item != null) {
                 item.delete();
@@ -106,7 +106,7 @@ public class ItemFrameVisual extends AbstractEntityVisual<ItemFrame> implements 
             return;
         }
         if (!ItemStack.matches(entity.getItem(), currentStack)
-                || ItemStackSlot.isVisualized(currentStack) != visualized) {
+                || ItemStackSlot.isVisualized(currentStack, ItemDisplayContext.FIXED, entity) != visualized) {
             updateItem();
         }
         animate(context.partialTick());

@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class DhGlVanillaFadeRendererMixin {
     // Before its raw GL state; GlDhVanillaFadeShader samples the result.
     @Inject(method = "render", at = @At("HEAD"))
-    private void flw$prepareFadeMask(RenderParams params, CallbackInfo ci) {
+    private void flywheel$prepareFadeMask(RenderParams params, CallbackInfo ci) {
         DistantHorizonsFade.prepare(params);
     }
 }

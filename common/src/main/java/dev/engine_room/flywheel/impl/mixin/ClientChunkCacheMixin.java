@@ -19,7 +19,7 @@ abstract class ClientChunkCacheMixin {
     ClientLevel level;
 
     @Inject(method = "onLightUpdate", at = @At("HEAD"), require = 1)
-    private void flw$onLightUpdate(LightLayer layer, SectionPos pos, CallbackInfo ci) {
+    private void flywheel$onLightUpdate(LightLayer layer, SectionPos pos, CallbackInfo ci) {
         VisualizationManagerImpl manager = VisualizationManagerImpl.get(level);
         if (manager != null) {
             manager.onLightUpdate(pos, layer);

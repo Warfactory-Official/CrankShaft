@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 abstract class SodiumStatefulOptionMixin {
     @Inject(method = "getTooltip", at = @At("HEAD"), cancellable = true, require = 1)
     private void flywheel$explainNvidium(CallbackInfoReturnable<Component> cir) {
-        if (NvidiumCompat.isNvidiumOption(((SodiumOptionAccessor) (Object) this).flywheel$id())
+        if (NvidiumCompat.isNvidiumOption(((SodiumOptionAccessor) this).flywheel$id())
                 && NvidiumCompat.engineOwnsTerrain()) {
             cir.setReturnValue(NvidiumCompat.terrainOwnedTooltip());
         }

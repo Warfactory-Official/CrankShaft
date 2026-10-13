@@ -8,9 +8,11 @@ import java.util.List;
 import java.util.Set;
 
 public final class FlwImplMixinPlugin implements IMixinConfigPlugin {
+    #if MC < 26.3
     private static final String MIXIN_CHUNK_SECTIONS_TO_RENDER = "dev.engine_room.flywheel.impl.mixin.MixinChunkSectionsToRender";
     private static final boolean SODIUM_PRESENT = classPresent(
             "net.caffeinemc.mods.sodium.client.render.SodiumWorldRenderer");
+    #endif
     private static final String MIXIN_BETTER_BLOCK_ENTITIES = "dev.engine_room.flywheel.impl.mixin.visualmanage.BetterBlockEntitiesMixin";
     private static final boolean BETTER_BLOCK_ENTITIES_PRESENT = classPresent(
             "betterblockentities.client.render.immediate.blockentity.extentions.BlockEntityExt");
@@ -30,9 +32,11 @@ public final class FlwImplMixinPlugin implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        #if MC < 26.3
         if (MIXIN_CHUNK_SECTIONS_TO_RENDER.equals(mixinClassName)) {
             return !SODIUM_PRESENT;
         }
+        #endif
         if (MIXIN_BETTER_BLOCK_ENTITIES.equals(mixinClassName)) {
             return BETTER_BLOCK_ENTITIES_PRESENT;
         }

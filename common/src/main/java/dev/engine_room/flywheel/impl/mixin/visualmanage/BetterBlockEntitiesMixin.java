@@ -18,7 +18,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 abstract class BetterBlockEntitiesMixin {
     @Dynamic("Added by Better Block Entities' BlockEntityMixin")
     @Inject(method = "bbe$isSupportedBlockEntity", at = @At("HEAD"), cancellable = true, require = 1)
-    private void flw$yieldToVisual(CallbackInfoReturnable<Boolean> cir) {
+    private void flywheel$yieldToVisual(CallbackInfoReturnable<Boolean> cir) {
         BlockEntity self = (BlockEntity) (Object) this;
         if (VisualizationManager.supportsVisualization(self.getLevel()) && VisualizationHelper.skipVanillaRender(
                 self)) {

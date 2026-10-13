@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.iris.engine;
 
+import dev.engine_room.flywheel.iris.mixin.IrisRenderingPipelineAccessor;
 import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.api.backend.RenderContext;
 import dev.engine_room.flywheel.backend.Backends;
@@ -15,7 +16,6 @@ import dev.engine_room.flywheel.backend.engine.uniform.Uniforms;
 import dev.engine_room.flywheel.iris.compile.ContractProperties;
 import dev.engine_room.flywheel.iris.compile.GuestPipelines;
 import dev.engine_room.flywheel.iris.compile.GuestSsbos;
-import dev.engine_room.flywheel.iris.mixin.IrisRenderingPipelineAccessor;
 import it.unimi.dsi.fastutil.objects.Object2IntFunction;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import net.irisshaders.iris.Iris;

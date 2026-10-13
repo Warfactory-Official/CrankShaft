@@ -1,16 +1,15 @@
 package dev.engine_room.flywheel.backend.engine.terrain;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.vulkan.VulkanGpuBuffer;
-import com.mojang.blaze3d.vulkan.VulkanGpuSampler;
-import com.mojang.blaze3d.vulkan.VulkanGpuTextureView;
-import com.mojang.blaze3d.vulkan.VulkanRenderPass;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuBuffer;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuSampler;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
@@ -18,6 +17,9 @@ import dev.engine_room.flywheel.backend.engine.SodiumTerrainOitReplay;
 import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
 import dev.engine_room.flywheel.backend.engine.indirect.VkFoldedOitReplay;
 import dev.engine_room.flywheel.backend.engine.indirect.VkMlabBuffers;
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.engine.indirect.VkNativeOitPass;
+#endif
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher.TranslucentBatch;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher.VisibleRegionBatch;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
@@ -280,7 +282,7 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
     public void replay(RenderPass pass, OitMode mode, OitFramebuffer framebuffer, GpuTextureView lightmapView,
                        GpuTextureView blueNoiseView, GpuSampler clampLinear, GpuSampler oitSampler,
                        GpuSampler noiseSampler) {
-        replayOnCmd(((VulkanRenderPass) pass.backend).commandBuffer, mode, framebuffer, lightmapView,
+        replayOnCmd(VkContext.renderPass(pass).commandBuffer, mode, framebuffer, lightmapView,
                 blueNoiseView, clampLinear, oitSampler, noiseSampler, false);
     }
 
@@ -329,7 +331,8 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
         PhaseSet b = buffers();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/translucent_mlab/" + oitMode);
         VkGraphicsPipeline pipeline = programs.terrain().translucentMlabPipeline(oitMode);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS,
+                #if MC >= 26.3 VkNativeOitPass.enginePipeline(pipeline) #else pipeline.handle() #endif);
         VK12.vkCmdBindIndexBuffer(cmd, ((VulkanGpuBuffer) sharedIndexGpu).vkBuffer(), 0L, VK12.VK_INDEX_TYPE_UINT32);
 
         m.writer.storage(1, b.drawData.vkBuffer(), 0L, (long) batch.count * DRAW_DATA_STRIDE)
@@ -405,7 +408,8 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
         PhaseSet b = buffers();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/translucent_oit/" + mode.name);
         VkGraphicsPipeline pipeline = programs.terrain().translucentProducerPipeline(mode, folded);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS,
+                #if MC >= 26.3 VkNativeOitPass.enginePipeline(pipeline) #else pipeline.handle() #endif);
         VK12.vkCmdBindIndexBuffer(cmd, ((VulkanGpuBuffer) sharedIndexGpu).vkBuffer(), 0L, VK12.VK_INDEX_TYPE_UINT32);
 
         m.writer.storage(1, b.drawData.vkBuffer(), 0L, (long) batch.count * DRAW_DATA_STRIDE)

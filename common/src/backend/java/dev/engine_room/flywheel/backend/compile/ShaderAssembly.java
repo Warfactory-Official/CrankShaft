@@ -1,12 +1,11 @@
 package dev.engine_room.flywheel.backend.compile;
 
-import com.mojang.blaze3d.opengl.GlDevice;
-import com.mojang.blaze3d.systems.RenderSystem;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.compile.core.ShaderCache;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.glsl.GlslVersion;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
+import dev.engine_room.flywheel.backend.vk.VkContext;
 
 import java.util.Collection;
 import java.util.List;
@@ -20,7 +19,7 @@ public final class ShaderAssembly {
     }
 
     public static GlslVersion glslVersion() {
-        return RenderSystem.getDevice().backend instanceof GlDevice ? GlCompat.MAX_GLSL_VERSION : GlslVersion.V460;
+        return VkContext.isVulkanHost() ? GlslVersion.V460 : GlCompat.MAX_GLSL_VERSION;
     }
 
     public static String assemble(Consumer<Compilation> preamble, List<SourceComponent> roots) {
@@ -44,7 +43,15 @@ public final class ShaderAssembly {
 
     public static String assembleFlattened(GlslVersion version, Consumer<Compilation> preamble,
                                            List<SourceComponent> roots) {
+        #if MC >= 26.3
+        return assemble(version, preamble, roots);
+        #else
         return MojImportPreprocessor.flatten(assemble(version, preamble, roots));
+        #endif
+    }
+
+    public static void appendComponents(Compilation compilation, List<SourceComponent> roots) {
+        ShaderCache.expand(roots, compilation::appendComponent);
     }
 
     public record RawSource(String name, String source) implements SourceComponent {

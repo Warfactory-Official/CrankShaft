@@ -69,7 +69,7 @@ abstract class ProgramSetMixin implements ContractProgramSet {
             flywheel$nativeWater = self.get(ProgramId.Water).orElseThrow();
             flywheel$pack = pack;
         }
-        DeferredOitProfile deferred = ((ContractShaderPack) pack).flywheel$deferredOit();
+        DeferredOitProfile deferred = pack.flywheel$deferredOit();
         if (deferred != null) {
             try {
                 flywheel$patchedFragments = deferred.fragments(self, flywheel$contract);
@@ -91,7 +91,7 @@ abstract class ProgramSetMixin implements ContractProgramSet {
     @Override
     public @Nullable ContractProperties flywheel$nativeOit() {
         if (flywheel$nativeWater != null) {
-            ContractShaderPack pack = (ContractShaderPack) flywheel$pack;
+            ContractShaderPack pack = flywheel$pack;
             flywheel$nativeOit = ContractProperties.nativeForwardOit(flywheel$nativeWater, pack.flywheel$forwardOit(),
                     pack.flywheel$contractProperties().oit(false));
             flywheel$nativeWater = null;

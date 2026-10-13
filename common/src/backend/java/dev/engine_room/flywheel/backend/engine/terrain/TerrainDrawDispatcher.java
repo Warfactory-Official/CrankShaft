@@ -1,18 +1,20 @@
 package dev.engine_room.flywheel.backend.engine.terrain;
 
-import com.mojang.blaze3d.IndexType;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.opengl.GlTexture;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
+import dev.engine_room.flywheel.impl.mixin.sodium.ChunkRenderListAccessor;
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.systems.CommandEncoder;
-import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.pipeline.IndexType;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.opengl.GlBuffer;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
@@ -25,12 +27,13 @@ import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
 import dev.engine_room.flywheel.backend.engine.indirect.OitPipelines;
 import dev.engine_room.flywheel.backend.engine.indirect.StagingBuffer;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
-import dev.engine_room.flywheel.backend.gl.buffer.GlBuffer;
 import dev.engine_room.flywheel.backend.gl.buffer.GlBufferType;
 import dev.engine_room.flywheel.backend.gl.buffer.GlBufferUsage;
 import dev.engine_room.flywheel.backend.gl.buffer.GlResidentBuffer;
 import dev.engine_room.flywheel.backend.gl.shader.GlProgram;
-import dev.engine_room.flywheel.impl.mixin.sodium.ChunkRenderListAccessor;
+import dev.engine_room.flywheel.compat.backend.UniformData;
+import dev.engine_room.flywheel.compat.backend.UniformStorage;
+import dev.engine_room.flywheel.compat.backend.UniformStorageOps;
 import dev.engine_room.flywheel.lib.memory.MemoryBlock;
 import it.unimi.dsi.fastutil.longs.Long2LongMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
@@ -50,7 +53,6 @@ import net.caffeinemc.mods.sodium.client.util.iterator.ByteIterator;
 import net.caffeinemc.mods.sodium.client.util.iterator.ReversibleObjectArrayIterator;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.DynamicUniformStorage;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.util.Mth;
@@ -62,7 +64,6 @@ import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.*;
 import org.lwjgl.system.MemoryUtil;
-
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Collection;
@@ -139,8 +140,10 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
     public final GlResidentBuffer translucentRegionVisBuffer = new GlResidentBuffer();
     public final GlResidentBuffer translucentCommandBuffer = new GlResidentBuffer();
     public final GlResidentBuffer translucentCommandCount = new GlResidentBuffer();
-    public final GlBuffer translucentHizUniformBuffer = new GlBuffer(GlBufferUsage.DYNAMIC_DRAW);
-    public final GlBuffer translucentLiveMaskBuffer = new GlBuffer(GlBufferUsage.STREAM_DRAW);
+    public final dev.engine_room.flywheel.backend.gl.buffer.GlBuffer translucentHizUniformBuffer =
+            new dev.engine_room.flywheel.backend.gl.buffer.GlBuffer(GlBufferUsage.DYNAMIC_DRAW);
+    public final dev.engine_room.flywheel.backend.gl.buffer.GlBuffer translucentLiveMaskBuffer =
+            new dev.engine_room.flywheel.backend.gl.buffer.GlBuffer(GlBufferUsage.STREAM_DRAW);
     public final TranslucentRegionBatch translucentRegionBatch = new TranslucentRegionBatch();
     private final SharedQuadIndexBuffer sharedIndexBuffer = new SharedQuadIndexBuffer(
             SharedQuadIndexBuffer.IndexFormat.INTEGER);
@@ -157,28 +160,31 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
             MemoryBlock.malloc((long) MAX_VISIBLE_REGIONS * LIVE_MASK_WORDS_PER_SLOT * Integer.BYTES);
     private final Matrix4f lastProjection = new Matrix4f();
     private final MemoryBlock regionInputScratch = MemoryBlock.malloc((long) MAX_VISIBLE_REGIONS * REGION_INPUT_STRIDE);
-    private final @Nullable GlBuffer shadowSectionMaskBuffer = GuestTerrainGate.enabled()
-            ? new GlBuffer(GlBufferUsage.STREAM_DRAW) : null;
+    private final dev.engine_room.flywheel.backend.gl.buffer.@Nullable GlBuffer shadowSectionMaskBuffer =
+            GuestTerrainGate.enabled()
+            ? new dev.engine_room.flywheel.backend.gl.buffer.GlBuffer(GlBufferUsage.STREAM_DRAW) : null;
     private final @Nullable MemoryBlock shadowSectionMaskScratch = GuestTerrainGate.enabled()
             ? MemoryBlock.malloc((long) PASS_COUNT * MAX_VISIBLE_REGIONS * SHADOW_MASK_LONGS * Long.BYTES) : null;
     private final long @Nullable [] shadowSectionMasks = GuestTerrainGate.enabled()
             ? new long[(PASS_COUNT + 1) * MAX_VISIBLE_REGIONS * SHADOW_MASK_LONGS] : null;
-    private final DynamicUniformStorage<RegionChunkOriginUniform> regionOriginUniforms =
-            new DynamicUniformStorage<>("flywheel:terrain_region_origin", 16, 256);
-    private final DynamicUniformStorage<ChunkSectionUniform> chunkSectionUniforms =
-            new DynamicUniformStorage<>("flywheel:terrain_chunk_section", 96, 4);
-    private final DynamicUniformStorage<ChunkSectionUniform> translucentChunkSectionUniforms =
-            new DynamicUniformStorage<>("flywheel:terrain_translucent_chunk_section", 96, 64);
+    private final UniformStorage<RegionChunkOriginUniform> regionOriginUniforms =
+            UniformStorageOps.create("flywheel:terrain_region_origin", 16, 256);
+    private final UniformStorage<ChunkSectionUniform> chunkSectionUniforms =
+            UniformStorageOps.create("flywheel:terrain_chunk_section", 96, 4);
+    private final UniformStorage<ChunkSectionUniform> translucentChunkSectionUniforms =
+            UniformStorageOps.create("flywheel:terrain_translucent_chunk_section", 96, 64);
+
     private final VisibleRegionBatch solidBatch = new VisibleRegionBatch(PASS_SOLID);
     private final VisibleRegionBatch cutoutBatch = new VisibleRegionBatch(PASS_CUTOUT);
     private final OpaqueTerrainBatch opaqueBatch = new OpaqueTerrainBatch(solidBatch, cutoutBatch);
     private final TranslucentBatch translucentBatch = new TranslucentBatch();
     private final Long2LongMap translucentFirstSeenMillis = new Long2LongOpenHashMap();
     private final Long2LongMap translucentFadeDurationMillis = new Long2LongOpenHashMap();
-    private final GlBuffer hizUniformBuffer =
-            new GlBuffer(GlBufferUsage.DYNAMIC_DRAW);
+    private final dev.engine_room.flywheel.backend.gl.buffer.GlBuffer hizUniformBuffer =
+            new dev.engine_room.flywheel.backend.gl.buffer.GlBuffer(GlBufferUsage.DYNAMIC_DRAW);
     private final MemoryBlock hizUniformScratch = MemoryBlock.malloc(96L);
-    private final GlBuffer terrainSceneUbo = new GlBuffer(GlBufferUsage.DYNAMIC_DRAW);
+    private final dev.engine_room.flywheel.backend.gl.buffer.GlBuffer terrainSceneUbo =
+            new dev.engine_room.flywheel.backend.gl.buffer.GlBuffer(GlBufferUsage.DYNAMIC_DRAW);
     private final MemoryBlock terrainSceneUboScratch = MemoryBlock.malloc(TERRAIN_SCENE_UBO_BYTES);
     private final GpuSampler lightmapSampler;
     private final Matrix4f lastModelView = new Matrix4f();
@@ -345,7 +351,7 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         if (buffer == null || buffer.isClosed()) {
             return -1;
         }
-        if (!(buffer instanceof com.mojang.blaze3d.opengl.GlBuffer glBuffer)) {
+        if (!(buffer instanceof GlBuffer glBuffer)) {
             return -1;
         }
         return glBuffer.handle();
@@ -573,17 +579,17 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         try (RenderPass pass = encoder.createRenderPass(() -> "flywheel:terrain/shadow",
                 colorView, Optional.empty(), depthView, OptionalDouble.empty())) {
             RenderSystem.bindDefaultUniforms(pass);
-            pass.bindTexture("Sampler0", atlasView, TerrainAtlasFilter.sampler());
-            pass.bindTexture("Sampler2", lightmapView, lightmapSampler);
+            pass.setUniform("Sampler0", atlasView, TerrainAtlasFilter.sampler());
+            pass.setUniform("Sampler2", lightmapView, lightmapSampler);
 
             pass.setUniform("ChunkSection", chunkSectionUniforms.writeUniform(
                     new ChunkSectionUniform(matrices.modelView())));
             bindSodiumTerrainUniforms(pass);
 
-            pass.setPipeline(TerrainPipelines.shadow(false));
+            pass.setRenderPipeline(TerrainPipelines.shadow(false));
             drawCommandStream(pass, PASS_SOLID, opaque.solid);
 
-            pass.setPipeline(TerrainPipelines.shadow(true));
+            pass.setRenderPipeline(TerrainPipelines.shadow(true));
             drawCommandStream(pass, PASS_CUTOUT, opaque.cutout);
         }
     }
@@ -788,18 +794,18 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         try (RenderPass pass = encoder.createRenderPass(() -> "flywheel:terrain/opaque",
                 colorView, Optional.empty(), depthView, OptionalDouble.empty())) {
             RenderSystem.bindDefaultUniforms(pass);
-            pass.bindTexture("Sampler0", atlasView, TerrainAtlasFilter.sampler());
-            pass.bindTexture("Sampler2", lightmapView, lightmapSampler);
+            pass.setUniform("Sampler0", atlasView, TerrainAtlasFilter.sampler());
+            pass.setUniform("Sampler2", lightmapView, lightmapSampler);
 
             GpuBufferSlice chunkSectionSlice = chunkSectionUniforms.writeUniform(
                     new ChunkSectionUniform(matrices.modelView()));
             pass.setUniform("ChunkSection", chunkSectionSlice);
             bindSodiumTerrainUniforms(pass);
 
-            pass.setPipeline(TerrainPipelines.solid());
+            pass.setRenderPipeline(TerrainPipelines.solid());
             drawCommandStream(pass, PASS_SOLID, opaque.solid);
 
-            pass.setPipeline(TerrainPipelines.cutout());
+            pass.setRenderPipeline(TerrainPipelines.cutout());
             drawCommandStream(pass, PASS_CUTOUT, opaque.cutout);
         }
     }
@@ -1142,9 +1148,9 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         GpuTextureView atlasView = Minecraft.getInstance().getTextureManager()
                                             .getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView();
 
-        pass.setPipeline(OitPipelines.chunkSodiumProducer(mode));
-        pass.bindTexture("Sampler0", atlasView, TerrainAtlasFilter.sampler());
-        pass.bindTexture("Sampler2", lightmapView, clampLinear);
+        pass.setRenderPipeline(OitPipelines.chunkSodiumProducer(mode));
+        pass.setUniform("Sampler0", atlasView, TerrainAtlasFilter.sampler());
+        pass.setUniform("Sampler2", lightmapView, clampLinear);
         framebuffer.bindOitReads(pass, mode, blueNoiseView, oitSampler, noiseSampler);
         pass.setIndexBuffer(sharedIndexGpu, IndexType.INT);
 
@@ -1265,6 +1271,8 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
         GpuTextureView atlasView = Minecraft.getInstance().getTextureManager()
                                             .getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView();
+        // ChunkSection carries ONLY ModelViewMat now (the fade is GPU-resident); one slice per frame, shared across
+        // every region + both streams + the 3 OIT producer modes.
         GpuBufferSlice chunkSectionSlice = translucentChunkSectionUniforms.writeUniform(
                 new ChunkSectionUniform(lastModelView));
 
@@ -1281,9 +1289,9 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
                                        GpuSampler clampLinear, GpuSampler oitSampler, GpuSampler noiseSampler,
                                        GpuTextureView atlasView, GpuBufferSlice chunkSectionSlice,
                                        GpuBuffer sharedIndexGpu, boolean fading) {
-        pass.setPipeline(OitPipelines.chunkSodiumProducer(mode, fading));
-        pass.bindTexture("Sampler0", atlasView, TerrainAtlasFilter.sampler());
-        pass.bindTexture("Sampler2", lightmapView, clampLinear);
+        pass.setRenderPipeline(OitPipelines.chunkSodiumProducer(mode, fading));
+        pass.setUniform("Sampler0", atlasView, TerrainAtlasFilter.sampler());
+        pass.setUniform("Sampler2", lightmapView, clampLinear);
         framebuffer.bindOitReads(pass, mode, blueNoiseView, oitSampler, noiseSampler);
         pass.setUniform("ChunkSection", chunkSectionSlice);
         pass.setIndexBuffer(sharedIndexGpu, IndexType.INT);
@@ -1351,9 +1359,9 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         try (RenderPass pass = encoder.createRenderPass(() -> "flywheel:terrain/guest_oit",
                 colorView, Optional.empty(), depthView, OptionalDouble.empty())) {
             RenderSystem.bindDefaultUniforms(pass);
-            pass.setPipeline(producer);
-            pass.bindTexture("Sampler0", atlasView, TerrainAtlasFilter.sampler());
-            pass.bindTexture("Sampler2", lightmapView, clampLinear);
+            pass.setRenderPipeline(producer);
+            pass.setUniform("Sampler0", atlasView, TerrainAtlasFilter.sampler());
+            pass.setUniform("Sampler2", lightmapView, clampLinear);
             pass.setUniform("ChunkSection", chunkSectionSlice);
             bindSodiumTerrainUniforms(pass);
             pass.setIndexBuffer(sharedIndexGpu, IndexType.INT);
@@ -1400,9 +1408,9 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
                                              GpuSampler clampLinear, GpuTextureView atlasView,
                                              GpuBufferSlice chunkSectionSlice,
                                              GpuBuffer sharedIndexGpu, boolean fading) {
-        pass.setPipeline(OitPipelines.chunkSodiumMlab(mode, fading));
-        pass.bindTexture("Sampler0", atlasView, TerrainAtlasFilter.sampler());
-        pass.bindTexture("Sampler2", lightmapView, clampLinear);
+        pass.setRenderPipeline(OitPipelines.chunkSodiumMlab(mode, fading));
+        pass.setUniform("Sampler0", atlasView, TerrainAtlasFilter.sampler());
+        pass.setUniform("Sampler2", lightmapView, clampLinear);
         pass.setUniform("ChunkSection", chunkSectionSlice);
         pass.setIndexBuffer(sharedIndexGpu, IndexType.INT);
 
@@ -1707,15 +1715,14 @@ public final class TerrainDrawDispatcher implements TerrainDispatcher {
         }
     }
 
-    private record RegionChunkOriginUniform(int x, int y, int z) implements DynamicUniformStorage.DynamicUniform {
+    private record RegionChunkOriginUniform(int x, int y, int z) implements UniformData {
         @Override
         public void write(ByteBuffer buf) {
             buf.putInt(x).putInt(y).putInt(z).putInt(0);
         }
     }
 
-    private record ChunkSectionUniform(Matrix4fc modelView, float chunkVisibility)
-            implements DynamicUniformStorage.DynamicUniform {
+    private record ChunkSectionUniform(Matrix4fc modelView, float chunkVisibility) implements UniformData {
         ChunkSectionUniform(Matrix4fc modelView) {
             this(modelView, 1.0f);
         }

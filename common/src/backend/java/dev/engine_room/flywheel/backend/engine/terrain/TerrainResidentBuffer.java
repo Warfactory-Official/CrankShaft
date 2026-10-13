@@ -1,5 +1,7 @@
 package dev.engine_room.flywheel.backend.engine.terrain;
 
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+
 public interface TerrainResidentBuffer {
     boolean ensureCapacity(long bytes);
 
@@ -10,6 +12,13 @@ public interface TerrainResidentBuffer {
     void clearRange(long offset, long size, int fillWord);
 
     void delete();
+
+    /**
+     * Borrowed native binding; re-query after capacity changes.
+     */
+    default GpuBufferSlice slice() {
+        throw new UnsupportedOperationException();
+    }
 
     default long deviceAddress() {
         throw new UnsupportedOperationException();

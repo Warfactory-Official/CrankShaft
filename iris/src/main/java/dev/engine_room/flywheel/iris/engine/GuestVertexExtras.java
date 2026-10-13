@@ -1,7 +1,7 @@
 package dev.engine_room.flywheel.iris.engine;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.vertex.VertexFormat;
 import dev.engine_room.flywheel.api.model.Mesh;
 import dev.engine_room.flywheel.api.vertex.VertexList;
 import dev.engine_room.flywheel.backend.engine.MeshVertexExtras;

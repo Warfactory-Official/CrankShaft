@@ -3,7 +3,7 @@ name: CI Build
 on:
   push:
     branches:
-      - 26.2
+      - multiversion
   pull_request:
   workflow_dispatch:
 
@@ -32,8 +32,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: 9.5.0
-          cache-read-only: ${{ github.ref != 'refs/heads/26.2' }}
+          cache-read-only: ${{ github.ref != 'refs/heads/multiversion' }}
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
@@ -46,18 +45,17 @@ jobs:
         with:
           name: ${{ github.event.repository.name }}-jars
           path: |
-            build/mods/*.jar
+            build/mods/*/*.jar
           if-no-files-found: error
 
       - name: Publish snapshots to Maven (warfactory)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/26.2' && github.repository == 'Warfactory-Official/CrankShaft'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/multiversion' && github.repository == 'Warfactory-Official/CrankShaft'
         env:
           MAVEN_USER: ${{ secrets.MAVEN_USER }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
           MAVEN_URL: https://repo.warfactory.co/snapshots
         run: |
           ./gradlew \
-            :fabric:publishMavenJarPublicationToWarfactoryRepository \
-            :neoforge:publishMavenJarPublicationToWarfactoryRepository \
+            publishAllVersions \
             --no-daemon \
             --stacktrace

@@ -1,17 +1,19 @@
 package dev.engine_room.flywheel.iris.engine;
 
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.opengl.GlBuffer;
-import com.mojang.blaze3d.opengl.GlConst;
-import com.mojang.blaze3d.opengl.GlStateManager;
+import dev.engine_room.flywheel.iris.mixin.CompositePassAccessor;
+import dev.engine_room.flywheel.iris.mixin.ComputeProgramAccessor;
+import dev.engine_room.flywheel.iris.mixin.ShaderStorageBufferAccessor;
+import net.irisshaders.iris.mixinterface.CustomPass;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.backend.opengl.GlBuffer;
+import com.mojang.renderpearl.backend.opengl.GlConst;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.impl.BackendManagerImpl;
-import dev.engine_room.flywheel.iris.mixin.ComputeProgramAccessor;
-import dev.engine_room.flywheel.iris.mixin.ShaderStorageBufferAccessor;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.blending.BlendModeOverride;
 import net.irisshaders.iris.gl.buffer.ShaderStorageBuffer;
@@ -24,7 +26,6 @@ import net.irisshaders.iris.uniforms.custom.CustomUniforms;
 import net.minecraft.client.Minecraft;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.*;
-
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
@@ -45,9 +46,9 @@ public final class DeferredOitRenderer implements AutoCloseable {
     private static final int[] ZERO_STENCIL = {0};
     private static final int[] INVALID_CAPTURE = {1};
     private final DeferredReplayResources resources;
-    private final DeferredCompositePass first;
-    private final @Nullable DeferredCompositePass after;
-    private final DeferredCompositePass[] passes;
+    private final CustomPass first;
+    private final @Nullable CustomPass after;
+    private final CustomPass[] passes;
     private final Program[] graphics;
     private final boolean[] masked;
     private final int[] farLocations;
@@ -119,7 +120,7 @@ public final class DeferredOitRenderer implements AutoCloseable {
     private boolean viewportKnown;
     private int viewportX, viewportY, viewportWidth, viewportHeight;
     private int nearestStage;
-    private @Nullable DeferredCompositePass pendingNearest;
+    private @Nullable CustomPass pendingNearest;
 
     private DeferredOitRenderer(DeferredReplayPlan plan, RenderTargets targets, CustomUniforms uniforms,
                                 ShaderStorageBuffer[] storage, boolean concurrentCompute) {
@@ -144,7 +145,7 @@ public final class DeferredOitRenderer implements AutoCloseable {
         var stages = plan.stages();
         first = stages[0].pass();
         after = plan.after();
-        passes = new DeferredCompositePass[stages.length];
+        passes = new CustomPass[stages.length];
         graphics = new Program[stages.length];
         masked = new boolean[stages.length];
         farLocations = new int[stages.length];
@@ -156,26 +157,26 @@ public final class DeferredOitRenderer implements AutoCloseable {
         var computeList = new ArrayList<ComputeProgram>();
         boolean mask = false;
         for (int i = 0; i < stages.length; i++) {
-            DeferredCompositePass pass = passes[i] = stages[i].pass();
-            Program program = graphics[i] = pass.flywheel$program();
+            CustomPass pass = passes[i] = stages[i].pass();
+            Program program = graphics[i] = ((CompositePassAccessor) pass).flywheel$program();
             computeStarts[i] = computeList.size();
-            for (ComputeProgram compute : pass.flywheel$computes()) if (compute != null) computeList.add(compute);
+            for (ComputeProgram compute : ((CompositePassAccessor) pass).flywheel$computes()) if (compute != null) computeList.add(compute);
             if (program == null) continue;
             farLocations[i] = GL20C.glGetUniformLocation(program.getProgramId(), "flw_oitFarLayer");
             layerLocations[i] = GL20C.glGetUniformLocation(program.getProgramId(), "flw_oitLayerIndex");
             replayLocations[i] = GL20C.glGetUniformLocation(program.getProgramId(), "flw_oitReplaying");
             masked[i] = stages[i].tileMasked();
             mask |= masked[i];
-            var view = pass.flywheel$viewportScale();
+            var view = ((CompositePassAccessor) pass).flywheel$viewportScale();
             if (masked[i] && (view.scale() != 1 || view.viewportX() != 0 || view.viewportY() != 0)) {
-                throw new IllegalArgumentException("Tile-masked replay needs a full viewport: " + pass.flywheel$name());
+                throw new IllegalArgumentException("Tile-masked replay needs a full viewport: " + ((CompositePassAccessor) pass).flywheel$name());
             }
-            int[] buffers = pass.flywheel$mipmaps().stream().mapToInt(Integer::intValue).toArray();
+            int[] buffers = ((CompositePassAccessor) pass).flywheel$mipmaps().stream().mapToInt(Integer::intValue).toArray();
             mipTargets[i] = new RenderTarget[buffers.length];
             mipAlt[i] = new boolean[buffers.length];
             for (int j = 0; j < buffers.length; j++) {
                 mipTargets[i][j] = targets.get(buffers[j]);
-                mipAlt[i][j] = pass.flywheel$readAlt().contains(buffers[j]);
+                mipAlt[i][j] = ((CompositePassAccessor) pass).flywheel$readAlt().contains(buffers[j]);
             }
         }
         usesStencil = mask;
@@ -259,7 +260,7 @@ public final class DeferredOitRenderer implements AutoCloseable {
         compilation.define("FLW_REPLAY_TILE_RADIUS", Integer.toString(tileRadius));
     }
 
-    public void before(DeferredCompositePass current) {
+    public void before(CustomPass current) {
         finishNearestPass();
         if (current == after) finish();
         if (current == first && BackendManagerImpl.isBackendOn()) {
@@ -279,7 +280,7 @@ public final class DeferredOitRenderer implements AutoCloseable {
 
     private void finishNearestPass() {
         if (pendingNearest != null) {
-            DeferredCompositePass completed = pendingNearest;
+            CustomPass completed = pendingNearest;
             pendingNearest = null;
             resources.afterPass(completed, 0);
         }
@@ -356,10 +357,10 @@ public final class DeferredOitRenderer implements AutoCloseable {
                 maskAttached = true;
                 for (int i = 0; i < passes.length; i++)
                     if (masked[i]) {
-                        if (passes[i].flywheel$viewWidth() != width || passes[i].flywheel$viewHeight() != height)
+                        if (((CompositePassAccessor) passes[i]).flywheel$viewWidth() != width || ((CompositePassAccessor) passes[i]).flywheel$viewHeight() != height)
                             throw new IllegalStateException(
-                                    "Tile-masked pass dimensions changed: " + passes[i].flywheel$name());
-                        GL45C.glNamedFramebufferRenderbuffer(passes[i].flywheel$framebuffer().getId(),
+                                    "Tile-masked pass dimensions changed: " + ((CompositePassAccessor) passes[i]).flywheel$name());
+                        GL45C.glNamedFramebufferRenderbuffer(((CompositePassAccessor) passes[i]).flywheel$framebuffer().getId(),
                                 GL30C.GL_STENCIL_ATTACHMENT, GL30C.GL_RENDERBUFFER, stencil);
                     }
                 GL45C.glClearNamedFramebufferiv(maskFbo, GL11C.GL_STENCIL, 0, ZERO_STENCIL);
@@ -431,7 +432,7 @@ public final class DeferredOitRenderer implements AutoCloseable {
     }
 
     private void replayPass(int index, int layer, int indexType) {
-        DeferredCompositePass pass = passes[index];
+        CustomPass pass = passes[index];
         resources.beforePass(pass, layer);
         if (!preservesViewport) viewportKnown = false;
         for (int i = computeStarts[index]; i < computeStarts[index + 1]; i++) {
@@ -463,11 +464,11 @@ public final class DeferredOitRenderer implements AutoCloseable {
                 target.turnOnMips(alt);
             }
             pass.setupState();
-            var view = pass.flywheel$viewportScale();
-            viewport((int) (pass.flywheel$viewWidth() * view.viewportX()),
-                    (int) (pass.flywheel$viewHeight() * view.viewportY()),
-                    (int) (pass.flywheel$viewWidth() * view.scale()),
-                    (int) (pass.flywheel$viewHeight() * view.scale()));
+            var view = ((CompositePassAccessor) pass).flywheel$viewportScale();
+            viewport((int) (((CompositePassAccessor) pass).flywheel$viewWidth() * view.viewportX()),
+                    (int) (((CompositePassAccessor) pass).flywheel$viewHeight() * view.viewportY()),
+                    (int) (((CompositePassAccessor) pass).flywheel$viewWidth() * view.scale()),
+                    (int) (((CompositePassAccessor) pass).flywheel$viewHeight() * view.scale()));
             GlStateManager._disableScissorTest();
             program.use();
             uniforms.push(program);
@@ -578,7 +579,7 @@ public final class DeferredOitRenderer implements AutoCloseable {
         GL11C.glStencilFunc(GL11C.GL_ALWAYS, 0, 0xFF);
         for (int i = 0; i < passes.length; i++)
             if (masked[i])
-                GL45C.glNamedFramebufferRenderbuffer(passes[i].flywheel$framebuffer().getId(),
+                GL45C.glNamedFramebufferRenderbuffer(((CompositePassAccessor) passes[i]).flywheel$framebuffer().getId(),
                         GL30C.GL_STENCIL_ATTACHMENT,
                         GL30C.GL_RENDERBUFFER, 0);
     }
@@ -603,9 +604,9 @@ public final class DeferredOitRenderer implements AutoCloseable {
             if (fallback != lastFallback) {
                 if (fallback != 0) FlwBackend.LOGGER.warn(
                         "Deferred transparency uses native ordering: {} flags={}, requestedSlots={}, layers={}, priorBound={}; pool limit={} slots",
-                        first.flywheel$name(), fallback, demand, data.getInt(8), readbackBounds[slot],
+                        ((CompositePassAccessor) first).flywheel$name(), fallback, demand, data.getInt(8), readbackBounds[slot],
                         maxPoolNodes(resources.width(), resources.height()));
-                else FlwBackend.LOGGER.info("Deferred transparency sorting restored: {}", first.flywheel$name());
+                else FlwBackend.LOGGER.info("Deferred transparency sorting restored: {}", ((CompositePassAccessor) first).flywheel$name());
                 lastFallback = fallback;
             }
             long granules = (demand + demand / 4 + nodeGranule - 1) / nodeGranule;

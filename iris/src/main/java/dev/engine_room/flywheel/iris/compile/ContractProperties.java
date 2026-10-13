@@ -200,7 +200,7 @@ public final class ContractProperties {
             if (!path[1].startsWith(prefix)) {
                 throw new IllegalStateException("colorwheel.properties " + key + ": expected " + prefix + "N");
             }
-            bufferBlend.computeIfAbsent(program, p -> new ArrayList<>())
+            bufferBlend.computeIfAbsent(program, _ -> new ArrayList<>())
                        .add(new BufferBlendInformation(Integer.parseInt(path[1].substring(prefix.length())), mode));
         }
     }

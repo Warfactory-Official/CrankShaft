@@ -23,13 +23,16 @@ public final class FlwPrograms {
     }
 
     public static void reload(ResourceManager manager) {
+        RenderPipelineCompiler.reset();
         BackendRecovery.beginReload();
         ProgramAvailability.beginReload();
         Models.invalidate();
         RendererReloadCache.onReloadLevelRenderer();
         AnimatedSprites.clear();
         ResourceReloadHolder.onEndClientResourceReload();
+        #if MC < 26.3
         MojImportPreprocessor.clearImportContents();
+        #endif
         var sources = new ShaderSources(manager);
         SOURCES = sources;
 

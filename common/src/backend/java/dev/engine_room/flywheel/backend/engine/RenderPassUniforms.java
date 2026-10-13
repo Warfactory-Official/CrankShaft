@@ -1,10 +1,12 @@
 package dev.engine_room.flywheel.backend.engine;
 
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
+import dev.engine_room.flywheel.compat.backend.UniformData;
+import dev.engine_room.flywheel.compat.backend.UniformStorage;
+import dev.engine_room.flywheel.compat.backend.UniformStorageOps;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.DynamicUniformStorage;
 import net.minecraft.core.Vec3i;
 import net.minecraft.util.Util;
 import org.joml.Matrix3fc;
@@ -18,27 +20,22 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Per-frame UBO ring buffers backing the RenderPass producer's fragment-side lighting (upstream common.frag
- * parity): a per-draw-group packed material ({@code _FlwInstanceDraw}) + a per-frame render origin
- * ({@code _FlwRenderOrigin}), plus the embedded-environment per-draw UBOs ({@code _FlwEmbed} /
- * {@code _FlwEmbedDraw}). All are CPU-mapped triple-buffered rings ({@link DynamicUniformStorage}); the 26.2
- * RenderPass RHI has no scalar uniform setter, so these small values ride UBO slices bound per draw via
- * {@code pass.setUniform}. Slices are pre-written (before the pass) and stay valid until the next frame's
+ * Per-frame UBO rings for RenderPass producers: per-draw-group packed material ({@code _FlwInstanceDraw}), render
+ * origin ({@code _FlwRenderOrigin}), embedded-environment per-draw UBOs ({@code _FlwEmbed} / {@code _FlwEmbedDraw}).
+ * Slices written before the pass, bound per draw via {@code pass.setUniform}, valid until the next
  * {@link #beginFrame}. One instance per draw manager.
  */
 public final class RenderPassUniforms {
-    // DynamicUniformStorage rounds the block to the device's min uniform-offset alignment,
+    // The uniform storage rounds the block to the device's min uniform-offset alignment,
     // so the small declared sizes are just the written-byte counts.
-    private final DynamicUniformStorage<MaterialUniform> material = new DynamicUniformStorage<>("flywheel:material", 48,
-            64);
-    private final DynamicUniformStorage<RenderOriginUniform> renderOrigin = new DynamicUniformStorage<>(
+    private final UniformStorage<MaterialUniform> material = UniformStorageOps.create("flywheel:material", 48, 64);
+    private final UniformStorage<RenderOriginUniform> renderOrigin = UniformStorageOps.create(
             "flywheel:render_origin", DynamicLights.UNIFORM_SIZE, 2);
     // Embedded-environment per-draw UBOs: instancing carries the composed pose/normal directly (mat4 + mat4 =
     // 128 B); indirect carries only the MultiDraw's draw-command start offset (the matrix rides the SSBO).
-    private final DynamicUniformStorage<EmbedUniform> embed = new DynamicUniformStorage<>("flywheel:embed", 128, 16);
-    private final DynamicUniformStorage<EmbedDrawUniform> embedDraw = new DynamicUniformStorage<>("flywheel:embed_draw",
-            4, 16);
-    private final DynamicUniformStorage<LineFrameUniform> lineFrame = new DynamicUniformStorage<>(
+    private final UniformStorage<EmbedUniform> embed = UniformStorageOps.create("flywheel:embed", 128, 16);
+    private final UniformStorage<EmbedDrawUniform> embedDraw = UniformStorageOps.create("flywheel:embed_draw", 4, 16);
+    private final UniformStorage<LineFrameUniform> lineFrame = UniformStorageOps.create(
             "flywheel:line_frame", FrameUniforms.size(), 2);
 
     // Per-frame reuse: each write flushes its mapped range (NV GPU copy). gl_instancing 150-mob lineup: 1420 -> 24
@@ -143,8 +140,7 @@ public final class RenderPassUniforms {
 
     private record MaterialUniform(int drawTag, int packedProperties, float systemSeconds, float glintSpeedOption,
                                    float glintStrengthOption, int itemTag,
-                                   float partialTick, float renderTicks,
-                                   float renderSeconds) implements DynamicUniformStorage.DynamicUniform {
+                                   float partialTick, float renderTicks, float renderSeconds) implements UniformData {
         @Override
         public void write(ByteBuffer buf) {
             buf.putInt(drawTag);               // _flw_drawPackedMaterial.x
@@ -161,7 +157,7 @@ public final class RenderPassUniforms {
     }
 
     private record RenderOriginUniform(Vec3i origin, int ambientOcclusion,
-                                       int constantAmbientLight) implements DynamicUniformStorage.DynamicUniform {
+                                       int constantAmbientLight) implements UniformData {
         @Override
         public void write(ByteBuffer buf) {
             long ptr = MemoryUtil.memAddress(buf);
@@ -176,7 +172,7 @@ public final class RenderPassUniforms {
 
     // The normal mat3 rides the upper-left of a mat4 (std140 simplicity); the shader's mat3(_flw_embedNormal)
     // extracts the 3x3. Copies guard against the environment mutating its composed matrices next frame.
-    private record EmbedUniform(Matrix4f pose, Matrix4f normal) implements DynamicUniformStorage.DynamicUniform {
+    private record EmbedUniform(Matrix4f pose, Matrix4f normal) implements UniformData {
         @Override
         public void write(ByteBuffer buf) {
             pose.get(0, buf);    // mat4 _flw_embedPose (column-major)
@@ -184,14 +180,14 @@ public final class RenderPassUniforms {
         }
     }
 
-    private record EmbedDrawUniform(int baseDraw) implements DynamicUniformStorage.DynamicUniform {
+    private record EmbedDrawUniform(int baseDraw) implements UniformData {
         @Override
         public void write(ByteBuffer buf) {
             buf.putInt(baseDraw); // uint _flw_baseDraw
         }
     }
 
-    private record LineFrameUniform() implements DynamicUniformStorage.DynamicUniform {
+    private record LineFrameUniform() implements UniformData {
         @Override
         public void write(ByteBuffer buf) {
             buf.put(MemoryUtil.memByteBuffer(FrameUniforms.ptr(), FrameUniforms.size()));

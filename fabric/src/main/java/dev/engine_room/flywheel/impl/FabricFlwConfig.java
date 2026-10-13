@@ -286,7 +286,6 @@ public final class FabricFlwConfig implements FlwConfig {
             int kbuffer = 0;
             int mlab = 0;
             int abuffer = 0;
-            boolean exactWeather = false;
             if (object.get("oit") instanceof JsonObject oit) {
                 if (oit.get("path") instanceof JsonPrimitive p && p.isString()) {
                     for (OitConfig.Path v : OitConfig.Path.values()) {
@@ -299,9 +298,12 @@ public final class FabricFlwConfig implements FlwConfig {
                 kbuffer = readInt(oit, "kbufferLayers");
                 mlab = readInt(oit, "mlabLayers");
                 abuffer = readInt(oit, "abufferLayers");
-                exactWeather = oit.get("exactWeather") instanceof JsonPrimitive e && e.isBoolean() && e.getAsBoolean();
             }
-            OitConfig.loadState(path, kbuffer, mlab, abuffer, exactWeather);
+            #if MC < 26.3
+            boolean exactWeather = object.get("oit") instanceof JsonObject oit
+                    && oit.get("exactWeather") instanceof JsonPrimitive e && e.isBoolean() && e.getAsBoolean();
+            #endif
+            OitConfig.loadState(path, kbuffer, mlab, abuffer #if MC < 26.3 , exactWeather #endif);
         }
 
         private static int readInt(JsonObject object, String key) {
@@ -375,7 +377,9 @@ public final class FabricFlwConfig implements FlwConfig {
             oit.addProperty("kbufferLayers", OitConfig.rawLayers(OitConfig.Path.KBUFFER));
             oit.addProperty("mlabLayers", OitConfig.rawLayers(OitConfig.Path.MLAB));
             oit.addProperty("abufferLayers", OitConfig.rawLayers(OitConfig.Path.ABUFFER));
+            #if MC < 26.3
             oit.addProperty("exactWeather", OitConfig.exactFabulous());
+            #endif
             object.add("oit", oit);
             return object;
         }

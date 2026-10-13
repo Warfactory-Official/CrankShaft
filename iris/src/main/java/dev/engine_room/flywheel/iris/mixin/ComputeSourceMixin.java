@@ -1,6 +1,5 @@
 package dev.engine_room.flywheel.iris.mixin;
 
-import dev.engine_room.flywheel.iris.compile.ContractProgramSet;
 import net.irisshaders.iris.shaderpack.programs.ComputeSource;
 import net.irisshaders.iris.shaderpack.programs.ProgramSet;
 import org.spongepowered.asm.mixin.Final;
@@ -24,7 +23,7 @@ abstract class ComputeSourceMixin {
     // Keep work-group/directive discovery on the original source, as for graphics stages.
     @Inject(method = "getSource", at = @At("RETURN"), cancellable = true)
     private void flywheel$adaptCompute(CallbackInfoReturnable<Optional<String>> cir) {
-        String source = ((ContractProgramSet) parent).flywheel$patchedFragment(name + ".csh");
+        String source = parent.flywheel$patchedFragment(name + ".csh");
         if (source != null) cir.setReturnValue(Optional.of(source));
     }
 }

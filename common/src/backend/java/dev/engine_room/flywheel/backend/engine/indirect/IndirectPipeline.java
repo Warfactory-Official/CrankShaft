@@ -1,11 +1,14 @@
 package dev.engine_room.flywheel.backend.engine.indirect;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.pipeline.*;
-import com.mojang.blaze3d.platform.BlendFactor;
-import com.mojang.blaze3d.shaders.ShaderSource;
-import com.mojang.blaze3d.shaders.UniformType;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
+import com.mojang.renderpearl.api.pipeline.BlendFactor;
+import com.mojang.renderpearl.api.pipeline.BlendFunction;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.pipeline.UniformType;
 import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.InternalVertex;
@@ -15,9 +18,11 @@ import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
+import dev.engine_room.flywheel.backend.engine.MaterialRenderState;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
+import dev.engine_room.flywheel.compat.backend.PipelineShaderSource;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
@@ -31,7 +36,7 @@ import java.util.function.Consumer;
 public final class IndirectPipeline {
     private static final Map<Identifier, VertexAssembly> VERTEX_ASSEMBLY = new HashMap<>();
     private static final Map<Identifier, FragmentAssembly> FRAGMENT_ASSEMBLY = new HashMap<>();
-    private static final ShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
+    private static final PipelineShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
         case VERTEX -> {
             VertexAssembly va = VERTEX_ASSEMBLY.get(id);
             yield RenderPassShaders.assembleUberIndirectVertex(va.material(), va.debug(),
@@ -114,22 +119,20 @@ public final class IndirectPipeline {
                                                       boolean polygonOffset, boolean bindless) {
         BindGroupLayout.Builder bindGroup = BindGroupLayout.builder();
         if (!bindless) {
-            bindGroup.withSampler("Sampler0");
+            bindGroup.withImageSampler("Sampler0");
         }
-        bindGroup.withSampler("Sampler1")
-                 .withSampler("Sampler2")
+        bindGroup.withImageSampler("Sampler1")
+                 .withImageSampler("Sampler2")
                  .withUniform("_FlwRenderOrigin", UniformType.UNIFORM_BUFFER);
 
         RenderPipeline.Builder builder = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                                                       .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
-                                                       .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-                                                       .withDepthStencilState(
-                                                               new DepthStencilState(depthTest.compareOp,
-                                                                       depthWrite,
-                                                                       polygonOffset && transparency != Transparency.OPAQUE ? 1.0f : 0.0f,
-                                                                       polygonOffset ? 10.0f : 0.0f))
-                                                       .withCull(cull)
-                                                       .withBindGroupLayout(bindGroup.build());
+                .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
+                .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                .withDepthStencilState(new DepthStencilState(depthTest.compareOp, depthWrite,
+                        polygonOffset ? MaterialRenderState.polygonOffsetSlope(transparency, depthTest) : 0.0f,
+                        polygonOffset ? MaterialRenderState.POLYGON_OFFSET_UNITS : 0.0f))
+                .withCull(cull)
+                .withBindGroupLayout(bindGroup.build());
 
         ColorTargetState colorTarget = uberColorTarget(transparency, colorWrite);
         if (colorTarget != null) {
@@ -150,7 +153,11 @@ public final class IndirectPipeline {
         };
 
         if (blend == null && colorWrite) {
+            #if MC >= 26.3
+            return ColorTargetState.DEFAULT;
+            #else
             return null;
+            #endif
         }
 
         int writeMask = colorWrite ? ColorTargetState.WRITE_ALL : ColorTargetState.WRITE_NONE;

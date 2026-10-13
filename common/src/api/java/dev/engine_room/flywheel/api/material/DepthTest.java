@@ -1,6 +1,6 @@
 package dev.engine_room.flywheel.api.material;
 
-import com.mojang.blaze3d.platform.CompareOp;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
 
 public enum DepthTest {
     OFF(CompareOp.ALWAYS_PASS),

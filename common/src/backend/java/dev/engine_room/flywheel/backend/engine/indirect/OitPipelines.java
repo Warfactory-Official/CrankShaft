@@ -1,15 +1,18 @@
 package dev.engine_room.flywheel.backend.engine.indirect;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.pipeline.*;
-import com.mojang.blaze3d.platform.BlendFactor;
-import com.mojang.blaze3d.platform.BlendOp;
-import com.mojang.blaze3d.platform.CompareOp;
-import com.mojang.blaze3d.shaders.ShaderSource;
-import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
+import com.mojang.renderpearl.api.pipeline.BlendFactor;
+import com.mojang.renderpearl.api.pipeline.BlendFunction;
+import com.mojang.renderpearl.api.pipeline.BlendOp;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.pipeline.UniformType;
+import com.mojang.renderpearl.api.vertex.VertexFormat;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
@@ -17,6 +20,7 @@ import dev.engine_room.flywheel.backend.InternalVertex;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.*;
+import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.BerFamily;
 import dev.engine_room.flywheel.backend.engine.OitTransparency;
@@ -26,6 +30,7 @@ import dev.engine_room.flywheel.backend.engine.terrain.TerrainVertexFormat;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
+import dev.engine_room.flywheel.compat.backend.PipelineShaderSource;
 import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.client.renderer.BindGroupLayouts;
@@ -50,10 +55,10 @@ public final class OitPipelines {
             BlendFactor.ONE_MINUS_SRC_ALPHA, BlendFactor.ONE, BlendFactor.ONE_MINUS_SRC_ALPHA);
 
     // Reversed-Z depth test against the opaque depth, never write -- shared by every fixed-format OIT producer.
-    private static final DepthStencilState OIT_PRODUCER_DEPTH_STATE = new DepthStencilState(
+    static final DepthStencilState OIT_PRODUCER_DEPTH_STATE = new DepthStencilState(
             CompareOp.GREATER_THAN_OR_EQUAL, false, 0.0f, 0.0f);
 
-    private static final Identifier FULLSCREEN_VERTEX = ResourceUtil.rl("codegen/oit/fullscreen");
+    static final Identifier FULLSCREEN_VERTEX = ResourceUtil.rl("codegen/oit/fullscreen");
     private static final Identifier COMPOSITE_FRAGMENT = ResourceUtil.rl("codegen/oit/composite_frag");
     private static final Identifier COMPOSITE_EMISSION_FRAGMENT =
             ResourceUtil.rl("codegen/oit/composite_emission_frag");
@@ -80,17 +85,11 @@ public final class OitPipelines {
     private static final Map<Identifier, BerFamily> BER_VERTEX_FAMILY = new HashMap<>();
     private static final Identifier[][] BER_FRAGMENT = new Identifier[BerFamily.VALUES.length][OitMode.values().length];
     private static final Map<Identifier, BerKey> BER_FRAGMENT_KEY = new HashMap<>();
-    private static final Identifier[] LAYER_FRAGMENT = new Identifier[OitMode.values().length];
-    private static final Map<Identifier, OitMode> LAYER_FRAGMENT_MODE = new HashMap<>();
-    private static final Identifier WEATHER_VERTEX = ResourceUtil.rl("codegen/oit/weather");
-    private static final Identifier[] WEATHER_FRAGMENT = new Identifier[OitMode.values().length];
-    private static final Map<Identifier, OitMode> WEATHER_FRAGMENT_MODE = new HashMap<>();
     private static final Map<Identifier, MlabUberKey> MLAB_UBER_KEY = new HashMap<>();
     private static final Map<Identifier, ChunkMlabKey> CHUNK_MLAB_KEY = new HashMap<>();
     private static final Map<Identifier, OitInsertMode> MLAB_RESOLVE_MODE = new HashMap<>();
     private static final Map<Identifier, BerMlabKey> BER_MLAB_KEY = new HashMap<>();
-    private static final Map<Identifier, OitInsertMode> WEATHER_MLAB_MODE = new HashMap<>();
-    private static final ShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
+    private static final PipelineShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
         case VERTEX -> {
             if (id.equals(FULLSCREEN_VERTEX)) {
                 yield RenderPassShaders.fullscreenVertex();
@@ -110,9 +109,6 @@ public final class OitPipelines {
             BerFamily berFamily = BER_VERTEX_FAMILY.get(id);
             if (berFamily != null) {
                 yield RenderPassShaders.assembleBerOitVertex(berFamily);
-            }
-            if (id.equals(WEATHER_VERTEX)) {
-                yield RenderPassShaders.assembleWeatherOitVertex();
             }
             VertexAssembly va = VERTEX_ASSEMBLY.get(id);
             if (id.getPath().contains("/uber/")) {
@@ -152,14 +148,6 @@ public final class OitPipelines {
             if (berKey != null) {
                 yield RenderPassShaders.assembleBerOitFragment(berKey.family(), berKey.mode());
             }
-            OitMode layerMode = LAYER_FRAGMENT_MODE.get(id);
-            if (layerMode != null) {
-                yield RenderPassShaders.assembleLayerOitFragment(layerMode);
-            }
-            OitMode weatherMode = WEATHER_FRAGMENT_MODE.get(id);
-            if (weatherMode != null) {
-                yield RenderPassShaders.assembleWeatherOitFragment(weatherMode);
-            }
             MlabUberKey mlabUber = MLAB_UBER_KEY.get(id);
             if (mlabUber != null) {
                 yield RenderPassShaders.assembleUberMlabFragment(mlabUber.mode(), mlabUber.light(), mlabUber.material(),
@@ -181,10 +169,6 @@ public final class OitPipelines {
             if (berMlab != null) {
                 yield RenderPassShaders.assembleBerMlabFragment(berMlab.family(), berMlab.mode());
             }
-            OitInsertMode weatherMlabMode = WEATHER_MLAB_MODE.get(id);
-            if (weatherMlabMode != null) {
-                yield RenderPassShaders.assembleWeatherMlabFragment(weatherMlabMode);
-            }
             ProducerFragmentKey pfk = PRODUCER_FRAGMENT_KEY.get(id);
             Consumer<Compilation> emission = emissionExtra(pfk.emission()).andThen(embeddedExtra(pfk.embedded()));
             if (id.getPath().contains("/uber/")) {
@@ -198,22 +182,23 @@ public final class OitPipelines {
     };
     private static final Map<ProducerKey, RenderPipeline> PRODUCER_CACHE = new HashMap<>();
     private static final Map<ChunkFragmentKey, RenderPipeline> CHUNK_CACHE = new HashMap<>();
+    #if MC >= 26.3
+    private static final Map<ChunkFragmentKey, RenderPipeline> CHUNK_MULTIDRAW_CACHE = new HashMap<>();
+    private static final Map<ChunkMlabKey, RenderPipeline> CHUNK_MULTIDRAW_MLAB_CACHE = new HashMap<>();
+    #endif
     private static final Map<ChunkFragmentKey, RenderPipeline> CHUNK_SODIUM_CACHE = new HashMap<>();
     private static final Map<ChunkFragmentKey, RenderPipeline> CHUNK_SODIUM_SETTLED_CACHE = new HashMap<>();
     private static final Map<ChunkFragmentKey, RenderPipeline> CHUNK_SODIUM_FADING_CACHE = new HashMap<>();
     private static final Map<BerKey, RenderPipeline> BER_CACHE = new HashMap<>();
-    private static final Map<OitMode, RenderPipeline> LAYER_CACHE = new EnumMap<>(OitMode.class);
-    private static final Map<OitMode, RenderPipeline> WEATHER_CACHE = new EnumMap<>(OitMode.class);
     private static final Map<UberProducerKey, RenderPipeline> UBER_PRODUCER_CACHE = new HashMap<>();
     private static final BlendFunction PREMULT_BLEND = new BlendFunction(BlendFactor.ONE,
             BlendFactor.ONE_MINUS_SRC_ALPHA, BlendFactor.ONE, BlendFactor.ONE_MINUS_SRC_ALPHA);
-    private static final ColorTargetState MLAB_NO_COLOR = new ColorTargetState(Optional.empty(), GpuFormat.RGBA8_UNORM,
+    static final ColorTargetState MLAB_NO_COLOR = new ColorTargetState(Optional.empty(), GpuFormat.RGBA8_UNORM,
             ColorTargetState.WRITE_NONE);
     private static final Map<MlabUberKey, RenderPipeline> UBER_MLAB_CACHE = new HashMap<>();
     private static final Map<ChunkMlabKey, RenderPipeline> CHUNK_MLAB_CACHE = new HashMap<>();
     private static final Map<OitInsertMode, RenderPipeline> MLAB_RESOLVE_CACHE = new EnumMap<>(OitInsertMode.class);
     private static final Map<BerMlabKey, RenderPipeline> BER_MLAB_CACHE = new HashMap<>();
-    private static final Map<OitInsertMode, RenderPipeline> WEATHER_MLAB_CACHE = new EnumMap<>(OitInsertMode.class);
     private static final Map<ChunkSodiumMlabKey, RenderPipeline> CHUNK_SODIUM_MLAB_CACHE = new HashMap<>();
     private static RenderPipeline compositePipeline;
     private static RenderPipeline compositeEmissionPipeline;
@@ -233,17 +218,6 @@ public final class OitPipelines {
                 BER_FRAGMENT[family.ordinal()][mode.ordinal()] = id;
                 BER_FRAGMENT_KEY.put(id, new BerKey(family, mode));
             }
-        }
-    }
-
-    static {
-        for (OitMode mode : new OitMode[]{OitMode.DEPTH_RANGE, OitMode.GENERATE_COEFFICIENTS, OitMode.EVALUATE}) {
-            Identifier layerId = ResourceUtil.rl("codegen/oit/layer_frag" + mode.name);
-            LAYER_FRAGMENT[mode.ordinal()] = layerId;
-            LAYER_FRAGMENT_MODE.put(layerId, mode);
-            Identifier weatherId = ResourceUtil.rl("codegen/oit/weather_frag" + mode.name);
-            WEATHER_FRAGMENT[mode.ordinal()] = weatherId;
-            WEATHER_FRAGMENT_MODE.put(weatherId, mode);
         }
     }
 
@@ -425,10 +399,26 @@ public final class OitPipelines {
     }
 
     private static RenderPipeline buildChunkProducer(ChunkFragmentKey key) {
+        return buildChunkProducer(key, false);
+    }
+
+    #if MC >= 26.3
+    public static RenderPipeline chunkProducer(OitMode mode, boolean multidraw) {
+        if (!multidraw) return chunkProducer(mode);
+        ChunkFragmentKey key = new ChunkFragmentKey(mode, TerrainAtlasFilter.linear());
+        RenderPipeline pipeline = CHUNK_MULTIDRAW_CACHE.computeIfAbsent(key, value -> buildChunkProducer(value, true));
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
+        return pipeline;
+    }
+    #endif
+
+    private static RenderPipeline buildChunkProducer(ChunkFragmentKey key, boolean multidraw) {
         OitMode mode = key.mode();
         RenderPipeline.Builder builder = RenderPipeline.builder()
                                                        .withLocation(ResourceUtil.rl(
-                                                               "pipeline/oit/chunk" + mode.name + (key.linear() ? "_linear" : "")))
+                                                               "pipeline/oit/chunk" + mode.name
+                                                                       + (key.linear() ? "_linear" : "")
+                                                                       + (multidraw ? "_multidraw" : "")))
                                                        .withVertexShader(CHUNK_VERTEX)
                                                        .withFragmentShader(chunkFragmentId(mode, key.linear()))
                                                        .withVertexBinding(0, DefaultVertexFormat.BLOCK)
@@ -438,8 +428,8 @@ public final class OitPipelines {
                                                        .withBindGroupLayout(BindGroupLayouts.GLOBALS)
                                                        .withBindGroupLayout(BindGroupLayouts.FOG)
                                                        .withBindGroupLayout(BindGroupLayouts.SAMPLER0_SAMPLER2)
-                                                       .withBindGroupLayout(BindGroupLayouts.PROJECTION)
-                                                       .withBindGroupLayout(BindGroupLayouts.CHUNK_SECTION);
+                                                       .withBindGroupLayout(BindGroupLayouts.PROJECTION);
+        withChunkSectionLayout(builder, multidraw);
 
         BindGroupLayout oitSamplers = chunkOitSamplers(mode);
         if (oitSamplers != null) {
@@ -447,6 +437,20 @@ public final class OitPipelines {
         }
 
         return withOitColorTargets(builder, mode, "Chunk-OIT").build();
+    }
+
+    private static void withChunkSectionLayout(RenderPipeline.Builder builder, boolean multidraw) {
+        #if MC >= 26.3
+        builder.withBindGroupLayout(BindGroupLayouts.TERRAIN_INFO);
+        if (multidraw) {
+            builder.withShaderDefine("MULTIDRAW_TERRAIN")
+                   .withVertexBinding(1, DefaultVertexFormat.CHUNK_DATA_INSTANCED);
+        } else {
+            builder.withBindGroupLayout(BindGroupLayouts.CHUNK_SECTION);
+        }
+        #else
+        builder.withBindGroupLayout(BindGroupLayouts.CHUNK_SECTION);
+        #endif
     }
 
     private static void dropSodiumOnFormatChange() {
@@ -512,18 +516,18 @@ public final class OitPipelines {
         if (OitConfig.coefficientArray()) {
             return b;
         }
-        return b.withSampler("_flw_coefficients0")
-                .withSampler("_flw_coefficients1")
-                .withSampler("_flw_coefficients2")
-                .withSampler("_flw_coefficients3");
+        return b.withImageSampler("_flw_coefficients0")
+                .withImageSampler("_flw_coefficients1")
+                .withImageSampler("_flw_coefficients2")
+                .withImageSampler("_flw_coefficients3");
     }
 
-    private static BindGroupLayout.Builder withOitReadSamplers(BindGroupLayout.Builder b, OitMode mode) {
+    static BindGroupLayout.Builder withOitReadSamplers(BindGroupLayout.Builder b, OitMode mode) {
         if (mode == OitMode.DEPTH_RANGE) {
             return b;
         }
-        b = b.withSampler("_flw_depthRange")
-             .withSampler("_flw_blueNoise");
+        b = b.withImageSampler("_flw_depthRange")
+             .withImageSampler("_flw_blueNoise");
         if (mode == OitMode.EVALUATE) {
             b = withCoefficientSamplers(b);
         }
@@ -561,60 +565,8 @@ public final class OitPipelines {
         return withOitColorTargets(builder, mode, "BER-OIT").build();
     }
 
-    public static RenderPipeline layerProducer(OitMode mode) {
-        RenderPipeline pipeline = LAYER_CACHE.computeIfAbsent(mode, OitPipelines::buildLayerProducer);
-        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
-        return pipeline;
-    }
-
-    private static RenderPipeline buildLayerProducer(OitMode mode) {
-        RenderPipeline.Builder builder = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                                                       .withLocation(ResourceUtil.rl("pipeline/oit/layer" + mode.name))
-                                                       .withVertexShader(FULLSCREEN_VERTEX)
-                                                       .withFragmentShader(LAYER_FRAGMENT[mode.ordinal()])
-                                                       .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-                                                       .withDepthStencilState(OIT_PRODUCER_DEPTH_STATE)
-                                                       .withCull(false)
-                                                       .withBindGroupLayout(layerBindGroup(mode));
-
-        return withOitColorTargets(builder, mode, "Layer-OIT").build();
-    }
-
-    private static BindGroupLayout layerBindGroup(OitMode mode) {
-        return withOitReadSamplers(BindGroupLayout.builder()
-                                                  .withSampler("_flw_layerColor")
-                                                  .withSampler("_flw_layerDepth"), mode).build();
-    }
-
-    public static RenderPipeline weatherProducer(OitMode mode) {
-        RenderPipeline pipeline = WEATHER_CACHE.computeIfAbsent(mode, OitPipelines::buildWeatherProducer);
-        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
-        return pipeline;
-    }
-
-    private static RenderPipeline buildWeatherProducer(OitMode mode) {
-        RenderPipeline.Builder builder = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                                                       .withLocation(
-                                                               ResourceUtil.rl("pipeline/oit/weather" + mode.name))
-                                                       .withVertexShader(WEATHER_VERTEX)
-                                                       .withFragmentShader(WEATHER_FRAGMENT[mode.ordinal()])
-                                                       .withVertexBinding(0, DefaultVertexFormat.PARTICLE)
-                                                       .withPrimitiveTopology(PrimitiveTopology.QUADS)
-                                                       .withDepthStencilState(OIT_PRODUCER_DEPTH_STATE)
-                                                       .withCull(false)
-                                                       .withBindGroupLayout(weatherOitSamplers(mode));
-
-        return withOitColorTargets(builder, mode, "Weather-OIT").build();
-    }
-
-    private static BindGroupLayout weatherOitSamplers(OitMode mode) {
-        return withOitReadSamplers(BindGroupLayout.builder()
-                                                  .withSampler("Sampler0")
-                                                  .withSampler("Sampler2"), mode).build();
-    }
-
-    private static RenderPipeline.Builder withOitColorTargets(RenderPipeline.Builder builder, OitMode mode,
-                                                              String producerName) {
+    static RenderPipeline.Builder withOitColorTargets(RenderPipeline.Builder builder, OitMode mode,
+                                                      String producerName) {
         switch (mode) {
             case DEPTH_RANGE -> builder.withColorTargetState(0,
                     new ColorTargetState(Optional.of(MAX_BLEND), OitFramebuffer.DEPTH_BOUNDS_FORMAT,
@@ -636,12 +588,12 @@ public final class OitPipelines {
 
     private static BindGroupLayout berOitSamplers(BerFamily family, OitMode mode) {
         BindGroupLayout.Builder builder = BindGroupLayout.builder()
-                                                         .withSampler("Sampler0");
+                                                         .withImageSampler("Sampler0");
         if (family.overlay) {
-            builder.withSampler("Sampler1");
+            builder.withImageSampler("Sampler1");
         }
         if (family.lightmap) {
-            builder.withSampler("Sampler2");
+            builder.withImageSampler("Sampler2");
         }
         return withOitReadSamplers(builder, mode).build();
     }
@@ -694,10 +646,10 @@ public final class OitPipelines {
             b.withUniform("_FlwRenderOrigin", UniformType.UNIFORM_BUFFER);
         } else {
             if (!(indirect && GlCompat.SUPPORTS_BINDLESS_TEXTURES)) {
-                b.withSampler("Sampler0");
+                b.withImageSampler("Sampler0");
             }
-            b.withSampler("Sampler1")
-             .withSampler("Sampler2");
+            b.withImageSampler("Sampler1")
+             .withImageSampler("Sampler2");
             if (!indirect) {
                 b.withUniform(INSTANCE_BUFFER_NAME, UniformType.TEXEL_BUFFER, GpuFormat.RGBA32_UINT)
                  .withUniform(LIGHT_LUT_NAME, UniformType.TEXEL_BUFFER, GpuFormat.R32_UINT)
@@ -720,10 +672,10 @@ public final class OitPipelines {
 
     private static RenderPipeline buildComposite(boolean emission) {
         BindGroupLayout.Builder samplers = BindGroupLayout.builder()
-                                                          .withSampler("_flw_accumulate")
-                                                          .withSampler("_flw_depthRange");
+                                                          .withImageSampler("_flw_accumulate")
+                                                          .withImageSampler("_flw_depthRange");
         if (emission) {
-            samplers.withSampler("_flw_emission");
+            samplers.withImageSampler("_flw_emission");
         }
         return RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
                              .withLocation(ResourceUtil.rl(emission ? "pipeline/oit/composite_emission"
@@ -749,8 +701,8 @@ public final class OitPipelines {
                              .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS, false, 0.0f, 0.0f))
                              .withCull(false)
                              .withBindGroupLayout(BindGroupLayout.builder()
-                                                                 .withSampler("_flw_accumulate")
-                                                                 .withSampler("_flw_emission")
+                                                                 .withImageSampler("_flw_accumulate")
+                                                                 .withImageSampler("_flw_emission")
                                                                  .build())
                              .withColorTargetState(0,
                                      new ColorTargetState(Optional.of(BlendFunction.ADDITIVE), GpuFormat.RGBA8_UNORM,
@@ -840,10 +792,10 @@ public final class OitPipelines {
     private static BindGroupLayout uberMlabBindGroup(LightShader light) {
         BindGroupLayout.Builder b = BindGroupLayout.builder();
         if (!GlCompat.SUPPORTS_BINDLESS_TEXTURES) {
-            b.withSampler("Sampler0");
+            b.withImageSampler("Sampler0");
         }
-        b.withSampler("Sampler1")
-         .withSampler("Sampler2")
+        b.withImageSampler("Sampler1")
+         .withImageSampler("Sampler2")
          .withUniform("_FlwRenderOrigin", UniformType.UNIFORM_BUFFER);
         return b.build();
     }
@@ -856,9 +808,23 @@ public final class OitPipelines {
     }
 
     private static RenderPipeline buildChunkMlab(ChunkMlabKey key) {
-        return RenderPipeline.builder()
+        return buildChunkMlab(key, false);
+    }
+
+    #if MC >= 26.3
+    public static RenderPipeline chunkMlab(OitInsertMode mode, boolean multidraw) {
+        if (!multidraw) return chunkMlab(mode);
+        ChunkMlabKey key = new ChunkMlabKey(mode, TerrainAtlasFilter.linear());
+        RenderPipeline pipeline = CHUNK_MULTIDRAW_MLAB_CACHE.computeIfAbsent(key, value -> buildChunkMlab(value, true));
+        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
+        return pipeline;
+    }
+    #endif
+
+    private static RenderPipeline buildChunkMlab(ChunkMlabKey key, boolean multidraw) {
+        RenderPipeline.Builder builder = RenderPipeline.builder()
                              .withLocation(ResourceUtil.rl("pipeline/oit/mlab/chunk_" + key.mode().name().toLowerCase(
-                                     Locale.ROOT) + (key.linear() ? "_linear" : "")))
+                                     Locale.ROOT) + (key.linear() ? "_linear" : "") + (multidraw ? "_multidraw" : "")))
                              .withVertexShader(CHUNK_VERTEX)
                              .withFragmentShader(chunkMlabFragmentId(key.mode(), key.linear()))
                              .withVertexBinding(0, DefaultVertexFormat.BLOCK)
@@ -869,9 +835,9 @@ public final class OitPipelines {
                              .withBindGroupLayout(BindGroupLayouts.FOG)
                              .withBindGroupLayout(BindGroupLayouts.SAMPLER0_SAMPLER2)
                              .withBindGroupLayout(BindGroupLayouts.PROJECTION)
-                             .withBindGroupLayout(BindGroupLayouts.CHUNK_SECTION)
-                             .withColorTargetState(0, MLAB_NO_COLOR)
-                             .build();
+                             .withColorTargetState(0, MLAB_NO_COLOR);
+        withChunkSectionLayout(builder, multidraw);
+        return builder.build();
     }
 
     public static RenderPipeline mlabResolve(OitInsertMode mode) {
@@ -890,8 +856,8 @@ public final class OitPipelines {
                                           .withDepthStencilState(WRITEBACK_DEPTH_STATE)
                                           .withCull(false)
                                           .withBindGroupLayout(BindGroupLayout.builder()
-                                                                              .withSampler("_flw_accumulate")
-                                                                              .withSampler("_flw_depthRange")
+                                                                              .withImageSampler("_flw_accumulate")
+                                                                              .withImageSampler("_flw_depthRange")
                                                                               .build())
                                           .withColorTargetState(0, new ColorTargetState(Optional.empty(),
                                                   GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_NONE))
@@ -911,7 +877,8 @@ public final class OitPipelines {
                                                      .withDepthStencilState(WRITEBACK_DEPTH_STATE)
                                                      .withCull(false)
                                                      .withBindGroupLayout(
-                                                             BindGroupLayout.builder().withSampler("_flw_mlabNearest")
+                                                             BindGroupLayout.builder()
+                                                                            .withImageSampler("_flw_mlabNearest")
                                                                             .build())
                                                      .withColorTargetState(0, new ColorTargetState(Optional.empty(),
                                                              GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_NONE))
@@ -923,42 +890,28 @@ public final class OitPipelines {
 
     private static RenderPipeline buildMlabResolve(OitInsertMode mode) {
         RenderPipeline.Builder builder = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                                                       .withLocation(ResourceUtil.rl("pipeline/oit/mlab/resolve_"
-                                                               + mode.name().toLowerCase(Locale.ROOT)))
-                                                       .withVertexShader(FULLSCREEN_VERTEX)
-                                                       .withFragmentShader(mlabResolveFragmentId(mode))
-                                                       .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-                                                       .withDepthStencilState(
-                                                               new DepthStencilState(CompareOp.ALWAYS_PASS, false,
-                                                                       0.0f, 0.0f))
-                                                       .withCull(false)
-                                                       .withBindGroupLayout(BindGroupLayout.builder()
-                                                                                           .withSampler(
-                                                                                                   "_flw_layerColor")
-                                                                                           .withSampler(
-                                                                                                   "_flw_layerDepth")
-                                                                                           .withSampler(
-                                                                                                   "_flw_layerColor1")
-                                                                                           .withSampler(
-                                                                                                   "_flw_layerDepth1")
-                                                                                           .withSampler(
-                                                                                                   "_flw_layerColor2")
-                                                                                           .withSampler(
-                                                                                                   "_flw_layerDepth2")
-                                                                                           .withSampler(
-                                                                                                   "_flw_layerColor3")
-                                                                                           .withSampler(
-                                                                                                   "_flw_layerDepth3")
-                                                                                           .build())
-                                                       .withColorTargetState(0,
-                                                               new ColorTargetState(Optional.of(PREMULT_BLEND),
-                                                                       GpuFormat.RGBA8_UNORM,
-                                                                       ColorTargetState.WRITE_ALL))
-                                                       // 26.2: GL_BLEND toggles globally, cached per index; unblended,
-                                                       // a stale index-1 cache disables attachment 0's blend.
-                                                       .withColorTargetState(1, new ColorTargetState(Optional.of(PREMULT_BLEND),
-                                                               OitFramebuffer.NEAREST_DEPTH_FORMAT,
-                                                               ColorTargetState.WRITE_ALL));
+                .withLocation(ResourceUtil.rl("pipeline/oit/mlab/resolve_" + mode.name().toLowerCase(Locale.ROOT)))
+                .withVertexShader(FULLSCREEN_VERTEX)
+                .withFragmentShader(mlabResolveFragmentId(mode))
+                .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS, false, 0.0f, 0.0f))
+                .withCull(false)
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withImageSampler("_flw_layerColor")
+                        .withImageSampler("_flw_layerDepth")
+                        .withImageSampler("_flw_layerColor1")
+                        .withImageSampler("_flw_layerDepth1")
+                        .withImageSampler("_flw_layerColor2")
+                        .withImageSampler("_flw_layerDepth2")
+                        .withImageSampler("_flw_layerColor3")
+                        .withImageSampler("_flw_layerDepth3")
+                        .build())
+                .withColorTargetState(0, new ColorTargetState(Optional.of(PREMULT_BLEND), GpuFormat.RGBA8_UNORM,
+                        ColorTargetState.WRITE_ALL))
+                // 26.2: GL_BLEND toggles globally, cached per index; unblended,
+                // a stale index-1 cache disables attachment 0's blend.
+                .withColorTargetState(1, new ColorTargetState(Optional.of(PREMULT_BLEND),
+                        OitFramebuffer.NEAREST_DEPTH_FORMAT, ColorTargetState.WRITE_ALL));
         return builder.build();
     }
 
@@ -979,12 +932,12 @@ public final class OitPipelines {
     private static RenderPipeline buildBerMlab(BerMlabKey key) {
         BerFamily family = key.family();
         BindGroupLayout.Builder samplers = BindGroupLayout.builder()
-                                                          .withSampler("Sampler0");
+                                                          .withImageSampler("Sampler0");
         if (family.overlay) {
-            samplers.withSampler("Sampler1");
+            samplers.withImageSampler("Sampler1");
         }
         if (family.lightmap) {
-            samplers.withSampler("Sampler2");
+            samplers.withImageSampler("Sampler2");
         }
         return RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
                              .withLocation(ResourceUtil.rl(
@@ -997,36 +950,6 @@ public final class OitPipelines {
                              .withDepthStencilState(OIT_PRODUCER_DEPTH_STATE)
                              .withCull(family.cull)
                              .withBindGroupLayout(samplers.build())
-                             .withColorTargetState(0, MLAB_NO_COLOR)
-                             .build();
-    }
-
-    private static Identifier weatherMlabFragmentId(OitInsertMode mode) {
-        Identifier id = ResourceUtil.rl("codegen/oit/mlab/weather_frag_" + mode.name().toLowerCase(Locale.ROOT));
-        WEATHER_MLAB_MODE.putIfAbsent(id, mode);
-        return id;
-    }
-
-    public static RenderPipeline weatherMlab(OitInsertMode mode) {
-        RenderPipeline pipeline = WEATHER_MLAB_CACHE.computeIfAbsent(mode, OitPipelines::buildWeatherMlab);
-        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
-        return pipeline;
-    }
-
-    private static RenderPipeline buildWeatherMlab(OitInsertMode mode) {
-        return RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                             .withLocation(ResourceUtil.rl(
-                                     "pipeline/oit/mlab/weather_" + mode.name().toLowerCase(Locale.ROOT)))
-                             .withVertexShader(WEATHER_VERTEX)
-                             .withFragmentShader(weatherMlabFragmentId(mode))
-                             .withVertexBinding(0, DefaultVertexFormat.PARTICLE)
-                             .withPrimitiveTopology(PrimitiveTopology.QUADS)
-                             .withDepthStencilState(OIT_PRODUCER_DEPTH_STATE)
-                             .withCull(false)
-                             .withBindGroupLayout(BindGroupLayout.builder()
-                                                                 .withSampler("Sampler0")
-                                                                 .withSampler("Sampler2")
-                                                                 .build())
                              .withColorTargetState(0, MLAB_NO_COLOR)
                              .build();
     }

@@ -1,6 +1,5 @@
 package dev.engine_room.flywheel.backend.engine;
 
-import com.mojang.blaze3d.systems.RenderSystem;
 import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.backend.RenderContext;
@@ -17,6 +16,7 @@ import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.GpuTimer;
 import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
+import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.embed.*;
 import dev.engine_room.flywheel.backend.engine.uniform.Uniforms;
@@ -132,18 +132,24 @@ public class EngineImpl implements Engine {
 
     @Override
     public void renderOit(RenderContext context) {
-        renderOit(context, null, null, null, null);
+        renderOit(context, null, null, #if MC < 26.3 null, #endif null);
     }
 
     public boolean renderOit(RenderContext context, @Nullable ChunkSectionsToRender chunks,
-                             @Nullable BerTranslucentCapture ber, @Nullable SodiumTerrainOitReplay terrain,
-                             @Nullable FabulousCaptures fabulous) {
+                             @Nullable BerTranslucentCapture ber,
+                             #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
+                             @Nullable SodiumTerrainOitReplay terrain) {
         try {
-            return drawManager.renderOit(lightStorage, environmentStorage, chunks, ber, terrain, fabulous);
+            return drawManager.renderOit(lightStorage, environmentStorage, chunks, ber,
+                    #if MC < 26.3 fabulous, #endif terrain);
         } catch (BackendUnavailableException e) {
             recoverFailure(e);
             return false;
         }
+    }
+
+    public boolean renderNativeOit(NativeOitReplay replay) {
+        return drawManager.renderNativeOit(lightStorage, environmentStorage, replay);
     }
 
     @Override
@@ -171,7 +177,7 @@ public class EngineImpl implements Engine {
                 VkPrograms.rejectFeature(featureFailure.feature());
             } else {
                 RendererReloadCache.onReloadLevelRenderer();
-                RenderSystem.getDevice().clearPipelineCache();
+                RenderPipelineCompiler.clearCache();
             }
             Minecraft.getInstance().levelExtractor.allChanged();
             return;

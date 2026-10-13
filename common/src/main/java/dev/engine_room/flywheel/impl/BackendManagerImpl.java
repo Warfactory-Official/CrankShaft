@@ -7,6 +7,9 @@ import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
 import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.compile.NativeOitWarmup;
+#endif
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
@@ -107,18 +110,24 @@ public final class BackendManagerImpl {
         if (VkContext.isVulkanHost()) VkPrograms.kill();
         else if (backend == Backends.INSTANCING) InstancingPrograms.kill();
         else if (backend == Backends.INDIRECT
-                || Backend.REGISTRY.getIdOrThrow(backend).equals(ResourceUtil.rl("gl_mesh_shader"))) IndirectPrograms.kill();
+                || Backends.GL_MESH_SHADER_ID.equals(Backend.REGISTRY.getIdOrThrow(backend))) IndirectPrograms.kill();
         reselect();
     }
 
     public static void reselect() {
         chooseBackend();
         VisualizationManagerImpl.resetAll();
+        #if MC >= 26.3
+        NativeOitWarmup.configurationChanged();
+        #endif
     }
 
     public static void onReloadLevelRenderer(Level level) {
         chooseBackend();
         VisualizationManagerImpl.reset(level);
+        #if MC >= 26.3
+        NativeOitWarmup.configurationChanged();
+        #endif
     }
 
     private static void chooseBackend() {

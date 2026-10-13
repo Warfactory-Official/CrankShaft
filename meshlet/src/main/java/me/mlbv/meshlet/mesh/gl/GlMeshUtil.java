@@ -2,15 +2,16 @@
 // Copyright (C) 2026 movblock
 package me.mlbv.meshlet.mesh.gl;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.opengl.GlBuffer;
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.GlTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.opengl.GlBuffer;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
 import dev.engine_room.flywheel.backend.gl.GlTextureLevelState;
 import org.lwjgl.opengl.*;
 
 import java.nio.ByteBuffer;
+
 
 final class GlMeshUtil {
     private GlMeshUtil() {

@@ -53,6 +53,7 @@ final class GuestGeometryStage {
         int[] maxVertices = {0};
         boolean[] triangles = {false}, strip = {false};
         parser.setTransformation((tree, root) -> {
+            GuestTerrainMeshShaders.collectStructTypes(tree, stage);
             for (var external : List.copyOf(tree.getChildren())) {
                 if (external instanceof DeclarationExternalDeclaration declaration
                         && declaration.getDeclaration() instanceof VariableDeclaration variable && variable.getNames()

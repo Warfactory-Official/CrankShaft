@@ -19,6 +19,15 @@ public interface ContractProgramSet {
     boolean flywheel$hasContract(ContractProgram program);
 
     /**
+     * Native glint draws after deferred lighting; authored contracts write the gbuffer.
+     */
+    default boolean flywheel$nativeGlint() {
+        if (!flywheel$hasContract(ContractProgram.GBUFFERS_GLINT)) return true;
+        var glint = flywheel$contractSource(ContractProgram.GBUFFERS_GLINT);
+        return glint.getTessControlSource().isPresent() || glint.getTessEvalSource().isPresent();
+    }
+
+    /**
      * Checked shared forward-OIT adapter for this preprocessed dimension, or null for native fallback.
      */
     @Nullable ContractProperties flywheel$nativeOit();

@@ -3,9 +3,12 @@ package dev.engine_room.flywheel.lib.model.baked;
 import com.mojang.blaze3d.vertex.PoseStack;
 import dev.engine_room.flywheel.lib.util.ItemFoil;
 import net.fabricmc.fabric.api.client.renderer.v1.Renderer;
+import net.fabricmc.fabric.api.client.renderer.v1.mesh.MeshView;
 import net.fabricmc.fabric.api.client.renderer.v1.mesh.MutableQuadView;
 import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadEmitter;
+import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadView;
 import net.fabricmc.fabric.api.client.renderer.v1.render.AltModelBlockRenderer;
+import net.fabricmc.fabric.impl.client.renderer.LayerRenderStateExtension;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.renderer.block.BlockModelLighter;
@@ -16,7 +19,6 @@ import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
 import net.minecraft.client.renderer.block.model.BlockDisplayContext;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.item.*;
-import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -52,7 +54,7 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
         for (BakedQuad quad : quads) {
             int tintIndex = quad.materialInfo().tintIndex();
             int tint = tintIndex != -1 && tintIndex < tints.length ? tints[tintIndex] : -1;
-            emitter.accept(pose.pose(), pose.normal(), quad, tint);
+            emitter.accept(pose, quad, tint);
         }
     }
 
@@ -79,9 +81,19 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
             if (layer.specialRenderer != null) {
                 return null; // special / block-entity-renderer item (skull, banner, shield, ...) -> vanilla renders it
             }
+            #if MC >= 26.3
+            List<BakedQuad> quads = layer.quads.all();
+            #else
             List<BakedQuad> quads = layer.prepareQuadList();
-            if (quads.isEmpty()) {
+            #endif
+            MeshView mesh = ((LayerRenderStateExtension) layer).fabric_getMutableMesh();
+            if (quads.isEmpty() && (mesh == null || mesh.size() == 0)) {
                 continue;
+            }
+            // ItemMeshes has one foil flag; differently foiled layers stay native.
+            if (layer.foilType != (foil ? ItemStackRenderState.FoilType.STANDARD
+                    : ItemStackRenderState.FoilType.NONE)) {
+                return null;
             }
             int[] tints = layer.tintLayers().toIntArray();
 
@@ -95,19 +107,50 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
                 }
                 pose.setIdentity();
             }
-            Matrix4fc poseMatrix = pose.pose();
-            Matrix3fc normalMatrix = pose.normal();
 
             for (BakedQuad quad : quads) {
                 int tintIndex = quad.materialInfo().tintIndex();
                 int tint = tintIndex >= 0 && tintIndex < tints.length ? tints[tintIndex] : -1;
-                // Mirrors MaterialInfo.of's ITEM branch: item rendering is cutout MINIMUM (Sheets.cutoutItemSheet),
-                // not the quad's terrain-context SOLID layer; the atlas axis mirrors atlasLocation() -- 26.2 stitches
-                // item sprites onto their own atlas, so UVs are only meaningful against the atlas its sprite lives on.
-                boolean blocksAtlas = quad.materialInfo().sprite().atlasLocation().equals(TextureAtlas.LOCATION_BLOCKS);
-                emitters.computeIfAbsent(ItemMeshKey.of(quad.materialInfo().layer().translucent(), blocksAtlas),
-                                $ -> new ItemMeshEmitter())
-                        .accept(poseMatrix, normalMatrix, quad, tint);
+                #if MC >= 26.3
+                ItemMeshKey key = ItemMeshKey.of(foil ? quad.materialInfo().itemGlintRenderType()
+                        : quad.materialInfo().itemRenderType(), foil);
+                #else
+                ItemMeshKey key = ItemMeshKey.of(quad.materialInfo().itemRenderType(), foil);
+                #endif
+                if (key == null) return null;
+                emitters.computeIfAbsent(key, $ -> new ItemMeshEmitter())
+                        .accept(pose, quad, tint);
+            }
+            if (mesh != null && mesh.size() > 0) {
+                var consumer = new Consumer<QuadView>() {
+                    boolean supported = true;
+
+                    @Override
+                    public void accept(QuadView quad) {
+                        if (quad.foilType() != null && quad.foilType() != layer.foilType) {
+                            supported = false;
+                            return;
+                        }
+                        int tintIndex = quad.tintIndex();
+                        int tint = tintIndex >= 0 && tintIndex < tints.length ? tints[tintIndex] : -1;
+                        #if MC >= 26.3
+                        ItemMeshKey key =
+                                ItemMeshKey.of(foil ? quad.itemGlintRenderType() : quad.itemRenderType(), foil);
+                        #else
+                        ItemMeshKey key = ItemMeshKey.of(quad.itemRenderType(), foil);
+                        #endif
+                        if (key == null) {
+                            supported = false;
+                            return;
+                        }
+                        emitters.computeIfAbsent(key, $ -> new ItemMeshEmitter())
+                                .accept(pose, quad, tint);
+                    }
+                };
+                mesh.forEach(consumer);
+                if (!consumer.supported) {
+                    return null;
+                }
             }
         }
 
@@ -287,7 +330,7 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
                 submit.mesh().forEach(quad -> {
                     int tintIndex = quad.tintIndex();
                     int tint = tintIndex != -1 && tintIndex < submit.tints().length ? submit.tints()[tintIndex] : -1;
-                    emitter.accept(submit.pose().pose(), submit.pose().normal(), quad, tint);
+                    emitter.accept(submit.pose(), quad, tint);
                 });
             }
             meshes.add(new DisplayMesh(submit.renderType(), emitter.build(state)));

@@ -1,12 +1,15 @@
 package dev.engine_room.flywheel.backend.gl;
 
-import com.mojang.blaze3d.opengl.GlCommandEncoder;
-import com.mojang.blaze3d.opengl.GlDevice;
-import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlCommandEncoder;
+import com.mojang.renderpearl.backend.opengl.GlDevice;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 
 import dev.engine_room.flywheel.backend.gl.buffer.GlBufferType;
 import org.lwjgl.opengl.*;
+#if MC >= 26.3
+import com.mojang.renderpearl.frontend.FrontendGpuDevice;
+#endif
 
 public class GlStateTracker {
     /**
@@ -77,10 +80,17 @@ public class GlStateTracker {
      * believes the program unchanged, so a bind made outside its trySetup would leave stale uniforms.
      */
     public static void invalidateEncoderProgramCache() {
+        #if MC >= 26.3
+        if (((FrontendGpuDevice) RenderSystem.getDevice()).backend instanceof GlDevice glDevice
+                && glDevice.createCommandEncoder() instanceof GlCommandEncoder encoder) {
+            encoder.lastPipeline = null;
+        }
+        #else
         if (RenderSystem.getDevice().backend instanceof GlDevice glDevice
                 && glDevice.createCommandEncoder() instanceof GlCommandEncoder encoder) {
             encoder.lastProgram = null;
         }
+        #endif
     }
 
     public static void bindVao(int vao) {

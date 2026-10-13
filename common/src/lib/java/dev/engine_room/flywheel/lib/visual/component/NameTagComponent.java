@@ -1,8 +1,8 @@
 package dev.engine_room.flywheel.lib.visual.component;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.api.vertex.MutableVertexList;
@@ -418,6 +418,14 @@ public final class NameTagComponent implements EntityComponent {
         public VertexConsumer setUv1(int pu, int pv) {
             return this;
         }
+
+        #if MC >= 26.3
+        @Override
+        public VertexConsumer setUv3(float pu, float pv) {
+            // 26.3: glyphs use the primary atlas coordinates and carry no foil layer.
+            return this;
+        }
+        #endif
 
         @Override
         public VertexConsumer setUv2(int pu, int pv) {

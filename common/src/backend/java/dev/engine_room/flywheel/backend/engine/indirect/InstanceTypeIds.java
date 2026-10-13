@@ -12,6 +12,7 @@ public final class InstanceTypeIds {
 
     private static final Object2IntOpenHashMap<InstanceType<?>> IDS = new Object2IntOpenHashMap<>();
     private static final List<InstanceType<?>> TYPES = new ArrayList<>();
+    private static volatile int generation;
 
     static {
         IDS.defaultReturnValue(-1);
@@ -31,7 +32,15 @@ public final class InstanceTypeIds {
         }
         IDS.put(type, id);
         TYPES.add(type);
+        generation = TYPES.size();
         return id;
+    }
+
+    /**
+     * Render-path cache key; type registration publishes a new generation.
+     */
+    public static int generation() {
+        return generation;
     }
 
     public static synchronized int count() {

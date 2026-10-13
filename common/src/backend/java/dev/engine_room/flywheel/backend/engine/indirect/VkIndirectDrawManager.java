@@ -1,14 +1,13 @@
 package dev.engine_room.flywheel.backend.engine.indirect;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.systems.CommandEncoder;
-import com.mojang.blaze3d.systems.RenderPass;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.vulkan.VulkanRenderPass;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
@@ -35,6 +34,7 @@ import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorWriter;
 import dev.engine_room.flywheel.backend.vk.shader.VkComputePipeline;
 import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline;
+import dev.engine_room.flywheel.backend.vk.shader.VkMeshPipeline;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -629,7 +629,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         try (RenderPass pass = encoder.createRenderPass(
                 pass2 ? () -> "flywheel:vk/opaque_pass2" : () -> "flywheel:vk/opaque",
                 colorView, Optional.empty(), depthView, OptionalDouble.empty())) {
-            VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
+            VkCommandBuffer cmd = VkContext.renderPass(pass).commandBuffer;
             VkCmd.setViewportScissor(cmd, width, height);
 
             VK10.vkCmdBindIndexBuffer(cmd, indexVk, 0L, VK10.VK_INDEX_TYPE_UINT32);
@@ -745,7 +745,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             VkGraphicsPipeline pipeline = programs.uber().oitProducerPipeline(material, multiDraw.embedded(),
                     smoothness, mode, folded);
             if (pipeline != lastPipeline) {
-                bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
+                bindGraphicsPipeline(cmd, oitPipeline(pipeline), pipeline.layout());
                 lastPipeline = pipeline;
             }
             writeUberCommon(fs, fs.indexTable, fs.draw, multiDraw.start());
@@ -786,7 +786,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             VkGraphicsPipeline pipeline = programs.uber().mlabProducerPipeline(oitMode, material, multiDraw.embedded(),
                     smoothness);
             if (pipeline != lastPipeline) {
-                bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
+                bindGraphicsPipeline(cmd, oitPipeline(pipeline), pipeline.layout());
                 lastPipeline = pipeline;
             }
             writeUberCommon(fs, fs.indexTable, fs.draw, multiDraw.start());
@@ -853,12 +853,39 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     @Override
     public boolean renderOit(LightStorage lightStorage, EnvironmentStorage environmentStorage,
                              @Nullable ChunkSectionsToRender chunks, @Nullable BerTranslucentCapture ber,
-                             @Nullable SodiumTerrainOitReplay terrain, @Nullable FabulousCaptures fabulous) {
+                             #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
+                             @Nullable SodiumTerrainOitReplay terrain) {
         drawPass2IfPending();
         if (BackendDebugFlags.SKIP_OIT) {
             return false;
         }
-        return oit.render(chunks, ber, terrain, fabulous);
+        return oit.render(chunks, ber, #if MC < 26.3 fabulous, #endif terrain);
+    }
+
+    static long oitPipeline(VkGraphicsPipeline pipeline) {
+        #if MC >= 26.3
+        return VkNativeOitPass.enginePipeline(pipeline);
+        #else
+        return pipeline.handle();
+        #endif
+    }
+
+    static long oitPipeline(VkMeshPipeline pipeline) {
+        #if MC >= 26.3
+        return VkNativeOitPass.enginePipeline(pipeline);
+        #else
+        return pipeline.handle();
+        #endif
+    }
+
+    @Override
+    public boolean renderNativeOit(LightStorage lightStorage, EnvironmentStorage environmentStorage,
+                                   NativeOitReplay replay) {
+        drawPass2IfPending();
+        if (BackendDebugFlags.SKIP_OIT) {
+            return false;
+        }
+        return oit.renderNative(replay);
     }
 
     @Override
@@ -909,7 +936,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         FlwPassBarrier.expectFramebufferProducer();
         try (RenderPass pass = encoder.createRenderPass(() -> "flywheel:vk/crumbling",
                 colorView, Optional.empty(), depthView, OptionalDouble.empty())) {
-            VkCommandBuffer cmd = ((VulkanRenderPass) pass.backend).commandBuffer;
+            VkCommandBuffer cmd = VkContext.renderPass(pass).commandBuffer;
             VkCmd.setViewportScissor(cmd, width, height);
             VK10.vkCmdBindIndexBuffer(cmd, indexVk, 0L, VK10.VK_INDEX_TYPE_UINT32);
             VkCmd.bindVertexBuffer(cmd, vertexVk);

@@ -1,6 +1,10 @@
 package dev.engine_room.flywheel.backend.gl.shader;
 
 import dev.engine_room.flywheel.backend.FlwBackend;
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.compile.NativeShaderPreprocessor;
+import net.minecraft.client.renderer.ShaderDefines;
+#endif
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL20C;
 
@@ -9,6 +13,9 @@ public final class MeshGlPrograms {
     }
 
     public static int compileShader(String tag, int glType, String name, String source) {
+        #if MC >= 26.3
+        source = NativeShaderPreprocessor.preprocess(source, tag + ":" + name, glType, ShaderDefines.EMPTY);
+        #endif
         int handle = GL20C.glCreateShader(glType);
         GL20C.glShaderSource(handle, source);
         GL20C.glCompileShader(handle);

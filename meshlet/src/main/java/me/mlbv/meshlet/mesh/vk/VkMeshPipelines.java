@@ -3,10 +3,15 @@
 
 package me.mlbv.meshlet.mesh.vk;
 
+import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.OitConfig;
+import dev.engine_room.flywheel.backend.TerrainMode;
 import dev.engine_room.flywheel.backend.compile.*;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.engine.indirect.VkNativeOitPass;
+#endif
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainPipelines;
 import dev.engine_room.flywheel.backend.vk.VkContext;
@@ -16,6 +21,7 @@ import dev.engine_room.flywheel.backend.vk.shader.*;
 import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline.Blend;
 import me.mlbv.meshlet.mesh.shared.MeshShaderPrep;
 import net.minecraft.resources.Identifier;
+import org.jspecify.annotations.Nullable;
 import org.lwjgl.util.shaderc.Shaderc;
 import org.lwjgl.vulkan.EXTMeshShader;
 import org.lwjgl.vulkan.VK12;
@@ -33,6 +39,37 @@ import java.util.function.Consumer;
  * CrankShaft's -- only the binding TABLES (the tier's shader ABI) live here.
  */
 public final class VkMeshPipelines {
+    #if MC >= 26.3
+    /** Render-thread loading/configuration hook for this live owner's selected terrain producers and prerequisites. */
+    public void warmNative(VkNativeOitPass pass,
+                            @Nullable OitInsertMode insert) {
+        VkPrograms programs = VkPrograms.get();
+        TerrainMode terrain = BackendConfig.INSTANCE.terrainMode();
+        // Per-world PSO caches are distinct from the module's temporary loading warmup owner.
+        if (terrain.ownsOpaque() && programs.usesGpuTerrain()) {
+            emitPipeline();
+            drawPipeline(false, VK12.VK_FORMAT_R8G8B8A8_UNORM);
+            drawPipeline(true, VK12.VK_FORMAT_R8G8B8A8_UNORM);
+        }
+        if (!terrain.compositesTranslucent() || !programs.usesGpuTranslucentTerrain()) return;
+        translucentEmitPipeline();
+        translucentGatherPipeline();
+        for (int i = 0; i < pass.phaseCount(); i++) {
+            var phase = pass.phase(i);
+            switch (phase) {
+                case DEPTH_TERRAIN -> translucentDrawPipeline(OitMode.DEPTH_RANGE, true)
+                        .subpassHandle(pass.engineCompatibility(i));
+                case COEFFICIENT_TERRAIN, EVALUATE_TERRAIN -> {
+                    if (insert == null) translucentDrawPipeline(phase.mode(), true)
+                            .subpassHandle(pass.engineCompatibility(i));
+                }
+                case INSERT_TERRAIN -> translucentMlabPipeline(insert).subpassHandle(pass.engineCompatibility(i));
+                default -> {
+                }
+            }
+        }
+    }
+    #endif
     private static final int FMT_RGBA32F = VK12.VK_FORMAT_R32G32B32A32_SFLOAT;
     private static final int FMT_RGBA16F = VK12.VK_FORMAT_R16G16B16A16_SFLOAT;
 

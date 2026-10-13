@@ -52,7 +52,7 @@ public class ItemVisual extends AbstractEntityVisual<ItemEntity> implements Simp
     }
 
     public static boolean isSupported(ItemEntity entity) {
-        return ItemStackSlot.isVisualized(entity.getItem())
+        return ItemStackSlot.isVisualized(entity.getItem(), ItemDisplayContext.GROUND, entity)
                 || ItemModels.isSupported(entity.getItem(), ItemDisplayContext.GROUND, entity, entity.getId());
     }
 
@@ -85,7 +85,7 @@ public class ItemVisual extends AbstractEntityVisual<ItemEntity> implements Simp
         currentStack = entity.getItem();
         deleteInstances();
         minOffsetY = 0.0f;
-        if (ItemStackSlot.isVisualized(currentStack)) {
+        if (ItemStackSlot.isVisualized(currentStack, ItemDisplayContext.GROUND, entity)) {
             // ItemEntityRenderer.submit's cluster from the stack's model bounds, special-renderer extents included.
             Minecraft minecraft = Minecraft.getInstance();
             ItemStackRenderState state = new ItemStackRenderState();
@@ -129,7 +129,7 @@ public class ItemVisual extends AbstractEntityVisual<ItemEntity> implements Simp
             return;
         }
         if (!ItemStack.matches(entity.getItem(), currentStack)
-                || ItemStackSlot.isVisualized(currentStack) != (slots.length != 0)) {
+                || ItemStackSlot.isVisualized(currentStack, ItemDisplayContext.GROUND, entity) != (slots.length != 0)) {
             updateStack();
         } else if (instances.length != 0 && !isSupported(entity)) {
             deleteInstances();

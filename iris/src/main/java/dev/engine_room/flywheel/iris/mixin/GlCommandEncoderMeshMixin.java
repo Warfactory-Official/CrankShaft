@@ -1,8 +1,8 @@
 package dev.engine_room.flywheel.iris.mixin;
 
-import com.mojang.blaze3d.IndexType;
-import com.mojang.blaze3d.opengl.GlRenderPass;
-import com.mojang.blaze3d.opengl.GlRenderPipeline;
+import com.mojang.renderpearl.api.pipeline.IndexType;
+import com.mojang.renderpearl.backend.opengl.GlRenderPass;
+import com.mojang.renderpearl.backend.opengl.GlRenderPipeline;
 import dev.engine_room.flywheel.iris.compile.GuestProgram;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;

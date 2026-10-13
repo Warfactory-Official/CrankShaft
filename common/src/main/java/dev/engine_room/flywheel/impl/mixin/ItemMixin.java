@@ -11,16 +11,16 @@ import org.spongepowered.asm.mixin.Unique;
 abstract class ItemMixin implements ItemExtension {
     @Unique
     @Nullable
-    private ItemStackVisualizer flw$visualizer;
+    private ItemStackVisualizer flywheel$visualizer;
 
     @Override
     @Nullable
-    public ItemStackVisualizer flw$getVisualizer() {
-        return flw$visualizer;
+    public ItemStackVisualizer flywheel$getVisualizer() {
+        return flywheel$visualizer;
     }
 
     @Override
-    public void flw$setVisualizer(@Nullable ItemStackVisualizer visualizer) {
-        flw$visualizer = visualizer;
+    public void flywheel$setVisualizer(@Nullable ItemStackVisualizer visualizer) {
+        flywheel$visualizer = visualizer;
     }
 }

@@ -1,25 +1,29 @@
 package dev.engine_room.flywheel.backend.engine.indirect;
 
-import com.mojang.blaze3d.IndexType;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.systems.CommandEncoder;
-import com.mojang.blaze3d.systems.RenderPass;
-import com.mojang.blaze3d.systems.RenderPassDescriptor;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
+import com.mojang.renderpearl.api.pipeline.IndexType;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.engine.*;
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.engine.ChunkReplayData;
+#endif
+import dev.engine_room.flywheel.backend.engine.NativeOitReplay;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
+import dev.engine_room.flywheel.compat.backend.RenderPassOps;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
-import net.minecraft.client.renderer.texture.AbstractTexture;
 import org.joml.Matrix4fc;
 import org.joml.Vector4f;
 import org.joml.Vector4fc;
@@ -39,6 +43,12 @@ public final class GlInsertOitChain {
     private static final int DATA_BINDING = 25;
     private static final int COUNTER_BINDING = 27;
     private static final List<String> CHUNK_SECTION_UNIFORM = List.of("ChunkSection");
+    #if MC >= 26.3
+    // Resolve layer composite inputs; no Fabulous layer feeds them.
+    private static final List<String> LAYER_SAMPLERS = List.of("_flw_layerColor", "_flw_layerDepth",
+            "_flw_layerColor1", "_flw_layerDepth1", "_flw_layerColor2", "_flw_layerDepth2", "_flw_layerColor3",
+            "_flw_layerDepth3");
+    #endif
     private final OitFramebuffer framebuffer = new OitFramebuffer();
     @Nullable
     private ResizableStorageBuffer countOrHead; // per-pixel uint: sample count (k-buffer/MLAB) or list head (A-buffer)
@@ -60,14 +70,6 @@ public final class GlInsertOitChain {
         return GlCompat.MAX_SHADER_STORAGE_BUFFER_BINDINGS > COUNTER_BINDING;
     }
 
-    private static void drawWeatherColumns(RenderPass pass, AbstractTexture texture, int startColumn, int columnCount) {
-        if (columnCount == 0) {
-            return;
-        }
-        pass.bindTexture("Sampler0", texture.getTextureView(), texture.getSampler());
-        pass.drawIndexed(columnCount * 6, 1, startColumn * 6, 0, 0);
-    }
-
     private static void clearWord(int handle, long sizeBytes, int value) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             var v = stack.mallocInt(1);
@@ -82,15 +84,17 @@ public final class GlInsertOitChain {
     }
 
     public boolean render(Matrix4fc renderModelView, @Nullable GpuBuffer vertexBuffer, @Nullable GpuBuffer indexBuffer,
-                          boolean hasInstanceOit, @Nullable Runnable prePass,
-                          @Nullable ChunkSectionsToRender chunks,
-                          @Nullable BerTranslucentCapture ber, @Nullable SodiumTerrainOitReplay terrain,
-                          @Nullable FabulousCaptures fabulous, OitInsertMode mode, InsertProducerGeometry producer) {
-        boolean hasChunks = chunks != null;
+                          boolean hasInstanceOit, @Nullable Runnable prePass, @Nullable ChunkSectionsToRender chunks,
+                          @Nullable BerTranslucentCapture ber,
+                          #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
+                          @Nullable SodiumTerrainOitReplay terrain, OitInsertMode mode,
+                          @Nullable NativeOitReplay nativeReplay, InsertProducerGeometry producer) {
         boolean hasBer = ber != null && !ber.isEmpty();
-        boolean hasFabulous = fabulous != null && fabulous.hasAny();
-        boolean hasTerrain = terrain != null;
-        if (!hasInstanceOit && !hasChunks && !hasBer && !hasFabulous && !hasTerrain) {
+        boolean idle = !hasInstanceOit && chunks == null && !hasBer && terrain == null && nativeReplay == null;
+        #if MC < 26.3
+        idle &= fabulous == null || !fabulous.hasAny();
+        #endif
+        if (idle) {
             return false;
         }
         if (hasInstanceOit && (vertexBuffer == null || indexBuffer == null)) {
@@ -98,8 +102,12 @@ public final class GlInsertOitChain {
         }
 
         Minecraft mc = Minecraft.getInstance();
+        #if MC >= 26.3
+        RenderTarget target = mc.gameRenderer.mainRenderTarget();
+        #else
         RenderTarget translucentTarget = mc.levelRenderer.translucentTarget();
         RenderTarget target = translucentTarget != null ? translucentTarget : mc.gameRenderer.mainRenderTarget();
+        #endif
         GpuTextureView colorView = target.getColorTextureView();
         GpuTextureView depthView = target.getDepthTextureView();
         if (colorView == null || depthView == null) {
@@ -128,27 +136,27 @@ public final class GlInsertOitChain {
         if (counter != null) {
             clearWord(counter.handle(), Integer.BYTES, 0);
         }
-        int layerMask = fabulous != null ? fabulous.layerMask(!OitConfig.exactFabulous()) : 0;
+        int layerMask = #if MC < 26.3 fabulous != null ? fabulous.layerMask(!OitConfig.exactFabulous()) : #endif 0;
         writeUniforms(width, height, maxNodes, layers, layerMask);
 
-        framebuffer.prepareLayersOnly(); // size the fabulous layer targets; no wavelet chain targets are allocated
+        framebuffer.prepareSize(); // no wavelet chain targets
         OitFrame frame = OitFrame.capture(renderModelView, hasInstanceOit ? vertexBuffer : null,
                 hasInstanceOit ? indexBuffer : null, null);
         CommandEncoder encoder = frame.encoder();
-
+        if (nativeReplay != null) nativeReplay.prepareInsert(framebuffer, frame, false);
+        #if MC < 26.3
         if (fabulous != null) {
-            CloudsOitReplay.prepass(encoder, fabulous, framebuffer);
-            if (!OitConfig.exactFabulous()) {
-                WeatherOitReplay.prepass(encoder, fabulous, framebuffer);
-            }
+            LayerOitReplay.prepass(encoder, fabulous, framebuffer);
         }
+        #endif
 
         RenderPass.RenderArea area = new RenderPass.RenderArea(0, 0, width, height);
 
-        RenderPassDescriptor producerDesc = RenderPassDescriptor.create(() -> "flywheel:oit/mlab/producers")
-                                                                .withColorAttachment(colorView)
-                                                                .withDepthAttachment(depthView, OptionalDouble.empty())
-                                                                .withRenderArea(area);
+        RenderPassDescriptor producerDesc = RenderPassOps.builder(() -> "flywheel:oit/mlab/producers")
+                                                         .withColorAttachment(colorView)
+                                                         .withDepthAttachment(depthView, OptionalDouble.empty())
+                                                         .withRenderArea(area)
+                                                         .build();
         GlCompat.pushDebugGroup("flywheel:gl/oit/mlab/producers");
         try (RenderPass pass = encoder.createRenderPass(producerDesc)) {
             RenderSystem.bindDefaultUniforms(pass);
@@ -158,8 +166,8 @@ public final class GlInsertOitChain {
                 pass.setVertexBuffer(0, frame.vertexBuffer().slice());
                 pass.setIndexBuffer(frame.indexBuffer(), IndexType.INT);
             }
-            pass.bindTexture("Sampler1", frame.overlayView(), frame.loSampler());
-            pass.bindTexture("Sampler2", frame.lightmapView(), frame.loSampler());
+            pass.setUniform("Sampler1", frame.overlayView(), frame.loSampler());
+            pass.setUniform("Sampler2", frame.lightmapView(), frame.loSampler());
             if (hasInstanceOit) {
                 producer.submit(pass, mode, frame);
             }
@@ -173,27 +181,34 @@ public final class GlInsertOitChain {
                 bindStorage(mode);
                 terrain.replayInsert(pass, mode, frame.lightmapView(), frame.loSampler());
             }
+            #if MC < 26.3
             if (fabulous != null && OitConfig.exactFabulous() && fabulous.hasWeather()) {
-                replayWeather(pass, fabulous, mode, frame);
+                WeatherOitReplay.replayInsert(pass, fabulous, mode, frame, () -> bindStorage(mode));
             }
+            #endif
         } finally {
             GlCompat.popDebugGroup();
         }
 
+        if (nativeReplay != null) {
+            bindStorage(mode);
+            nativeReplay.replayInsert(producerDesc, mode, null, frame);
+        }
         GL42.glMemoryBarrier(GL43.GL_SHADER_STORAGE_BARRIER_BIT);
 
         framebuffer.prepareNearestDepth();
-        resolve(frame, colorView, depthView, area, mode, fabulous);
-        RenderPassDescriptor depthDesc = RenderPassDescriptor.create(() -> "flywheel:oit/mlab/nearest_depth")
-                                                             .withColorAttachment(colorView)
-                                                             .withDepthAttachment(depthView, OptionalDouble.empty())
-                                                             .withRenderArea(area);
+        resolve(frame, #if MC < 26.3 fabulous, #endif colorView, depthView, area, mode);
+        RenderPassDescriptor depthDesc = RenderPassOps.builder(() -> "flywheel:oit/mlab/nearest_depth")
+                                                      .withColorAttachment(colorView)
+                                                      .withDepthAttachment(depthView, OptionalDouble.empty())
+                                                      .withRenderArea(area)
+                                                      .build();
         GlCompat.pushDebugGroup("flywheel:gl/oit/mlab/nearest_depth");
         try (RenderPass pass = frame.encoder().createRenderPass(depthDesc)) {
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform("DynamicTransforms", frame.dynamicTransforms());
-            pass.setPipeline(OitPipelines.mlabNearestDepth());
-            pass.bindTexture("_flw_mlabNearest", framebuffer.nearestDepthView(), frame.oitSampler());
+            pass.setRenderPipeline(OitPipelines.mlabNearestDepth());
+            pass.setUniform("_flw_mlabNearest", framebuffer.nearestDepthView(), frame.oitSampler());
             pass.draw(3, 1, 0, 0);
         } finally {
             GlCompat.popDebugGroup();
@@ -201,34 +216,42 @@ public final class GlInsertOitChain {
         return true;
     }
 
-    private void resolve(OitFrame frame, GpuTextureView colorView, GpuTextureView depthView,
-                         RenderPass.RenderArea area, OitInsertMode mode, @Nullable FabulousCaptures fabulous) {
-        RenderPassDescriptor resolveDesc = RenderPassDescriptor.create(() -> "flywheel:oit/mlab/resolve")
-                                                               .withColorAttachment(colorView)
-                                                               .withColorAttachment(framebuffer.nearestDepthView(),
-                                                                       Optional.<Vector4fc>of(new Vector4f(-1.0f)))
-                                                               .withDepthAttachment(depthView, OptionalDouble.empty())
-                                                               .withRenderArea(area);
+    private void resolve(OitFrame frame, #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
+                         GpuTextureView colorView, GpuTextureView depthView, RenderPass.RenderArea area,
+                         OitInsertMode mode) {
+        RenderPassDescriptor resolveDesc = RenderPassOps.builder(() -> "flywheel:oit/mlab/resolve")
+                                                        .withColorAttachment(colorView)
+                                                        .withColorAttachment(framebuffer.nearestDepthView(),
+                                                                Optional.<Vector4fc>of(new Vector4f(-1.0f)))
+                                                        .withDepthAttachment(depthView, OptionalDouble.empty())
+                                                        .withRenderArea(area)
+                                                        .build();
         GlCompat.pushDebugGroup("flywheel:gl/oit/mlab/resolve");
         try (RenderPass pass = frame.encoder().createRenderPass(resolveDesc)) {
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform("DynamicTransforms", frame.dynamicTransforms());
-            pass.setPipeline(OitPipelines.mlabResolve(mode));
+            pass.setRenderPipeline(OitPipelines.mlabResolve(mode));
             bindStorage(mode);
             GpuTextureView ph = frame.lightmapView();
             GpuSampler s = frame.oitSampler();
+            #if MC < 26.3
             boolean clouds = fabulous != null && fabulous.hasClouds();
             boolean item = fabulous != null && fabulous.hasItemLayer();
             boolean particle = fabulous != null && fabulous.hasParticleLayer();
             boolean weather = fabulous != null && fabulous.hasWeather() && !OitConfig.exactFabulous();
-            pass.bindTexture("_flw_layerColor", clouds ? framebuffer.cloudsColorView() : ph, s);
-            pass.bindTexture("_flw_layerDepth", clouds ? framebuffer.cloudsDepthView() : ph, s);
-            pass.bindTexture("_flw_layerColor1", item ? fabulous.itemLayerColor : ph, s);
-            pass.bindTexture("_flw_layerDepth1", item ? fabulous.itemLayerDepth : ph, s);
-            pass.bindTexture("_flw_layerColor2", particle ? fabulous.particleLayerColor : ph, s);
-            pass.bindTexture("_flw_layerDepth2", particle ? fabulous.particleLayerDepth : ph, s);
-            pass.bindTexture("_flw_layerColor3", weather ? framebuffer.weatherColorView() : ph, s);
-            pass.bindTexture("_flw_layerDepth3", weather ? framebuffer.weatherDepthView() : ph, s);
+            pass.setUniform("_flw_layerColor", clouds ? framebuffer.cloudsColorView() : ph, s);
+            pass.setUniform("_flw_layerDepth", clouds ? framebuffer.cloudsDepthView() : ph, s);
+            pass.setUniform("_flw_layerColor1", item ? fabulous.itemLayerColor : ph, s);
+            pass.setUniform("_flw_layerDepth1", item ? fabulous.itemLayerDepth : ph, s);
+            pass.setUniform("_flw_layerColor2", particle ? fabulous.particleLayerColor : ph, s);
+            pass.setUniform("_flw_layerDepth2", particle ? fabulous.particleLayerDepth : ph, s);
+            pass.setUniform("_flw_layerColor3", weather ? framebuffer.weatherColorView() : ph, s);
+            pass.setUniform("_flw_layerDepth3", weather ? framebuffer.weatherDepthView() : ph, s);
+            #else
+            for (String layer : LAYER_SAMPLERS) {
+                pass.setUniform(layer, ph, s);
+            }
+            #endif
             pass.draw(3, 1, 0, 0);
         } finally {
             GlCompat.popDebugGroup();
@@ -236,6 +259,14 @@ public final class GlInsertOitChain {
     }
 
     private void replayChunks(RenderPass pass, ChunkSectionsToRender sections, OitInsertMode mode, OitFrame frame) {
+        #if MC >= 26.3
+        var separate = OitPipelines.chunkMlab(mode, false);
+        var indirect = OitPipelines.chunkMlab(mode, true);
+        pass.setUniform("Sampler0", ChunkReplayData.textureView(), TerrainAtlasFilter.sampler());
+        pass.setUniform("Sampler2", frame.lightmapView(), frame.loSampler());
+        bindStorage(mode);
+        ChunkReplayData.replay(pass, sections, separate, indirect);
+        #else
         var drawGroup = sections.drawGroupsPerLayer().get(ChunkSectionLayer.TRANSLUCENT);
         if (drawGroup == null || drawGroup.isEmpty()) {
             return;
@@ -244,9 +275,9 @@ public final class GlInsertOitChain {
         RenderSystem.AutoStorageIndexBuffer autoIndices = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS);
         GpuBuffer indexBuffer = maxIndices == 0 ? null : autoIndices.getBuffer(maxIndices);
         IndexType indexType = maxIndices == 0 ? null : autoIndices.type();
-        pass.setPipeline(OitPipelines.chunkMlab(mode));
-        pass.bindTexture("Sampler0", sections.textureView(), TerrainAtlasFilter.sampler());
-        pass.bindTexture("Sampler2", frame.lightmapView(), frame.loSampler());
+        pass.setRenderPipeline(OitPipelines.chunkMlab(mode));
+        pass.setUniform("Sampler0", sections.textureView(), TerrainAtlasFilter.sampler());
+        pass.setUniform("Sampler2", frame.lightmapView(), frame.loSampler());
         bindStorage(mode); // re-bind after the pipeline prime, defensive against RHI state churn
 
         GpuBufferSlice[] chunkInfos = sections.chunkSectionInfos();
@@ -255,6 +286,7 @@ public final class GlInsertOitChain {
                 pass.drawMultipleIndexed(draws.reversed(), indexBuffer, indexType, CHUNK_SECTION_UNIFORM, chunkInfos);
             }
         }
+        #endif
     }
 
     private void replayBer(RenderPass pass, BerTranslucentCapture ber, OitInsertMode mode, OitFrame frame) {
@@ -263,12 +295,12 @@ public final class GlInsertOitChain {
             if (draws.isEmpty()) {
                 continue;
             }
-            pass.setPipeline(OitPipelines.berMlab(family, mode));
+            pass.setRenderPipeline(OitPipelines.berMlab(family, mode));
             if (family.overlay) {
-                pass.bindTexture("Sampler1", frame.overlayView(), frame.loSampler());
+                pass.setUniform("Sampler1", frame.overlayView(), frame.loSampler());
             }
             if (family.lightmap) {
-                pass.bindTexture("Sampler2", frame.lightmapView(), frame.loSampler());
+                pass.setUniform("Sampler2", frame.lightmapView(), frame.loSampler());
             }
             bindStorage(mode);
             for (int i = 0; i < draws.size(); i++) {
@@ -283,27 +315,13 @@ public final class GlInsertOitChain {
                     if ((!family.overlay && "Sampler1".equals(name)) || (!family.lightmap && "Sampler2".equals(name))) {
                         continue;
                     }
-                    pass.bindTexture(name, texture.textureView(), texture.sampler());
+                    pass.setUniform(name, texture.textureView(), texture.sampler());
                 }
                 pass.setVertexBuffer(0, info.vertexBuffer().slice());
                 pass.setIndexBuffer(info.indexBuffer(), info.indexType());
                 pass.drawIndexed(info.indexCount(), 1, info.firstIndex(), info.baseVertex(), 0);
             }
         }
-    }
-
-    private void replayWeather(RenderPass pass, FabulousCaptures fabulous, OitInsertMode mode, OitFrame frame) {
-        pass.setPipeline(OitPipelines.weatherMlab(mode));
-        pass.setUniform("DynamicTransforms", fabulous.weatherTransform);
-        pass.bindTexture("Sampler2", frame.lightmapView(), frame.loSampler());
-        bindStorage(mode);
-        pass.setVertexBuffer(0, fabulous.weatherVertices.slice());
-        RenderSystem.AutoStorageIndexBuffer indices = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS);
-        pass.setIndexBuffer(indices.getBuffer(6 * (fabulous.rainColumns + fabulous.snowColumns)), indices.type());
-        var tm = frame.textureManager();
-        drawWeatherColumns(pass, tm.getTexture(WeatherOitReplay.RAIN_LOCATION), 0, fabulous.rainColumns);
-        drawWeatherColumns(pass, tm.getTexture(WeatherOitReplay.SNOW_LOCATION), fabulous.rainColumns,
-                fabulous.snowColumns);
     }
 
     private void bindStorage(OitInsertMode mode) {

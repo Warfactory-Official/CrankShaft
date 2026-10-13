@@ -14,7 +14,7 @@
     "CustomUniformsAccessor",
     "EntityConversionMixin",
     "GlCommandEncoderMeshMixin",
-    "GlDeviceMixin",
+    "GuestPipelineMixin",
     "IncludeGraphMixin",
     "IrisRenderingPipelineAccessor",
     "IrisRenderingPipelineMixin",
@@ -32,8 +32,7 @@
     "ShadowFrustumAccessors$SafeZone",
     "ShadowRendererMixin",
     "TerrainDrawDispatcherMixin",
-    "VisualizationManagerMixin",
-    "ZombieVillagerAccessor"
+    "VisualizationManagerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

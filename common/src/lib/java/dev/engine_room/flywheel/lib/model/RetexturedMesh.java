@@ -6,12 +6,18 @@ import dev.engine_room.flywheel.api.vertex.MutableVertexList;
 import dev.engine_room.flywheel.lib.util.AnimatedSprites;
 import dev.engine_room.flywheel.lib.vertex.VertexTransformations;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+#if MC >= 26.3
+import net.minecraft.client.renderer.texture.UvMapping;
+#endif
 import org.joml.Vector4fc;
 
-public record RetexturedMesh(Mesh mesh, TextureAtlasSprite sprite) implements Mesh {
+public record RetexturedMesh(Mesh mesh,
+        #if MC >= 26.3 UvMapping #else TextureAtlasSprite #endif sprite) implements Mesh {
     // Port: registers for Sodium's visible-only animation.
     public RetexturedMesh {
-        AnimatedSprites.add(sprite);
+        if (sprite instanceof TextureAtlasSprite atlasSprite) {
+            AnimatedSprites.add(atlasSprite);
+        }
     }
 
     @Override

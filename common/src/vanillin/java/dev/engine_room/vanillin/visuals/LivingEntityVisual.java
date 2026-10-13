@@ -8,6 +8,7 @@ import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.api.material.WriteMask;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.compat.lib.PoseStackOps;
 import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
@@ -79,6 +80,9 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
     private static final Set<EntityType<?>> MISMATCH_WARNED = ConcurrentHashMap.newKeySet();
     // Body-equipment base material, polygon-offset so coplanar equipment (strider saddle) wins the depth test.
     private static final Map<Identifier, Material> EQUIPMENT_MATERIALS = new ConcurrentHashMap<>();
+    #if MC >= 26.3
+    private static final Map<Identifier, Material> EQUIPMENT_CRACK_MATERIALS = new ConcurrentHashMap<>();
+    #endif
     // WingsLayer pushes the elytra 0.125 behind the body before rendering.
     private static final Matrix4fc WINGS_OFFSET = new Matrix4f().translate(0.0F, 0.0F, 0.125F);
     private static final Map<Identifier, Material> TRANSLUCENT_BODY_MATERIALS = new ConcurrentHashMap<>();
@@ -215,6 +219,17 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
                                                                                  .polygonOffset(true)
                                                                                  .build());
     }
+
+    #if MC >= 26.3
+    static Material equipmentCrackMaterial(Identifier texture) {
+        // 26.3: WolfArmorLayer gives translucent cracks the equipment's view offset and alpha cutout.
+        return EQUIPMENT_CRACK_MATERIALS.computeIfAbsent(texture, tex -> irisRouted(SimpleMaterial.builderOf(
+                dynamicOverlayMaterial(tex, OverlayKind.TRANSLUCENT))
+                .polygonOffset(true)
+                .cutout(CutoutShaders.ONE_TENTH)
+                .build(), PackIdentity.ENTITIES_TRANSLUCENT));
+    }
+    #endif
 
     static Material translucentBodyMaterial(Identifier texture) {
         return TRANSLUCENT_BODY_MATERIALS.computeIfAbsent(texture, tex -> SimpleMaterial.builder()
@@ -382,7 +397,7 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
             bodyRot += (float) (Math.cos(Mth.floor(s.ageInTicks) * 3.25F) * Math.PI * 0.4F);
         }
         if (!s.hasPose(Pose.SLEEPING)) {
-            pose.mulPose(Axis.YP.rotationDegrees(180.0F - bodyRot));
+            PoseStackOps.rotateDegrees(pose, Axis.YP, 180.0F - bodyRot);
         }
         if (s.deathTime > 0.0F) {
             float fall = (s.deathTime - 1.0F) / 20.0F * 1.6F;
@@ -390,19 +405,19 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
             if (fall > 1.0F) {
                 fall = 1.0F;
             }
-            pose.mulPose(Axis.ZP.rotationDegrees(fall * flipDegrees));
+            PoseStackOps.rotateDegrees(pose, Axis.ZP, fall * flipDegrees);
         } else if (s.isAutoSpinAttack) {
-            pose.mulPose(Axis.XP.rotationDegrees(-90.0F - s.xRot));
-            pose.mulPose(Axis.YP.rotationDegrees(s.ageInTicks * -75.0F));
+            PoseStackOps.rotateDegrees(pose, Axis.XP, -90.0F - s.xRot);
+            PoseStackOps.rotateDegrees(pose, Axis.YP, s.ageInTicks * -75.0F);
         } else if (s.hasPose(Pose.SLEEPING)) {
             Direction bed = s.bedOrientation;
             float angle = bed != null ? sleepDirectionToRotation(bed) : bodyRot;
-            pose.mulPose(Axis.YP.rotationDegrees(angle));
-            pose.mulPose(Axis.ZP.rotationDegrees(flipDegrees));
-            pose.mulPose(Axis.YP.rotationDegrees(270.0F));
+            PoseStackOps.rotateDegrees(pose, Axis.YP, angle);
+            PoseStackOps.rotateDegrees(pose, Axis.ZP, flipDegrees);
+            PoseStackOps.rotateDegrees(pose, Axis.YP, 270.0F);
         } else if (s.isUpsideDown) {
             pose.translate(0.0F, (s.boundingBoxHeight + 0.1F) / entityScale, 0.0F);
-            pose.mulPose(Axis.ZP.rotationDegrees(180.0F));
+            PoseStackOps.rotateDegrees(pose, Axis.ZP, 180.0F);
         }
     }
 
@@ -1115,7 +1130,7 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
         }
 
         private static boolean drawable(ItemStack stack, ItemDisplayContext context, LivingEntity owner) {
-            return stack.isEmpty() || ItemStackSlot.isVisualized(stack)
+            return stack.isEmpty() || ItemStackSlot.isVisualized(stack, context, owner)
                     || ItemModels.isSupported(stack, context, owner, owner.getId())
                     || SpecialItemModels.isSupported(stack, context, owner, owner.getId());
         }

@@ -1,6 +1,6 @@
 package dev.engine_room.flywheel.iris.engine;
 
-import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
@@ -101,7 +101,8 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
     @Override
     public boolean renderOit(LightStorage lightStorage, EnvironmentStorage environmentStorage,
                              @Nullable ChunkSectionsToRender chunks, @Nullable BerTranslucentCapture ber,
-                             @Nullable SodiumTerrainOitReplay terrain, @Nullable FabulousCaptures fabulous) {
+                             #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
+                             @Nullable SodiumTerrainOitReplay terrain) {
         if (IrisApi.getInstance()
                    .isRenderingShadowPass()) {
             return false;

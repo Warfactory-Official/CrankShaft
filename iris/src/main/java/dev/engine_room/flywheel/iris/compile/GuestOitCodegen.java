@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.iris.compile;
 
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
+import dev.engine_room.flywheel.iris.IrisRuntime;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.resources.Identifier;
 
@@ -19,12 +20,40 @@ final class GuestOitCodegen {
     private GuestOitCodegen() {
     }
 
+    static int layers(int rank) {
+        return (1 << (rank + 1)) / 4;
+    }
+
+    private static void flatCoefficients(StringBuilder out, int[] ranks, boolean sampled) {
+        if (!sampled) {
+            out.append("vec4 _flw_oitReadLayer(int coefficientSet, int layer) { return vec4(0.0); }\n");
+            return;
+        }
+        for (int set = 0; set < ranks.length; set++) {
+            out.append("const int _flw_coefficients").append(set).append(" = ").append(set).append(";\n");
+            for (int layer = 0; layer < layers(ranks[set]); layer++) {
+                out.append("uniform sampler2D _flw_coefficients").append(set).append('_').append(layer).append(";\n");
+            }
+        }
+        out.append("vec4 _flw_oitReadLayer(int coefficientSet, int layer) {\n");
+        for (int set = 0; set < ranks.length; set++) {
+            out.append("    if (coefficientSet == ").append(set).append(") {\n");
+            for (int layer = 0; layer < layers(ranks[set]); layer++) {
+                out.append("        if (layer == ").append(layer).append(") return texelFetch(_flw_coefficients")
+                   .append(set).append('_').append(layer).append(", ivec2(gl_FragCoord.xy), 0);\n");
+            }
+            out.append("    }\n");
+        }
+        out.append("    return vec4(0.0);\n}\n");
+    }
+
     private static String deviceDepth(boolean shadow) {
         return shadow ? "(1.0 - gl_FragCoord.z)" : "gl_FragCoord.z";
     }
 
     static String producer(GuestShaders.OitSpec spec, Map<Integer, String> outputs) {
         StringBuilder out = new StringBuilder();
+        if (IrisRuntime.EXPERIMENTAL) flatCoefficients(out, spec.oit().ranks(), spec.pass() == OitPass.EVALUATE);
         switch (spec.pass()) {
             case DEPTH_RANGE -> out.append("layout(location = 0) out vec4 _flw_oitDepthRange;\n")
                                    .append("void main() {\n    _flw_irisMain();\n")
@@ -51,7 +80,7 @@ final class GuestOitCodegen {
                           .ranks();
         int attachment = 0;
         for (int rank : ranks) {
-            for (int layer = 0; layer < GuestOitTargets.layers(rank); layer++) {
+            for (int layer = 0; layer < layers(rank); layer++) {
                 out.append("layout(location = ")
                    .append(attachment)
                    .append(") out vec4 _flw_oitCoefficients")
@@ -78,7 +107,7 @@ final class GuestOitCodegen {
                .append("        _flw_oitAddTransmittance(c, transmittance, d, ")
                .append(ranks[set])
                .append(");\n");
-            for (int layer = 0; layer < GuestOitTargets.layers(ranks[set]); layer++) {
+            for (int layer = 0; layer < layers(ranks[set]); layer++) {
                 out.append("        _flw_oitCoefficients")
                    .append(attachment++)
                    .append(" = c[")
@@ -93,7 +122,7 @@ final class GuestOitCodegen {
     private static void evaluate(StringBuilder out, GuestShaders.OitSpec spec, Map<Integer, String> outputs) {
         int[] ranks = spec.oit()
                           .ranks();
-        for (int set = 0; set < ranks.length; set++) {
+        for (int set = 0; !IrisRuntime.EXPERIMENTAL && set < ranks.length; set++) {
             out.append("uniform sampler2DArray _flw_coefficients")
                .append(set)
                .append(";\n");
@@ -145,7 +174,8 @@ final class GuestOitCodegen {
         out.append(FlwPrograms.SOURCES.get(LIBRARY)
                                       .source())
            .append('\n');
-        for (int set = 0; set < ranks.length; set++) {
+        if (IrisRuntime.EXPERIMENTAL) flatCoefficients(out, ranks, true);
+        for (int set = 0; !IrisRuntime.EXPERIMENTAL && set < ranks.length; set++) {
             out.append("uniform sampler2DArray _flw_coefficients")
                .append(set)
                .append(";\n");

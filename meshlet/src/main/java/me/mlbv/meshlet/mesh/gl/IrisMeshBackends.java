@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR LGPL-3.0-only
+// Copyright (C) 2026 movblock
 package me.mlbv.meshlet.mesh.gl;
 
 import dev.engine_room.flywheel.api.Flywheel;
@@ -7,6 +9,7 @@ import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.vk.VkContext;
+import dev.engine_room.flywheel.iris.IrisRuntime;
 import dev.engine_room.flywheel.iris.engine.GuestEngine;
 import dev.engine_room.flywheel.iris.engine.GuestIndirectDrawManager;
 import dev.engine_room.flywheel.lib.backend.SimpleBackend;
@@ -26,7 +29,7 @@ final class IrisMeshBackends {
                                              .priority(895)
                                              .gpuDriven(true)
                                              .supported(
-                                                     () -> GuestTerrainGate.meshEnabled() && !VkContext.isVulkanHost()
+                                                     () -> !IrisRuntime.EXPERIMENTAL && GuestTerrainGate.meshEnabled() && !VkContext.isVulkanHost()
                                                              && GlCompat.SUPPORTS_TERRAIN_MESH && GL.getCapabilities().glMultiDrawMeshTasksIndirectCountNV != 0
                                                              && GL.getCapabilities().GL_KHR_shader_subgroup && GlCompat.SUBGROUP_SIZE == 32
                                                              && (GL11C.glGetInteger(

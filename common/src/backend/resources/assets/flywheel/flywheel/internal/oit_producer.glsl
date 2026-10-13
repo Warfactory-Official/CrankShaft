@@ -6,6 +6,12 @@ void _flw_writeDepthRange(float linearDepth, float deviceDepth) {
     _flw_depthRange_out = vec4(-linearDepth + 1e-5, linearDepth + 1e-2, deviceDepth, 0.0);
 }
 
+void _flw_writeDepthRange(float linearDepth, float deviceDepth, float alpha) {
+    _flw_writeDepthRange(linearDepth, deviceDepth);
+    // Native Improved Transparency culls fully opaque terrain before preparing cloud and water depths.
+    _flw_depthRange_out.a = alpha > 0.99 ? deviceDepth : 0.0;
+}
+
 #else
 
 #ifdef _FLW_BINDLESS

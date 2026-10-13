@@ -6,19 +6,22 @@ import dev.engine_room.flywheel.api.material.CutoutShader;
 import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
+import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
 import dev.engine_room.flywheel.backend.compile.component.BufferTextureInstanceComponent;
 import dev.engine_room.flywheel.backend.compile.component.InstanceStructComponent;
 import dev.engine_room.flywheel.backend.compile.component.SsboInstanceComponent;
 import dev.engine_room.flywheel.backend.compile.component.UberInstanceComponent;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
-import dev.engine_room.flywheel.backend.compile.core.ShaderCache;
 import dev.engine_room.flywheel.backend.engine.indirect.BufferBindings;
 import dev.engine_room.flywheel.backend.engine.indirect.InstanceTypeIds;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.glsl.GlslVersion;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
+import dev.engine_room.flywheel.backend.vk.VkContext;
+import dev.engine_room.flywheel.iris.IrisRuntime;
 import dev.engine_room.flywheel.iris.compile.patches.ContractPatches;
 import dev.engine_room.flywheel.iris.compile.patches.SundialTranslucent;
+import dev.engine_room.flywheel.iris.mixin.IrisRenderingPipelineAccessor;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.FogShaders;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
@@ -48,6 +51,9 @@ import net.irisshaders.iris.pipeline.transform.PatchShaderType;
 import net.irisshaders.iris.pipeline.transform.TransformPatcher;
 import net.irisshaders.iris.shaderpack.programs.ProgramSource;
 import net.irisshaders.iris.shaderpack.properties.PackDirectives;
+#if MC >= 26.3
+import net.irisshaders.iris.shaderpack.texture.TextureStage;
+#endif
 import net.irisshaders.iris.vertices.IrisVertexFormats;
 import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
@@ -56,7 +62,9 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Render-thread transforms; resource warmup clears memos. */
+/**
+ * Render-thread transforms; resource warmup clears memos.
+ */
 public final class GuestShaders {
     static final String[] ATTRIBUTES = {"_flw_aPosition", "_flw_aColor", "_flw_aTexCoord", "_flw_aOverlay",
             "_flw_aLight", "_flw_aNormal", "_flw_aIrisEntity", "_flw_aMidTexCoord", "_flw_aTangent", "_flw_aMidBlock",
@@ -99,7 +107,8 @@ public final class GuestShaders {
 
     private static final ShaderAttributeInputs INPUTS = new ShaderAttributeInputs(IrisVertexFormats.ENTITY, false,
             false, false, false, false);
-    private static final ShaderAttributeInputs GLINT_INPUTS = new ShaderAttributeInputs(DefaultVertexFormat.POSITION_TEX,
+    private static final ShaderAttributeInputs GLINT_INPUTS = new ShaderAttributeInputs(
+            DefaultVertexFormat.POSITION_TEX,
             false, false, true, false, false);
 
     private static final Pattern VERSION_LINE = Pattern.compile("#version\\s+(\\d+)[^\\n]*\\n");
@@ -108,15 +117,13 @@ public final class GuestShaders {
 
     private static final SingleASTTransformer<JobParameters> TRANSFORMER = versionedTransformer();
     private static final SingleASTTransformer<JobParameters> FRAGMENT_TRANSFORMER = versionedTransformer();
-
-    private static @Nullable VertexInterface lastInterface;
-    private static @Nullable Map<Integer, String> lastOutputs;
-
     private static final Map<TextPair, String> ADAPTED = new HashMap<>();
     private static final Map<String, String> CHUNK_FADE = new HashMap<>();
     private static final Map<String, String> SHIFTED = new HashMap<>();
     private static final Map<String, Rewritten> REWRITTEN = new HashMap<>();
     private static final Map<String, OitFragment> DEMOTED = new HashMap<>();
+    private static @Nullable VertexInterface lastInterface;
+    private static @Nullable Map<Integer, String> lastOutputs;
 
     static {
         TRANSFORMER.setTransformation((TranslationUnit tree, Root root) -> lastInterface = rewriteInputs(tree, root));
@@ -128,18 +135,19 @@ public final class GuestShaders {
     }
 
     static GlslVersion glslVersion() {
-        return GlCompat.MAX_GLSL_VERSION;
+        return VkContext.isVulkanHost() ? GlslVersion.V460 : GlCompat.MAX_GLSL_VERSION;
     }
 
     static String versionPreamble() {
         Compilation ctx = new Compilation();
         ctx.version(glslVersion());
+        if (IrisRuntime.EXPERIMENTAL) ctx.define("_FLW_GUEST_FLAT_COEFFICIENTS");
         return ctx.assembledSource();
     }
 
     static String libraryPreamble() {
         Compilation ctx = new Compilation();
-        ctx.polyfillFmaIfMissing();
+        if (!VkContext.isVulkanHost()) ctx.polyfillFmaIfMissing();
         return ctx.assembledSource();
     }
 
@@ -170,9 +178,16 @@ public final class GuestShaders {
         return transformer;
     }
 
-    /** {@code contract}: Colorwheel {@code clrwl_computeFragment} interface. */
+    /**
+     * {@code contract}: Colorwheel {@code clrwl_computeFragment} interface.
+     */
     static Stages build(IrisRenderingPipeline pipeline, ProgramSource source, AlphaTest alpha,
-                        GuestPipelines.ProgramKey key, boolean contract, @Nullable OitSpec oit) {
+                        ProgramKey key, boolean contract, @Nullable OitSpec oit) {
+        return build(pipeline, source, alpha, key, contract, oit, false);
+    }
+
+    static Stages build(IrisRenderingPipeline pipeline, ProgramSource source, AlphaTest alpha,
+                        ProgramKey key, boolean contract, @Nullable OitSpec oit, boolean visibleInstances) {
         String packFragment = source.getFragmentSource().orElseThrow();
         if (key.role() == PackRole.ADDITIVE)
             packFragment = ALPHA_DITHER_DISCARD.matcher(packFragment).replaceAll("");
@@ -193,8 +208,10 @@ public final class GuestShaders {
         Map<PatchShaderType, String> patched = TransformPatcher.patchVanilla(transformName,
                 packVertex, source.getGeometrySource().orElse(null),
                 source.getTessControlSource().orElse(null), source.getTessEvalSource().orElse(null),
-                packFragment, alpha, false, false, true, !contract && key.role() == PackRole.GLINT ? GLINT_INPUTS : INPUTS,
-                pipeline.getTextureMap());
+                packFragment, alpha, false, false, true,
+                !contract && key.role() == PackRole.GLINT ? GLINT_INPUTS : INPUTS,
+                pipeline.getTextureMap()
+                #if MC >= 26.3 , pipeline.getTextureOverrides(TextureStage.GBUFFERS_AND_SHADOW) #endif);
         patched.forEach((stage, text) -> requireSupportedStage(source.getName() + "/" + stage, text));
 
         List<SourceComponent> body = new ArrayList<>();
@@ -207,7 +224,8 @@ public final class GuestShaders {
             InstanceType<?> type = Objects.requireNonNull(key.type());
             body.add(new InstanceStructComponent(type));
             body.add(FlwPrograms.SOURCES.get(type.vertexShader()));
-            body.add(key.indirect() ? new SsboInstanceComponent(type) : new BufferTextureInstanceComponent(type));
+            body.add(key.indirect() || IrisRuntime.EXPERIMENTAL
+                    ? new SsboInstanceComponent(type) : new BufferTextureInstanceComponent(type));
         }
         body.add(FlwPrograms.SOURCES.get(key.materialVertex()));
         body.add(FlwPrograms.SOURCES.get(key.indirect() ? INDIRECT : INSTANCING));
@@ -227,7 +245,8 @@ public final class GuestShaders {
         boolean emissive = key.role() == PackRole.ADDITIVE;
         String library = library(body, key, !contract && !key.crumbling() && !emissive && key.role() != PackRole.GLINT
                         ? source.getParent().getPackDirectives() : null, contract, oit != null, proxy, emissive,
-                emissive && GuestPipelines.deferredEmissive(pipeline));
+                emissive && ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack().flywheel$deferredEmissive(),
+                visibleInstances);
         String fragment = shiftBufferBindings(modelChunkFade(patched.get(PatchShaderType.FRAGMENT), shadow));
         if (contract) {
             String fragmentLibrary = contractLibrary(key, source.getParent().getPackDirectives(), oit != null);
@@ -246,7 +265,7 @@ public final class GuestShaders {
         String geometry = shiftBufferBindings(modelChunkFade(patched.get(PatchShaderType.GEOMETRY), shadow));
         if (contract && geometry != null) {
             Compilation ctx = new Compilation();
-            ShaderCache.expand(List.of(FlwPrograms.SOURCES.get(CONTRACT_GEOMETRY)), ctx::appendComponent);
+            ShaderAssembly.appendComponents(ctx, List.of(FlwPrograms.SOURCES.get(CONTRACT_GEOMETRY)));
             geometry = afterLeadingDirectives(geometry, ctx.assembledSource());
         }
         return new Stages(vertex(vertex, inputs, library), geometry,
@@ -302,13 +321,13 @@ public final class GuestShaders {
     }
 
     static @Nullable String shiftBufferBindings(@Nullable String stage, int offset) {
-        if (stage == null || !STORAGE_BLOCK.matcher(stage).find()) return stage;
-        return SHIFTED.computeIfAbsent(offset + "\n" + stage, key -> shifted(stage, offset));
+        if (IrisRuntime.EXPERIMENTAL || stage == null || !STORAGE_BLOCK.matcher(stage).find()) return stage;
+        return SHIFTED.computeIfAbsent(offset + "\n" + stage, _ -> shifted(stage, offset));
     }
 
     private static String shifted(String stage, int offset) {
         var parser = versionedTransformer();
-        parser.setTransformation((tree, root) -> {
+        parser.setTransformation((_, root) -> {
             for (var block : root.nodeIndex.getStream(InterfaceBlockDeclaration.class).toList()) {
                 if (block.getTypeQualifier().getParts().stream()
                          .noneMatch(part -> part instanceof StorageQualifier storage
@@ -345,17 +364,22 @@ public final class GuestShaders {
         return parser.transform(stage);
     }
 
-    private static String library(List<SourceComponent> body, GuestPipelines.ProgramKey key,
+    private static String library(List<SourceComponent> body, ProgramKey key,
                                   @Nullable PackDirectives vertexLight, boolean contract, boolean oit, boolean proxy,
-                                  boolean emissive, boolean emissivePeak) {
+                                  boolean emissive, boolean emissivePeak, boolean visibleInstances) {
         boolean crumbling = key.crumbling();
         boolean indirect = key.indirect();
         Compilation ctx = new Compilation();
+        if (IrisRuntime.EXPERIMENTAL && !indirect) {
+            ctx.define("_FLW_GUEST_STORAGE_INSTANCES");
+            ctx.define("_FLW_GUEST_INSTANCE_UINTS", Integer.toString(
+                    (Objects.requireNonNull(key.type()).layout().byteSize() + 15) / 16 * 4));
+        }
         if (key.embedded()) {
             ctx.define("FLW_EMBEDDED");
         }
-        ctx.polyfillFmaIfMissing();
-        if (!indirect && GlCompat.USE_INSTANCING_SELECTOR) {
+        if (!VkContext.isVulkanHost()) ctx.polyfillFmaIfMissing();
+        if (key.selector()) {
             ctx.define("_FLW_INSTANCING_SELECTOR");
         } else if (crumbling || indirect) {
             ctx.requireExtension("GL_ARB_shader_draw_parameters");
@@ -365,6 +389,9 @@ public final class GuestShaders {
         }
         if (indirect) {
             ctx.define("_FLW_GUEST_INDIRECT");
+        }
+        if (visibleInstances) {
+            ctx.define("_FLW_GUEST_VISIBLE_INSTANCES");
         }
         if (contract) {
             ctx.define("_FLW_GUEST_CONTRACT");
@@ -396,23 +423,24 @@ public final class GuestShaders {
             Objects.requireNonNull(key.smoothness())
                    .appendDefines(ctx);
             ctx.define("flw_renderOrigin", "_flw_renderOrigin.xyz");
-            if (indirect) {
+            if (indirect || IrisRuntime.EXPERIMENTAL) {
                 ctx.define("_FLW_LIGHT_LUT_BUFFER_BINDING", String.valueOf(BufferBindings.LIGHT_LUT));
                 ctx.define("_FLW_LIGHT_SECTIONS_BUFFER_BINDING", String.valueOf(BufferBindings.LIGHT_SECTION));
             }
             roots.add(FlwPrograms.SOURCES.get(VERTEX_LIGHT_HEADER));
-            roots.add(FlwPrograms.SOURCES.get(indirect ? INDIRECT_LIGHT : INSTANCING_LIGHT));
+            roots.add(
+                    FlwPrograms.SOURCES.get(indirect || IrisRuntime.EXPERIMENTAL ? INDIRECT_LIGHT : INSTANCING_LIGHT));
             roots.add(FlwPrograms.SOURCES.get(Objects.requireNonNull(key.light())));
             roots.add(FlwPrograms.SOURCES.get(VERTEX_LIGHT));
         }
         roots.addAll(body);
-        ShaderCache.expand(roots, ctx::appendComponent);
+        ShaderAssembly.appendComponents(ctx, roots);
         return ctx.assembledSource();
     }
 
-    private static String contractLibrary(GuestPipelines.ProgramKey key, PackDirectives directives, boolean oit) {
+    private static String contractLibrary(ProgramKey key, PackDirectives directives, boolean oit) {
         Compilation ctx = new Compilation();
-        ctx.polyfillFmaIfMissing();
+        if (!VkContext.isVulkanHost()) ctx.polyfillFmaIfMissing();
         if (key.role() == PackRole.TERRAIN_TRANSLUCENT) ctx.define("_FLW_GUEST_BORROWED_BLOCK");
         if (key.role() == PackRole.ADDITIVE && key.transparency() == Transparency.ADDITIVE) {
             ctx.define("_FLW_GUEST_ADDITIVE_ONE");
@@ -430,7 +458,7 @@ public final class GuestShaders {
         ctx.define("diffuse", "_flw_diffuse");
         ctx.define("diffuseNether", "_flw_diffuseNether");
         ctx.define("diffuseFromLightDirections", "_flw_diffuseFromLightDirections");
-        if (key.indirect()) {
+        if (key.indirect() || IrisRuntime.EXPERIMENTAL) {
             ctx.define("_FLW_LIGHT_LUT_BUFFER_BINDING", String.valueOf(BufferBindings.LIGHT_LUT));
             ctx.define("_FLW_LIGHT_SECTIONS_BUFFER_BINDING", String.valueOf(BufferBindings.LIGHT_SECTION));
         }
@@ -452,7 +480,8 @@ public final class GuestShaders {
             roots.add(FlwPrograms.SOURCES.get(GuestOitCodegen.LIBRARY));
         }
         roots.add(FlwPrograms.SOURCES.get(DIFFUSE));
-        roots.add(FlwPrograms.SOURCES.get(key.indirect() ? INDIRECT_LIGHT : INSTANCING_LIGHT));
+        roots.add(FlwPrograms.SOURCES.get(
+                key.indirect() || IrisRuntime.EXPERIMENTAL ? INDIRECT_LIGHT : INSTANCING_LIGHT));
         roots.add(FlwPrograms.SOURCES.get(Objects.requireNonNull(key.light())));
         roots.add(FlwPrograms.SOURCES.get(Objects.requireNonNull(key.materialFragment())));
         if (cutout != CutoutShaders.OFF) {
@@ -460,7 +489,7 @@ public final class GuestShaders {
             roots.add(FlwPrograms.SOURCES.get(cutout.source()));
         }
         roots.add(FlwPrograms.SOURCES.get(CONTRACT));
-        ShaderCache.expand(roots, ctx::appendComponent);
+        ShaderAssembly.appendComponents(ctx, roots);
         return ctx.assembledSource();
     }
 
@@ -468,7 +497,9 @@ public final class GuestShaders {
         return withLibrary(irisFragment, library, CONTRACT_PROTOTYPE);
     }
 
-    /** Pack fragment before library; {@code prelude} provides forward prototypes. */
+    /**
+     * Pack fragment before library; {@code prelude} provides forward prototypes.
+     */
     static String withLibrary(String irisFragment, String library, @Nullable String prelude) {
         Matcher version = VERSION_LINE.matcher(irisFragment);
         if (!version.find()) {

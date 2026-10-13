@@ -55,7 +55,7 @@ public class ItemDisplayVisual extends AbstractEntityVisual<Display.ItemDisplay>
 
     public static boolean shouldVisualize(Display.ItemDisplay entity) {
         var state = entity.itemRenderState();
-        return state != null && (ItemStackSlot.isVisualized(state.itemStack())
+        return state != null && (ItemStackSlot.isVisualized(state.itemStack(), state.itemTransform(), entity)
                 || ItemModels.isSupported(state.itemStack(), state.itemTransform(), entity, entity.getId()));
     }
 
@@ -88,7 +88,7 @@ public class ItemDisplayVisual extends AbstractEntityVisual<Display.ItemDisplay>
         }
 
         var itemStack = object.itemStack();
-        boolean visualized = ItemStackSlot.isVisualized(itemStack);
+        boolean visualized = ItemStackSlot.isVisualized(itemStack, object.itemTransform(), entity);
         instance.setVisible(!visualized);
         nameTagComponent.beginFrame(ctx);
 

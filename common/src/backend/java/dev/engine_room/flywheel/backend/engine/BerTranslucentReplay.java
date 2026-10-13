@@ -1,8 +1,8 @@
 package dev.engine_room.flywheel.backend.engine;
 
-import com.mojang.blaze3d.systems.RenderPass;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.engine.BerTranslucentCapture.CapturedDraw;
 import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
@@ -25,15 +25,15 @@ public final class BerTranslucentReplay {
                 continue;
             }
 
-            pass.setPipeline(OitPipelines.berProducer(family, mode));
+            pass.setRenderPipeline(OitPipelines.berProducer(family, mode));
 
             // The family's vertex samples the lightmap (Sampler2) / overlay (Sampler1) where declared; both are
             // frame-constant. The BER atlas (Sampler0) is per-draw (bound from the captured RenderType below).
             if (family.overlay) {
-                pass.bindTexture("Sampler1", overlayView, loSampler);
+                pass.setUniform("Sampler1", overlayView, loSampler);
             }
             if (family.lightmap) {
-                pass.bindTexture("Sampler2", lightmapView, loSampler);
+                pass.setUniform("Sampler2", lightmapView, loSampler);
             }
             framebuffer.bindOitReads(pass, mode, blueNoiseView, oitSampler, noiseSampler);
 
@@ -54,7 +54,7 @@ public final class BerTranslucentReplay {
                     if ((!family.overlay && "Sampler1".equals(name)) || (!family.lightmap && "Sampler2".equals(name))) {
                         continue;
                     }
-                    pass.bindTexture(name, texture.textureView(), texture.sampler());
+                    pass.setUniform(name, texture.textureView(), texture.sampler());
                 }
                 pass.setVertexBuffer(0, info.vertexBuffer()
                                             .slice());

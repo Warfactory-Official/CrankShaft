@@ -20,8 +20,13 @@ import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.client.renderer.state.level.QuadParticleRenderState;
 import net.minecraft.client.renderer.texture.OverlayTexture;
+#if MC >= 26.3
+import net.minecraft.client.renderer.texture.UvMapping;
+import net.minecraft.client.resources.model.geometry.ItemQuads;
+#else
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
+#endif
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.item.ItemDisplayContext;
@@ -86,8 +91,12 @@ public final class EntityOutlineSubmits {
         @Override
         public <S> void submitModel(Model<? super S> model, S state, PoseStack poseStack, RenderType renderType,
                                     int lightCoords, int overlayCoords, int tintedColor,
+                                    #if MC >= 26.3
+                                    @Nullable UvMapping sprite, int outlineColor) {
+                                    #else
                                     @Nullable TextureAtlasSprite sprite, int outlineColor,
                                     ModelFeatureRenderer.@Nullable CrumblingOverlay crumblingOverlay) {
+                                    #endif
             if (outlineColor == 0) {
                 return;
             }
@@ -96,8 +105,21 @@ public final class EntityOutlineSubmits {
                 return;
             }
             collection.submitModel(model, state, poseStack, outlineType, lightCoords, overlayCoords, tintedColor,
-                    sprite, outlineColor, null);
+                    sprite, outlineColor #if MC < 26.3 , null #endif);
         }
+
+        #if MC >= 26.3
+        @Override
+        public <S> void submitCrumblingOverlay(Model<? super S> model, S state, PoseStack poseStack,
+                                               RenderType renderType, int lightCoords, int overlayCoords,
+                                               int tintedColor, ModelFeatureRenderer.CrumblingOverlay overlay) {
+        }
+
+        @Override
+        public void submitTextBackground(PoseStack poseStack, float x0, float y0, float x1, float y1,
+                                          int color, Font.DisplayMode displayMode, int lightCoords) {
+        }
+        #endif
 
         @Override
         public void submitBlockModel(PoseStack poseStack, RenderType renderType, List<BlockStateModelPart> modelParts,
@@ -115,13 +137,23 @@ public final class EntityOutlineSubmits {
 
         @Override
         public void submitItem(PoseStack poseStack, ItemDisplayContext displayContext, int lightCoords,
-                               int overlayCoords, int outlineColor, int[] tintLayers, List<BakedQuad> quads,
+                               int overlayCoords, int outlineColor, int[] tintLayers,
+                               #if MC >= 26.3
+                               ItemQuads quads,
+                               #else
+                               List<BakedQuad> quads,
+                               #endif
                                ItemStackRenderState.FoilType foilType) {
             if (outlineColor == 0) {
                 return;
             }
             collection.outline.submit(new ItemFeatureRenderer.Submit(poseStack.last().copy(), displayContext, 15728880,
-                    OverlayTexture.NO_OVERLAY, outlineColor, ItemStackRenderState.LayerRenderState.EMPTY_TINTS, quads,
+                    OverlayTexture.NO_OVERLAY, outlineColor, ItemStackRenderState.LayerRenderState.EMPTY_TINTS,
+                    #if MC >= 26.3
+                    quads.all(),
+                    #else
+                    quads,
+                    #endif
                     ItemStackRenderState.FoilType.NONE));
         }
 
@@ -133,7 +165,7 @@ public final class EntityOutlineSubmits {
             }
             collection.outline.submit(
                     new MovingBlockFeatureRenderer.Submit(new Matrix4f(poseStack.last().pose()), movingBlockRenderState,
-                            outlineColor));
+                            outlineColor #if MC >= 26.3 , false #endif));
         }
 
         @Override
@@ -168,7 +200,8 @@ public final class EntityOutlineSubmits {
         }
 
         @Override
-        public void submitBreakingBlockModel(PoseStack poseStack, List<BlockStateModelPart> parts, int progress) {
+        public void submitBreakingBlockModel(PoseStack poseStack, List<BlockStateModelPart> parts, int progress
+                                             #if MC >= 26.3 , boolean isBlockTranslucent #endif) {
         }
 
         @Override

@@ -59,7 +59,7 @@ final class GuestShadowCull {
                                                                                               .withResource(
                                                                                                       ResourceUtil.rl(
                                                                                                               "iris/shadow_cull.glsl")))
-                                                                                 .postLink((key, program) -> {
+                                                                                 .postLink((_, program) -> {
                                                                                      Uniforms.setUniformBlockBindings(
                                                                                              program);
                                                                                      program.setUniformBlockBinding(
@@ -88,23 +88,22 @@ final class GuestShadowCull {
         int planeCount = 0;
         double distance = 0;
         double safeZone = 0;
-        if (frustum instanceof AdvancedShadowCullingFrustum) {
-            var advanced = (ShadowFrustumAccessors.Advanced) frustum;
-            float[][] planes = advanced.flywheel$planes();
-            planeCount = advanced.flywheel$planeCount();
+        if (frustum instanceof AdvancedShadowCullingFrustum advanced) {
+            float[][] planes = ((ShadowFrustumAccessors.Advanced) advanced).flywheel$planes();
+            planeCount = ((ShadowFrustumAccessors.Advanced) advanced).flywheel$planeCount();
             for (int i = 0; i < planeCount; i++) {
                 for (int c = 0; c < 4; c++) {
                     MemoryUtil.memPutFloat(ptr + 16L * i + 4L * c, planes[i][c]);
                 }
             }
-            if (frustum instanceof SafeZoneCullingFrustum) {
-                distance = maxDistance(((ShadowFrustumAccessors.SafeZone) frustum).flywheel$distanceCuller());
-                safeZone = maxDistance(advanced.flywheel$boxCuller());
+            if (frustum instanceof SafeZoneCullingFrustum safe) {
+                distance = maxDistance(((ShadowFrustumAccessors.SafeZone) safe).flywheel$distanceCuller());
+                safeZone = maxDistance(((ShadowFrustumAccessors.Advanced) advanced).flywheel$boxCuller());
             } else {
-                distance = maxDistance(advanced.flywheel$boxCuller());
+                distance = maxDistance(((ShadowFrustumAccessors.Advanced) advanced).flywheel$boxCuller());
             }
-        } else if (frustum instanceof BoxCullingFrustum) {
-            distance = maxDistance(((ShadowFrustumAccessors.Box) frustum).flywheel$boxCuller());
+        } else if (frustum instanceof BoxCullingFrustum box) {
+            distance = maxDistance(((ShadowFrustumAccessors.Box) box).flywheel$boxCuller());
         }
 
         long tail = ptr + 16L * MAX_PLANES;

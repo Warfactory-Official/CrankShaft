@@ -52,7 +52,11 @@ public final class VkDeviceFault {
                         VkDescriptorHeap.bindsRecorded(), VkDescriptorHeap.bindsElided());
             }
             for (int i = 0; i < addressCount; i++) {
+                #if MC >= 26.3
+                VkDeviceFaultAddressInfoKHR a = addresses.get(i);
+                #else
                 VkDeviceFaultAddressInfoEXT a = addresses.get(i);
+                #endif
                 long precision = Math.max(1L, a.addressPrecision());
                 long lo = a.reportedAddress() & ~(precision - 1);
                 long hi = a.reportedAddress() | (precision - 1);
@@ -60,7 +64,11 @@ public final class VkDeviceFault {
                         addressTypeName(a.addressType()), Long.toHexString(lo), Long.toHexString(hi));
             }
             for (int i = 0; i < vendorCount; i++) {
+                #if MC >= 26.3
+                VkDeviceFaultVendorInfoKHR v = vendors.get(i);
+                #else
                 VkDeviceFaultVendorInfoEXT v = vendors.get(i);
+                #endif
                 FlwBackend.LOGGER.error("[vk]   vendor fault: \"{}\" code=0x{} data=0x{}",
                         v.descriptionString(), Long.toHexString(v.vendorFaultCode()),
                         Long.toHexString(v.vendorFaultData()));

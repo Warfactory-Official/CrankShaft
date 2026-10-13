@@ -60,7 +60,6 @@ final class GuestDrawTags {
         return new DrawTags(drawTag, itemTag);
     }
 
-
     /**
      * First identity the running pack actually maps, as a draw tag; 0 when it maps none, so the draw keeps its own.
      * A pack's unmapped entries resolve to id 0, which is the same "no special handling" the absent case wants.

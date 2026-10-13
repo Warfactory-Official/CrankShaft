@@ -3,6 +3,7 @@ package dev.engine_room.vanillin.visuals;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.compat.lib.PoseStackOps;
 import net.minecraft.client.model.EntityModel;
 import net.minecraft.client.model.animal.llama.LlamaSpitModel;
 import net.minecraft.client.model.geom.ModelLayers;
@@ -27,7 +28,7 @@ public final class LlamaSpitVisual extends EntityModelVisual<LlamaSpit, LlamaSpi
     @Override
     protected void setupRootPose(PoseStack pose, LlamaSpitRenderState state) {
         pose.translate(0.0F, 0.15F, 0.0F);
-        pose.mulPose(Axis.YP.rotationDegrees(state.yRot - 90.0F));
-        pose.mulPose(Axis.ZP.rotationDegrees(state.xRot));
+        PoseStackOps.rotateDegrees(pose, Axis.YP, state.yRot - 90.0F);
+        PoseStackOps.rotateDegrees(pose, Axis.ZP, state.xRot);
     }
 }

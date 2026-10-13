@@ -2,8 +2,8 @@
 // Copyright (C) 2026 movblock
 package me.mlbv.meshlet.mesh.vk;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.vulkan.VulkanGpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuBuffer;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher.VisibleRegionBatch;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
@@ -42,7 +42,6 @@ final class VkMeshUtil {
             MemoryUtil.memPutLong(ptr + (long) slot * GEO_ENTRY_BYTES, addr);
         }
     }
-
 
     static void gatherInputBarrier(VkCommandBuffer cmd) {
         try (MemoryStack stack = MemoryStack.stackPush()) {

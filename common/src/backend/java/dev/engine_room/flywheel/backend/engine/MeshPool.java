@@ -1,8 +1,8 @@
 package dev.engine_room.flywheel.backend.engine;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.commands.RenderPass;
 import dev.engine_room.flywheel.api.model.Mesh;
 import dev.engine_room.flywheel.backend.InternalVertex;
 import dev.engine_room.flywheel.backend.util.ReferenceCounted;
@@ -225,7 +225,7 @@ public class MeshPool {
             float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
             for (int t = triStart; t < triEnd; t++) {
                 for (int j = 0; j < 3; j++) {
-                    int vi = MemoryUtil.memGetInt(idxScratchPtr + (long) (t * 3 + j) * Integer.BYTES);
+                    int vi = MemoryUtil.memGetInt(idxScratchPtr + (t * 3L + j) * Integer.BYTES);
                     long p = vertsPtr + (long) vi * InternalVertex.STRIDE;
                     float x = MemoryUtil.memGetFloat(p);
                     float y = MemoryUtil.memGetFloat(p + 4L);
@@ -303,6 +303,14 @@ public class MeshPool {
         if (extrasVbo != null) {
             pass.setVertexBuffer(1, extrasVbo.slice());
         }
+    }
+
+    /**
+     * Pool-owned binding-1 stream; re-query after {@link #flush()} because growth replaces the buffer.
+     */
+    @Nullable
+    public GpuBuffer extrasBuffer() {
+        return extrasVbo;
     }
 
     /**
@@ -393,7 +401,7 @@ public class MeshPool {
         }
 
         public int firstIndex() {
-            return MeshPool.this.indexPool.firstIndex(mesh.indexSequence());
+            return indexPool.firstIndex(mesh.indexSequence());
         }
 
         public boolean isInvalid() {
@@ -402,8 +410,8 @@ public class MeshPool {
 
         @Override
         protected void _delete() {
-            MeshPool.this.dirty = true;
-            MeshPool.this.anyToRemove = true;
+            dirty = true;
+            anyToRemove = true;
         }
     }
 }

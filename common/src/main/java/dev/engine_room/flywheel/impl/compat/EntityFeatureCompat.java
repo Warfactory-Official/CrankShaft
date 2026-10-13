@@ -40,7 +40,7 @@ public final class EntityFeatureCompat {
     private static final boolean EMF = CompatMod.ENTITY_MODEL_FEATURES.isLoaded;
     private static final boolean POLYTONE = CompatMod.POLYTONE.isLoaded;
     public static final boolean ACTIVE = ETF || EMF || POLYTONE;
-    private static final RendererReloadCache<Boolean, State> STATE = new RendererReloadCache<>($ -> new State());
+    private static final RendererReloadCache<Boolean, State> STATE = new RendererReloadCache<>(_ -> new State());
     private static final Function<Object, Boolean> MANAGES = key -> key instanceof EntityType<?> type
             ? restyles(type) : Etf.manages((Identifier) key);
     private static final ThreadLocal<EmfRoots> EMF_ROOT = ThreadLocal.withInitial(EmfRoots::new);
@@ -230,9 +230,9 @@ public final class EntityFeatureCompat {
                 return Polytone.COLORS.getPaintingRenderType() != null;
             }
             if (type == EntityTypes.EXPERIENCE_ORB) {
-                var colors = (PolytoneColorManagerAccessor) Polytone.COLORS;
-                return colors.flywheel$xpOrbColor() != null || colors.flywheel$xpOrbColorR() != null
-                        || colors.flywheel$xpOrbColorG() != null || colors.flywheel$xpOrbColorB() != null;
+                var colors = Polytone.COLORS;
+                return ((PolytoneColorManagerAccessor) colors).flywheel$xpOrbColor() != null || ((PolytoneColorManagerAccessor) colors).flywheel$xpOrbColorR() != null
+                        || ((PolytoneColorManagerAccessor) colors).flywheel$xpOrbColorG() != null || ((PolytoneColorManagerAccessor) colors).flywheel$xpOrbColorB() != null;
             }
             return false;
         }

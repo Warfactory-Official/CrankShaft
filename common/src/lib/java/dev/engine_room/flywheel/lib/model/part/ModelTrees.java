@@ -8,6 +8,9 @@ import dev.engine_room.flywheel.lib.model.SingleMeshModel;
 import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+#if MC >= 26.3
+import net.minecraft.client.renderer.texture.UvMapping;
+#endif
 import org.jspecify.annotations.Nullable;
 
 import java.util.Collections;
@@ -40,6 +43,18 @@ public final class ModelTrees {
         return CACHE.get(new ModelTreeKey(layer, Collections.emptySet(), sprite, material));
     }
 
+    #if MC >= 26.3
+    // Dynamic palettes prepare their mapping on the render thread; the cached mesh consumes immutable UVs.
+    public static ModelTree of(ModelLayerLocation layer, UvMapping mapping, Material material) {
+        return CACHE.get(new ModelTreeKey(layer, Collections.emptySet(), mapping, material));
+    }
+
+    public static ModelTree of(ModelLayerLocation layer, Set<String> pathsToPrune, UvMapping mapping,
+                               Material material) {
+        return CACHE.get(new ModelTreeKey(layer, Set.copyOf(pathsToPrune), mapping, material));
+    }
+    #endif
+
     public static ModelTree of(ModelLayerLocation layer, Set<String> pathsToPrune, Material material) {
         return CACHE.get(new ModelTreeKey(layer, Set.copyOf(pathsToPrune), null, material));
     }
@@ -51,7 +66,11 @@ public final class ModelTrees {
 
     @Nullable
     private static ModelTree convert(String path, MeshTree meshTree, Set<String> pathsToPrune,
+                                     #if MC >= 26.3
+                                     @Nullable UvMapping sprite, Material material) {
+                                     #else
                                      @Nullable TextureAtlasSprite sprite, Material material) {
+                                     #endif
         if (pathsToPrune.contains(path)) {
             return null;
         }
@@ -82,7 +101,12 @@ public final class ModelTrees {
         return new ModelTree(model, meshTree.initialPose(), children);
     }
 
-    private record ModelTreeKey(ModelLayerLocation layer, Set<String> pathsToPrune, @Nullable TextureAtlasSprite sprite,
+    private record ModelTreeKey(ModelLayerLocation layer, Set<String> pathsToPrune,
+                                #if MC >= 26.3
+                                @Nullable UvMapping sprite,
+                                #else
+                                @Nullable TextureAtlasSprite sprite,
+                                #endif
                                 Material material) {
     }
 }

@@ -42,8 +42,12 @@ public final class ShaderWarmupSplash {
         long now = System.nanoTime();
         if (now - start < DELAY || now - lastFrame < INTERVAL) return;
         beforeFrame.run();
-        RenderSystem.pollEvents();
         Minecraft minecraft = Minecraft.getInstance();
+        #if MC >= 26.3
+        RenderSystem.pollEvents(minecraft.sdlEventHandler);
+        #else
+        RenderSystem.pollEvents();
+        #endif
         if (minecraft.getWindow().shouldClose()) cancelled = true;
         minecraft.renderFrame(false);
         lastFrame = System.nanoTime();

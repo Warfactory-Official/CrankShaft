@@ -18,21 +18,27 @@ import org.spongepowered.asm.mixin.injection.At;
 abstract class AbstractBoatRendererMixin {
     @SuppressWarnings({"unchecked", "rawtypes"})
     @WrapOperation(method = "submit(Lnet/minecraft/client/renderer/entity/state/BoatRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/renderer/state/level/CameraRenderState;)V",
+            #if MC >= 26.3
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/SubmitNodeCollector;submitModel(Lnet/minecraft/client/model/Model;Ljava/lang/Object;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/resources/Identifier;III)V"))
+            #else
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/SubmitNodeCollector;submitModel(Lnet/minecraft/client/model/Model;Ljava/lang/Object;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/resources/Identifier;IIILnet/minecraft/client/renderer/feature/ModelFeatureRenderer$CrumblingOverlay;)V"))
+            #endif
     private void flywheel$skipInstancedHull(SubmitNodeCollector collector, Model model, Object state,
                                             PoseStack poseStack, Identifier texture, int lightCoords,
                                             int overlayCoords, int outlineColor,
+                                            #if MC < 26.3
                                             ModelFeatureRenderer.@Nullable CrumblingOverlay crumblingOverlay,
+                                            #endif
                                             Operation<Void> original) {
         if (!((PrimarySkipState) state).flywheel$skipPrimary()) {
-            original.call(collector, model, state, poseStack, texture, lightCoords, overlayCoords, outlineColor,
-                    crumblingOverlay);
+            original.call(collector, model, state, poseStack, texture, lightCoords, overlayCoords, outlineColor
+                    #if MC < 26.3 , crumblingOverlay #endif);
             return;
         }
         if (outlineColor != 0) {
             // An outline render type submits to the outline phase only.
             model.renderType(texture).outline().ifPresent(outline -> collector.submitModel(model, state, poseStack,
-                    outline, lightCoords, overlayCoords, -1, null, outlineColor, null));
+                    outline, lightCoords, overlayCoords, -1, null, outlineColor #if MC < 26.3 , null #endif));
         }
     }
 }

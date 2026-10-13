@@ -2,7 +2,7 @@
 // Copyright (C) 2026 movblock
 package me.mlbv.meshlet.mesh.gl;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import it.unimi.dsi.fastutil.objects.Reference2LongOpenHashMap;
 import org.lwjgl.opengl.GL15C;
 import org.lwjgl.opengl.GL31C;

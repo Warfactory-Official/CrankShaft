@@ -11,6 +11,7 @@ import dev.engine_room.flywheel.backend.gl.Driver;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.impl.compat.CompatMod;
+import dev.engine_room.flywheel.iris.compile.GuestPipelines;
 import dev.engine_room.flywheel.iris.engine.GuestEngine;
 import dev.engine_room.flywheel.iris.engine.GuestIndirectDrawManager;
 import dev.engine_room.flywheel.iris.engine.GuestInstancedDrawManager;
@@ -26,41 +27,43 @@ public final class IrisBackends {
      * Just below {@link Backends#INSTANCING}, which is unsupported while a pack is active: preferring
      * {@code flywheel:instancing} falls back here.
      */
-    public static final Backend IRIS_INSTANCING = SimpleBackend.builder()
-                                                               .engineFactory(level -> new GuestEngine(level,
-                                                                       new GuestInstancedDrawManager(
-                                                                               InstancingPrograms.get())))
-                                                               .priority(490)
-                                                               .supported(() -> CompatMod.IRIS.isLoaded
-                                                                       && !VkContext.isVulkanHost()
-                                                                       && GlCompat.SUPPORTS_INSTANCING
-                                                                       && InstancingPrograms.allLoaded()
-                                                                       && IrisGate.isPackInUse())
-                                                               .register(Identifier.fromNamespaceAndPath(Flywheel.ID,
-                                                                       "iris_instancing"));
+    public static final Backend IRIS_INSTANCING = IrisRuntime.EXPERIMENTAL ? experimental(
+            "iris_instancing") : SimpleBackend.builder()
+                                              .engineFactory(level -> new GuestEngine(level,
+                                                      new GuestInstancedDrawManager(
+                                                              InstancingPrograms.get())))
+                                              .priority(490)
+                                              .supported(() -> CompatMod.IRIS.isLoaded
+                                                      && !VkContext.isVulkanHost()
+                                                      && GlCompat.SUPPORTS_INSTANCING
+                                                      && InstancingPrograms.allLoaded()
+                                                      && IrisGate.isPackInUse())
+                                              .register(Identifier.fromNamespaceAndPath(Flywheel.ID,
+                                                      "iris_instancing"));
 
     /**
      * Just below {@code flywheel:gl_mesh_shader} (900), which with {@link Backends#INDIRECT} is unsupported while a pack
      * is active: preferring either falls back here. GPU-driven only when the terrain guest is enabled, since that flag
      * is what the engine's terrain takeover gates on.
      */
-    public static final Backend IRIS_INDIRECT = SimpleBackend.builder()
-                                                             .gpuDriven(GuestTerrainGate::enabled)
-                                                             .engineFactory(level -> new GuestEngine(level,
-                                                                     new GuestIndirectDrawManager(
-                                                                             IndirectPrograms.get())))
-                                                             .priority(() -> GlCompat.DRIVER == Driver.INTEL ? 1 : 890)
-                                                             .supported(() -> CompatMod.IRIS.isLoaded
-                                                                     && !VkContext.isVulkanHost()
-                                                                     && GlCompat.SUPPORTS_INDIRECT
-                                                                     && IndirectPrograms.allLoaded()
-                                                                     && IrisGate.isPackInUse())
-                                                             .register(Identifier.fromNamespaceAndPath(Flywheel.ID,
-                                                                     "iris_indirect"));
+    public static final Backend IRIS_INDIRECT = IrisRuntime.EXPERIMENTAL ? experimental(
+            "iris_indirect") : SimpleBackend.builder()
+                                            .gpuDriven(GuestTerrainGate::enabled)
+                                            .engineFactory(level -> new GuestEngine(level,
+                                                    new GuestIndirectDrawManager(
+                                                            IndirectPrograms.get())))
+                                            .priority(() -> GlCompat.DRIVER == Driver.INTEL ? 1 : 890)
+                                            .supported(() -> CompatMod.IRIS.isLoaded
+                                                    && !VkContext.isVulkanHost()
+                                                    && GlCompat.SUPPORTS_INDIRECT
+                                                    && IndirectPrograms.allLoaded()
+                                                    && IrisGate.isPackInUse())
+                                            .register(Identifier.fromNamespaceAndPath(Flywheel.ID,
+                                                    "iris_indirect"));
 
     static {
         // Iris re-enters Sodium's terrain draw for the shadow pass; the engine must leave that one alone.
-        if (CompatMod.IRIS.isLoaded) {
+        if (CompatMod.IRIS.isLoaded && !IrisRuntime.EXPERIMENTAL) {
             ShaderWarmup.register(IrisWarmup::warm);
             GuestTerrainGate.setShadowPass(IrisShadow::active);
             GuestTerrainGate.setShadowResolution(IrisShadow::resolution);
@@ -68,6 +71,15 @@ public final class IrisBackends {
     }
 
     private IrisBackends() {
+    }
+
+    private static Backend experimental(String id) {
+        try {
+            Class.forName("dev.engine_room.flywheel.iris.experimental.ExperimentalBackends");
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException("Experimental Iris integration is missing", e);
+        }
+        return Backend.REGISTRY.getOrThrow(Identifier.fromNamespaceAndPath(Flywheel.ID, id));
     }
 
     // Separate class: this one must load without Iris, so the Iris reference resolves only once IRIS.isLoaded
@@ -84,7 +96,7 @@ public final class IrisBackends {
 
     private static final class IrisWarmup {
         static void warm() {
-            if (IrisGate.isPackInUse()) dev.engine_room.flywheel.iris.compile.GuestPipelines.warmCurrent();
+            if (IrisGate.isPackInUse()) GuestPipelines.warmCurrent();
         }
     }
 }

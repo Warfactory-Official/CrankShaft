@@ -9,21 +9,16 @@ base {
     archivesName = "meshlet"
 }
 
-val commonMainJava: Configuration = configurations.create("commonMainJava") { isCanBeResolved = true }
-val commonApiJava: Configuration = configurations.create("commonApiJava") { isCanBeResolved = true }
-val commonLibJava: Configuration = configurations.create("commonLibJava") { isCanBeResolved = true }
-val commonBackendJava: Configuration = configurations.create("commonBackendJava") { isCanBeResolved = true }
+val commonMainJava: Configuration = configurations.create("commonMainJava") { isCanBeResolved = true; isCanBeConsumed = false }
+val commonApiJava: Configuration = configurations.create("commonApiJava") { isCanBeResolved = true; isCanBeConsumed = false }
+val commonLibJava: Configuration = configurations.create("commonLibJava") { isCanBeResolved = true; isCanBeConsumed = false }
+val commonBackendJava: Configuration = configurations.create("commonBackendJava") { isCanBeResolved = true; isCanBeConsumed = false }
 
 dependencies {
-    commonMainJava(project(path = ":common", configuration = "commonMainJava"))
-    commonApiJava(project(path = ":common", configuration = "commonApiJava"))
-    commonLibJava(project(path = ":common", configuration = "commonLibJava"))
-    commonBackendJava(project(path = ":common", configuration = "commonBackendJava"))
-}
-
-repositories {
-    mavenLocal()
-    maven("https://maven.caffeinemc.net/releases/")
+    commonMainJava(project(path = siblingProjectPath("common"), configuration = "commonMainJava"))
+    commonApiJava(project(path = siblingProjectPath("common"), configuration = "commonApiJava"))
+    commonLibJava(project(path = siblingProjectPath("common"), configuration = "commonLibJava"))
+    commonBackendJava(project(path = siblingProjectPath("common"), configuration = "commonBackendJava"))
 }
 
 sourceSets {
@@ -39,14 +34,14 @@ dependencies {
     minecraft("com.mojang:minecraft:${minecraftVersion}")
 
     compileOnly("net.caffeinemc:sodium-fabric:${sodiumVersion}")
-    compileOnly(project(":iris"))
+    compileOnly(project(siblingProjectPath("iris")))
     compileOnly("maven.modrinth:iris:${irisVersion}-fabric")
 
     compileOnly("org.jspecify:jspecify:1.0.0")
 
-    compileOnly("io.github.llamalad7:mixinextras-common:0.5.4")
-    annotationProcessor("io.github.llamalad7:mixinextras-common:0.5.4")
-    compileOnly("net.fabricmc:sponge-mixin:0.17.3+mixin.0.8.7")
+    compileOnly("io.github.llamalad7:mixinextras-common:${mixinExtrasVersion}")
+    annotationProcessor("io.github.llamalad7:mixinextras-common:${mixinExtrasVersion}")
+    compileOnly("net.fabricmc:sponge-mixin:${mixinVersion}")
 
     compileOnly("net.fabricmc:fabric-loader:${fabricLoaderVersion}")
 }
@@ -58,15 +53,8 @@ loom {
 }
 
 tasks {
-    processResources {
-        inputs.property("version", version)
-        filesMatching(listOf("fabric.mod.json", "META-INF/neoforge.mods.toml")) {
-            expand(mapOf("version" to inputs.properties["version"]))
-        }
-    }
-
     jar {
-        from("LICENSE") { into("META-INF") }
-        from("THIRD_PARTY_NOTICES") { into("META-INF") }
+        from(sharedModuleFile("LICENSE")) { into("META-INF") }
+        from(sharedModuleFile("THIRD_PARTY_NOTICES")) { into("META-INF") }
     }
 }

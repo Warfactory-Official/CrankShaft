@@ -1,0 +1,7 @@
+accessWidener v1 official
+
+accessible method com/mojang/renderpearl/backend/opengl/GlProgram <init> (ILjava/lang/String;)V
+accessible field com/mojang/renderpearl/backend/opengl/GlProgram uniforms Ljava/util/List;
+accessible class com/mojang/renderpearl/backend/opengl/GlRenderPass
+accessible field com/mojang/renderpearl/backend/opengl/GlRenderPass pipeline Lcom/mojang/renderpearl/backend/opengl/GlRenderPipeline;
+accessible field com/mojang/renderpearl/backend/opengl/GlRenderPass uniforms Lit/unimi/dsi/fastutil/objects/ReferenceList;

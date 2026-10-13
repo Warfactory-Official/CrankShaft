@@ -5,6 +5,9 @@ import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.backend.engine.InstancerKey;
 import dev.engine_room.flywheel.backend.engine.MeshPool;
+#if MC >= 26.3
+import net.minecraft.client.Minecraft;
+#endif
 
 import java.util.ArrayList;
 import java.util.List;
@@ -55,6 +58,10 @@ public class IndirectCullingGroup<I extends Instance> {
                                                .meshes();
         for (int i = 0; i < meshes.size(); i++) {
             var entry = meshes.get(i);
+            #if MC >= 26.3
+            // 26.3: first lookup may upload; new draws are initialized before any render pass.
+            Minecraft.getInstance().getTextureManager().getTexture(entry.material().texture());
+            #endif
 
             MeshPool.PooledMesh mesh = meshPool.alloc(entry.mesh());
             var draw = new IndirectDraw(instancer, entry.material(), mesh, key.bias(), i,

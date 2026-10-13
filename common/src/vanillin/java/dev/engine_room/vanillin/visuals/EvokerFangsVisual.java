@@ -1,5 +1,7 @@
 package dev.engine_room.vanillin.visuals;
 
+import dev.engine_room.flywheel.compat.lib.PoseStackOps;
+
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 
@@ -25,7 +27,7 @@ public final class EvokerFangsVisual extends EntityModelVisual<EvokerFangs, Evok
 
     @Override
     protected void setupRootPose(PoseStack pose, EvokerFangsRenderState state) {
-        pose.mulPose(Axis.YP.rotationDegrees(90.0F - state.yRot));
+        PoseStackOps.rotateDegrees(pose, Axis.YP, 90.0F - state.yRot);
         pose.scale(-1.0F, -1.0F, 1.0F);
         pose.translate(0.0F, -1.501F, 0.0F);
     }

@@ -4,9 +4,7 @@
   "package": "dev.engine_room.flywheel.impl.mixin.neoforge",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "LevelExtractorMixin",
-    "LevelRendererMixin",
-    "WeatherEffectRendererMixin"
+    "LevelExtractorMixin"
   ],
   "injectors": {
     "defaultRequire": 1

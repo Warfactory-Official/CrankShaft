@@ -12,7 +12,7 @@ public final class TerrainModeGate {
     }
 
     public static TerrainMode effective(TerrainMode requested) {
-        if (requested.requiresSodium() && !SodiumCompat.isSodiumActive()) {
+        if (requested.requiresSodium() && !SodiumCompat.ACTIVE) {
             TerrainMode fallback = requested == TerrainMode.OPAQUE ? TerrainMode.OFF : TerrainMode.TRANSLUCENT_OIT;
             if (WARNED.compareAndSet(false, true)) {
                 FlwImpl.CONFIG_LOGGER.error(

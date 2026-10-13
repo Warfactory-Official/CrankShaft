@@ -3,8 +3,6 @@ package dev.engine_room.flywheel.iris.mixin;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
-import dev.engine_room.flywheel.iris.compile.ContractProgramSet;
-import dev.engine_room.flywheel.iris.compile.ContractShaderPack;
 import dev.engine_room.flywheel.iris.compile.GuestPipelines;
 import it.unimi.dsi.fastutil.ints.Int2ObjectArrayMap;
 import net.irisshaders.iris.gl.buffer.BuiltShaderStorageInfo;
@@ -23,8 +21,8 @@ abstract class IrisRenderingPipelineMixin {
     private Int2ObjectArrayMap<BuiltShaderStorageInfo> flywheel$acceptedBuffers(ShaderPack pack,
                                                                                 Operation<Int2ObjectArrayMap<BuiltShaderStorageInfo>> original,
                                                                                 @Local(argsOnly = true) ProgramSet programs) {
-        var profile = ((ContractShaderPack) pack).flywheel$deferredOit();
-        if (profile != null && ((ContractProgramSet) programs).flywheel$deferredOit() == null) {
+        var profile = pack.flywheel$deferredOit();
+        if (profile != null && programs.flywheel$deferredOit() == null) {
             // A rejected adapter must leave the pack's own storage bindings intact.
             var nativeBuffers = new Int2ObjectArrayMap<>(original.call(pack));
             for (int binding : profile.storageBindings()) nativeBuffers.remove(binding);

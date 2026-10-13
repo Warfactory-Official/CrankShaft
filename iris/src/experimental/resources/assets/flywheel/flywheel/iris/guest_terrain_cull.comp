@@ -1,0 +1,52 @@
+#include "flywheel:internal/terrain_region_input.glsl"
+
+layout(local_size_x = 256) in;
+layout(std430) readonly buffer _FlwTerrainRegions { uvec4 regions[]; };
+layout(std430) readonly buffer _FlwTerrainSections { uvec4 sections[]; };
+layout(std430) readonly buffer _FlwTerrainVisibility { uint visibility[]; };
+layout(std430) writeonly buffer _FlwTerrainCommands { uint commands[]; };
+layout(std430) buffer _FlwTerrainCounts { uint countsPerRun[]; };
+layout(std140) uniform _FlwTerrainCull { ivec4 cameraAndShadow; };
+
+void main() {
+    uint slot = gl_WorkGroupID.x;
+    uint section = gl_LocalInvocationID.x;
+    uvec4 region = regions[slot];
+    uint base = (region.z * 256u + section) * 3u;
+    uvec4 a = sections[base];
+    uvec4 b = sections[base + 1u];
+    uvec4 c = sections[base + 2u];
+    uint counts[7] = uint[7](b.y, b.z, b.w, c.x, c.y, c.z, c.w);
+    bool visible = (visibility[slot * 8u + (section >> 5u)] & (1u << (section & 31u))) != 0u;
+    ivec3 sectionOrigin = (_flw_unpackRegionOrigin(region)
+    + ivec3((section >> 5u) & 7u, section & 3u, (section >> 2u) & 7u)) * 16;
+    ivec3 relative = sectionOrigin - cameraAndShadow.xyz;
+    uint mask = 1u << 6u;
+    if (cameraAndShadow.w != 0) mask = 127u;
+    else {
+        if (relative.x < 3) mask |= 1u << 0u;
+        if (relative.y < 3) mask |= 1u << 1u;
+        if (relative.z < 3) mask |= 1u << 2u;
+        if (relative.x > -19) mask |= 1u << 3u;
+        if (relative.y > -19) mask |= 1u << 4u;
+        if (relative.z > -19) mask |= 1u << 5u;
+    }
+    mask &= b.x;
+    uint vertex = a.y;
+    for (uint facing = 0u; facing < 7u; ++facing) {
+        uint direction = facing < 4u ? (a.z >> (facing * 8u)) & 255u : (a.w >> ((facing - 4u) * 8u)) & 255u;
+        uint count = (counts[facing] >> 2u) * 6u;
+        if (!visible || count == 0u || (mask & (1u << direction)) == 0u) {
+            vertex += counts[facing];
+            continue;
+        }
+        uint run = region.w;
+        uint commandOffset = (run * 256u * 7u + atomicAdd(countsPerRun[run], 1u)) * 5u;
+        commands[commandOffset] = count;
+        commands[commandOffset + 1u] = 1u;
+        commands[commandOffset + 2u] = (cameraAndShadow.w & 2) != 0 ? 0u : a.x;
+        commands[commandOffset + 3u] = vertex;
+        commands[commandOffset + 4u] = slot;
+        vertex += counts[facing];
+    }
+}

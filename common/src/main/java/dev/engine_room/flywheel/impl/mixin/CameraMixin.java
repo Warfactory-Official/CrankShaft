@@ -16,7 +16,7 @@ abstract class CameraMixin {
 
     // Farthest LoD point: horizontal radius x full level height.
     @ModifyExpressionValue(method = "update", at = @At(value = "INVOKE", target = "Ljava/lang/Math;max(FF)F"))
-    private float flw$lodFar(float original) {
+    private float flywheel$lodFar(float original) {
         int lod = LodCompat.observe();
         if (lod == 0 || level == null) {
             return original;

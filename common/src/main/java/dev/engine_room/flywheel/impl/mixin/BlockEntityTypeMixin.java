@@ -13,25 +13,25 @@ import org.spongepowered.asm.mixin.Unique;
 abstract class BlockEntityTypeMixin<T extends BlockEntity> implements BlockEntityTypeExtension<T> {
     @Unique
     @Nullable
-    private BlockEntityVisualizer<? super T> flw$visualizer;
+    private BlockEntityVisualizer<? super T> flywheel$visualizer;
 
     @Unique
     @Nullable
-    private Object flw$sodiumPredicate;
+    private Object flywheel$sodiumPredicate;
 
     @Override
     @Nullable
-    public BlockEntityVisualizer<? super T> flw$getVisualizer() {
-        return flw$visualizer;
+    public BlockEntityVisualizer<? super T> flywheel$getVisualizer() {
+        return flywheel$visualizer;
     }
 
     @Override
-    public void flw$setVisualizer(@Nullable BlockEntityVisualizer<? super T> visualizer) {
+    public void flywheel$setVisualizer(@Nullable BlockEntityVisualizer<? super T> visualizer) {
         if (SodiumCompat.ACTIVE) {
-            flw$sodiumPredicate = SodiumCompat.onSetBlockEntityVisualizer((BlockEntityType<T>) (Object) this,
-                    flw$visualizer, visualizer, flw$sodiumPredicate);
+            flywheel$sodiumPredicate = SodiumCompat.onSetBlockEntityVisualizer((BlockEntityType<T>) (Object) this,
+                    flywheel$visualizer, visualizer, flywheel$sodiumPredicate);
         }
 
-        flw$visualizer = visualizer;
+        flywheel$visualizer = visualizer;
     }
 }

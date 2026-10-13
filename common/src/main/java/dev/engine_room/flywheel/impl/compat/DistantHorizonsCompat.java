@@ -1,12 +1,12 @@
 package dev.engine_room.flywheel.impl.compat;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.opengl.FrameBufferCache;
-import com.mojang.blaze3d.opengl.GlTexture;
-import com.mojang.blaze3d.opengl.GlTextureView;
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.opengl.FrameBufferCache;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
+import com.mojang.renderpearl.backend.opengl.GlTextureView;
 import com.seibel.distanthorizons.api.DhApi;
 import com.seibel.distanthorizons.api.enums.config.EDhApiDepthRange;
 import com.seibel.distanthorizons.api.enums.config.EDhApiRenderingEngine;
@@ -15,7 +15,6 @@ import com.seibel.distanthorizons.api.interfaces.config.IDhApiConfig;
 import com.seibel.distanthorizons.api.interfaces.config.client.IDhApiGraphicsConfig;
 import com.seibel.distanthorizons.api.interfaces.data.IDhApiTerrainDataCache;
 import com.seibel.distanthorizons.api.interfaces.data.IDhApiTerrainDataRepo;
-import com.seibel.distanthorizons.api.interfaces.render.IDhApiBlazeTextureWrapper;
 import com.seibel.distanthorizons.api.interfaces.render.IDhApiRenderProxy;
 import com.seibel.distanthorizons.api.interfaces.world.IDhApiLevelWrapper;
 import com.seibel.distanthorizons.api.interfaces.world.IDhApiWorldProxy;
@@ -26,7 +25,11 @@ import com.seibel.distanthorizons.api.methods.events.sharedParameterObjects.DhAp
 import com.seibel.distanthorizons.api.methods.events.sharedParameterObjects.DhApiRenderParam;
 import com.seibel.distanthorizons.api.objects.DhApiResult;
 import com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint;
+import com.seibel.distanthorizons.common.render.blaze.postProcessing.BlazeVanillaFadeRenderer;
 import dev.engine_room.flywheel.api.lod.LodSurface;
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
+#endif
 import dev.engine_room.flywheel.lib.util.ShadersModHelper;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -49,12 +52,27 @@ public final class DistantHorizonsCompat {
 
     public static void init() {
         if (ACTIVE) {
+            #if MC >= 26.3
+            ShaderWarmup.registerNativeResources(LodCompat::warmGpuResources);
+            #endif
             Internals.bind();
         }
     }
 
     public static int distance() {
         return ACTIVE ? Internals.distance() : 0;
+    }
+
+    static void destroyGpuResources() {
+        if (ACTIVE) {
+            Internals.destroyGpuResources();
+        }
+    }
+
+    static void releaseFadeMaskView(GpuTexture texture) {
+        if (ACTIVE) {
+            Internals.releaseFadeMaskView(texture);
+        }
     }
 
     public static CompletableFuture<LodSurface> surface(ClientLevel level, Heightmap.Types type, int minX, int minZ,
@@ -71,6 +89,26 @@ public final class DistantHorizonsCompat {
 
         private static @Nullable DhApiRenderParam applied;
         private static @Nullable GlTextureView glDepth;
+
+        static void destroyGpuResources() {
+            if (glDepth != null) {
+                glDepth.close();
+                glDepth = null;
+            }
+        }
+
+        static void releaseFadeMaskView(GpuTexture texture) {
+            if (DhApi.Delayed.renderProxy.getRenderingEngine() != EDhApiRenderingEngine.BLAZE_3D) {
+                return;
+            }
+            // Compat with DH 3.3.4: its fade wrapper creates an extra view/sampler but has no shutdown release.
+            var wrapper = BlazeVanillaFadeRenderer.INSTANCE.mcDepthTextureWrapper;
+            var view = wrapper.getTextureView();
+            if (view != null && view.texture() == texture) {
+                view.close();
+                wrapper.getTextureSampler().close();
+            }
+        }
 
         static void bind() {
             DhApi.events.bind(DhApiBeforeApplyShaderRenderEvent.class, new DhApiBeforeApplyShaderRenderEvent() {
@@ -184,12 +222,16 @@ public final class DistantHorizonsCompat {
             GlTextureView view = glDepth;
             if (view == null || view.glId() != id || view.getWidth(0) != main.width
                     || view.getHeight(0) != main.height) {
+                if (view != null) {
+                    view.close();
+                }
                 view = glDepth = wrapForeign(id, main.width, main.height);
             }
             return view;
         }
 
         private static GlTextureView wrapForeign(int id, int width, int height) {
+            // DH owns the texture ID; only the view is released when its size or ID changes.
             FrameBufferCache unused = new FrameBufferCache();
             GlTexture texture = new GlTexture(GpuTexture.USAGE_TEXTURE_BINDING, "Distant Horizons depth",
                     GpuFormat.D32_FLOAT, width, height, 1, 1, id, unused) {

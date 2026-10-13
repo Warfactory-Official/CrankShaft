@@ -11,7 +11,7 @@ abstract class DhGlDhVanillaFadeShaderMixin {
     // The fade overwrites every drawn pixel past its band with LoD colour, far entities included.
     @ModifyExpressionValue(method = "onRender", at = @At(value = "INVOKE",
             target = "Lcom/seibel/distanthorizons/core/wrapperInterfaces/minecraft/IMinecraftRenderWrapper;getGlDepthTextureId()I"))
-    private int flw$fadeMask(int original) {
+    private int flywheel$fadeMask(int original) {
         return DistantHorizonsFade.maskGlId();
     }
 }

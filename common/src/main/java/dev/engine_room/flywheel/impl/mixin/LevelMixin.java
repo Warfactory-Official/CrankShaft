@@ -13,7 +13,7 @@ abstract class LevelMixin implements LevelExtension {
     protected abstract LevelEntityGetter<Entity> getEntities();
 
     @Override
-    public Iterable<Entity> flw$getAllLoadedEntities() {
+    public Iterable<Entity> flywheel$getAllLoadedEntities() {
         return getEntities().getAll();
     }
 }

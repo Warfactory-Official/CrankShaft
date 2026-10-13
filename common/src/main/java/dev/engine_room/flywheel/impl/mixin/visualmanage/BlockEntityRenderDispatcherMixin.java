@@ -17,10 +17,10 @@ import org.spongepowered.asm.mixin.injection.At;
 abstract class BlockEntityRenderDispatcherMixin {
     // Every overload holding the call: NeoForge's Frustum variant carries it on NeoForge.
     @WrapOperation(method = "tryExtractRenderState*", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/blockentity/BlockEntityRenderer;extractRenderState(Lnet/minecraft/world/level/block/entity/BlockEntity;Lnet/minecraft/client/renderer/blockentity/state/BlockEntityRenderState;FLnet/minecraft/world/phys/Vec3;Lnet/minecraft/client/renderer/feature/ModelFeatureRenderer$CrumblingOverlay;)V"), require = 1)
-    private void flw$deferBlockEntity(BlockEntityRenderer<?, ?> renderer, BlockEntity blockEntity,
-                                      BlockEntityRenderState state, float partialTicks, Vec3 cameraPosition,
-                                      ModelFeatureRenderer.@Nullable CrumblingOverlay breakProgress,
-                                      Operation<Void> original) {
+    private void flywheel$deferBlockEntity(BlockEntityRenderer<?, ?> renderer, BlockEntity blockEntity,
+                                           BlockEntityRenderState state, float partialTicks, Vec3 cameraPosition,
+                                           ModelFeatureRenderer.@Nullable CrumblingOverlay breakProgress,
+                                           Operation<Void> original) {
         if (!ConcurrentExtraction.deferBlockEntity(renderer, blockEntity, state, partialTicks, cameraPosition,
                 breakProgress)) {
             original.call(renderer, blockEntity, state, partialTicks, cameraPosition, breakProgress);

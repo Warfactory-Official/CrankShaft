@@ -1,0 +1,13 @@
+{
+  "client": [
+    "FrontendCommandEncoderDescriptorMixin",
+    "FrontendGpuDeviceLodMixin",
+    "FrontendRenderPassDescriptorMixin",
+    "ImprovedTransparencyOptionMixin",
+    "LevelRendererNativeOitMixin",
+    "LevelRendererSolidPassMixin",
+    "OitRenderPassProviderMixin",
+    "RenderSystemNativeOitMixin",
+    "VulkanDepthlessPipelineMixin"
+  ]
+}

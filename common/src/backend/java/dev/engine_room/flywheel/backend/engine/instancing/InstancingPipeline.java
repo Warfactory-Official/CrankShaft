@@ -1,11 +1,14 @@
 package dev.engine_room.flywheel.backend.engine.instancing;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.pipeline.*;
-import com.mojang.blaze3d.platform.BlendFactor;
-import com.mojang.blaze3d.shaders.ShaderSource;
-import com.mojang.blaze3d.shaders.UniformType;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
+import com.mojang.renderpearl.api.pipeline.BlendFactor;
+import com.mojang.renderpearl.api.pipeline.BlendFunction;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.pipeline.UniformType;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
@@ -14,8 +17,10 @@ import dev.engine_room.flywheel.backend.compile.LightSmoothness;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
+import dev.engine_room.flywheel.backend.engine.MaterialRenderState;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
+import dev.engine_room.flywheel.compat.backend.PipelineShaderSource;
 import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.client.renderer.RenderPipelines;
@@ -33,7 +38,7 @@ public final class InstancingPipeline {
     private static final String LIGHT_SECTIONS_NAME = "_flw_lightSections";
     private static final Map<Identifier, VertexAssembly> VERTEX_ASSEMBLY = new HashMap<>();
     private static final Map<Identifier, FragmentAssembly> FRAGMENT_ASSEMBLY = new HashMap<>();
-    private static final ShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
+    private static final PipelineShaderSource SHADER_SOURCE = (id, type) -> switch (type) {
         case VERTEX -> {
             VertexAssembly va = VERTEX_ASSEMBLY.get(id);
             yield id.getPath().contains("/embedded/")
@@ -126,9 +131,9 @@ public final class InstancingPipeline {
                                                       boolean depthWrite, boolean colorWrite, boolean cull,
                                                       boolean polygonOffset, boolean embedded) {
         BindGroupLayout.Builder bindGroup = BindGroupLayout.builder()
-                                                           .withSampler("Sampler0")
-                                                           .withSampler("Sampler1")
-                                                           .withSampler("Sampler2")
+                                                           .withImageSampler("Sampler0")
+                                                           .withImageSampler("Sampler1")
+                                                           .withImageSampler("Sampler2")
                                                            .withUniform(INSTANCE_BUFFER_NAME, UniformType.TEXEL_BUFFER,
                                                                    GpuFormat.RGBA32_UINT)
                                                            .withUniform(LIGHT_LUT_NAME, UniformType.TEXEL_BUFFER,
@@ -143,18 +148,13 @@ public final class InstancingPipeline {
         }
 
         RenderPipeline.Builder builder = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                                                       .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
-                                                       .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-                                                       // Positive offset wins GREATER_THAN_OR_EQUAL under reversed-Z (26.2 feeds bias straight to
-                                                       // glPolygonOffset, no sign flip). OPAQUE offsets are units-only: slope terms beat real geometry
-                                                       // at grazing angles; non-opaque (entity shadow decal) keeps the slope.
-                                                       .withDepthStencilState(
-                                                               new DepthStencilState(depthTest.compareOp,
-                                                                       depthWrite,
-                                                                       polygonOffset && transparency != Transparency.OPAQUE ? 1.0f : 0.0f,
-                                                                       polygonOffset ? 10.0f : 0.0f))
-                                                       .withCull(cull)
-                                                       .withBindGroupLayout(bindGroup.build());
+                .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
+                .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                .withDepthStencilState(new DepthStencilState(depthTest.compareOp, depthWrite,
+                        polygonOffset ? MaterialRenderState.polygonOffsetSlope(transparency, depthTest) : 0.0f,
+                        polygonOffset ? MaterialRenderState.POLYGON_OFFSET_UNITS : 0.0f))
+                .withCull(cull)
+                .withBindGroupLayout(bindGroup.build());
 
         ColorTargetState colorTarget = colorTarget(transparency, colorWrite);
         if (colorTarget != null) {
@@ -175,7 +175,11 @@ public final class InstancingPipeline {
         };
 
         if (blend == null && colorWrite) {
+            #if MC >= 26.3
+            return ColorTargetState.DEFAULT;
+            #else
             return null;
+            #endif
         }
 
         int writeMask = colorWrite ? ColorTargetState.WRITE_ALL : ColorTargetState.WRITE_NONE;

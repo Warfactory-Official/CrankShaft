@@ -3,6 +3,7 @@ package dev.engine_room.vanillin.visuals;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.compat.lib.PoseStackOps;
 import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.client.model.object.boat.BoatModel;
 import net.minecraft.client.model.object.boat.RaftModel;
@@ -37,16 +38,17 @@ public final class BoatVisual extends EntityModelVisual<AbstractBoat, BoatRender
     @Override
     protected void setupRootPose(PoseStack pose, BoatRenderState state) {
         pose.translate(0.0F, 0.375F, 0.0F);
-        pose.mulPose(Axis.YP.rotationDegrees(180.0F - state.yRot));
+        PoseStackOps.rotateDegrees(pose, Axis.YP, 180.0F - state.yRot);
         float hurt = state.hurtTime;
         if (hurt > 0.0F) {
-            pose.mulPose(Axis.XP.rotationDegrees(Mth.sin(hurt) * hurt * state.damageTime / 10.0F * state.hurtDir));
+            PoseStackOps.rotateDegrees(pose, Axis.XP, Mth.sin(hurt) * hurt * state.damageTime / 10.0F * state.hurtDir);
         }
         if (!state.isUnderWater && !Mth.equal(state.bubbleAngle, 0.0F)) {
-            pose.mulPose(new Quaternionf().setAngleAxis(state.bubbleAngle * (float) (Math.PI / 180.0), 1.0F, 0.0F,
-                    1.0F));
+            PoseStackOps.rotate(pose,
+                    new Quaternionf().setAngleAxis(state.bubbleAngle * (float) (Math.PI / 180.0), 1.0F,
+                    0.0F, 1.0F));
         }
         pose.scale(-1.0F, -1.0F, 1.0F);
-        pose.mulPose(Axis.YP.rotationDegrees(90.0F));
+        PoseStackOps.rotateDegrees(pose, Axis.YP, 90.0F);
     }
 }

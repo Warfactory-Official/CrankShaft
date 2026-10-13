@@ -2,13 +2,9 @@ package dev.engine_room.flywheel.impl;
 
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.backend.compile.FlwProgramsReloader;
-import dev.engine_room.flywheel.impl.compat.DistantHorizonsCompat;
-import dev.engine_room.flywheel.impl.compat.LambDynLightsCompat;
 import dev.engine_room.flywheel.impl.test.OitDemoContent;
 import dev.engine_room.flywheel.impl.test.OitDemoVisual;
 import dev.engine_room.flywheel.impl.visualization.VisualizationEventHandler;
-import dev.engine_room.flywheel.lib.instance.InstanceTypes;
-import dev.engine_room.flywheel.lib.material.Materials;
 import dev.engine_room.flywheel.lib.model.baked.PartialModelEventHandler;
 import dev.engine_room.flywheel.lib.visualization.SimpleBlockEntityVisualizer;
 import net.fabricmc.api.ClientModInitializer;
@@ -95,12 +91,10 @@ public final class FlywheelFabric implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        BackendManagerImpl.init();
-        LambDynLightsCompat.init();
-        DistantHorizonsCompat.init();
-        InstanceTypes.TRANSFORMED.hashCode();
-        Materials.SOLID_BLOCK.hashCode();
-        FlwImpl.freezeRegistries();
+        #if MC >= 26.3
+        FlwImplXplatImpl.registerNativeVulkanFactories();
+        #endif
+        FlwImpl.init();
         FabricFlwConfig.INSTANCE.load();
 
         registerReloadListener();

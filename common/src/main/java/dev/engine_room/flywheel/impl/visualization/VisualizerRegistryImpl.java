@@ -21,7 +21,7 @@ public final class VisualizerRegistryImpl {
 
     @Nullable
     public static <T extends BlockEntity> BlockEntityVisualizer<? super T> getVisualizer(BlockEntityType<T> type) {
-        return ((BlockEntityTypeExtension<T>) type).flw$getVisualizer();
+        return ((BlockEntityTypeExtension<T>) type).flywheel$getVisualizer();
     }
 
     @Nullable
@@ -30,25 +30,25 @@ public final class VisualizerRegistryImpl {
         if (EntityFeatureCompat.emfOwns(type)) {
             return null;
         }
-        return ((EntityTypeExtension<T>) type).flw$getVisualizer();
+        return ((EntityTypeExtension<T>) type).flywheel$getVisualizer();
     }
 
     public static <T extends BlockEntity> void setVisualizer(BlockEntityType<T> type,
                                                              @Nullable BlockEntityVisualizer<? super T> visualizer) {
-        ((BlockEntityTypeExtension<T>) type).flw$setVisualizer(visualizer);
+        ((BlockEntityTypeExtension<T>) type).flywheel$setVisualizer(visualizer);
     }
 
     public static <T extends Entity> void setVisualizer(EntityType<T> type,
                                                         @Nullable EntityVisualizer<? super T> visualizer) {
-        ((EntityTypeExtension<T>) type).flw$setVisualizer(visualizer);
+        ((EntityTypeExtension<T>) type).flywheel$setVisualizer(visualizer);
     }
 
     @Nullable
     public static ItemStackVisualizer getVisualizer(Item item) {
-        return ((ItemExtension) item).flw$getVisualizer();
+        return ((ItemExtension) item).flywheel$getVisualizer();
     }
 
     public static void setVisualizer(Item item, @Nullable ItemStackVisualizer visualizer) {
-        ((ItemExtension) item).flw$setVisualizer(visualizer);
+        ((ItemExtension) item).flywheel$setVisualizer(visualizer);
     }
 }

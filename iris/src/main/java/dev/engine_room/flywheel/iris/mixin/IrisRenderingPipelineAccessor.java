@@ -3,6 +3,9 @@ package dev.engine_room.flywheel.iris.mixin;
 import net.irisshaders.iris.gl.buffer.ShaderStorageBufferHolder;
 import net.irisshaders.iris.gl.image.GlImage;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
+#if MC >= 26.3
+import net.irisshaders.iris.pipeline.WorldRenderingPhase;
+#endif
 import net.irisshaders.iris.shaderpack.ShaderPack;
 import net.irisshaders.iris.shaderpack.programs.ProgramFallbackResolver;
 import net.irisshaders.iris.shaderpack.properties.PackShadowDirectives;
@@ -17,6 +20,11 @@ import java.util.function.Supplier;
 
 @Mixin(IrisRenderingPipeline.class)
 public interface IrisRenderingPipelineAccessor {
+    #if MC >= 26.3
+    @Accessor("overridePhase")
+    @Nullable WorldRenderingPhase flywheel$overridePhase();
+    #endif
+
     @Accessor("renderTargets")
     RenderTargets flywheel$renderTargets();
 

@@ -1,6 +1,6 @@
 package dev.engine_room.flywheel.backend.vk;
 
-import com.mojang.blaze3d.vulkan.VulkanPhysicalDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanPhysicalDevice;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout.Binding;
 import org.jspecify.annotations.Nullable;
@@ -14,6 +14,17 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 public final class VkCaps {
+    private static final int DESCRIPTOR_SAMPLER = 0;
+    private static final int DESCRIPTOR_UNIFORM = 1;
+    private static final int DESCRIPTOR_STORAGE = 2;
+    private static final int DESCRIPTOR_SAMPLED_IMAGE = 3;
+    private static final int DESCRIPTOR_STORAGE_IMAGE = 4;
+    private static final int DESCRIPTOR_INPUT_ATTACHMENT = 5;
+    private static final int DESCRIPTOR_RESOURCE = 6;
+    private static final String[] DESCRIPTOR_NAMES = {"samplers", "uniform buffers", "storage buffers",
+            "sampled images", "storage images", "input attachments", "resources"};
+    private static final String[] STAGE_NAMES = {"Vertex", "Tessellation control", "Tessellation evaluation",
+            "Geometry", "Fragment", "Compute", "Task", "Mesh"};
     public static boolean DRAW_INDIRECT_FIRST_INSTANCE_SUPPORTED;
     public static boolean DRAW_INDIRECT_COUNT_SUPPORTED;
     public static boolean BUFFER_DEVICE_ADDRESS_SUPPORTED;
@@ -26,7 +37,6 @@ public final class VkCaps {
     public static boolean BINDLESS_TEXTURES_SUPPORTED;
     public static boolean FRAGMENT_SHADER_INTERLOCK_SUPPORTED;
     public static boolean DYNAMIC_RENDERING_LOCAL_READ_SUPPORTED;
-
     public static boolean DRAW_INDIRECT_FIRST_INSTANCE_NEGOTIATED;
     public static boolean DRAW_INDIRECT_COUNT_NEGOTIATED;
     public static boolean BUFFER_DEVICE_ADDRESS_NEGOTIATED;
@@ -41,13 +51,11 @@ public final class VkCaps {
     public static boolean BINDLESS_TEXTURES_NEGOTIATED;
     public static boolean FRAGMENT_SHADER_INTERLOCK_NEGOTIATED;
     public static boolean DYNAMIC_RENDERING_LOCAL_READ_NEGOTIATED;
-
     public static boolean GPU_INSTANCE_CULL;
     public static boolean MULTI_MIP_HIZ;
     public static boolean SINGLE_MIP_HIZ;
     public static boolean GPU_OPAQUE_TERRAIN;
     public static boolean GPU_TRANSLUCENT_CULL;
-
     public static long DB_OFFSET_ALIGNMENT;
     public static int DB_UNIFORM_BUFFER_SIZE;
     public static int DB_STORAGE_BUFFER_SIZE;
@@ -56,14 +64,16 @@ public final class VkCaps {
     public static int DB_INPUT_ATTACHMENT_SIZE;
     public static long DB_MAX_RESOURCE_RANGE;
     public static long DB_MAX_SAMPLER_RANGE;
-
     public static int SUBGROUP_SIZE = 32;
     public static boolean SUBGROUP_BALLOT;
+    public static boolean FRAGMENT_SUBGROUP_BALLOT;
     public static int BINDLESS_TABLE_CAPACITY;
     public static int MESH_MAX_WORKGROUP_COUNT_X = 65535;
     public static int MESH_MAX_OUTPUT_VERTICES = 256;
     public static int MESH_MAX_OUTPUT_PRIMITIVES = 256;
-
+    private static final long[] PER_STAGE_DESCRIPTORS = new long[7];
+    private static final long[] SET_DESCRIPTORS = new long[6];
+    private static final ConcurrentMap<Integer, FormatFeatures> FORMATS = new ConcurrentHashMap<>();
     public static int MAX_COMPUTE_WORK_GROUP_INVOCATIONS;
     public static int MAX_COMPUTE_WORK_GROUP_SIZE_X;
     public static int MAX_COMPUTE_WORK_GROUP_SIZE_Y;
@@ -81,21 +91,6 @@ public final class VkCaps {
     public static long MAX_UNIFORM_BUFFER_RANGE;
     public static long MAX_STORAGE_BUFFER_RANGE;
     public static long MAX_MEMORY_ALLOCATION_SIZE;
-
-    private static final int DESCRIPTOR_SAMPLER = 0;
-    private static final int DESCRIPTOR_UNIFORM = 1;
-    private static final int DESCRIPTOR_STORAGE = 2;
-    private static final int DESCRIPTOR_SAMPLED_IMAGE = 3;
-    private static final int DESCRIPTOR_STORAGE_IMAGE = 4;
-    private static final int DESCRIPTOR_INPUT_ATTACHMENT = 5;
-    private static final int DESCRIPTOR_RESOURCE = 6;
-    private static final String[] DESCRIPTOR_NAMES = {"samplers", "uniform buffers", "storage buffers",
-            "sampled images", "storage images", "input attachments", "resources"};
-    private static final String[] STAGE_NAMES = {"Vertex", "Tessellation control", "Tessellation evaluation",
-            "Geometry", "Fragment", "Compute", "Task", "Mesh"};
-    private static final long[] PER_STAGE_DESCRIPTORS = new long[7];
-    private static final long[] SET_DESCRIPTORS = new long[6];
-    private static final ConcurrentMap<Integer, FormatFeatures> FORMATS = new ConcurrentHashMap<>();
     private static @Nullable VkPhysicalDevice physicalDevice;
     private static long maxPushConstantsSize;
     private static long maxVertexInputAttributes;
@@ -256,7 +251,8 @@ public final class VkCaps {
         int available = formatFeatures(format).optimal();
         if ((available & requiredOptimalFeatures) != requiredOptimalFeatures) {
             throw new BackendUnavailableException(label + " format " + format + " requires optimal features 0x"
-                    + Integer.toHexString(requiredOptimalFeatures) + "; device has 0x" + Integer.toHexString(available));
+                    + Integer.toHexString(requiredOptimalFeatures) + "; device has 0x" + Integer.toHexString(
+                    available));
         }
     }
 
@@ -275,7 +271,8 @@ public final class VkCaps {
             requireLimit("Vertex attributes", attributes.remaining(), maxVertexInputAttributes);
             for (int i = 0; i < attributes.remaining(); i++) {
                 var attribute = attributes.get(i);
-                requireLimit("Vertex attribute location", unsigned(attribute.location()) + 1L, maxVertexInputAttributes);
+                requireLimit("Vertex attribute location", unsigned(attribute.location()) + 1L,
+                        maxVertexInputAttributes);
                 requireLimit("Vertex attribute offset", unsigned(attribute.offset()), maxVertexInputAttributeOffset);
                 if ((formatFeatures(attribute.format()).buffer() & VK10.VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) == 0) {
                     throw new BackendUnavailableException("Vertex format " + attribute.format() + " is unsupported");
@@ -285,7 +282,7 @@ public final class VkCaps {
     }
 
     public static void requireDescriptorLayout(List<Binding> bindings, int pushConstantSize, int pushConstantStages,
-                                                boolean descriptorBuffer) {
+                                               boolean descriptorBuffer) {
         if (pushConstantSize < 0 || (pushConstantSize & 3) != 0
                 || pushConstantSize > 0 && pushConstantStages == 0) {
             throw new IllegalArgumentException("Invalid push constant range: " + pushConstantSize);
@@ -333,6 +330,7 @@ public final class VkCaps {
                 counts[DESCRIPTOR_SAMPLER]++;
                 counts[DESCRIPTOR_SAMPLED_IMAGE]++;
             }
+            case VK10.VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER -> counts[DESCRIPTOR_SAMPLED_IMAGE]++;
             case VK10.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE -> counts[DESCRIPTOR_STORAGE_IMAGE]++;
             case VK10.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT -> counts[DESCRIPTOR_INPUT_ATTACHMENT]++;
             default -> throw new IllegalArgumentException("Unsupported descriptor type: " + type);

@@ -124,13 +124,15 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
         client.oitLayersKbuffer.set(OitConfig.rawLayers(OitConfig.Path.KBUFFER));
         client.oitLayersMlab.set(OitConfig.rawLayers(OitConfig.Path.MLAB));
         client.oitLayersAbuffer.set(OitConfig.rawLayers(OitConfig.Path.ABUFFER));
+        #if MC < 26.3
         client.oitExactWeather.set(OitConfig.exactFabulous());
+        #endif
         clientSpec.save();
     }
 
     public void syncOitToRuntime() {
-        OitConfig.loadState(client.oitPath.get(), client.oitLayersKbuffer.get(),
-                client.oitLayersMlab.get(), client.oitLayersAbuffer.get(), client.oitExactWeather.get());
+        OitConfig.loadState(client.oitPath.get(), client.oitLayersKbuffer.get(), client.oitLayersMlab.get(),
+                client.oitLayersAbuffer.get() #if MC < 26.3 , client.oitExactWeather.get() #endif);
     }
 
     public void registerSpecs(ModContainer context) {
@@ -149,7 +151,9 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
         public final ModConfigSpec.IntValue oitLayersKbuffer;
         public final ModConfigSpec.IntValue oitLayersMlab;
         public final ModConfigSpec.IntValue oitLayersAbuffer;
+        #if MC < 26.3
         public final ModConfigSpec.BooleanValue oitExactWeather;
+        #endif
 
         private ClientConfig(ModConfigSpec.Builder builder) {
             backend = builder.comment("Select the backend to use. Set to \"DEFAULT\" to let Flywheel decide.")
@@ -208,10 +212,12 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
             oitLayersMlab = builder.defineInRange("oitLayersMlab", 0, 0, OitConfig.MAX_LAYERS);
             oitLayersAbuffer = builder.defineInRange("oitLayersAbuffer", 0, 0, OitConfig.MAX_LAYERS);
 
+            #if MC < 26.3
             oitExactWeather = builder.comment("Weather accuracy under OIT, all paths. false: rain/snow render once "
                                              + "into a resolved layer (vanilla-fabulous semantics; far cheaper in rain). true: rain/snow "
                                              + "are per-fragment OIT producers that depth-sort exactly against other translucents.")
                                      .define("oitExactWeather", false);
+            #endif
 
             builder.pop();
         }
