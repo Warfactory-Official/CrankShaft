@@ -2,15 +2,14 @@ package dev.engine_room.flywheel.backend.engine.indirect;
 
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.backend.engine.AbstractInstancer;
+import dev.engine_room.flywheel.backend.engine.HostSlab;
 import dev.engine_room.flywheel.backend.engine.InstanceHandleImpl;
 import dev.engine_room.flywheel.backend.engine.InstancerKey;
-import dev.engine_room.flywheel.backend.engine.SlabBuffer;
 import dev.engine_room.flywheel.backend.util.AtomicBitSet;
 import dev.engine_room.flywheel.lib.math.MoreMath;
 import dev.engine_room.flywheel.lib.memory.FlwMemoryTracker;
 import org.joml.Vector4fc;
 import org.jspecify.annotations.Nullable;
-import org.lwjgl.opengl.GL45C;
 import org.lwjgl.system.MemoryUtil;
 
 import java.lang.invoke.MethodHandles;
@@ -24,14 +23,25 @@ import java.util.concurrent.atomic.AtomicReference;
 import static dev.engine_room.flywheel.backend.engine.EngineConstants.*;
 
 public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> {
+    private static final int DIRTY_SHARD_COUNT;
+    private static final int DIRTY_SHARD_MASK;
+    private static final int DIRTY_SHARD_STRIDE = 8;
+    private static final int DIRTY_MIN_OFF = 2;
+    private static final int DIRTY_MAX_OFF = 4;
+    private static final VarHandle DIRTY_LA = MethodHandles.arrayElementVarHandle(long[].class);
+
+    static {
+        int parallelism = ForkJoinPool.commonPool().getParallelism();
+        int n = parallelism > 1 ? Integer.highestOneBit(parallelism - 1) << 1 : 4;
+        DIRTY_SHARD_COUNT = Math.max(4, n);
+        DIRTY_SHARD_MASK = DIRTY_SHARD_COUNT - 1;
+    }
+
     private final long instanceStride;
     private final List<IndirectDraw> associatedDraws = new ArrayList<>();
     private final Vector4fc boundingSphere;
-
     private final AtomicReference<InstancePage<I>[]> pages = new AtomicReference<>(pageArray(0));
-
     private final AtomicInteger instanceCount = new AtomicInteger(0);
-
     /**
      * The set of pages whose count changed and thus need their descriptor re-uploaded.
      */
@@ -52,21 +62,18 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
      * but we also don't want to waste work merging into pages that are already empty.
      */
     private final AtomicBitSet mergeablePages = new AtomicBitSet();
-
     private final long[] validityDirtyShards = freshDirtyShards();
     private final long[] contentsDirtyShards = freshDirtyShards();
+    public ObjectStorage.Mapping mapping;
+    private int modelIndex = -1;
+    private int baseInstance = -1;
+    private @Nullable HostSlab slabBuffer;
 
-    private static final int DIRTY_SHARD_COUNT;
-    private static final int DIRTY_SHARD_MASK;
-    private static final int DIRTY_SHARD_STRIDE = 8;
-    private static final int DIRTY_MIN_OFF = 2;
-    private static final int DIRTY_MAX_OFF = 4;
-    private static final VarHandle DIRTY_LA = MethodHandles.arrayElementVarHandle(long[].class);
-    static {
-        int parallelism = ForkJoinPool.commonPool().getParallelism();
-        int n = parallelism > 1 ? Integer.highestOneBit(parallelism - 1) << 1 : 4;
-        DIRTY_SHARD_COUNT = Math.max(4, n);
-        DIRTY_SHARD_MASK = DIRTY_SHARD_COUNT - 1;
+    public IndirectInstancer(InstancerKey<I> key, Recreate<I> recreate) {
+        super(key, recreate);
+        instanceStride = MoreMath.align4(type.layout()
+                                             .byteSize());
+        boundingSphere = key.model().boundingSphere();
     }
 
     private static long[] freshDirtyShards() {
@@ -119,20 +126,6 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
         }
     }
 
-    public ObjectStorage.Mapping mapping;
-
-    private int modelIndex = -1;
-    private int baseInstance = -1;
-
-    private @Nullable SlabBuffer slabBuffer;
-
-    public IndirectInstancer(InstancerKey<I> key, Recreate<I> recreate) {
-        super(key, recreate);
-        instanceStride = MoreMath.align4(type.layout()
-                .byteSize());
-        boundingSphere = key.model().boundingSphere();
-    }
-
     @SuppressWarnings("unchecked")
     private static <I extends Instance> InstancePage<I>[] pageArray(int length) {
         return new InstancePage[length];
@@ -156,11 +149,309 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
         return null;
     }
 
+    private static boolean isFull(int valid) {
+        return valid == 0xFFFFFFFF;
+    }
+
+    private static boolean isEmpty(int valid) {
+        return valid == 0;
+    }
+
+    private static boolean isMergeable(int valid) {
+        return !isEmpty(valid) && Integer.bitCount(valid) <= 16;
+    }
+
+    public void addDraw(IndirectDraw draw) {
+        associatedDraws.add(draw);
+    }
+
+    public List<IndirectDraw> draws() {
+        return associatedDraws;
+    }
+
+    public void update(int modelIndex, int baseInstance) {
+        this.baseInstance = baseInstance;
+
+        var sameModelIndex = this.modelIndex == modelIndex;
+        int dirtyMin = sameModelIndex ? reduceDirtyMin(validityDirtyShards) : 0;
+        if (sameModelIndex && dirtyMin == Integer.MAX_VALUE) {
+            return;
+        }
+
+        this.modelIndex = modelIndex;
+
+        var pages = this.pages.get();
+        mapping.updateCount(pages.length);
+
+        if (sameModelIndex) {
+            int dirtyMax = Math.min(reduceDirtyMax(validityDirtyShards), pages.length - 1);
+            for (int page = validityChanged.nextSetBit(
+                    dirtyMin); page >= 0 && page <= dirtyMax; page = validityChanged.nextSetBit(page + 1)) {
+                mapping.updatePage(page, modelIndex, pages[page].valid.get());
+            }
+        } else {
+            for (int i = 0; i < pages.length; i++) {
+                mapping.updatePage(i, modelIndex, pages[i].valid.get());
+            }
+        }
+
+        validityChanged.clear();
+        clearDirtyShards(validityDirtyShards);
+    }
+
+    public void writeModel(long ptr) {
+        MemoryUtil.memPutInt(ptr, 0); // instanceCount - to be incremented by the cull shader
+        MemoryUtil.memPutInt(ptr + 4, baseInstance); // baseInstance
+        MemoryUtil.memPutInt(ptr + 8, environment.matrixIndex()); // matrixIndex
+        MemoryUtil.memPutFloat(ptr + 12, boundingSphere.x()); // boundingSphere
+        MemoryUtil.memPutFloat(ptr + 16, boundingSphere.y());
+        MemoryUtil.memPutFloat(ptr + 20, boundingSphere.z());
+        MemoryUtil.memPutFloat(ptr + 24, boundingSphere.w());
+    }
+
+    public void uploadInstances(StagingBuffer stagingBuffer, int instanceVbo) {
+        uploadInstances(stagingBuffer, instanceVbo, 0);
+    }
+
+    public void uploadInstances(StagingBuffer stagingBuffer, int instanceVbo, long instanceOffset) {
+        int dirtyMin = reduceDirtyMin(contentsDirtyShards);
+        if (dirtyMin == Integer.MAX_VALUE) {
+            return;
+        }
+
+        var pages = this.pages.get();
+        int dirtyMax = Math.min(reduceDirtyMax(contentsDirtyShards), pages.length - 1);
+
+        prepareUpload(pages);
+
+        int mappedPages = mapping.pageCount();
+        boolean deferred = false;
+        int spanStart = contentsChanged.nextSetBit(dirtyMin);
+        while (spanStart >= 0 && spanStart <= dirtyMax) {
+            int spanEnd = Math.min(contentsChanged.nextClearBit(spanStart) - 1, dirtyMax);
+            for (int page = spanStart; page <= spanEnd; page++) {
+                if (page >= mappedPages) {
+                    deferred = true;
+                    continue;
+                }
+                long baseByte = mapping.page2ByteOffset(page);
+                if (baseByte < 0) continue;
+                int valid = pages[page].valid.get();
+                if (valid == 0) continue;
+                int first = Integer.numberOfTrailingZeros(valid);
+                int end = Integer.SIZE - Integer.numberOfLeadingZeros(valid);
+                long offset = first * instanceStride;
+                // Snapshot before later animation writes; the staging fence owns the GPU lifetime.
+                stagingBuffer.enqueueCopy(slabBuffer.ptrForPage(page) + offset, (end - first) * instanceStride,
+                        instanceVbo, instanceOffset + baseByte + offset);
+            }
+            spanStart = contentsChanged.nextSetBit(spanEnd + 1);
+        }
+        contentsChanged.clear();
+        clearDirtyShards(contentsDirtyShards);
+        if (deferred) {
+            contentsChanged.set(mappedPages, pages.length);
+            markDirtyShard(contentsDirtyShards, mappedPages);
+            markDirtyShard(contentsDirtyShards, pages.length - 1);
+        }
+    }
+
+    private void prepareUpload(InstancePage<I>[] pages) {
+        if (slabBuffer == null) {
+            slabBuffer = new HostSlab((long) PAGE_SIZE * instanceStride, INITIAL_BUFFER_PAGES);
+        }
+        slabBuffer.releaseRetired();
+        boolean grew = slabBuffer.ensureCapacity(pages.length);
+        long pageBytes = (long) PAGE_SIZE * instanceStride;
+        for (InstancePage<I> page : pages) {
+            if (page.transient_) {
+                long mappedPtr = slabBuffer.ptrForPage(page.pageNo);
+                MemoryUtil.memCopy(page.slabPtr, mappedPtr, pageBytes);
+                FlwMemoryTracker.free(page.slabPtr);
+                FlwMemoryTracker._freeCpuMemory(pageBytes);
+                page.slabPtr = mappedPtr;
+                page.transient_ = false;
+            } else if (grew) {
+                page.slabPtr = slabBuffer.ptrForPage(page.pageNo);
+            }
+        }
+    }
+
+    @Override
+    public void parallelUpdate() {
+        var pages = this.pages.get();
+
+        mergeablePages.clear(pages.length, mergeablePages.currentCapacity());
+
+        int page = 0;
+        while (mergeablePages.cardinality() > 1) {
+            page = mergeablePages.nextSetBit(page);
+            if (page < 0) {
+                break;
+            }
+
+            int next = mergeablePages.nextSetBit(page + 1);
+            if (next < 0) {
+                break;
+            }
+
+            pages[page].takeFrom(pages[next]);
+        }
+    }
+
+    @Override
+    public void delete() {
+        for (IndirectDraw draw : draws()) {
+            draw.delete();
+        }
+
+        for (InstancePage<I> page : pages.getAndSet(pageArray(0))) {
+            page.dispose();
+        }
+
+        freeSlabResources();
+
+        // mapping is null when the instancer was created via getInstancer but never reached
+        // IndirectDrawManager.initialize() (between creation and the next render() call). The
+        // engine teardown path on backend switch can land in this window.
+        if (mapping != null) {
+            mapping.delete();
+            mapping = null;
+        }
+    }
+
+    public int modelIndex() {
+        return modelIndex;
+    }
+
+    public int baseInstance() {
+        return baseInstance;
+    }
+
+    public int local2GlobalInstanceIndex(int instanceIndex) {
+        return mapping.objectIndex2GlobalIndex(instanceIndex);
+    }
+
+    @Override
+    public I createInstance() {
+        var handle = new InstanceHandleImpl<I>(null);
+        I instance = type.create(handle);
+
+        addInner(instance, handle);
+
+        return instance;
+    }
+
+    @Override
+    public InstanceHandleImpl.State<I> revealInstance(InstanceHandleImpl<I> handle, I instance) {
+        addInner(instance, handle);
+        return handle.state;
+    }
+
+    @Override
+    public void stealInstance(@Nullable I instance) {
+        if (instance == null) {
+            return;
+        }
+
+        var instanceHandle = instance.handle();
+
+        if (!(instanceHandle instanceof InstanceHandleImpl<?>)) {
+            return;
+        }
+
+        @SuppressWarnings("unchecked") var handle = (InstanceHandleImpl<I>) instanceHandle;
+
+        if (handle.state instanceof InstanceHandleImpl.Deleted) {
+            return;
+        }
+        if (handle.state instanceof InstanceHandleImpl.Hidden<I> hidden && recreate.equals(hidden.recreate())) {
+            return;
+        }
+
+        if (handle.state instanceof InstancePage<?> other) {
+            if (other.parent == this) {
+                return;
+            }
+
+            other.setDeleted(handle.index);
+
+            addInner(instance, handle);
+        } else if (handle.state instanceof InstanceHandleImpl.Hidden<I>) {
+            handle.state = new InstanceHandleImpl.Hidden<>(recreate, instance);
+        }
+    }
+
+    private void addInner(I instance, InstanceHandleImpl<I> handle) {
+        while (true) {
+            var pages = this.pages.get();
+
+            for (int i = fullPages.nextClearBit(0); i < pages.length; i = fullPages.nextClearBit(i + 1)) {
+                if (pages[i].add(instance, handle)) {
+                    return;
+                }
+            }
+
+            var desiredLength = pages.length + 1;
+
+            while (pages.length < desiredLength) {
+                InstancePage<I>[] newPages = pageArray(desiredLength);
+
+                System.arraycopy(pages, 0, newPages, 0, pages.length);
+                InstancePage<I> appended = new InstancePage<>(this, pages.length);
+                newPages[pages.length] = appended;
+
+                if (this.pages.compareAndSet(pages, newPages)) {
+                    pages = newPages;
+                } else {
+                    appended.dispose();
+                    pages = this.pages.get();
+                }
+            }
+
+            if (pages[pages.length - 1].add(instance, handle)) {
+                return;
+            }
+        }
+    }
+
+    @Override
+    public int instanceCount() {
+        return instanceCount.get();
+    }
+
+    /**
+     * Clear all instances without freeing GL resources. Safe to call from any thread —
+     * matches upstream's contract. Transient heap pages are freed here (nmemFree is
+     * thread-safe); Page retirement lives in {@link #freeSlabResources()}.
+     */
+    @Override
+    public void clear() {
+        InstancePage<I>[] old = this.pages.getAndSet(pageArray(0));
+        for (InstancePage<I> page : old) {
+            page.dispose();
+        }
+        contentsChanged.clear();
+        validityChanged.clear();
+        fullPages.clear();
+        mergeablePages.clear();
+        clearDirtyShards(contentsDirtyShards);
+        clearDirtyShards(validityDirtyShards);
+    }
+
+    /**
+     * Release cached instance pages after worker updates have joined.
+     */
+    private void freeSlabResources() {
+        if (slabBuffer != null) {
+            slabBuffer.delete();
+            slabBuffer = null;
+        }
+    }
+
     private static final class InstancePage<I extends Instance> implements InstanceHandleImpl.State<I> {
         private final IndirectInstancer<I> parent;
         private final int pageNo;
-        long slabPtr;
-        boolean transient_;
         private final I[] instances;
         // Handles are only read in #takeFrom. It would be nice to avoid tracking these at all.
         private final InstanceHandleImpl<I>[] handles;
@@ -168,6 +459,8 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
          * A bitset describing which indices in the instances/handles arrays contain live instances.
          */
         private final AtomicInteger valid;
+        long slabPtr;
+        boolean transient_;
 
         private InstancePage(IndirectInstancer<I> parent, int pageNo) {
             this.parent = parent;
@@ -364,295 +657,6 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
             if (isFull(valid)) {
                 parent.fullPages.set(pageNo);
             }
-        }
-    }
-
-    public void addDraw(IndirectDraw draw) {
-        associatedDraws.add(draw);
-    }
-
-    public List<IndirectDraw> draws() {
-        return associatedDraws;
-    }
-
-    public void update(int modelIndex, int baseInstance) {
-        this.baseInstance = baseInstance;
-
-        var sameModelIndex = this.modelIndex == modelIndex;
-        int dirtyMin = sameModelIndex ? reduceDirtyMin(validityDirtyShards) : 0;
-        if (sameModelIndex && dirtyMin == Integer.MAX_VALUE) {
-            return;
-        }
-
-        this.modelIndex = modelIndex;
-
-        var pages = this.pages.get();
-        mapping.updateCount(pages.length);
-
-        if (sameModelIndex) {
-            int dirtyMax = Math.min(reduceDirtyMax(validityDirtyShards), pages.length - 1);
-            for (int page = validityChanged.nextSetBit(dirtyMin); page >= 0 && page <= dirtyMax; page = validityChanged.nextSetBit(page + 1)) {
-                mapping.updatePage(page, modelIndex, pages[page].valid.get());
-            }
-        } else {
-            for (int i = 0; i < pages.length; i++) {
-                mapping.updatePage(i, modelIndex, pages[i].valid.get());
-            }
-        }
-
-        validityChanged.clear();
-        clearDirtyShards(validityDirtyShards);
-    }
-
-    public void writeModel(long ptr) {
-        MemoryUtil.memPutInt(ptr, 0); // instanceCount - to be incremented by the cull shader
-        MemoryUtil.memPutInt(ptr + 4, baseInstance); // baseInstance
-        MemoryUtil.memPutInt(ptr + 8, environment.matrixIndex()); // matrixIndex
-        MemoryUtil.memPutFloat(ptr + 12, boundingSphere.x()); // boundingSphere
-        MemoryUtil.memPutFloat(ptr + 16, boundingSphere.y());
-        MemoryUtil.memPutFloat(ptr + 20, boundingSphere.z());
-        MemoryUtil.memPutFloat(ptr + 24, boundingSphere.w());
-    }
-
-    public void uploadInstances(StagingBuffer stagingBuffer, int instanceVbo) {
-        int dirtyMin = reduceDirtyMin(contentsDirtyShards);
-        if (dirtyMin == Integer.MAX_VALUE) {
-            return;
-        }
-
-        var pages = this.pages.get();
-        int dirtyMax = Math.min(reduceDirtyMax(contentsDirtyShards), pages.length - 1);
-
-        prepareUpload(pages);
-
-        long pageBytes = PAGE_SIZE * instanceStride;
-        int srcHandle = slabBuffer.handle();
-
-        // Coalesce contiguous dirty pages into one flush per span. Destination offsets are
-        // allocator-assigned and non-contiguous, so copies stay per-page.
-        int spanStart = contentsChanged.nextSetBit(dirtyMin);
-        while (spanStart >= 0 && spanStart <= dirtyMax) {
-            int spanEnd = contentsChanged.nextClearBit(spanStart) - 1;
-            if (spanEnd > dirtyMax) {
-                spanEnd = dirtyMax;
-            }
-            long srcOff = (long) spanStart * pageBytes;
-            slabBuffer.flushRange(srcOff, (long) (spanEnd - spanStart + 1) * pageBytes);
-
-            for (int page = spanStart; page <= spanEnd; page++) {
-                long baseByte = mapping.page2ByteOffset(page);
-                if (baseByte < 0) {
-                    continue;
-                }
-                GL45C.glCopyNamedBufferSubData(srcHandle, instanceVbo, (long) page * pageBytes, baseByte, pageBytes);
-            }
-            spanStart = contentsChanged.nextSetBit(spanEnd + 1);
-        }
-
-        contentsChanged.clear();
-        clearDirtyShards(contentsDirtyShards);
-    }
-
-    private void prepareUpload(InstancePage<I>[] pages) {
-        if (slabBuffer == null) {
-            slabBuffer = new SlabBuffer((long) PAGE_SIZE * instanceStride, INITIAL_BUFFER_PAGES);
-        }
-        slabBuffer.releaseRetired();
-        boolean grew = slabBuffer.ensureCapacity(pages.length);
-        long pageBytes = (long) PAGE_SIZE * instanceStride;
-        for (InstancePage<I> page : pages) {
-            if (page.transient_) {
-                long mappedPtr = slabBuffer.ptrForPage(page.pageNo);
-                MemoryUtil.memCopy(page.slabPtr, mappedPtr, pageBytes);
-                FlwMemoryTracker.free(page.slabPtr);
-                FlwMemoryTracker._freeCpuMemory(pageBytes);
-                page.slabPtr = mappedPtr;
-                page.transient_ = false;
-            } else if (grew) {
-                page.slabPtr = slabBuffer.ptrForPage(page.pageNo);
-            }
-        }
-    }
-
-    @Override
-    public void parallelUpdate() {
-        var pages = this.pages.get();
-
-        mergeablePages.clear(pages.length, mergeablePages.currentCapacity());
-
-        int page = 0;
-        while (mergeablePages.cardinality() > 1) {
-            page = mergeablePages.nextSetBit(page);
-            if (page < 0) {
-                break;
-            }
-
-            int next = mergeablePages.nextSetBit(page + 1);
-            if (next < 0) {
-                break;
-            }
-
-            pages[page].takeFrom(pages[next]);
-        }
-    }
-
-    private static boolean isFull(int valid) {
-        return valid == 0xFFFFFFFF;
-    }
-
-    private static boolean isEmpty(int valid) {
-        return valid == 0;
-    }
-
-    private static boolean isMergeable(int valid) {
-        return !isEmpty(valid) && Integer.bitCount(valid) <= 16;
-    }
-
-    @Override
-    public void delete() {
-        for (IndirectDraw draw : draws()) {
-            draw.delete();
-        }
-
-        for (InstancePage<I> page : pages.getAndSet(pageArray(0))) {
-            page.dispose();
-        }
-
-        freeGlResources();
-
-        // mapping is null when the instancer was created via getInstancer but never reached
-        // IndirectDrawManager.initialize() (between creation and the next render() call). The
-        // engine teardown path on backend switch can land in this window.
-        if (mapping != null) {
-            mapping.delete();
-            mapping = null;
-        }
-    }
-
-    public int modelIndex() {
-        return modelIndex;
-    }
-
-    public int baseInstance() {
-        return baseInstance;
-    }
-
-    public int local2GlobalInstanceIndex(int instanceIndex) {
-        return mapping.objectIndex2GlobalIndex(instanceIndex);
-    }
-
-    @Override
-    public I createInstance() {
-        var handle = new InstanceHandleImpl<I>(null);
-        I instance = type.create(handle);
-
-        addInner(instance, handle);
-
-        return instance;
-    }
-
-    @Override
-    public InstanceHandleImpl.State<I> revealInstance(InstanceHandleImpl<I> handle, I instance) {
-        addInner(instance, handle);
-        return handle.state;
-    }
-
-    @Override
-    public void stealInstance(@Nullable I instance) {
-        if (instance == null) {
-            return;
-        }
-
-        var instanceHandle = instance.handle();
-
-        if (!(instanceHandle instanceof InstanceHandleImpl<?>)) {
-            return;
-        }
-
-        @SuppressWarnings("unchecked") var handle = (InstanceHandleImpl<I>) instanceHandle;
-
-        if (handle.state instanceof InstanceHandleImpl.Deleted) {
-            return;
-        }
-        if (handle.state instanceof InstanceHandleImpl.Hidden<I> hidden && recreate.equals(hidden.recreate())) {
-            return;
-        }
-
-        if (handle.state instanceof InstancePage<?> other) {
-            if (other.parent == this) {
-                return;
-            }
-
-            other.setDeleted(handle.index);
-
-            addInner(instance, handle);
-        } else if (handle.state instanceof InstanceHandleImpl.Hidden<I>) {
-            handle.state = new InstanceHandleImpl.Hidden<>(recreate, instance);
-        }
-    }
-
-    private void addInner(I instance, InstanceHandleImpl<I> handle) {
-        while (true) {
-            var pages = this.pages.get();
-
-            for (int i = fullPages.nextClearBit(0); i < pages.length; i = fullPages.nextClearBit(i + 1)) {
-                if (pages[i].add(instance, handle)) {
-                    return;
-                }
-            }
-
-            var desiredLength = pages.length + 1;
-
-            while (pages.length < desiredLength) {
-                InstancePage<I>[] newPages = pageArray(desiredLength);
-
-                System.arraycopy(pages, 0, newPages, 0, pages.length);
-                InstancePage<I> appended = new InstancePage<>(this, pages.length);
-                newPages[pages.length] = appended;
-
-                if (this.pages.compareAndSet(pages, newPages)) {
-                    pages = newPages;
-                } else {
-                    appended.dispose();
-                    pages = this.pages.get();
-                }
-            }
-
-            if (pages[pages.length - 1].add(instance, handle)) {
-                return;
-            }
-        }
-    }
-
-    @Override
-    public int instanceCount() {
-        return instanceCount.get();
-    }
-
-    /**
-     * Clear all instances without freeing GL resources. Safe to call from any thread —
-     * matches upstream's contract. Transient heap pages are freed here (nmemFree is
-     * thread-safe); GL teardown lives in {@link #freeGlResources()}.
-     */
-    @Override
-    public void clear() {
-        InstancePage<I>[] old = this.pages.getAndSet(pageArray(0));
-        for (InstancePage<I> page : old) {
-            page.dispose();
-        }
-        contentsChanged.clear();
-        validityChanged.clear();
-        fullPages.clear();
-        mergeablePages.clear();
-        clearDirtyShards(contentsDirtyShards);
-        clearDirtyShards(validityDirtyShards);
-    }
-
-    /** Release the per-instancer slab GL buffer. Render-thread only. */
-    private void freeGlResources() {
-        if (slabBuffer != null) {
-            slabBuffer.delete();
-            slabBuffer = null;
         }
     }
 }

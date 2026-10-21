@@ -24,9 +24,13 @@ public final class Models {
     private static final RendererReloadCache<IBlockState, Model> BLOCK_STATE = new RendererReloadCache<>(it ->
             new BlockModelBuilder(SinglePosVirtualBlockGetter.createFullDark().blockState(it),
                     Collections.singletonList(BlockPos.ORIGIN)).build());
+    private static final RendererReloadCache<CulledKey, Model> CULLED_BLOCK_STATE = new RendererReloadCache<>(key ->
+            new BlockModelBuilder(SinglePosVirtualBlockGetter.createFullDark().blockState(key.state()),
+                    Collections.singletonList(BlockPos.ORIGIN)).cullFaces(key.cullMask()).build());
     private static final RendererReloadCache<PartialModel, Model> PARTIAL = new RendererReloadCache<>(it ->
             new BakedModelBuilder(it.get()).build());
-    private static final RendererReloadCache<TransformedPartial<?>, Model> TRANSFORMED_PARTIAL = new RendererReloadCache<>(TransformedPartial::create);
+    private static final RendererReloadCache<TransformedPartial<?>, Model> TRANSFORMED_PARTIAL = new RendererReloadCache<>(
+            TransformedPartial::create);
 
     private Models() {
     }
@@ -42,7 +46,15 @@ public final class Models {
     }
 
     /**
+     * Bake a block state's model with the faces in {@code cullMask} removed (bit per {@link EnumFacing#ordinal()}).
+     */
+    public static Model block(IBlockState state, int cullMask) {
+        return cullMask == 0 ? block(state) : CULLED_BLOCK_STATE.get(new CulledKey(state, cullMask));
+    }
+
+    /**
      * Get a usable model for a given partial model.
+     *
      * @param partial The partial model you wish to render.
      * @return A model built from the baked model the partial model represents.
      */
@@ -72,7 +84,7 @@ public final class Models {
      * {@link EnumFacing#NORTH} is considered the default direction and the corresponding transform will be a no-op.
      *
      * @param partial The partial model you wish to render.
-     * @param dir The direction you wish the model to be rotated to.
+     * @param dir     The direction you wish the model to be rotated to.
      * @return A model built from the baked model the partial model represents, transformed to face the given direction.
      */
     public static Model partial(PartialModel partial, EnumFacing dir) {
@@ -96,6 +108,9 @@ public final class Models {
             case WEST -> mat.rotateY((float) Math.toRadians(90));
             case EAST -> mat.rotateY((float) Math.toRadians(270));
         }
+    }
+
+    private record CulledKey(IBlockState state, int cullMask) {
     }
 
     private record TransformedPartial<T>(PartialModel partial, T key, BiConsumer<T, Matrix4f> transformer) {

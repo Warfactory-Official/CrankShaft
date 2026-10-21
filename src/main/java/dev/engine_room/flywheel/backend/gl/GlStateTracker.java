@@ -4,11 +4,15 @@ import dev.engine_room.flywheel.backend.gl.buffer.GlBufferType;
 import net.minecraft.client.renderer.GlStateManager;
 import org.lwjgl.opengl.*;
 
+import java.util.Arrays;
+
 /**
  * Tracks bound buffers/vbos because GlStateManager doesn't do that for us.
  */
 public class GlStateTracker {
-    /** {@code GlBufferType.values()} clones on every call; cache once and reuse. Never mutate. */
+    /**
+     * {@code GlBufferType.values()} clones on every call; cache once and reuse. Never mutate.
+     */
     private static final GlBufferType[] BUFFER_TYPES = GlBufferType.values();
     private static final int[] BUFFERS = new int[BUFFER_TYPES.length];
     private static int vao;
@@ -40,6 +44,23 @@ public class GlStateTracker {
 
     public static void _setProgram(int id) {
         program = id;
+    }
+
+    // Native renderers can bind through LWJGL 3 entry points that bypass the LWJGL 2 tracking mixins.
+    public static void invalidate() {
+        var caps = GlCompat.CAPABILITIES;
+        for (var type : BUFFER_TYPES) {
+            var supported = switch (type) {
+                case DRAW_INDIRECT_BUFFER -> caps.OpenGL40 || caps.GL_ARB_draw_indirect;
+                case ATOMIC_COUNTER_BUFFER -> caps.OpenGL42 || caps.GL_ARB_shader_atomic_counters;
+                case DISPATCH_INDIRECT_BUFFER -> caps.OpenGL43 || caps.GL_ARB_compute_shader;
+                case SHADER_STORAGE_BUFFER -> caps.OpenGL43 || caps.GL_ARB_shader_storage_buffer_object;
+                default -> true;
+            };
+            if (supported) BUFFERS[type.ordinal()] = -1;
+        }
+        vao = -1;
+        program = -1;
     }
 
     public static State getRestoreState() {
@@ -79,6 +100,30 @@ public class GlStateTracker {
         BUFFERS[GlBufferType.idFromTarget(target)] = buffer;
     }
 
+    // Compat with shader hosts: raw sampler binds must also update Minecraft's texture cache.
+    public static void hostActiveTexture(int texture) {
+        GL13.glActiveTexture(texture);
+        var unit = texture - GL13.GL_TEXTURE0;
+        if (unit >= GlStateManager.textureState.length) {
+            var previous = GlStateManager.textureState;
+            var expanded = Arrays.copyOf(previous, GL11.glGetInteger(GL20.GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS));
+            for (var index = previous.length; index < expanded.length; index++) {
+                expanded[index] = new GlStateManager.TextureState();
+                expanded[index].textureName = -1;
+            }
+            GlStateManager.textureState = expanded;
+        }
+        GlStateManager.activeTextureUnit = unit;
+    }
+
+    public static void hostBindTexture(int target, int texture) {
+        GL11.glBindTexture(target, texture);
+        var unit = GlStateManager.activeTextureUnit;
+        if (target == GL11.GL_TEXTURE_2D && unit < GlStateManager.textureState.length) {
+            GlStateManager.textureState[unit].textureName = texture;
+        }
+    }
+
     public record State(int[] buffers, int vao, int program, int activeTexture) implements AutoCloseable {
         public void restore() {
             if (vao != GlStateTracker.vao) {
@@ -98,7 +143,8 @@ public class GlStateTracker {
                 GlStateTracker.program = program;
             }
 
-            GlStateManager.setActiveTexture(activeTexture);
+            // Raw instance-buffer binds can leave the actual unit ahead of Minecraft's cache after an exception.
+            hostActiveTexture(activeTexture);
         }
 
         @Override

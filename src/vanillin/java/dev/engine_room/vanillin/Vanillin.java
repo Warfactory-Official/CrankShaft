@@ -15,7 +15,7 @@ import thedarkcolour.futuremc.tile.BellTileEntity;
 @Mod(
         modid = Tags.VANILLIN_ID,
         name = Tags.VANILLIN_NAME,
-        version = Tags.VANILLIN_VERSION,
+        version = Tags.VERSION,
         clientSideOnly = true,
         acceptableRemoteVersions = "*",
         dependencies = "required-after:" + Flywheel.ID

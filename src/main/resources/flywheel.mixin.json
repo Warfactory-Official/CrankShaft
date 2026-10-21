@@ -1,19 +1,23 @@
 {
   "required": true,
   "package": "dev.engine_room.flywheel.backend.mixin",
+  "plugin": "dev.engine_room.flywheel.backend.core.MixinCompatibilityPlugin",
   "refmap": "mixins.flywheel.refmap.json",
   "compatibilityLevel": "JAVA_8",
   "target": "@env(DEFAULT)",
   "client": [
     "MixinEntity",
+    "MixinEntityRenderer",
     "MixinFramebuffer",
     "MixinGL15",
     "MixinGL20",
     "MixinGL30",
     "MixinRenderGlobal",
+    "MixinRenderLayerCompletion",
     "MixinRenderManager",
     "MixinTileEntity",
     "MixinTileEntityRendererDispatcher",
+    "MixinVertexBuffer",
     "MixinWorld"
   ],
   "mixins": [],

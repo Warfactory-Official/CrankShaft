@@ -42,19 +42,20 @@ public final class ItemModels {
     private static final TintColors NO_TINTS = new TintColors(new int[0]);
 
     private static final RendererReloadCache<BakedModelKey, Model> MODEL_CACHE =
-            new RendererReloadCache<>(key -> bakeModel(key.model(), key.transformType(), key.material(), key.tints(), key.foil()));
+            new RendererReloadCache<>(
+                    key -> bakeModel(key.model(), key.transformType(), key.material(), key.tints(), key.foil()));
 
     // Reused across all getForModel calls. SimpleMaterial uses Object identity for equals, so
     // building a fresh Material per call made BakedModelKey miss the cache every time, leaking
     // a TrackedMemoryBlock per item-model bake.
     private static final Material ITEM_MATERIAL = SimpleMaterial.builderOf(Materials.CUTOUT)
-            .texture(TextureMap.LOCATION_BLOCKS_TEXTURE)
-            .cardinalLightingMode(CardinalLightingMode.ENTITY)
-            // useOverlay = false: 1.12.2 has no overlay texture, and the unbound overlay sampler
-            // (TEXTURE1 — same unit as the lightmap) would otherwise mix a faint darkening into
-            // the final color via the fragment shader's overlay-mix branch.
-            .useOverlay(false)
-            .build();
+                                                                .texture(TextureMap.LOCATION_BLOCKS_TEXTURE)
+                                                                .cardinalLightingMode(CardinalLightingMode.ENTITY)
+                                                                // useOverlay = false: 1.12.2 has no overlay texture, and the unbound overlay sampler
+                                                                // (TEXTURE1 — same unit as the lightmap) would otherwise mix a faint darkening into
+                                                                // the final color via the fragment shader's overlay-mix branch.
+                                                                .useOverlay(false)
+                                                                .build();
 
     private ItemModels() {
     }
@@ -65,7 +66,8 @@ public final class ItemModels {
 
     // Returns null for built-in renderers, which bypass the baked-quad path.
     @Nullable
-    public static IBakedModel getActualBakedModel(@Nullable World level, ItemStack stack, TransformType displayContext) {
+    public static IBakedModel getActualBakedModel(@Nullable World level, ItemStack stack,
+                                                  TransformType displayContext) {
         if (stack.isEmpty()) return null;
         IBakedModel baseModel = getModel(stack);
         ItemOverrideList overrides = baseModel.getOverrides();
@@ -83,7 +85,8 @@ public final class ItemModels {
     public static Model get(@Nullable World level, ItemStack stack, TransformType displayContext) {
         IBakedModel model = getActualBakedModel(level, stack, displayContext);
         if (model == null) return EmptyModel.INSTANCE;
-        return getForModel(model, displayContext, resolveTintColors(model, stack), stack.hasEffect());
+        return new ItemTaggedModel(
+                getForModel(model, displayContext, resolveTintColors(model, stack), stack.hasEffect()), stack);
     }
 
     public static Model getForModel(IBakedModel model, TransformType displayContext) {
@@ -111,7 +114,8 @@ public final class ItemModels {
         return new TintColors(colors);
     }
 
-    private static Model bakeModel(IBakedModel model, TransformType displayContext, Material material, TintColors tints, boolean foil) {
+    private static Model bakeModel(IBakedModel model, TransformType displayContext, Material material, TintColors tints,
+                                   boolean foil) {
         ReferenceArraySet<TextureAtlasSprite> spriteCollector =
                 SmartAnimatedTextureCompat.ENABLED ? new ReferenceArraySet<>() : null;
         Mesh mesh = bakeMesh(model, displayContext, tints, spriteCollector);
@@ -130,7 +134,8 @@ public final class ItemModels {
     }
 
     @Nullable
-    private static Mesh bakeMesh(IBakedModel model, TransformType displayContext, TintColors tints, @Nullable ReferenceArraySet<TextureAtlasSprite> spriteCollector) {
+    private static Mesh bakeMesh(IBakedModel model, TransformType displayContext, TintColors tints,
+                                 @Nullable ReferenceArraySet<TextureAtlasSprite> spriteCollector) {
         // Forge's IPerspectiveAwareModel (every "item/generated" 2D item) returns DEFAULT from
         // getItemCameraTransforms() and routes the real transform through handlePerspective —
         // reading from getItemCameraTransforms would collapse GROUND scale=0.5 to identity.
@@ -233,7 +238,8 @@ public final class ItemModels {
         return new SimpleQuadMesh(meshVertices, "ItemModel[" + displayContext + "]");
     }
 
-    private record BakedModelKey(IBakedModel model, TransformType transformType, Material material, TintColors tints, boolean foil) {
+    private record BakedModelKey(IBakedModel model, TransformType transformType, Material material, TintColors tints,
+                                 boolean foil) {
     }
 
     // Custom equals/hashCode — record defaults use identity hash for int[].

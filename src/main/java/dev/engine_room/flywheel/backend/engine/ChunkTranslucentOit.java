@@ -2,20 +2,16 @@ package dev.engine_room.flywheel.backend.engine;
 
 import dev.engine_room.flywheel.backend.compile.ChunkOitPrograms;
 import dev.engine_room.flywheel.backend.compile.PipelineCompiler;
+import dev.engine_room.flywheel.backend.engine.shaderpack.TerrainBuffer;
 import dev.engine_room.flywheel.backend.gl.shader.GlProgram;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GlStateManager;
-import net.minecraft.client.renderer.OpenGlHelper;
 import net.minecraft.client.renderer.RenderGlobal;
 import net.minecraft.client.renderer.chunk.RenderChunk;
 import net.minecraft.client.renderer.texture.TextureMap;
 import net.minecraft.client.renderer.vertex.VertexBuffer;
 import net.minecraft.util.BlockRenderLayer;
-import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL13;
-import org.lwjgl.opengl.GL15;
-import org.lwjgl.opengl.GL20;
-import org.lwjgl.opengl.GL30;
+import org.lwjgl.opengl.*;
 
 import java.util.List;
 
@@ -25,7 +21,6 @@ import java.util.List;
  */
 public final class ChunkTranslucentOit {
     private static final int TRANSLUCENT_LAYER_ORDINAL = BlockRenderLayer.TRANSLUCENT.ordinal();
-    private static final int STRIDE = 28;
 
     // 7 == GL_QUADS — vanilla VertexBuffer.drawArrays(7).
     private static final int CHUNK_PRIMITIVE = GL11.GL_QUADS;
@@ -43,8 +38,11 @@ public final class ChunkTranslucentOit {
     private ChunkTranslucentOit() {
     }
 
-    /** True when there is at least one visible translucent chunk to route through OIT this frame. */
+    /**
+     * True when there is at least one visible translucent chunk to route through OIT this frame.
+     */
     public static boolean hasVisibleTranslucentChunks() {
+        if (NativeChunkOit.active()) return true;
         RenderGlobal rg = Minecraft.getMinecraft().renderGlobal;
         if (rg == null) {
             return false;
@@ -56,8 +54,14 @@ public final class ChunkTranslucentOit {
         return !container.renderChunks.isEmpty();
     }
 
-    /** Replay every visible translucent chunk VBO into the given OIT-phase program. */
+    /**
+     * Replay every visible translucent chunk VBO into the given OIT-phase program.
+     */
     public static void replay(ChunkOitPrograms programs, PipelineCompiler.OitMode mode) {
+        if (NativeChunkOit.active()) {
+            NativeChunkOit.replay(mode);
+            return;
+        }
         RenderGlobal rg = Minecraft.getMinecraft().renderGlobal;
         if (rg == null) {
             return;
@@ -100,19 +104,31 @@ public final class ChunkTranslucentOit {
         for (int i = 0, n = chunks.size(); i < n; i++) {
             RenderChunk renderChunk = chunks.get(i);
             VertexBuffer vbo = renderChunk.getVertexBufferByLayer(TRANSLUCENT_LAYER_ORDINAL);
+            // Compat with shader pipelines: extended chunk vertices retain the vanilla prefix.
+            var stride = vbo.vertexFormat.getSize();
+            var slice = TerrainBuffer.source(vbo);
+            var offset = slice.offset();
 
             GlStateManager.pushMatrix();
-            container.preRenderChunk(renderChunk);
-            renderChunk.multModelviewMatrix();
+            if (slice.region()) {
+                var origin = TerrainBuffer.origin(renderChunk, slice);
+                GlStateManager.translate((float) (origin.getX() - container.viewEntityX),
+                        (float) (origin.getY() - container.viewEntityY),
+                        (float) (origin.getZ() - container.viewEntityZ));
+            } else {
+                container.preRenderChunk(renderChunk);
+                renderChunk.multModelviewMatrix();
+            }
 
-            vbo.bindBuffer();
+            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, slice.buffer());
             // Re-issued per chunk: glVertexAttribPointer captures the currently-bound ARRAY_BUFFER.
             // Lightmap is NOT normalized — raw SHORT pixel coords feed gl_TextureMatrix[1].
-            GL20.glVertexAttribPointer(ATTR_POS, 3, GL11.GL_FLOAT, false, STRIDE, 0);
-            GL20.glVertexAttribPointer(ATTR_COLOR, 4, GL11.GL_UNSIGNED_BYTE, true, STRIDE, 12);
-            GL20.glVertexAttribPointer(ATTR_UV0, 2, GL11.GL_FLOAT, false, STRIDE, 16);
-            GL20.glVertexAttribPointer(ATTR_UV1, 2, GL11.GL_SHORT, false, STRIDE, 24);
-            vbo.drawArrays(CHUNK_PRIMITIVE);
+            GL20.glVertexAttribPointer(ATTR_POS, 3, GL11.GL_FLOAT, false, stride, offset);
+            GL20.glVertexAttribPointer(ATTR_COLOR, 4, GL11.GL_UNSIGNED_BYTE, true, stride, offset + 12);
+            GL20.glVertexAttribPointer(ATTR_UV0, 2, GL11.GL_FLOAT, false, stride, offset + 16);
+            GL20.glVertexAttribPointer(ATTR_UV1, 2, GL11.GL_SHORT, false, stride, offset + 24);
+            // Compat with AUSM: VertexBuffer.drawArrays reinstalls legacy arrays over our attributes.
+            GL11.glDrawArrays(CHUNK_PRIMITIVE, 0, vbo.count);
 
             GlStateManager.popMatrix();
         }
@@ -136,8 +152,11 @@ public final class ChunkTranslucentOit {
         // Caller's next phase rebinds its own program — skip the unbind to save state churn.
     }
 
-    /** Free the lazily-allocated replay VAO; idempotent and lets a later replay regenerate it. */
+    /**
+     * Free the lazily-allocated replay VAO; idempotent and lets a later replay regenerate it.
+     */
     public static void deleteVao() {
+        NativeChunkOit.clear();
         if (vao != 0) {
             GL30.glDeleteVertexArrays(vao);
             vao = 0;

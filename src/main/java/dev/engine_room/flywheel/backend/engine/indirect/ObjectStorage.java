@@ -14,8 +14,6 @@ public class ObjectStorage extends AbstractArena {
 
     public static final int INITIAL_PAGES_ALLOCATED = 4;
     public static final int DESCRIPTOR_SIZE_BYTES = Integer.BYTES * 2;
-
-    private final BitSet changedFrames = new BitSet();
     /**
      * The GPU side buffer containing all the objects, logically divided into page frames.
      */
@@ -24,20 +22,36 @@ public class ObjectStorage extends AbstractArena {
      * The GPU side buffer containing 32 bit descriptors for each page frame.
      */
     public final ResizableStorageBuffer frameDescriptorBuffer;
+    private final BitSet changedFrames = new BitSet();
+    private final SharedStorageArena.Region region;
     /**
      * The CPU side memory block containing the page descriptors.
      */
     private MemoryBlock frameDescriptors;
 
     public ObjectStorage(long objectSizeBytes) {
+        this(objectSizeBytes, null);
+    }
+
+    public ObjectStorage(long objectSizeBytes, SharedStorageArena arena) {
         super(PAGE_SIZE * objectSizeBytes);
 
-        this.objectBuffer = new ResizableStorageBuffer();
+        this.objectBuffer = arena == null ? new ResizableStorageBuffer() : arena.buffer;
+        region = arena == null ? null : arena.region();
         this.frameDescriptorBuffer = new ResizableStorageBuffer();
 
-        objectBuffer.ensureCapacity(INITIAL_PAGES_ALLOCATED * elementSizeBytes);
+        if (region == null) objectBuffer.ensureCapacity(INITIAL_PAGES_ALLOCATED * elementSizeBytes);
+        else region.ensureCapacity(INITIAL_PAGES_ALLOCATED * elementSizeBytes);
         frameDescriptorBuffer.ensureCapacity(INITIAL_PAGES_ALLOCATED * DESCRIPTOR_SIZE_BYTES);
         frameDescriptors = MemoryBlock.malloc(INITIAL_PAGES_ALLOCATED * DESCRIPTOR_SIZE_BYTES);
+    }
+
+    public static int objectIndex2PageIndex(int objectIndex) {
+        return objectIndex >> LOG_2_PAGE_SIZE;
+    }
+
+    public static int pageIndex2ObjectIndex(int pageIndex) {
+        return pageIndex << LOG_2_PAGE_SIZE;
     }
 
     public Mapping createMapping() {
@@ -46,7 +60,11 @@ public class ObjectStorage extends AbstractArena {
 
     @Override
     public long byteCapacity() {
-        return objectBuffer.capacity();
+        return region == null ? objectBuffer.capacity() : region.capacity();
+    }
+
+    public long byteOffset() {
+        return region == null ? 0 : region.offset();
     }
 
     @Override
@@ -72,7 +90,8 @@ public class ObjectStorage extends AbstractArena {
 
     @Override
     protected void grow() {
-        objectBuffer.ensureCapacity(objectBuffer.capacity() * 2);
+        if (region == null) objectBuffer.ensureCapacity(objectBuffer.capacity() * 2);
+        else region.ensureCapacity(region.capacity() * 2);
         frameDescriptorBuffer.ensureCapacity(frameDescriptorBuffer.capacity() * 2);
         frameDescriptors = frameDescriptors.realloc(frameDescriptors.size() * 2);
     }
@@ -92,21 +111,14 @@ public class ObjectStorage extends AbstractArena {
     }
 
     public void delete() {
-        objectBuffer.delete();
+        if (region == null) objectBuffer.delete();
+        else region.delete();
         frameDescriptorBuffer.delete();
         frameDescriptors.free();
     }
 
     private long ptrForPage(int page) {
         return frameDescriptors.ptr() + (long) page * DESCRIPTOR_SIZE_BYTES;
-    }
-
-    public static int objectIndex2PageIndex(int objectIndex) {
-        return objectIndex >> LOG_2_PAGE_SIZE;
-    }
-
-    public static int pageIndex2ObjectIndex(int pageIndex) {
-        return pageIndex << LOG_2_PAGE_SIZE;
     }
 
     /**

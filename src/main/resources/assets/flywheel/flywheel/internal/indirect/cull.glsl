@@ -28,6 +28,22 @@ layout(std430, binding = _FLW_MATRIX_BUFFER_BINDING) restrict readonly buffer Ma
 };
 
 layout(binding = 0) uniform sampler2D _flw_depthPyramid;
+// Distorted shader-pack shadows cannot use the main camera's frustum or depth pyramid.
+uniform bool _flw_shadowCull;
+uniform vec4 _flw_shadowPlanes[13];
+uniform int _flw_shadowPlaneCount;
+uniform float _flw_shadowDistance;
+uniform vec3 _flw_shadowOriginOffset;
+
+bool _flw_shadowVisible(vec3 center, float radius) {
+    center += _flw_shadowOriginOffset;
+    if (_flw_shadowDistance > 0.0 && any(greaterThan(abs(center) - radius, vec3(_flw_shadowDistance)))) return false;
+    for (int i = 0; i < _flw_shadowPlaneCount; i++) {
+        vec4 plane = _flw_shadowPlanes[i];
+        if (dot(plane.xyz, center) + plane.w < -radius * length(plane.xyz)) return false;
+    }
+    return true;
+}
 
 // Disgustingly vectorized sphere frustum intersection taking advantage of ahead of time packing.
 // Only uses 6 fmas and some boolean ops.
@@ -81,6 +97,8 @@ bool _flw_isVisible(uint instanceIndex, uint modelIndex) {
         transformBoundingSphere(_flw_matrices[matrixIndex].pose, center, radius);
     }
 
+    // CrankShaft: host caster bounds preserve distortion and off-camera casters without camera HiZ.
+    if (_flw_shadowCull) return _flw_shadowVisible(center, radius);
     bool isVisible = _flw_testSphere(center, radius);
 
     // HiZ occlusion test. Requires vanilla Framebuffer.depthBuffer to be a sampleable depth

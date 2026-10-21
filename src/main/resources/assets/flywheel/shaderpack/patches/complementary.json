@@ -1,0 +1,55 @@
+{
+  "schema": 2,
+  "name": "Complementary",
+  "testedVersions": [
+    "ComplementaryReimagined_r5.9.3",
+    "ComplementaryUnbound_r5.9.3"
+  ],
+  "matches": [
+    {
+      "path": "program/gbuffers_entities.glsl",
+      "contains": [
+        "Complementary Shaders",
+        "FRAGMENT_SHADER"
+      ],
+      "excludes": [
+        "Euphoria Patches"
+      ]
+    },
+    {
+      "path": "lib/common.glsl",
+      "contains": []
+    }
+  ],
+  "files": [
+    {
+      "target": "clrwl_gbuffers_entities",
+      "patch": "complementary.patch"
+    },
+    {
+      "target": "clrwl_gbuffers_block",
+      "patch": "complementary_block.patch"
+    }
+  ],
+  "wrappers": [],
+  "blends": [],
+  "patches": [
+    "complementary_translucent_ao.patch",
+    "complementary_translucent_coverage.patch"
+  ],
+  "properties": "blend.clrwl_gbuffers_additive=ONE ONE ZERO ONE\n",
+  "programs": [
+    {
+      "target": "clrwl_gbuffers_additive",
+      "fragment": "complementary_light.fsh",
+      "vertex": "gbuffers_beaconbeam"
+    },
+    {
+      "target": "crankshaft_gbuffers_additive",
+      "fragment": "complementary_light.fsh",
+      "vertex": "gbuffers_beaconbeam",
+      "nativeDraw": true
+    }
+  ],
+  "emissiveLight": true
+}

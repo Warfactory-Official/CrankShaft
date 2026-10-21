@@ -1,18 +1,20 @@
 name: Release CrankShaft
 
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 concurrency:
   group: release-crankshaft-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   release:
-    name: Tag and publish CrankShaft
+    name: Publish tagged release
     runs-on: ubuntu-latest
 
     steps:
@@ -30,50 +32,57 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: 9.5.0
-          # Releases consume the cache populated by build.yml on master pushes;
-          # they should not write back into the shared cache.
           cache-read-only: true
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Resolve modVersion
-        shell: bash
+      - name: Verify release tag
+        id: release
+        shell: python
         run: |
-          set -euo pipefail
-          MOD_VERSION=$(grep -E '^\s*modVersion\s*=' version.properties | sed -E 's/^\s*modVersion\s*=\s*//; s/\r$//' | xargs || true)
-          if [[ -z "${MOD_VERSION}" ]]; then
-            echo "::error::modVersion is empty or missing in version.properties"; exit 1
-          fi
-          echo "MOD_VERSION=${MOD_VERSION}" >> "$GITHUB_ENV"
-          echo "TAG=v${MOD_VERSION}" >> "$GITHUB_ENV"
+          import os
+          from pathlib import Path
 
-      - name: Verify tag is unused
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
-            echo "::error::Tag ${TAG} already exists on origin. Bump modVersion in version.properties before releasing."
-            exit 1
-          fi
+          def property_value(path, key):
+              values = []
+              for line in path.read_text(encoding="utf-8").splitlines():
+                  name, separator, value = line.partition("=")
+                  if separator and name.strip() == key:
+                      values.append(value.strip())
+              if len(values) != 1 or not values[0]:
+                  raise SystemExit(f"::error::{key} must occur once and be nonempty in {path.name}")
+              return values[0]
 
-      - name: Create and push tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${TAG}" -m "CrankShaft ${MOD_VERSION}"
-          git push origin "${TAG}"
+          base = property_value(Path("version.properties"), "modVersion")
+          minecraft = property_value(Path("buildscript.properties"), "minecraftVersion")
+          version = f"{base}+mc{minecraft}"
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{version}":
+              raise SystemExit(f"::error::Tag {tag} does not match v{version}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+              stream.write(f"version={version}\n")
+          print(version)
 
-      - name: Publish CrankShaft to Maven (warfactory)
+      - name: Build bundled release
+        run: ./gradlew build --no-daemon --stacktrace
+
+      - name: Publish both artifacts to Maven
         if: github.repository == 'Warfactory-Official/CrankShaft'
         env:
           MAVEN_USER: ${{ secrets.MAVEN_USER }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+          MAVEN_URL: https://repo.warfactory.co/releases
         run: |
           ./gradlew \
+            publishVanillatePublicationToWarfactoryRepository \
             publishCrankshaftPublicationToWarfactoryRepository \
             --no-daemon \
             --stacktrace
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ github.ref_name }}-jars
+          path: build/libs/*.jar
+          if-no-files-found: error

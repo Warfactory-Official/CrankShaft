@@ -2,8 +2,7 @@ layout(local_size_x = 64) in;
 
 const uint SRC_OFFSET_MASK = 0xFFFFFF;
 
-// Since StagingBuffer is 16MB, a source offset *into an array of uints* can be represented with 22 bits.
-// We use 24 here for some wiggle room.
+// CrankShaft: source windows are bounded to 64 MiB so uint offsets fit in 24 bits.
 // The lower 24 bits are the offset into the Src buffer.
 // The upper 8 bits are the size of the copy.
 struct Copy {

@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "package": "dev.engine_room.flywheel.backend.mixin.mod.nothirium",
+  "refmap": "mixins.flywheel.refmap.json",
+  "compatibilityLevel": "JAVA_8",
+  "target": "@env(MOD)",
+  "client": [
+    "NativeGL43DrawMixin",
+    "NativeGL42DrawMixin",
+    "NativeGL20DrawMixin",
+    "NativeProgramCleanupMixin",
+    "NativeTerrainPartMixin",
+    "NativeTerrainPoolMixin"
+  ],
+  "minVersion": "0.8.7"
+}

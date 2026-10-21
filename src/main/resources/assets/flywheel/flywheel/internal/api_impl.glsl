@@ -10,3 +10,6 @@ bool flw_light(vec3 worldPos, vec3 normal, out FlwLightAo light);
 /// Fetches the light value at the given block position.
 /// Returns false if the light for the given block is not available.
 bool flw_lightFetch(ivec3 blockPos, out vec2 light);
+
+// CrankShaft shim: shader hosts need the AO factor independently of zero-valued albedo.
+void flw_applyAo(float ao);

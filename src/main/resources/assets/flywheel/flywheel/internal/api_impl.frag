@@ -25,6 +25,9 @@ FlwMaterial flw_material;
 
 bool flw_fragDiffuse;
 vec4 flw_fragColor;
+void flw_applyAo(float ao) {
+    flw_fragColor.rgb *= ao;
+}
 ivec2 flw_fragOverlay;
 vec2 flw_fragLight;
 

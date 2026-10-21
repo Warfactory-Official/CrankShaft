@@ -9,6 +9,8 @@ import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
 import dev.engine_room.flywheel.lib.material.Materials;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
+import dev.engine_room.flywheel.lib.model.PackIdentity;
+import dev.engine_room.flywheel.lib.model.PackTaggedModel;
 import dev.engine_room.flywheel.lib.model.QuadMesh;
 import dev.engine_room.flywheel.lib.model.SingleMeshModel;
 import dev.engine_room.flywheel.lib.util.LightTexture;
@@ -31,14 +33,16 @@ public final class FireComponent implements EntityComponent {
     private static final ResourceLocation FIRE_1 = new ResourceLocation("minecraft", "blocks/fire_layer_1");
 
     private static final Material FIRE_MATERIAL = SimpleMaterial.builderOf(Materials.CUTOUT_UNSHADED_BLOCK)
-            .backfaceCulling(false) // Disable backface because we want to be able to flip the model.
-            .build();
+                                                                .backfaceCulling(
+                                                                        false) // Disable backface because we want to be able to flip the model.
+                                                                .build();
 
     // Parameterize by the sprite's ResourceLocation rather than the sprite itself
     // because TextureMap sprites are invalidated and re-allocated on every resource reload.
     private static final RendererReloadCache<ResourceLocation, Model> FIRE_MODELS = new RendererReloadCache<>(loc -> {
         TextureAtlasSprite sprite = Minecraft.getMinecraft().getTextureMapBlocks().getAtlasSprite(loc.toString());
-        return new SingleMeshModel(new FireMesh(sprite), FIRE_MATERIAL);
+        return new PackTaggedModel(new SingleMeshModel(new FireMesh(sprite), FIRE_MATERIAL),
+                PackIdentity.Effect.FIRE_GLOW);
     });
 
     private final VisualizationContext context;
@@ -55,8 +59,8 @@ public final class FireComponent implements EntityComponent {
 
     private TransformedInstance createInstance(Model model) {
         TransformedInstance instance = context.instancerProvider()
-                .instancer(InstanceTypes.TRANSFORMED, model)
-                .createInstance();
+                                              .instancer(InstanceTypes.TRANSFORMED, model)
+                                              .createInstance();
         instance.light(LightTexture.FULL_BRIGHT);
         instance.overlay(OverlayTexture.NO_OVERLAY);
         instance.setChanged();
@@ -92,12 +96,12 @@ public final class FireComponent implements EntityComponent {
         float z = 0;
 
         scratch.identity()
-                .translate((float) (entityX - renderOrigin.getX()),
-                        (float) (entityY - renderOrigin.getY()),
-                        (float) (entityZ - renderOrigin.getZ()))
-                .scale(scale, scale, scale)
-                .rotateY((float) Math.toRadians(-ctx.camera().getYRot()))
-                .translate(0F, 0F, -0.3F + ((int) maxHeight) * 0.02F);
+               .translate((float) (entityX - renderOrigin.getX()),
+                       (float) (entityY - renderOrigin.getY()),
+                       (float) (entityZ - renderOrigin.getZ()))
+               .scale(scale, scale, scale)
+               .rotateY((float) Math.toRadians(-ctx.camera().getYRot()))
+               .translate(0F, 0F, -0.3F + ((int) maxHeight) * 0.02F);
 
         for (int i = 0; y < maxHeight; ++i) {
             Model model = FIRE_MODELS.get(i % 2 == 0 ? FIRE_0 : FIRE_1);
@@ -125,23 +129,6 @@ public final class FireComponent implements EntityComponent {
         private static final float SQRT_2_OVER_2 = (float) (Math.sqrt(2) * 0.5);
         private static final Vector4fc BOUNDING_SPHERE = new Vector4f(0, 0.5f, 0, SQRT_2_OVER_2);
 
-        @Override
-        public int vertexCount() {
-            return 4;
-        }
-
-        @Override
-        public void write(MutableVertexList vertexList) {
-            float u0 = sprite.getMinU();
-            float v0 = sprite.getMinV();
-            float u1 = sprite.getMaxU();
-            float v1 = sprite.getMaxV();
-            writeVertex(vertexList, 0, 0.5f, 0, u1, v1);
-            writeVertex(vertexList, 1, -0.5f, 0, u0, v1);
-            writeVertex(vertexList, 2, -0.5f, 1.4f, u0, v0);
-            writeVertex(vertexList, 3, 0.5f, 1.4f, u1, v0);
-        }
-
         // Magic numbers taken from:
         // net.minecraft.client.renderer.entity.EntityRenderDispatcher#fireVertex
         private static void writeVertex(MutableVertexList vertexList, int i, float x, float y, float u, float v) {
@@ -159,6 +146,23 @@ public final class FireComponent implements EntityComponent {
             vertexList.normalX(i, 0);
             vertexList.normalY(i, 1);
             vertexList.normalZ(i, 0);
+        }
+
+        @Override
+        public int vertexCount() {
+            return 4;
+        }
+
+        @Override
+        public void write(MutableVertexList vertexList) {
+            float u0 = sprite.getMinU();
+            float v0 = sprite.getMinV();
+            float u1 = sprite.getMaxU();
+            float v1 = sprite.getMaxV();
+            writeVertex(vertexList, 0, 0.5f, 0, u1, v1);
+            writeVertex(vertexList, 1, -0.5f, 0, u0, v1);
+            writeVertex(vertexList, 2, -0.5f, 1.4f, u0, v0);
+            writeVertex(vertexList, 3, 0.5f, 1.4f, u1, v0);
         }
 
         @Override

@@ -33,6 +33,26 @@ public class Compilation {
     private final StringBuilder fullSource = new StringBuilder();
     private int generatedLines = 0;
 
+    private static void dumpSource(String source, String fileName) {
+        if (!DUMP_SHADER_SOURCE) {
+            return;
+        }
+
+        File file = new File(new File(Minecraft.getMinecraft().gameDir, "flywheel_sources"), fileName);
+        // mkdirs of the parent so we don't create a directory named by the leaf file we want to write
+        file.getParentFile()
+            .mkdirs();
+        try (FileWriter writer = new FileWriter(file)) {
+            writer.write(source);
+        } catch (Exception e) {
+            FlwPrograms.LOGGER.error("Could not dump source.", e);
+        }
+    }
+
+    public static boolean compiledSuccessfully(int handle) {
+        return GL20.glGetShaderi(handle, GL20.GL_COMPILE_STATUS) == GL11.GL_TRUE;
+    }
+
     public ShaderResult compile(ShaderType shaderType, String name) {
         int handle = GL20.glCreateShader(shaderType.glEnum);
         var source = fullSource.toString();
@@ -50,7 +70,8 @@ public class Compilation {
         }
 
         GL20.glDeleteShader(handle);
-        return ShaderResult.failure(new FailedCompilation(shaderName, files, generatedSource.toString(), source, infoLog));
+        return ShaderResult.failure(
+                new FailedCompilation(shaderName, files, generatedSource.toString(), source, infoLog));
     }
 
     public void version(GlslVersion version) {
@@ -59,38 +80,38 @@ public class Compilation {
 
     public void version(GlslVersion version, GlslProfile profile) {
         fullSource.append("#version ")
-                .append(version.version);
+                  .append(version.version);
         if (!profile.token.isEmpty()) {
             fullSource.append(' ')
-                    .append(profile.token);
+                      .append(profile.token);
         }
         fullSource.append('\n');
     }
 
     public void enableExtension(String ext) {
         fullSource.append("#extension ")
-                .append(ext)
-                .append(" : enable\n");
+                  .append(ext)
+                  .append(" : enable\n");
     }
 
     public void requireExtension(String ext) {
         fullSource.append("#extension ")
-                .append(ext)
-                .append(" : require\n");
+                  .append(ext)
+                  .append(" : require\n");
     }
 
     public void define(String key, String value) {
         fullSource.append("#define ")
-                .append(key)
-                .append(' ')
-                .append(value)
-                .append('\n');
+                  .append(key)
+                  .append(' ')
+                  .append(value)
+                  .append('\n');
     }
 
     public void define(String key) {
         fullSource.append("#define ")
-                .append(key)
-                .append('\n');
+                  .append(key)
+                  .append('\n');
     }
 
     /**
@@ -116,6 +137,11 @@ public class Compilation {
         fullSource.append(source);
     }
 
+    // CrankShaft shim: guest stages need the shared preamble before entering the host compiler.
+    public String assembledSource() {
+        return fullSource.toString();
+    }
+
     private void appendHeader(SourceComponent component, String source) {
         if (component instanceof SourceFile file) {
             int fileId = files.size() + 1;
@@ -123,42 +149,22 @@ public class Compilation {
             files.add(file);
 
             fullSource.append("\n#line 0 ")
-                    .append(fileId)
-                    .append(" // ")
-                    .append(file.name())
-                    .append('\n');
+                      .append(fileId)
+                      .append(" // ")
+                      .append(file.name())
+                      .append('\n');
         } else {
             // Add extra newline to keep line numbers consistent
             generatedSource.append(source)
-                    .append('\n');
+                           .append('\n');
 
             fullSource.append("\n#line ")
-                    .append(generatedLines)
-                    .append(" 0 // (generated) ") // all generated code is put in file 0
-                    .append(component.name())
-                    .append('\n');
+                      .append(generatedLines)
+                      .append(" 0 // (generated) ") // all generated code is put in file 0
+                      .append(component.name())
+                      .append('\n');
 
             generatedLines += StringUtil.countLines(source);
         }
-    }
-
-    private static void dumpSource(String source, String fileName) {
-        if (!DUMP_SHADER_SOURCE) {
-            return;
-        }
-
-        File file = new File(new File(Minecraft.getMinecraft().gameDir, "flywheel_sources"), fileName);
-        // mkdirs of the parent so we don't create a directory named by the leaf file we want to write
-        file.getParentFile()
-                .mkdirs();
-        try (FileWriter writer = new FileWriter(file)) {
-            writer.write(source);
-        } catch (Exception e) {
-            FlwPrograms.LOGGER.error("Could not dump source.", e);
-        }
-    }
-
-    public static boolean compiledSuccessfully(int handle) {
-        return GL20.glGetShaderi(handle, GL20.GL_COMPILE_STATUS) == GL11.GL_TRUE;
     }
 }

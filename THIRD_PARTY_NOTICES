@@ -235,3 +235,53 @@ https://github.com/JCTools/JCTools
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+License for package(s): ['Colorwheel (https://github.com/djefrey/Colorwheel)']
+
+MIT License
+
+Copyright (c) 2025 djefrey
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Anarres C Preprocessor (JCPP) 1.4.14
+Copyright (c) 2007-2015, Shevek
+Licensed under the Apache License, Version 2.0.
+Source: https://github.com/shevek/jcpp
+License: META-INF/licenses/jcpp-Apache-2.0.txt
+
+AUSM shader vertex math and framebuffer format definitions
+Source: https://github.com/MtcLuna05/AUSM
+GuestVertexMath.java and GuestColorFormat.java are adapted from AUSM.
+Licensed under the GNU Lesser General Public License, version 3.
+License: META-INF/licenses/AUSM-LGPL-3.0.txt
+
+glsl-transformer 3.0.0-pre3
+Developed and maintained by douira.
+Source: https://github.com/IrisShaders/glsl-transformer
+Licensed under the GNU Affero General Public License, version 3.
+License: META-INF/licenses/glsl-transformer-AGPL-3.0.txt
+Includes Apache Commons Collections trie code under the Apache License, Version 2.0,
+reproduced above.
+
+ANTLR 4 runtime 4.13.1
+Copyright (c) 2012-2022 The ANTLR Project. All rights reserved.
+Source: https://github.com/antlr/antlr4
+Licensed under the BSD 3-Clause License.
+License: META-INF/licenses/antlr4-runtime-BSD-3-Clause.txt

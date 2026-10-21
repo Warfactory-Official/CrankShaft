@@ -13,9 +13,12 @@ Engine-Room team. It is not affiliated with, endorsed by, or supported by
 Flywheel or its maintainers. Bugs in CrankShaft are CrankShaft's, not
 Flywheel's — please file them here.
 
-Shipped alongside CrankShaft is **Vanillate**, the 1.12.2 counterpart to
+Bundled with CrankShaft is **Vanillate**, the 1.12.2 counterpart to
 Vanillin: instanced rendering for entities and block entities via
-Flywheel.
+Flywheel. Install only the CrankShaft JAR and remove any standalone Vanillate JAR
+when upgrading. Both mods share the same version.
+
+glsl-transformer is licensed under the GNU Affero General Public License version 3. This may affect your ability to distribute CrankShaft.
 
 ### Requirements
 
@@ -45,6 +48,8 @@ CrankShaft has explicit compat code for these.
 
 - *Renderers:* Sodium ports (Neonium, Vintagium, Relictium, Celeritas),
   Nothirium (with RenderLib).
+- *Shader packs:* AUSM and OptiFine, with authored Colorwheel contracts and
+  validated deferred replay adapters.
 - *Lighting engine:* Alfheim, Cubic Chunks.
 - *Smart animated textures:* LoliASM (aka CensoredASM).
 - *Dynamic lights:* Celeritas Dynamic Lights, OptiFine's Dynamic Lights.
@@ -55,12 +60,6 @@ CrankShaft has explicit compat code for these.
 > [!NOTE]
 > CrankShaft fixes Celeritas Dynamic Lights' entity lighting on Neonium, Vintagium, and
 > Relictium.
-
-#### Partially compatible
-
-Some of their features do not extend to Flywheel-instanced visuals.
-
-- *OptiFine* — shaderpacks are not supported.
 
 #### Incompatible
 
@@ -84,16 +83,19 @@ repositories {
 
 dependencies {
     implementation "dev.engine_room:crankshaft:${crankshaft_version}"
-    // Optional: vanilla visualizers (chest, item, item frame, …)
-    implementation "dev.engine_room:vanillate:${vanillate_version}"
+    // Only needed when compiling against Vanillate's API; it is already bundled at runtime.
+    compileOnly "dev.engine_room:vanillate:${crankshaft_version}"
 }
 ```
 
-`${crankshaft_version}` and `${vanillate_version}` get replaced by the versions
-you want to use, eg. `1.0.0`. The two artifacts are versioned independently.
+Replace `${crankshaft_version}` with the shared version, for example
+`1.2.0+mc1.12.2`. Both Maven artifacts use this version.
 
 For a list of available CrankShaft versions, you can
 check [the maven](https://repo.warfactory.co/releases/dev/engine_room/crankshaft/).
 
 Snapshot builds are published to `https://repo.warfactory.co/snapshots` with
-versions like `1.0.0-SNAPSHOT`.
+versions like `1.2.0+mc1.12.2-SNAPSHOT`. Build them locally with `-Pbuild.snapshot=true`.
+
+Release tags use `v<version>+mc<minecraft-version>`, for example
+`v1.2.0+mc1.12.2`. One release workflow publishes CrankShaft and Vanillate together.

@@ -18,22 +18,24 @@ import java.util.function.LongConsumer;
 // as a reference for implementation. Modified to be less safe and to allow for writing directly into the staging buffer.
 public class StagingBuffer {
     private static final long DEFAULT_CAPACITY = 1024 * 1024 * 16;
+    // CrankShaft: scatter source offsets are 24-bit uint indices.
+    private static final long MAX_SOURCE_BYTES = 1L << 26;
+    // CrankShaft: scatter.glsl fetches a full workgroup row before checking the copy size.
+    private static final long READ_AHEAD_BYTES = 64L * Integer.BYTES;
     private static final int STORAGE_FLAGS = GL44C.GL_MAP_PERSISTENT_BIT | GL30C.GL_MAP_WRITE_BIT | GL44C.GL_CLIENT_STORAGE_BIT;
     private static final int MAP_FLAGS = GL44C.GL_MAP_PERSISTENT_BIT | GL30C.GL_MAP_WRITE_BIT | GL30C.GL_MAP_FLUSH_EXPLICIT_BIT | GL30C.GL_MAP_INVALIDATE_BUFFER_BIT;
 
     private static final int SSBO_ALIGNMENT = GL11.glGetInteger(GL43.GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT);
-
+    private static final int MAX_SCATTER_GROUPS = maxScatterGroups();
     private final int vbo;
     private final long map;
     private final long capacity;
     private final IndirectPrograms programs;
-
     private final OverflowStagingBuffer overflow = new OverflowStagingBuffer();
     private final TransferList transfers = new TransferList();
     private final PriorityQueue<FencedRegion> fencedRegions = new ObjectArrayFIFOQueue<>();
     private final GlBuffer scatterBuffer = new GlBuffer(GlBufferUsage.STREAM_COPY);
     private final ScatterList scatterList = new ScatterList();
-
     /**
      * The position in the buffer at the time of the last flush.
      */
@@ -45,17 +47,15 @@ public class StagingBuffer {
     private long pos = 0;
     /**
      * The number of bytes used in the buffer since the last flush,
-     * decremented as transfers are enqueued.
+     * incremented as transfers are enqueued.
      */
     private long usedCapacity = 0;
-
     /**
      * The number of bytes available in the buffer.
      * <br>
      * This decreases as transfers are enqueued and increases as fenced regions are reclaimed.
      */
     private long totalAvailable;
-
     /**
      * A scratch buffer for when there is not enough contiguous space
      * in the staging buffer for the write the user wants to make.
@@ -68,18 +68,39 @@ public class StagingBuffer {
     }
 
     public StagingBuffer(long capacity, IndirectPrograms programs) {
+        if (capacity <= 0 || capacity > MAX_SOURCE_BYTES || capacity % Integer.BYTES != 0) {
+            throw new IllegalArgumentException("Staging capacity must be a positive multiple of 4 up to 64 MiB");
+        }
         this.capacity = capacity;
         this.programs = programs;
         vbo = GL45C.glCreateBuffers();
 
-        GL45C.glNamedBufferStorage(vbo, capacity, STORAGE_FLAGS);
-        map = GL45C.nglMapNamedBufferRange(vbo, 0, capacity, MAP_FLAGS);
+        GL45C.glNamedBufferStorage(vbo, capacity + READ_AHEAD_BYTES, STORAGE_FLAGS);
+        map = mapBuffer(vbo, capacity + READ_AHEAD_BYTES);
 
         totalAvailable = capacity;
 
-        // GL_CLIENT_STORAGE_BIT + GL_MAP_PERSISTENT_BIT: storage is pinned system RAM,
-        // GPU reads via PCIe/GART. Pressure is on host RAM, not VRAM.
-        FlwMemoryTracker._allocCpuMemory(capacity);
+        FlwMemoryTracker._allocCpuMemory(capacity + READ_AHEAD_BYTES);
+    }
+
+    private static int maxScatterGroups() {
+        int limit = GL30C.glGetIntegeri(GL43C.GL_MAX_COMPUTE_WORK_GROUP_COUNT, 0);
+        int alignedCopies = Math.max(1, SSBO_ALIGNMENT / (int) ScatterList.STRIDE);
+        if (limit < alignedCopies) {
+            throw new IllegalStateException("SSBO alignment exceeds scatter dispatch capacity");
+        }
+        return limit - limit % alignedCopies;
+    }
+
+    private static long mapBuffer(int buffer, long bytes) {
+        long ptr = GL45C.nglMapNamedBufferRange(buffer, 0, bytes, MAP_FLAGS);
+        if (ptr == MemoryUtil.NULL) {
+            int error = GL11C.glGetError();
+            if (error == GL11C.GL_OUT_OF_MEMORY)
+                throw new OutOfMemoryError("Mapping GL upload buffer of " + bytes + " bytes");
+            throw new IllegalStateException("Mapping GL upload buffer failed with error " + error);
+        }
+        return ptr;
     }
 
     /**
@@ -177,16 +198,20 @@ public class StagingBuffer {
     }
 
     public void flush() {
-        if (transfers.isEmpty()) {
+        if (transfers.isEmpty() && usedCapacity == 0) {
             return;
         }
 
         flushUsedRegion();
 
-        dispatchComputeCopies();
+        if (!transfers.isEmpty()) {
+            dispatchComputeCopies();
+        }
 
         transfers.reset();
-        fencedRegions.enqueue(new FencedRegion(new GlFence(), usedCapacity));
+        if (usedCapacity > 0) {
+            fencedRegions.enqueue(new FencedRegion(new GlFence(), usedCapacity));
+        }
 
         usedCapacity = 0;
         start = pos;
@@ -220,12 +245,11 @@ public class StagingBuffer {
         transfers.delete();
         scatterList.delete();
 
-        // Drain pending fences — each holds a native GL sync object.
         while (!fencedRegions.isEmpty()) {
             fencedRegions.dequeue().fence().delete();
         }
 
-        FlwMemoryTracker._freeCpuMemory(capacity);
+        FlwMemoryTracker._freeCpuMemory(capacity + READ_AHEAD_BYTES);
     }
 
     public MemoryBlock getScratch(long size) {
@@ -248,7 +272,7 @@ public class StagingBuffer {
     }
 
     /**
-     * We <em>could</em> just use {@link #sendCopyCommands}, but that has significant
+     * We <em>could</em> just use {@link GL45C#glCopyNamedBufferSubData}, but that has significant
      * overhead for many small transfers, such as when the object buffer is sparsely updated.
      * <br>
      * Instead, we use a compute shader to scatter the data from the staging buffer to the destination VBOs.
@@ -284,28 +308,36 @@ public class StagingBuffer {
 
         // If there's enough space in the staging buffer still, lets write the scatter in it directly.
         long alignedPos = pos + SSBO_ALIGNMENT - 1 - (pos + SSBO_ALIGNMENT - 1) % SSBO_ALIGNMENT;
+        long alignmentCost = alignedPos - pos;
 
         long remaining = capacity - alignedPos;
-        if (scatterSize <= remaining && scatterSize <= totalAvailable) {
+        int copiesVbo;
+        long copiesOffset;
+        if (scatterSize <= remaining && scatterSize + alignmentCost <= totalAvailable) {
             MemoryUtil.memCopy(scatterList.ptr(), map + alignedPos, scatterSize);
-            // The scatter region lives past flushUsedRegion's flush; without an explicit flush
-            // here, GL_MAP_FLUSH_EXPLICIT_BIT leaves its contents undefined for the dispatch.
+            // CrankShaft: metadata is written after flushUsedRegion, so it needs its own explicit flush.
             GL45C.glFlushMappedNamedBufferRange(vbo, alignedPos, scatterSize);
-            GL30.glBindBufferRange(GL43C.GL_SHADER_STORAGE_BUFFER, 0, vbo, alignedPos, scatterSize);
-
-            long alignmentCost = alignedPos - pos;
+            copiesVbo = vbo;
+            copiesOffset = alignedPos;
 
             usedCapacity += scatterSize + alignmentCost;
             totalAvailable -= scatterSize + alignmentCost;
             pos += scatterSize + alignmentCost;
         } else {
             scatterBuffer.upload(scatterList.ptr(), scatterSize);
-            GL30.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 0, scatterBuffer.handle());
+            copiesVbo = scatterBuffer.handle();
+            copiesOffset = 0;
         }
 
         GL30.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, 2, dstVbo);
 
-        GL43.glDispatchCompute(scatterList.copyCount(), 1, 1);
+        // CrankShaft: slicing the copy list keeps each dispatch within the device limit and each SSBO offset aligned.
+        for (int first = 0; first < scatterList.copyCount(); first += MAX_SCATTER_GROUPS) {
+            int count = Math.min(MAX_SCATTER_GROUPS, scatterList.copyCount() - first);
+            GL30.glBindBufferRange(GL43C.GL_SHADER_STORAGE_BUFFER, 0, copiesVbo,
+                    copiesOffset + first * ScatterList.STRIDE, count * ScatterList.STRIDE);
+            GL43.glDispatchCompute(count, 1, 1);
+        }
 
         scatterList.reset();
     }
@@ -316,27 +348,15 @@ public class StagingBuffer {
         }
     }
 
-    private long sendCopyCommands() {
-        long usedCapacity = 0;
-
-        for (int i = 0; i < transfers.length(); i++) {
-            var size = transfers.size(i);
-
-            usedCapacity += size;
-
-            GL45C.glCopyNamedBufferSubData(vbo, transfers.vbo(i), transfers.srcOffset(i), transfers.dstOffset(i), size);
-        }
-
-        return usedCapacity;
-    }
-
     private void flushUsedRegion() {
-        if (pos < start) {
-            // we rolled around, need to flush 2 ranges.
-            GL45C.glFlushMappedNamedBufferRange(vbo, start, capacity - start);
-            GL45C.glFlushMappedNamedBufferRange(vbo, 0, pos);
-        } else {
-            GL45C.glFlushMappedNamedBufferRange(vbo, start, pos - start);
+        // CrankShaft: equal cursors can also mean a full ring was written.
+        long firstSpan = Math.min(usedCapacity, capacity - start);
+        if (firstSpan > 0) {
+            GL45C.glFlushMappedNamedBufferRange(vbo, start, firstSpan);
+        }
+        long secondSpan = usedCapacity - firstSpan;
+        if (secondSpan > 0) {
+            GL45C.glFlushMappedNamedBufferRange(vbo, 0, secondSpan);
         }
     }
 

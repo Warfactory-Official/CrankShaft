@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.api.backend.RenderContext;
 import dev.engine_room.flywheel.api.task.Plan;
 import dev.engine_room.flywheel.api.visual.BlockEntityVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.backend.engine.TaggedVisualizationContexts;
 import dev.engine_room.flywheel.impl.extension.TileEntityExtension;
 import dev.engine_room.flywheel.lib.task.SimplePlan;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
@@ -48,8 +49,10 @@ public class BlockEntityStorage extends Storage<TileEntity> {
 
     @Override
     @Nullable
-    protected BlockEntityVisual<?> createRaw(VisualizationContext visualizationContext, TileEntity obj, float partialTick) {
-        var visual = ((TileEntityExtension) obj).flw$createVisual(visualizationContext, partialTick);
+    protected BlockEntityVisual<?> createRaw(VisualizationContext visualizationContext, TileEntity obj,
+                                             float partialTick) {
+        var visual = ((TileEntityExtension) obj).flw$createVisual(
+                TaggedVisualizationContexts.forBlockEntity(visualizationContext, obj), partialTick);
         if (visual == null) {
             return null;
         }
@@ -75,11 +78,11 @@ public class BlockEntityStorage extends Storage<TileEntity> {
     @Override
     public Plan<RenderContext> recreateAllPlan(VisualizationContext visualizationContext) {
         return SimplePlan.<RenderContext>of(ctx -> {
-                    synchronized (posLookup) {
-                        posLookup.clear();
-                    }
-                })
-                .then(super.recreateAllPlan(visualizationContext));
+                             synchronized (posLookup) {
+                                 posLookup.clear();
+                             }
+                         })
+                         .then(super.recreateAllPlan(visualizationContext));
     }
 
     @Override

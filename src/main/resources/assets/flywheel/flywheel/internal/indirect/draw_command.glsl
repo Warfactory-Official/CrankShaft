@@ -10,4 +10,5 @@ struct MeshDrawCommand {
 
     uint packedFogAndCutout;
     uint packedMaterialProperties;
+    uint instanceType; // CrankShaft: shared guest draws select their instance layout.
 };

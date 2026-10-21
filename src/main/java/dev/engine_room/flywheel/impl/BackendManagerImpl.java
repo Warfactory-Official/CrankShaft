@@ -14,11 +14,12 @@ import java.util.List;
 
 public final class BackendManagerImpl {
     public static final Backend OFF_BACKEND = SimpleBackend.builder()
-            .engineFactory(level -> {
-                throw new UnsupportedOperationException("Cannot create engine when backend is off.");
-            })
-            .supported(() -> true)
-            .register(ResourceUtil.rl("off"));
+                                                           .engineFactory(level -> {
+                                                               throw new UnsupportedOperationException(
+                                                                       "Cannot create engine when backend is off.");
+                                                           })
+                                                           .supported(() -> true)
+                                                           .register(ResourceUtil.rl("off"));
 
     private static Backend backend = OFF_BACKEND;
 
@@ -71,7 +72,8 @@ public final class BackendManagerImpl {
     }
 
     private static void chooseBackend() {
-        Backend preferred = FlwConfig.INSTANCE.backend();
+        // 1.12.2: keep explicit draw-strategy preferences valid when a shader pack is enabled or disabled.
+        Backend preferred = Backends.forShaderState(FlwConfig.INSTANCE.backend());
         if (preferred.isSupported()) {
             backend = preferred;
             return;

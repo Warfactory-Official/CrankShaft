@@ -1,22 +1,15 @@
 package dev.engine_room.vanillin.oit;
 
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockStainedGlass;
-import net.minecraft.block.BlockStainedGlassPane;
+import dev.engine_room.flywheel.backend.engine.shaderpack.GuestRendering;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.BlockRendererDispatcher;
-import net.minecraft.client.renderer.BufferBuilder;
-import net.minecraft.client.renderer.GlStateManager;
-import net.minecraft.client.renderer.OpenGlHelper;
-import net.minecraft.client.renderer.Tessellator;
-import net.minecraft.client.renderer.tileentity.TileEntitySpecialRenderer;
+import net.minecraft.client.renderer.*;
 import net.minecraft.client.renderer.texture.TextureMap;
+import net.minecraft.client.renderer.tileentity.TileEntitySpecialRenderer;
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
-import net.minecraft.init.Blocks;
-import net.minecraft.item.EnumDyeColor;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
+import net.minecraftforge.fml.common.Loader;
 import org.lwjgl.opengl.GL11;
 
 /**
@@ -32,7 +25,7 @@ public final class OitDemoRenderer extends TileEntitySpecialRenderer<TileEntityO
         World world = te.getWorld();
         BlockPos pos = te.getPos();
         IBlockState markerState = world.getBlockState(pos);
-        IBlockState renderedState = resolveRenderedState(markerState.getBlock(), markerState);
+        IBlockState renderedState = OitDemoBlockAccess.renderedState(markerState);
 
         Minecraft mc = Minecraft.getMinecraft();
         mc.getTextureManager().bindTexture(TextureMap.LOCATION_BLOCKS_TEXTURE);
@@ -48,9 +41,12 @@ public final class OitDemoRenderer extends TileEntitySpecialRenderer<TileEntityO
 
         Tessellator tess = Tessellator.getInstance();
         BufferBuilder buf = tess.getBuffer();
-        buf.begin(GL11.GL_QUADS, DefaultVertexFormats.BLOCK);
+        // AUSM only supplies material attributes when the buffer uses its extended block format.
+        var format = Loader.isModLoaded("ausm") ? GuestRendering.blockVertexFormat() : DefaultVertexFormats.BLOCK;
+        buf.begin(GL11.GL_QUADS, format);
         buf.setTranslation(x - pos.getX(), y - pos.getY(), z - pos.getZ());
-        mc.getBlockRendererDispatcher().renderBlock(renderedState, pos, world, buf);
+        // Keep the native dispatcher's shader-pack material metadata hooks.
+        mc.getBlockRendererDispatcher().renderBlock(renderedState, pos, new OitDemoBlockAccess(world), buf);
         buf.setTranslation(0, 0, 0);
         tess.draw();
 
@@ -59,18 +55,5 @@ public final class OitDemoRenderer extends TileEntitySpecialRenderer<TileEntityO
         GlStateManager.popMatrix();
     }
 
-    private static IBlockState resolveRenderedState(Block markerBlock, IBlockState markerState) {
-        if (markerBlock instanceof BlockOitDemoStainedGlass) {
-            EnumDyeColor color = markerState.getValue(BlockOitDemoStainedGlass.COLOR);
-            return Blocks.STAINED_GLASS.getDefaultState().withProperty(BlockStainedGlass.COLOR, color);
-        }
-        if (markerBlock instanceof BlockOitDemoStainedGlassPane) {
-            EnumDyeColor color = markerState.getValue(BlockOitDemoStainedGlassPane.COLOR);
-            return Blocks.STAINED_GLASS_PANE.getDefaultState().withProperty(BlockStainedGlassPane.COLOR, color);
-        }
-        if (markerBlock instanceof BlockOitDemoGlassPane) {
-            return Blocks.GLASS_PANE.getDefaultState();
-        }
-        return Blocks.GLASS.getDefaultState();
-    }
+
 }

@@ -12,12 +12,13 @@ import dev.engine_room.flywheel.api.task.Plan;
 import dev.engine_room.flywheel.api.visualization.VisualEmbedding;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 import dev.engine_room.flywheel.backend.FlwBackend;
-import dev.engine_room.flywheel.backend.engine.embed.EmbeddedEnvironment;
-import dev.engine_room.flywheel.backend.engine.embed.Environment;
-import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
+import dev.engine_room.flywheel.backend.engine.embed.*;
 import dev.engine_room.flywheel.backend.engine.uniform.Uniforms;
 import dev.engine_room.flywheel.backend.gl.GlStateTracker;
+import dev.engine_room.flywheel.lib.model.PackTaggedModel;
 import it.unimi.dsi.fastutil.longs.LongSet;
+import net.minecraft.entity.Entity;
+import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.math.Vec3i;
@@ -25,6 +26,7 @@ import net.minecraft.world.EnumSkyBlock;
 import net.minecraft.world.World;
 
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class EngineImpl implements Engine {
     private final DrawManager<? extends AbstractInstancer<?>> drawManager;
@@ -49,7 +51,7 @@ public class EngineImpl implements Engine {
     @Override
     public Plan<RenderContext> createFramePlan() {
         return drawManager.createFramePlan()
-                .and(lightStorage.createFramePlan());
+                          .and(lightStorage.createFramePlan());
     }
 
     @Override
@@ -136,7 +138,9 @@ public class EngineImpl implements Engine {
         drawManager.triggerFallback();
     }
 
-    public <I extends Instance> Instancer<I> instancer(Environment environment, InstanceType<I> type, Model model, int bias) {
+    public <I extends Instance> Instancer<I> instancer(Environment environment, InstanceType<I> type, Model model,
+                                                       int bias) {
+        if (!drawManager.supportsRenderIdentity()) model = PackTaggedModel.unwrap(model);
         return drawManager.getInstancer(environment, type, model, bias);
     }
 
@@ -152,11 +156,37 @@ public class EngineImpl implements Engine {
         return drawManager;
     }
 
-    private class VisualizationContextImpl implements VisualizationContext {
+    // Compat with shader packs: retain visual identities across reloads; the host resolves their current material IDs.
+    private class VisualizationContextImpl implements VisualizationContext, TaggedVisualizationContexts {
         private final InstancerProviderImpl instancerProvider;
+        private final RenderIdentity identity;
+        private final ConcurrentHashMap<RenderIdentity, VisualizationContextImpl> tagged;
 
         public VisualizationContextImpl() {
-            instancerProvider = new InstancerProviderImpl(EngineImpl.this);
+            this(null);
+        }
+
+        private VisualizationContextImpl(RenderIdentity identity) {
+            this.identity = identity;
+            tagged = identity == null ? new ConcurrentHashMap<>() : null;
+            instancerProvider = new InstancerProviderImpl(EngineImpl.this,
+                    identity == null ? GlobalEnvironment.INSTANCE : new TaggedEnvironment(identity));
+        }
+
+        @Override
+        public VisualizationContext forEntity(Entity entity) {
+            return drawManager.supportsRenderIdentity() ? forIdentity(RenderIdentity.of(entity)) : this;
+        }
+
+        @Override
+        public VisualizationContext forBlockEntity(TileEntity entity) {
+            return drawManager.supportsRenderIdentity() ? forIdentity(RenderIdentity.of(entity)) : this;
+        }
+
+        private VisualizationContext forIdentity(RenderIdentity requested) {
+            if (requested.equals(identity)) return this;
+            return tagged == null ? new VisualizationContextImpl(requested) : tagged.computeIfAbsent(requested,
+                    VisualizationContextImpl::new);
         }
 
         @Override
@@ -171,7 +201,7 @@ public class EngineImpl implements Engine {
 
         @Override
         public VisualEmbedding createEmbedding(Vec3i renderOrigin) {
-            var out = new EmbeddedEnvironment(EngineImpl.this, renderOrigin);
+            var out = new EmbeddedEnvironment(EngineImpl.this, renderOrigin, null, identity);
             environmentStorage.track(out);
             return out;
         }

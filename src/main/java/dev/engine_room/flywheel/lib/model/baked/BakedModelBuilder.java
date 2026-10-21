@@ -36,8 +36,8 @@ import java.util.List;
  */
 public final class BakedModelBuilder {
     private static final Material DEFAULT_MATERIAL = SimpleMaterial.builderOf(Materials.CUTOUT)
-            .texture(TextureMap.LOCATION_BLOCKS_TEXTURE)
-            .build();
+                                                                   .texture(TextureMap.LOCATION_BLOCKS_TEXTURE)
+                                                                   .build();
 
     private final IBakedModel model;
     private @Nullable IBlockState state;
@@ -78,21 +78,27 @@ public final class BakedModelBuilder {
         return this;
     }
 
-    /** Single material for every emitted quad. Mutually exclusive with {@link #materialFunc}. */
+    /**
+     * Single material for every emitted quad. Mutually exclusive with {@link #materialFunc}.
+     */
     public BakedModelBuilder material(Material material) {
         this.singleMaterial = material;
         this.materialFunc = null;
         return this;
     }
 
-    /** Route quads per (layer, shaded, ao) — return {@code null} to drop a quad. */
+    /**
+     * Route quads per (layer, shaded, ao) — return {@code null} to drop a quad.
+     */
     public BakedModelBuilder materialFunc(BlockMaterialFunction materialFunc) {
         this.materialFunc = materialFunc;
         this.singleMaterial = null;
         return this;
     }
 
-    /** Force a single render layer instead of deriving from state via {@code canRenderInLayer}. */
+    /**
+     * Force a single render layer instead of deriving from state via {@code canRenderInLayer}.
+     */
     public BakedModelBuilder layer(BlockRenderLayer layer) {
         this.forcedLayer = layer;
         return this;
@@ -110,9 +116,10 @@ public final class BakedModelBuilder {
         // block isn't self-emissive. Player AO setting intentionally NOT checked — bakes should be
         // consistent across the toggle. Emitter threshold delegated to EmissiveBlockAoBakingFix (MC-225516).
         boolean useAo = ao && FlwConfig.INSTANCE.emissiveBlockAoBakingFix()
-                .shouldApplyAo(lighterState.getLightValue(level, pos));
+                                                .shouldApplyAo(lighterState.getLightValue(level, pos));
 
         MeshAccumulator accumulator = new MeshAccumulator();
+        accumulator.block(state, pose);
         LighterPipeline pipeline = new LighterPipeline(accumulator, Minecraft.getMinecraft().getBlockColors());
         pipeline.setupBlock(level, lighterState, pos);
         try {

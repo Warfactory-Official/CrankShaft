@@ -16,7 +16,7 @@ public class IndirectBuffers {
 
     public static final long MODEL_STRIDE = 28;
 
-    public static final long DRAW_COMMAND_STRIDE = 36;
+    public static final long DRAW_COMMAND_STRIDE = 40;
     public static final long DRAW_COMMAND_OFFSET = 0;
 
     private static final long HANDLE_OFFSET = 0;
@@ -39,21 +39,24 @@ public class IndirectBuffers {
     private static final float INSTANCE_GROWTH_FACTOR = 1.25f;
     private static final float MODEL_GROWTH_FACTOR = 2f;
     private static final float DRAW_GROWTH_FACTOR = 2f;
-
-    private final MemoryBlock multiBindBlock;
-
     public final ObjectStorage objectStorage;
     public final ResizableStorageArray drawInstanceIndex;
     public final ResizableStorageArray model;
     public final ResizableStorageArray draw;
+    private final MemoryBlock multiBindBlock;
 
     IndirectBuffers(long instanceStride) {
+        this(instanceStride, null);
+    }
+
+    IndirectBuffers(long instanceStride, SharedIndirectStorage shared) {
         this.multiBindBlock = MemoryBlock.calloc(BUFFERS_SIZE_BYTES, 1);
 
-        objectStorage = new ObjectStorage(instanceStride);
-        drawInstanceIndex = new ResizableStorageArray(INT_SIZE, INSTANCE_GROWTH_FACTOR);
-        model = new ResizableStorageArray(MODEL_STRIDE, MODEL_GROWTH_FACTOR);
-        draw = new ResizableStorageArray(DRAW_COMMAND_STRIDE, DRAW_GROWTH_FACTOR);
+        objectStorage = new ObjectStorage(instanceStride, shared == null ? null : shared.objects);
+        drawInstanceIndex = new ResizableStorageArray(INT_SIZE, INSTANCE_GROWTH_FACTOR,
+                shared == null ? null : shared.indices);
+        model = new ResizableStorageArray(MODEL_STRIDE, MODEL_GROWTH_FACTOR, shared == null ? null : shared.models);
+        draw = new ResizableStorageArray(DRAW_COMMAND_STRIDE, DRAW_GROWTH_FACTOR, shared == null ? null : shared.draws);
     }
 
     void updateCounts(int instanceCount, int modelCount, int drawCount) {
@@ -69,8 +72,14 @@ public class IndirectBuffers {
         MemoryUtil.memPutInt(ptr + MODEL_HANDLE_OFFSET, model.handle());
         MemoryUtil.memPutInt(ptr + DRAW_HANDLE_OFFSET, draw.handle());
 
-        MemoryUtil.memPutAddress(ptr + PAGE_FRAME_DESCRIPTOR_SIZE_OFFSET, objectStorage.frameDescriptorBuffer.capacity());
-        MemoryUtil.memPutAddress(ptr + INSTANCE_SIZE_OFFSET, objectStorage.objectBuffer.capacity());
+        MemoryUtil.memPutAddress(ptr + PAGE_FRAME_DESCRIPTOR_SIZE_OFFSET,
+                objectStorage.frameDescriptorBuffer.capacity());
+        MemoryUtil.memPutAddress(ptr + OFFSET_OFFSET + BufferBindings.INSTANCE * PTR_SIZE, objectStorage.byteOffset());
+        MemoryUtil.memPutAddress(ptr + OFFSET_OFFSET + BufferBindings.DRAW_INSTANCE_INDEX * PTR_SIZE,
+                drawInstanceIndex.byteOffset());
+        MemoryUtil.memPutAddress(ptr + OFFSET_OFFSET + BufferBindings.MODEL * PTR_SIZE, model.byteOffset());
+        MemoryUtil.memPutAddress(ptr + OFFSET_OFFSET + BufferBindings.DRAW * PTR_SIZE, draw.byteOffset());
+        MemoryUtil.memPutAddress(ptr + INSTANCE_SIZE_OFFSET, objectStorage.byteCapacity());
         MemoryUtil.memPutAddress(ptr + DRAW_INSTANCE_INDEX_SIZE_OFFSET, INT_SIZE * instanceCount);
         MemoryUtil.memPutAddress(ptr + MODEL_SIZE_OFFSET, MODEL_STRIDE * modelCount);
         MemoryUtil.memPutAddress(ptr + DRAW_SIZE_OFFSET, DRAW_COMMAND_STRIDE * drawCount);
@@ -95,7 +104,8 @@ public class IndirectBuffers {
 
     private void multiBind(int base, int count) {
         final long ptr = multiBindBlock.ptr();
-        nglBindBuffersRange(GL_SHADER_STORAGE_BUFFER, base, count, ptr + base * INT_SIZE, ptr + OFFSET_OFFSET + base * PTR_SIZE, ptr + SIZE_OFFSET + base * PTR_SIZE);
+        nglBindBuffersRange(GL_SHADER_STORAGE_BUFFER, base, count, ptr + base * INT_SIZE,
+                ptr + OFFSET_OFFSET + base * PTR_SIZE, ptr + SIZE_OFFSET + base * PTR_SIZE);
     }
 
     public void delete() {

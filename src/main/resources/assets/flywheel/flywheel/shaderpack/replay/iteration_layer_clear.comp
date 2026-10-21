@@ -1,0 +1,89 @@
+#version 430 core
+layout(local_size_x = 8, local_size_y = 8) in;
+const vec2 workGroupsRender = vec2(1.0, 1.0);
+uniform vec2 screenSize;
+uniform int frameCounter;
+layout(std430, binding = 1) coherent buffer FlwHeads { uint flw_heads[]; };
+layout(std430, binding = 2) coherent buffer FlwNodes { uvec4 flw_nodes[]; };
+layout(std430, binding = 3) coherent buffer FlwCounts { uint flw_count; uint flw_overflow; uint flw_maxLayers; uint flw_pad; };
+layout(std430, binding = 4) coherent buffer FlwTiles { uint flw_tiles[]; };
+uniform bool flw_oitActive;
+
+uint flw_reserveSlots(uint slots) {
+    return atomicAdd(flw_count, slots);
+}
+
+bool flw_layerBefore(uint left, uint right) {
+    uvec4 a = flw_nodes[left];
+    uvec4 b = flw_nodes[right];
+    if (a.y != b.y) return a.y < b.y;
+    if (a.z != b.z) return a.z < b.z;
+    return a.w <= b.w;
+}
+
+void flw_captureLight(ivec2 pixel, float depth, vec4 radiance, uint width) {
+    if (!flw_oitActive || all(equal(radiance, vec4(0.0)))) return;
+    uint node = flw_reserveSlots(1u);
+    if (node >= uint(flw_nodes.length())) { atomicOr(flw_overflow, 1u); return; }
+    uint previous = atomicExchange(flw_heads[uint(pixel.y) * width + uint(pixel.x)], node);
+    flw_nodes[node] = uvec4(previous, floatBitsToUint(depth), packHalf2x16(radiance.rg), packHalf2x16(radiance.ba));
+}
+
+vec3 flw_resolveLight(vec3 background, ivec2 pixel, float front, float back, uvec2 size) {
+    if (!flw_oitActive || flw_overflow != 0u || any(greaterThanEqual(uvec2(pixel), size))) return background;
+    uint node = flw_heads[uint(pixel.y) * size.x + uint(pixel.x)];
+    vec3 light = vec3(0.0);
+    float transmission = 1.0;
+    while (node != 0xffffffffu) {
+        uvec4 entry = flw_nodes[node];
+        float depth = uintBitsToFloat(entry.y);
+        if (depth >= back) break;
+        if (depth >= front) {
+            vec4 value = vec4(unpackHalf2x16(entry.z), unpackHalf2x16(entry.w));
+            light += transmission * value.rgb;
+            transmission *= 1.0 - value.a;
+        }
+        node = entry.x;
+    }
+    return light + transmission * background;
+}
+
+layout(std430, binding = 5) buffer FlwOpaque { uvec4 flw_opaque[]; };
+layout(std430, binding = 6) coherent buffer FlwMaterialHeads { uint flw_materialHeads[]; };
+
+bool flw_materialBefore(uint left, uint right) {
+    for (uint i = 0u; i < 3u; i++) {
+        uvec4 a = flw_nodes[left + i], b = flw_nodes[right + i];
+        for (uint j = i == 0u?1u:0u; j < 4u; j++) if (a[j] != b[j]) return a[j] < b[j];
+    }
+    return true;
+}
+
+uint flw_materialAt(uint pixel, int layer) {
+    uint node = flw_materialHeads[pixel];
+    for (int i = 0; i < layer && node != 0xffffffffu; ++i) node = flw_nodes[node].x;
+    return node;
+}
+
+void flw_captureMaterial(ivec2 pixel, float depth, vec4 albedo, vec4 data, vec4 normal,
+        vec4 water, vec2 waterDepth, uint width) {
+    if (!flw_oitActive) return;
+    uint node = flw_reserveSlots(3u);
+    if (node + 2u >= uint(flw_nodes.length())) { atomicOr(flw_overflow, 1u); return; }
+    uint previous = atomicExchange(flw_materialHeads[uint(pixel.y) * width + uint(pixel.x)], node);
+    flw_nodes[node] = uvec4(previous, floatBitsToUint(depth), packHalf2x16(albedo.rg), packHalf2x16(albedo.ba));
+    flw_nodes[node + 1u] = uvec4(packUnorm2x16(data.xy), packUnorm2x16(data.zw),
+            packUnorm2x16(normal.xy), packUnorm2x16(normal.zw));
+    flw_nodes[node + 2u] = uvec4(packUnorm2x16(water.xy), packUnorm2x16(water.zw), floatBitsToUint(waterDepth));
+}
+
+void main() {
+    if (!flw_oitActive) return;
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(pixel, uvec2(screenSize)))) return;
+    uint offset = pixel.y * uint(screenSize.x) + pixel.x;
+    flw_heads[offset] = 0xffffffffu;
+    flw_materialHeads[offset] = 0xffffffffu;
+    if (offset == 0u) { flw_pad = frameCounter > 0 ? flw_maxLayers : 0u; flw_count = 0u; flw_overflow = 0u; flw_maxLayers = 0u; }
+    if (offset < uint(flw_tiles.length())) flw_tiles[offset] = 0u;
+}

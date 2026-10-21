@@ -9,23 +9,48 @@ import net.minecraft.client.renderer.GlStateManager;
 import org.lwjgl.opengl.*;
 
 public class DepthPyramid {
+    private static final long PLACEHOLDER_BYTES = 4L;
     private final IndirectPrograms programs;
-
     public int pyramidTextureId = -1;
-
-    /** 1×1 R32F=1.0 fallback bound when the pyramid hasn't been generated yet (e.g. first frame
-     *  before mc.framebuffer is fully initialized). The cull shader's `depthSphere <= depth`
-     *  test against depth=1.0 always passes, so culling degenerates to frustum-only. Without
-     *  this, sampling an unbound texture returns 0 and the test would reject every instance. */
+    /**
+     * 1×1 R32F=1.0 fallback bound when the pyramid hasn't been generated yet (e.g. first frame
+     * before mc.framebuffer is fully initialized). The cull shader's `depthSphere <= depth`
+     * test against depth=1.0 always passes, so culling degenerates to frustum-only. Without
+     * this, sampling an unbound texture returns 0 and the test would reject every instance.
+     */
     private int placeholderTextureId = -1;
-
     private int lastWidth = -1;
     private int lastHeight = -1;
-    private static final long PLACEHOLDER_BYTES = 4L;
     private long pyramidBytes;
 
     public DepthPyramid(IndirectPrograms programs) {
         this.programs = programs;
+    }
+
+    public static int mip0Size(int screenSize) {
+        return Integer.highestOneBit(screenSize);
+    }
+
+    private static long mipChainBytes(int mipLevels, int width, int height) {
+        long total = 0;
+        for (int i = 0; i < mipLevels; i++) {
+            int w = Math.max(1, width >> i);
+            int h = Math.max(1, height >> i);
+            total += (long) w * h * 4L;
+        }
+        return total;
+    }
+
+    public static int getImageMipLevels(int width, int height) {
+        int result = 1;
+
+        while (width > 1 && height > 1) {
+            result++;
+            width >>= 1;
+            height >>= 1;
+        }
+
+        return result;
     }
 
     public void generate() {
@@ -36,7 +61,7 @@ public class DepthPyramid {
         regenerate(mcFb.depthBuffer, mcFb.framebufferTextureWidth, mcFb.framebufferTextureHeight);
     }
 
-    private void regenerate(int depthBufferTextureId, int framebufferWidth, int framebufferHeight) {
+    public void regenerate(int depthBufferTextureId, int framebufferWidth, int framebufferHeight) {
         int width = mip0Size(framebufferWidth);
         int height = mip0Size(framebufferHeight);
         int mipLevels = getImageMipLevels(width, height);
@@ -135,31 +160,5 @@ public class DepthPyramid {
         GL45.glTextureParameteri(pyramidTextureId, GL14.GL_TEXTURE_COMPARE_MODE, GL11.GL_NONE);
         GL45.glTextureParameteri(pyramidTextureId, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
         GL45.glTextureParameteri(pyramidTextureId, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
-    }
-
-    public static int mip0Size(int screenSize) {
-        return Integer.highestOneBit(screenSize);
-    }
-
-    private static long mipChainBytes(int mipLevels, int width, int height) {
-        long total = 0;
-        for (int i = 0; i < mipLevels; i++) {
-            int w = Math.max(1, width >> i);
-            int h = Math.max(1, height >> i);
-            total += (long) w * h * 4L;
-        }
-        return total;
-    }
-
-    public static int getImageMipLevels(int width, int height) {
-        int result = 1;
-
-        while (width > 1 && height > 1) {
-            result++;
-            width >>= 1;
-            height >>= 1;
-        }
-
-        return result;
     }
 }

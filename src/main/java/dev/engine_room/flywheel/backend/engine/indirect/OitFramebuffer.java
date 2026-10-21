@@ -7,9 +7,7 @@ import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.gl.GlTextureUnit;
 import dev.engine_room.flywheel.lib.memory.FlwMemoryTracker;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GlStateManager;
-import net.minecraft.client.shader.Framebuffer;
 import org.lwjgl.opengl.*;
 
 public class OitFramebuffer {
@@ -31,6 +29,10 @@ public class OitFramebuffer {
     private int lastHeight = -1;
     private static final long BYTES_PER_PIXEL = 8L + 8L * 4L + 8L;
     private long trackedBytes;
+    private int targetFramebuffer;
+    private final int[] targetViewport = new int[4];
+    private final int[] targetDrawBuffers = new int[8];
+    private final int[] compositeDrawBuffers = new int[1];
 
     public OitFramebuffer(OitPrograms programs) {
         this.programs = programs;
@@ -53,9 +55,29 @@ public class OitFramebuffer {
         // composite "wrote no fragments". Disable for the OIT block; composite() re-enables.
         GlStateManager.disableAlpha();
 
-        Framebuffer renderTarget = Minecraft.getMinecraft().getFramebuffer();
+        // Compat with shader pipelines: their world target can differ from Minecraft's main FBO.
+        targetFramebuffer = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+        GL11.glGetIntegerv(GL11.GL_VIEWPORT, targetViewport);
+        for (var i = 0; i < targetDrawBuffers.length; i++) {
+            targetDrawBuffers[i] = GL11.glGetInteger(GL20.GL_DRAW_BUFFER0 + i);
+        }
+        compositeDrawBuffers[0] = GL11.GL_NONE;
+        for (var drawBuffer : targetDrawBuffers) {
+            if (drawBuffer != GL11.GL_NONE) {
+                compositeDrawBuffers[0] = drawBuffer;
+                break;
+            }
+        }
+        if (compositeDrawBuffers[0] == GL11.GL_NONE) {
+            throw new IllegalStateException("OIT world target has no color attachment: " + targetFramebuffer);
+        }
+        var depthType = GL30.glGetFramebufferAttachmentParameteri(GL30.GL_DRAW_FRAMEBUFFER,
+                GL30.GL_DEPTH_ATTACHMENT, GL30.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE);
+        var depth = GL30.glGetFramebufferAttachmentParameteri(GL30.GL_DRAW_FRAMEBUFFER,
+                GL30.GL_DEPTH_ATTACHMENT, GL30.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+        var readFramebuffer = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
 
-        maybeResizeFBO(renderTarget.framebufferTextureWidth, renderTarget.framebufferTextureHeight);
+        maybeResizeFBO(targetViewport[2], targetViewport[3]);
 
         Samplers.COEFFICIENTS.makeActive();
         GlStateManager.bindTexture(0);
@@ -69,11 +91,16 @@ public class OitFramebuffer {
             GlStateManager.bindTexture(NoiseTextures.BLUE_NOISE.getGlTextureId());
         }
 
-        GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, fbo);
-        // MixinFramebuffer turns the main FBO's depthBuffer into a GL_TEXTURE_2D so HiZ
-        // can sample it; attach it as a texture here so OIT shares the same depth state as the
-        // main pass. Both mixin and this code ship in the same jar, so the swap is guaranteed.
-        GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT, GL11.GL_TEXTURE_2D, renderTarget.depthBuffer, 0);
+        GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, readFramebuffer);
+        GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, fbo);
+        GL11.glViewport(0, 0, targetViewport[2], targetViewport[3]);
+        switch (depthType) {
+            case GL11.GL_TEXTURE -> GL30.glFramebufferTexture2D(GL30.GL_DRAW_FRAMEBUFFER,
+                    GL30.GL_DEPTH_ATTACHMENT, GL11.GL_TEXTURE_2D, depth, 0);
+            case GL30.GL_RENDERBUFFER -> GL30.glFramebufferRenderbuffer(GL30.GL_DRAW_FRAMEBUFFER,
+                    GL30.GL_DEPTH_ATTACHMENT, GL30.GL_RENDERBUFFER, depth);
+            default -> throw new IllegalStateException("OIT world target has no depth attachment: " + targetFramebuffer);
+        }
     }
 
     /**
@@ -167,12 +194,12 @@ public class OitFramebuffer {
     }
 
     /**
-     * Composite the accumulated luminance onto the main framebuffer.
+     * Composite the accumulated luminance onto the world framebuffer.
      */
     public void composite() {
-        Minecraft.getMinecraft()
-                .getFramebuffer()
-                .bindFramebuffer(false);
+        GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, targetFramebuffer);
+        GL11.glViewport(targetViewport[0], targetViewport[1], targetViewport[2], targetViewport[3]);
+        GL20.glDrawBuffers(compositeDrawBuffers);
 
         // The composite shader writes out the closest depth to gl_FragDepth.
         // depthMask = true: OIT stuff renders on top of other transparent stuff.
@@ -193,9 +220,7 @@ public class OitFramebuffer {
 
         drawFullscreenQuad();
 
-        Minecraft.getMinecraft()
-                .getFramebuffer()
-                .bindFramebuffer(false);
+        GL20.glDrawBuffers(targetDrawBuffers);
 
         // Re-enable for vanilla MC's subsequent cutout draws (clouds, weather etc).
         GlStateManager.enableAlpha();

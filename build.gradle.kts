@@ -2,7 +2,8 @@ import com.gtnewhorizons.retrofuturagradle.MinecraftExtension
 import com.gtnewhorizons.retrofuturagradle.mcp.InjectTagsTask
 import com.gtnewhorizons.retrofuturagradle.mcp.MCPTasks
 import com.gtnewhorizons.retrofuturagradle.mcp.ReobfuscatedJar
-import java.util.Properties
+import mov.movblock.tenon.gradle.TenonArguments
+import java.util.*
 
 plugins {
     java
@@ -12,6 +13,7 @@ plugins {
     eclipse
     `maven-publish`
     id("com.gtnewhorizons.retrofuturagradle")
+    id("mov.movblock.tenon")
 }
 
 run {
@@ -30,7 +32,8 @@ fun propBool(name: String, default: Boolean = false): Boolean =
     project.findProperty(name)?.toString()?.toBoolean() ?: default
 
 group = prop("modGroup")
-version = prop("modVersion")
+version = "${prop("modVersion")}+mc${prop("minecraftVersion")}" +
+        if (propBool("build.snapshot")) "-SNAPSHOT" else ""
 base { archivesName.set(prop("modArchivesBaseName")) }
 
 java {
@@ -61,9 +64,30 @@ sourceSets {
     }
 }
 
-listOf("compileJava", "compileApiJava", "compileVanillinJava").forEach { taskName ->
+tenon { preprocess.set(false) }
+listOf("main", "vanillin").forEach { name ->
+    tenon.sourceSet(sourceSets[name]) {
+        access {
+            enabled.set(true)
+            platform.set("neoforge")
+            accessTransformers.from("src/main/resources/META-INF/flywheel_at.cfg")
+        }
+    }
+}
+
+val crankshaftCompiles = setOf("compileJava", "compileApiJava", "compileVanillinJava")
+crankshaftCompiles.forEach { taskName ->
     tasks.named<JavaCompile>(taskName).configure {
         options.compilerArgs.add("--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED")
+    }
+}
+
+// RFG also registers Minecraft/Forge source sets; Tenon's source checks apply only to our own code.
+gradle.projectsEvaluated {
+    tasks.withType<JavaCompile>().configureEach {
+        if (name !in crankshaftCompiles) {
+            options.compilerArgumentProviders.removeAll { it is TenonArguments }
+        }
     }
 }
 
@@ -108,10 +132,9 @@ configure<MinecraftExtension> {
 
     injectedTags.put(prop("gradleTokenModId"), prop("modId"))
     injectedTags.put(prop("gradleTokenModName"), prop("modName"))
-    injectedTags.put(prop("gradleTokenVersion"), prop("modVersion"))
+    injectedTags.put(prop("gradleTokenVersion"), project.version.toString())
     injectedTags.put("VANILLIN_ID", prop("vanillinId"))
     injectedTags.put("VANILLIN_NAME", prop("vanillinName"))
-    injectedTags.put("VANILLIN_VERSION", prop("vanillinVersion"))
 
     extraRunJvmArguments.add("-ea:${prop("modGroup")}")
     extraRunJvmArguments.add("-Dterminal.jline=true")
@@ -143,6 +166,9 @@ run {
 }
 
 repositories {
+    maven("https://repo.warfactory.co/snapshots")
+    maven("https://maven.fabricmc.net/")
+    maven("https://maven.neoforged.net/releases/")
     maven {
         name = "GTNH Maven"
         url = uri("https://nexus.gtnewhorizons.com/repository/public/")
@@ -189,7 +215,7 @@ tasks.named<Copy>("processResources").configure {
     val mainResourceProps = mapOf(
         "modId" to prop("modId"),
         "modName" to prop("modName"),
-        "modVersion" to prop("modVersion"),
+        "modVersion" to project.version.toString(),
         "minecraftVersion" to prop("minecraftVersion"),
     )
     inputs.properties(mainResourceProps)
@@ -201,7 +227,7 @@ tasks.named<Copy>("processVanillinResources").configure {
         "modId" to prop("modId"),
         "vanillinId" to prop("vanillinId"),
         "vanillinName" to prop("vanillinName"),
-        "vanillinVersion" to prop("vanillinVersion"),
+        "modVersion" to project.version.toString(),
         "minecraftVersion" to prop("minecraftVersion"),
     )
     inputs.properties(vanillinResourceProps)
@@ -220,6 +246,11 @@ val fmlAtAttribute = prop("accessTransformersFile")
     .joinToString(",")
 
 tasks.jar.configure {
+    from(listOf("LICENSE", "THIRD_PARTY_NOTICES")) { into("META-INF") }
+    from({ embed.map { zipTree(it) } }) {
+        exclude("META-INF/MANIFEST.MF", "META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
+        exclude("org/anarres/cpp/Main.class", "org/anarres/cpp/CppTask*.class")
+    }
     manifest {
         attributes(
             "Specification-Title" to prop("modName"),
@@ -235,17 +266,23 @@ tasks.jar.configure {
 
 val vanillinJar = tasks.register<Jar>("vanillinJar") {
     archiveBaseName.set("vanillate")
-    archiveVersion.set(prop("vanillinVersion"))
+    archiveVersion.set(project.version.toString())
     archiveClassifier.set("dev")
     from(sourceSets["vanillin"].output)
     dependsOn(tasks.named("compileVanillinJava"), tasks.named("processVanillinResources"))
     manifest {
         attributes(
             "Specification-Title" to prop("vanillinName"),
-            "Specification-Version" to prop("vanillinVersion"),
+            "Specification-Version" to project.version,
             "Implementation-Title" to prop("vanillinName"),
-            "Implementation-Version" to prop("vanillinVersion"),
+            "Implementation-Version" to project.version,
+            "Maven-Artifact" to "${project.group}:vanillate:${project.version}",
         )
+        // Cleanroom uses the snapshot timestamp when extracting contained Maven artifacts.
+        if (project.version.toString().endsWith("-SNAPSHOT")) {
+            attributes("Timestamp" to providers.environmentVariable("SOURCE_DATE_EPOCH")
+                .map { it.toLong() * 1000 }.getOrElse(System.currentTimeMillis()))
+        }
     }
 }
 
@@ -262,21 +299,29 @@ val reobfVanillinJar = tasks.register<ReobfuscatedJar>("reobfVanillinJar") {
     recompMcJar.set(base.recompMcJar)
     referenceClasspath.from(base.referenceClasspath)
     archiveBaseName.set("vanillate")
-    archiveVersion.set(prop("vanillinVersion"))
+    archiveVersion.set(project.version.toString())
     destinationDirectory.set(layout.buildDirectory.dir("libs"))
+}
+
+tasks.jar.configure {
+    // Reobfuscation does not descend into nested JARs, so embed the already-remapped Vanillate artifact.
+    from(reobfVanillinJar.flatMap { it.archiveFile }) { into("META-INF/libraries") }
+    doFirst {
+        manifest.attributes("ContainedDeps" to reobfVanillinJar.get().archiveFileName.get())
+    }
 }
 
 val vanillinSourcesJar = tasks.register<Jar>("vanillinSourcesJar") {
     archiveBaseName.set("vanillate")
-    archiveVersion.set(prop("vanillinVersion"))
+    archiveVersion.set(project.version.toString())
     archiveClassifier.set("sources")
     from(sourceSets["vanillin"].allSource)
     manifest {
         attributes(
             "Specification-Title" to prop("vanillinName"),
-            "Specification-Version" to prop("vanillinVersion"),
+            "Specification-Version" to project.version,
             "Implementation-Title" to prop("vanillinName"),
-            "Implementation-Version" to prop("vanillinVersion"),
+            "Implementation-Version" to project.version,
         )
     }
 }
@@ -318,8 +363,6 @@ afterEvaluate {
 
 val publishGroupId = System.getenv("ARTIFACT_GROUP_ID")
     ?: propOrEmpty("mavenArtifactGroup").ifEmpty { prop("modGroup") }
-val publishVersion = System.getenv("RELEASE_VERSION") ?: prop("modVersion")
-val publishVanillinVersion = System.getenv("VANILLIN_RELEASE_VERSION") ?: prop("vanillinVersion")
 val publishUrl = System.getenv("MAVEN_URL") ?: propOrEmpty("customMavenPublishUrl")
 
 publishing {
@@ -329,14 +372,14 @@ publishing {
             artifact(tasks.named("sourcesJar"))
             groupId = publishGroupId
             artifactId = prop("modArchivesBaseName")
-            version = publishVersion
+            version = project.version.toString()
         }
         create<MavenPublication>("vanillate") {
             artifact(reobfVanillinJar)
             artifact(vanillinSourcesJar)
             groupId = publishGroupId
             artifactId = "vanillate"
-            version = publishVanillinVersion
+            version = project.version.toString()
         }
     }
     repositories {

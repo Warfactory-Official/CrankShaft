@@ -83,6 +83,10 @@ public class IndexPool {
         vertexArray.setElementBuffer(ebo.handle());
     }
 
+    public int bufferHandle() {
+        return ebo.handle();
+    }
+
     public void delete() {
         ebo.delete();
     }

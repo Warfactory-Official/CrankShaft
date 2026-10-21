@@ -2,11 +2,7 @@ package dev.engine_room.flywheel.lib.visualization;
 
 import dev.engine_room.flywheel.api.backend.RenderContext;
 import dev.engine_room.flywheel.api.visual.Effect;
-import dev.engine_room.flywheel.api.visualization.BlockEntityVisualizer;
-import dev.engine_room.flywheel.api.visualization.CrumblingPosRedirector;
-import dev.engine_room.flywheel.api.visualization.EntityVisualizer;
-import dev.engine_room.flywheel.api.visualization.VisualManager;
-import dev.engine_room.flywheel.api.visualization.VisualizationManager;
+import dev.engine_room.flywheel.api.visualization.*;
 import dev.engine_room.flywheel.impl.extension.EntityExtension;
 import dev.engine_room.flywheel.impl.extension.TileEntityExtension;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
@@ -34,6 +30,13 @@ import java.util.TreeSet;
 public final class VisualizationHelper {
     private static final Comparator<DestroyBlockProgress> CRUMBLING_ORDER =
             Comparator.comparingInt(DestroyBlockProgress::getPartialBlockDamage);
+    // Frame-invariant cache. Primed at HEAD of each per-frame BE/entity render entry point —
+    // vanilla RenderGlobal.renderEntities, RenderLib's TileEntityRenderer/EntityRenderer setup,
+    // Sodium-fork SodiumWorldRenderer.renderTileEntities, Celeritas's renderBlockEntities. Per-BE
+    // helpers (shouldSkip*, shouldRender, shouldRenderInPass, updateCachedBoundingBox*) read this
+    // to avoid ~33k+ per-frame static calls into supportsVisualization. Render-thread only.
+    // Defaults to false; calls before any primer has fired simply won't skip, which is safe.
+    private static boolean cachedSupportsVisualization;
 
     private VisualizationHelper() {
     }
@@ -53,7 +56,9 @@ public final class VisualizationHelper {
         manager.renderDispatcher().afterEntities(ctx);
     }
 
-    /** Dispatched at the TAIL of vanilla {@code renderBlockLayer(TRANSLUCENT, ...)}. */
+    /**
+     * Empty native chunk layers still flush guest translucency.
+     */
     public static void dispatchAfterTranslucent(@Nullable World level) {
         VisualizationManager manager = VisualizationManager.get(level);
         if (manager == null) return;
@@ -139,6 +144,10 @@ public final class VisualizationHelper {
         manager.entities().queueUpdate(entity);
     }
 
+    // 1.12.2: lookup goes through the per-class flw$visualizer() override injected by
+    // VisualizerTransformer; VisualizerRegistry is consulted only as the source of truth for
+    // the MutableCallSite target. Reading off the instance lets HotSpot inline the constant load.
+
     public static void queueUpdate(Effect effect) {
         VisualizationManager manager = VisualizationManager.get(effect.level());
         if (manager == null) {
@@ -148,12 +157,11 @@ public final class VisualizationHelper {
         manager.effects().queueUpdate(effect);
     }
 
-    // 1.12.2: lookup goes through the per-class flw$visualizer() override injected by
-    // VisualizerTransformer; VisualizerRegistry is consulted only as the source of truth for
-    // the MutableCallSite target. Reading off the instance lets HotSpot inline the constant load.
-    /** @deprecated pulling the visualizer out re-dispatches megamorphically through its interface;
-     *  use the injected per-class accessors instead ({@code flw$canVisualize},
-     *  {@code flw$skipVanillaRender}, {@code flw$createVisual}). */
+    /**
+     * @deprecated pulling the visualizer out re-dispatches megamorphically through its interface;
+     * use the injected per-class accessors instead ({@code flw$canVisualize},
+     * {@code flw$skipVanillaRender}, {@code flw$createVisual}).
+     */
     @Deprecated
     @SuppressWarnings("unchecked")
     @Nullable
@@ -161,21 +169,15 @@ public final class VisualizationHelper {
         return (BlockEntityVisualizer<? super T>) ((TileEntityExtension) blockEntity).flw$visualizer();
     }
 
-    /** @deprecated see {@link #getVisualizer(TileEntity)}. */
+    /**
+     * @deprecated see {@link #getVisualizer(TileEntity)}.
+     */
     @Deprecated
     @SuppressWarnings("unchecked")
     @Nullable
     public static <T extends Entity> EntityVisualizer<? super T> getVisualizer(T entity) {
         return (EntityVisualizer<? super T>) ((EntityExtension) entity).flw$visualizer();
     }
-
-    // Frame-invariant cache. Primed at HEAD of each per-frame BE/entity render entry point —
-    // vanilla RenderGlobal.renderEntities, RenderLib's TileEntityRenderer/EntityRenderer setup,
-    // Sodium-fork SodiumWorldRenderer.renderTileEntities, Celeritas's renderBlockEntities. Per-BE
-    // helpers (shouldSkip*, shouldRender, shouldRenderInPass, updateCachedBoundingBox*) read this
-    // to avoid ~33k+ per-frame static calls into supportsVisualization. Render-thread only.
-    // Defaults to false; calls before any primer has fired simply won't skip, which is safe.
-    private static boolean cachedSupportsVisualization;
 
     public static void cacheSupportsVisualization(@Nullable World level) {
         cachedSupportsVisualization = VisualizationManager.supportsVisualization(level);
@@ -195,7 +197,7 @@ public final class VisualizationHelper {
         return cachedSupportsVisualization && ((TileEntityExtension) te).flw$skipVanillaRender();
     }
 
-    // Installed via CeleritasRenderGlobalTransformer.
+    // MixinCompatibilityPlugin preserves this gate in Celeritas's renderEntities overwrite.
     public static boolean shouldRender(RenderManager renderManager, Entity entity, ICamera camera,
                                        double camX, double camY, double camZ) {
         if (cachedSupportsVisualization && ((EntityExtension) entity).flw$skipVanillaRender()) {
@@ -204,7 +206,7 @@ public final class VisualizationHelper {
         return renderManager.shouldRender(entity, camera, camX, camY, camZ);
     }
 
-    // Installed via SodiumRenderGlobalTransformer.
+    // MixinCompatibilityPlugin preserves this gate in Sodium forks and VintageFix's renderEntities overwrite.
     public static boolean shouldRenderInPass(Entity entity, int pass) {
         if (cachedSupportsVisualization && ((EntityExtension) entity).flw$skipVanillaRender()) {
             return false;
@@ -212,7 +214,7 @@ public final class VisualizationHelper {
         return entity.shouldRenderInPass(pass);
     }
 
-    // Installed via RenderLibBoundingBoxCacheTransformer. Unconditional cast: the dispatched
+    // Installed after RenderLib's mixins merge. Unconditional cast: the dispatched
     // call site is statically known to take an Entity.
     public static void updateCachedBoundingBoxEntity(IBoundingBoxCache cache, double partialTicks) {
         if (cachedSupportsVisualization && ((EntityExtension) cache).flw$skipVanillaRender()) {

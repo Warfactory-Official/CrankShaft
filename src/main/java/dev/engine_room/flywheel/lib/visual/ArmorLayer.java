@@ -7,6 +7,7 @@ import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 import dev.engine_room.flywheel.lib.instance.TransformedInstance;
 import dev.engine_room.flywheel.lib.material.Materials;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
+import dev.engine_room.flywheel.lib.model.ItemTaggedModel;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
 import dev.engine_room.flywheel.lib.util.OverlayTexture;
 import net.minecraft.client.model.ModelBiped;
@@ -50,7 +51,7 @@ public final class ArmorLayer implements LivingLayer {
     private static final int LEGS = (1 << 1) | (1 << 4) | (1 << 5);
     private static final int FEET = (1 << 4) | (1 << 5);
     private static final EntityEquipmentSlot[] ARMOR_SLOTS = ArmorModels.ARMOR_SLOTS;
-    private static final int[] SLOT_BONES = { HEAD, CHEST, LEGS, FEET };
+    private static final int[] SLOT_BONES = {HEAD, CHEST, LEGS, FEET};
     private static final ArmorTree[] NO_TREES = {};
     private static final int ROOT_COUNT = 7;
     private static final int WHITE = 0xFFFFFFFF;
@@ -65,7 +66,7 @@ public final class ArmorLayer implements LivingLayer {
     // The map dedups by key on (rare) stack changes; the array is what the per-frame loops walk.
     private final Map<String, ArmorTree> trees = new HashMap<>();
     private ArmorTree[] treeList = NO_TREES;
-    private final ItemStack[] lastStack = { ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY };
+    private final ItemStack[] lastStack = {ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY};
     private final String[] baseTex = new String[4];
     private final String[] overlayTex = new String[4];
     private final int[] dye = new int[4];
@@ -83,6 +84,23 @@ public final class ArmorLayer implements LivingLayer {
         this.entity = entity;
         this.body = body;
         this.bias = bias;
+    }
+
+    private static void setBones(ArmorTree t, int bones, int color) {
+        t.frameMask |= bones;
+        for (int i = 0; i < ROOT_COUNT; i++) {
+            if ((bones & (1 << i)) != 0) {
+                t.boneColor[i] = color;
+            }
+        }
+    }
+
+    private static Material armorMaterial(String texture) {
+        return MATERIALS.computeIfAbsent(texture, t -> SimpleMaterial.builderOf(Materials.CUTOUT_NO_CULL)
+                                                                     .cardinalLightingMode(CardinalLightingMode.ENTITY)
+                                                                     .texture(new ResourceLocation(t))
+                                                                     .mipmap(false)
+                                                                     .build());
     }
 
     @Override
@@ -117,13 +135,16 @@ public final class ArmorLayer implements LivingLayer {
                 // getArmorTexture could return one path for a leg slot (0.5) and a non-leg slot (1.0); a
                 // texture-only key would reuse the first slot's inflation.
                 float inflation = slot == EntityEquipmentSlot.LEGS ? 0.5F : 1.0F;
-                baseTree[s] = tree(inflation + "|" + baseTex[s], armorMaterial(baseTex[s]), inflation, bias);
+                baseTree[s] = tree(inflation + "|" + baseTex[s], armorMaterial(baseTex[s]), inflation, bias, stack);
                 overlayTree[s] = overlayTex[s] != null
-                        ? tree(inflation + "|" + overlayTex[s], armorMaterial(overlayTex[s]), inflation, bias) : null;
+                        ? tree(inflation + "|" + overlayTex[s], armorMaterial(overlayTex[s]), inflation, bias,
+                        stack) : null;
                 // Glint: two passes over byte-identical geometry at a higher bias (drawn after the base writes
-                // depth; GLINT uses depthTest=EQUAL), keyed by inflation so enchanted pieces share one glint tree.
-                glintTree[s] = glint[s] ? tree("glint:" + inflation, Materials.GLINT_ARMOR, inflation, bias + 1) : null;
-                glint2Tree[s] = glint[s] ? tree("glint2:" + inflation, Materials.GLINT_ARMOR_2, inflation, bias + 1) : null;
+                // depth; GLINT uses depthTest=EQUAL). Item identities split instances while sharing baked geometry.
+                glintTree[s] = glint[s] ? tree("glint:" + inflation, Materials.GLINT_ARMOR, inflation, bias + 1,
+                        stack) : null;
+                glint2Tree[s] = glint[s] ? tree("glint2:" + inflation, Materials.GLINT_ARMOR_2, inflation, bias + 1,
+                        stack) : null;
                 dirty = true;
             }
 
@@ -174,37 +195,22 @@ public final class ArmorLayer implements LivingLayer {
         }
     }
 
-    private static void setBones(ArmorTree t, int bones, int color) {
-        t.frameMask |= bones;
-        for (int i = 0; i < ROOT_COUNT; i++) {
-            if ((bones & (1 << i)) != 0) {
-                t.boneColor[i] = color;
-            }
-        }
-    }
-
-    private ArmorTree tree(String key, Material material, float inflation, int treeBias) {
-        ArmorTree t = trees.get(key);
+    private ArmorTree tree(String key, Material material, float inflation, int treeBias, ItemStack stack) {
+        var taggedKey = key + "|item=" + stack.getItem().getRegistryName() + ':' + stack.getMetadata();
+        ArmorTree t = trees.get(taggedKey);
         if (t == null) {
             String cacheKey = "flywheel:armor:" + key;
             EntityModel<ModelBiped> model = new BipedEntityModel<>(() -> new ModelBiped(inflation));
             InstanceTree it = InstanceTree.create(instancers,
-                    AbstractLivingEntityVisual.buildTree(model, material, cacheKey), treeBias);
+                    ItemTaggedModel.tag(AbstractLivingEntityVisual.buildTree(model, material, cacheKey), stack),
+                    treeBias);
             t = new ArmorTree(it);
-            trees.put(key, t);
+            trees.put(taggedKey, t);
             ArmorTree[] grown = Arrays.copyOf(treeList, treeList.length + 1);
             grown[treeList.length] = t;
             treeList = grown;
         }
         return t;
-    }
-
-    private static Material armorMaterial(String texture) {
-        return MATERIALS.computeIfAbsent(texture, t -> SimpleMaterial.builderOf(Materials.CUTOUT_NO_CULL)
-                .cardinalLightingMode(CardinalLightingMode.ENTITY)
-                .texture(new ResourceLocation(t))
-                .mipmap(false)
-                .build());
     }
 
     private void applyMask(InstanceTree tree, int mask) {

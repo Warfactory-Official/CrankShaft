@@ -3,6 +3,8 @@ package dev.engine_room.vanillin.visuals;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.lib.model.PackIdentity;
+import dev.engine_room.flywheel.lib.model.PackTaggedModel;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
 import dev.engine_room.flywheel.lib.util.LightTexture;
 import dev.engine_room.flywheel.lib.util.OverlayTexture;
@@ -12,6 +14,8 @@ import dev.engine_room.flywheel.lib.visual.DragonEntityModel;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import net.minecraft.entity.boss.EntityDragon;
 import org.joml.Matrix4f;
+
+import java.util.List;
 
 /**
  * Ender dragon — bespoke (no standard repose): {@code ModelDragon} animates entirely in {@code render()} and draws
@@ -74,6 +78,24 @@ public final class EnderDragonVisual extends AbstractEntityVisual<EntityDragon> 
         pose(partialTick);
     }
 
+    private static void poseSpine(InstanceTree spine, float ax, float ay, float az, float rx, float ry, float rz,
+                                  Matrix4f frame) {
+        InstanceTree node = spine.child(0);
+        node.pos(ax * S, ay * S, az * S);
+        node.rotation(rx, ry, rz);
+        spine.updateInstances(frame);
+    }
+
+    private static float updateRotations(double angle) {
+        while (angle >= 180.0) {
+            angle -= 360.0;
+        }
+        while (angle < -180.0) {
+            angle += 360.0;
+        }
+        return (float) angle;
+    }
+
     private void seedEyes() {
         headEyes.traverse(i -> {
             i.overlay(OverlayTexture.NO_OVERLAY);
@@ -86,8 +108,9 @@ public final class EnderDragonVisual extends AbstractEntityVisual<EntityDragon> 
     }
 
     private InstanceTree tree(int part, String cacheKey, Material material) {
-        return InstanceTree.create(instancerProvider(),
-                AbstractLivingEntityVisual.buildTree(new DragonEntityModel(part), material, cacheKey), 0);
+        var model = AbstractLivingEntityVisual.buildTree(new DragonEntityModel(part), material, cacheKey);
+        if (material == EYES) model = PackTaggedModel.tag(model, List.of(PackIdentity.SPIDER_EYES));
+        return InstanceTree.create(instancerProvider(), model, 0);
     }
 
     @Override
@@ -227,29 +250,12 @@ public final class EnderDragonVisual extends AbstractEntityVisual<EntityDragon> 
         }
     }
 
-    private static void poseSpine(InstanceTree spine, float ax, float ay, float az, float rx, float ry, float rz, Matrix4f frame) {
-        InstanceTree node = spine.child(0);
-        node.pos(ax * S, ay * S, az * S);
-        node.rotation(rx, ry, rz);
-        spine.updateInstances(frame);
-    }
-
     private void poseHead(InstanceTree headTree, float x, float y, float z, float rx, float ry, float rz, float jaw) {
         InstanceTree node = headTree.child(0);
         node.pos(x, y, z);
         node.rotation(rx, ry, rz);
         node.child(0).rotation(jaw, 0.0F, 0.0F);
         headTree.updateInstances(frameA);
-    }
-
-    private static float updateRotations(double angle) {
-        while (angle >= 180.0) {
-            angle -= 360.0;
-        }
-        while (angle < -180.0) {
-            angle += 360.0;
-        }
-        return (float) angle;
     }
 
     @Override

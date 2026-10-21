@@ -1,9 +1,9 @@
 package dev.engine_room.flywheel.backend.engine.indirect;
 
 import dev.engine_room.flywheel.api.material.Material;
+import dev.engine_room.flywheel.backend.compile.ContextShader;
 import dev.engine_room.flywheel.backend.engine.MaterialEncoder;
 import dev.engine_room.flywheel.backend.engine.MeshPool;
-import dev.engine_room.flywheel.backend.engine.embed.EmbeddedEnvironment;
 import org.lwjgl.system.MemoryUtil;
 
 public class IndirectDraw {
@@ -17,7 +17,8 @@ public class IndirectDraw {
     private final int packedMaterialProperties;
     private boolean deleted;
 
-    public IndirectDraw(IndirectInstancer<?> instancer, Material material, MeshPool.PooledMesh mesh, int bias, int indexOfMeshInModel) {
+    public IndirectDraw(IndirectInstancer<?> instancer, Material material, MeshPool.PooledMesh mesh, int bias,
+                        int indexOfMeshInModel) {
         this.instancer = instancer;
         this.material = material;
         this.mesh = mesh;
@@ -39,7 +40,8 @@ public class IndirectDraw {
     }
 
     public boolean isEmbedded() {
-        return instancer.environment instanceof EmbeddedEnvironment;
+        // Compat with tagged environments that delegate an embedded transform.
+        return instancer.environment.contextShader() == ContextShader.EMBEDDED;
     }
 
     public MeshPool.PooledMesh mesh() {
@@ -67,6 +69,7 @@ public class IndirectDraw {
 
         MemoryUtil.memPutInt(ptr + 28, packedFogAndCutout); // packedFogAndCutout
         MemoryUtil.memPutInt(ptr + 32, packedMaterialProperties); // packedMaterialProperties
+        MemoryUtil.memPutInt(ptr + 36, 0); // CrankShaft: reserved guest instance type.
     }
 
     public void writeWithOverrides(long ptr, int instanceIndex, Material materialOverride) {
@@ -82,6 +85,7 @@ public class IndirectDraw {
 
         MemoryUtil.memPutInt(ptr + 28, MaterialEncoder.packUberShader(materialOverride)); // packedFogAndCutout
         MemoryUtil.memPutInt(ptr + 32, MaterialEncoder.packProperties(materialOverride)); // packedMaterialProperties
+        MemoryUtil.memPutInt(ptr + 36, 0); // CrankShaft: reserved guest instance type.
     }
 
     public void delete() {

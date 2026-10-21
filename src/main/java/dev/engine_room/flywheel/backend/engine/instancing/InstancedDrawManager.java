@@ -166,6 +166,8 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         TextureBinder.resetLightAndOverlay();
     }
 
+    @Override public boolean hasOitDraws() { return !oitDraws.isEmpty(); }
+
     private void submitDraws() {
         for (var drawCall : draws) {
             var material = drawCall.material();

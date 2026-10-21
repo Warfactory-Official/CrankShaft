@@ -5,7 +5,9 @@
   "compatibilityLevel": "JAVA_8",
   "target": "@env(MOD)",
   "client": [
-    "MixinCeleritasWorldRenderer"
+    "MixinCeleritasWorldRenderer",
+    "NativeChunkDrawMixin",
+    "NativeProgramCleanupMixin"
   ],
   "mixins": [],
   "server": [],

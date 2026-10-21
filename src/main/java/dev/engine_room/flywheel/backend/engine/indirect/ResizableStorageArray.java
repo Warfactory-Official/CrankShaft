@@ -10,6 +10,7 @@ public class ResizableStorageArray {
     private final ResizableStorageBuffer buffer;
     private final long stride;
     private final double growthFactor;
+    private final SharedStorageArena.Region region;
 
     private long capacity;
 
@@ -18,6 +19,10 @@ public class ResizableStorageArray {
     }
 
     public ResizableStorageArray(long stride, double growthFactor) {
+        this(stride, growthFactor, null);
+    }
+
+    public ResizableStorageArray(long stride, double growthFactor, SharedStorageArena arena) {
         this.stride = stride;
         this.growthFactor = growthFactor;
 
@@ -29,7 +34,8 @@ public class ResizableStorageArray {
             throw new IllegalArgumentException("Growth factor must be greater than 1!");
         }
 
-        this.buffer = new ResizableStorageBuffer();
+        this.buffer = arena == null ? new ResizableStorageBuffer() : arena.buffer;
+        region = arena == null ? null : arena.region();
     }
 
     public int handle() {
@@ -45,19 +51,25 @@ public class ResizableStorageArray {
     }
 
     public long byteCapacity() {
-        return buffer.capacity();
+        return region == null ? buffer.capacity() : region.capacity();
+    }
+
+    public long byteOffset() {
+        return region == null ? 0 : region.offset();
     }
 
     public void ensureCapacity(long capacity) {
         if (capacity > this.capacity) {
             long newCapacity = grow(capacity);
-            buffer.ensureCapacity(stride * newCapacity);
+            if (region == null) buffer.ensureCapacity(stride * newCapacity);
+            else region.ensureCapacity(stride * newCapacity);
             this.capacity = newCapacity;
         }
     }
 
     public void delete() {
-        buffer.delete();
+        if (region == null) buffer.delete();
+        else region.delete();
     }
 
     private long grow(long capacity) {

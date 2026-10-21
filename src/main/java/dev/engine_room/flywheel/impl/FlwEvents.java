@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.impl;
 
+import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.impl.visualization.VisualizationEventHandler;
 import dev.engine_room.flywheel.lib.model.baked.PartialModel;
 import dev.engine_room.flywheel.lib.util.LevelAttached;
@@ -9,6 +10,8 @@ import net.minecraftforge.client.event.ModelBakeEvent;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.client.event.TextureStitchEvent;
 import net.minecraftforge.event.world.WorldEvent;
+import net.minecraftforge.fml.client.FMLClientHandler;
+import net.minecraftforge.fml.common.Loader;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 
@@ -24,6 +27,15 @@ public final class FlwEvents {
             return;
         }
         Minecraft mc = Minecraft.getMinecraft();
+        if (mc.world != null && (Loader.isModLoaded("ausm") || FMLClientHandler.instance().hasOptifine())) {
+            var current = BackendManagerImpl.currentBackend();
+            var preferred = current == BackendManagerImpl.OFF_BACKEND ? Backends.forShaderState(
+                    FlwConfig.INSTANCE.backend()) : current;
+            // Pack activation can finish after renderer reload. OFF stays supported even when a saved shader backend becomes available.
+            if (!current.isSupported() || current == BackendManagerImpl.OFF_BACKEND && preferred != current && preferred.isSupported()) {
+                BackendManagerImpl.onReloadLevelRenderer(mc.world);
+            }
+        }
         VisualizationEventHandler.onClientTick(mc, mc.world);
     }
 

@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build:
-    name: Build mod jars
+    name: Build bundled mod jars
     runs-on: ubuntu-latest
 
     steps:
@@ -32,50 +32,59 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: 9.5.0
           cache-read-only: ${{ github.ref != 'refs/heads/master' }}
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
+      - name: Resolve shared snapshot version
+        id: version
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          def property_value(path, key):
+              values = []
+              for line in path.read_text(encoding="utf-8").splitlines():
+                  name, separator, value = line.partition("=")
+                  if separator and name.strip() == key:
+                      values.append(value.strip())
+              if len(values) != 1 or not values[0]:
+                  raise SystemExit(f"::error::{key} must occur once and be nonempty in {path.name}")
+              return values[0]
+
+          base = property_value(Path("version.properties"), "modVersion")
+          minecraft = property_value(Path("buildscript.properties"), "minecraftVersion")
+          version = f"{base}+mc{minecraft}"
+          version += "-SNAPSHOT"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+              stream.write(f"version={version}\n")
+          print(version)
+
+      - name: Set reproducible snapshot timestamp
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+
       - name: Build with Gradle
-        run: ./gradlew build --no-daemon --stacktrace
+        run: ./gradlew build -Pbuild.snapshot=true --no-daemon --stacktrace
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ github.event.repository.name }}-jars
-          path: |
-            build/libs/*.jar
+          name: ${{ github.event.repository.name }}-${{ steps.version.outputs.version }}
+          path: build/libs/*.jar
           if-no-files-found: error
 
-      - name: Resolve snapshot versions
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'Warfactory-Official/CrankShaft'
-        shell: bash
-        run: |
-          set -euo pipefail
-          MOD_VERSION=$(grep -E '^\s*modVersion\s*=' version.properties | sed -E 's/^\s*modVersion\s*=\s*//; s/\r$//' | xargs || true)
-          VANILLIN_VERSION=$(grep -E '^\s*vanillinVersion\s*=' version.properties | sed -E 's/^\s*vanillinVersion\s*=\s*//; s/\r$//' | xargs || true)
-          if [[ -z "${MOD_VERSION}" ]]; then
-            echo "::error::modVersion is empty or missing in version.properties"; exit 1
-          fi
-          if [[ -z "${VANILLIN_VERSION}" ]]; then
-            echo "::error::vanillinVersion is empty or missing in version.properties"; exit 1
-          fi
-          echo "SNAPSHOT_VERSION=${MOD_VERSION}-SNAPSHOT" >> "$GITHUB_ENV"
-          echo "VANILLIN_SNAPSHOT_VERSION=${VANILLIN_VERSION}-SNAPSHOT" >> "$GITHUB_ENV"
-
-      - name: Publish snapshots to Maven (warfactory)
+      - name: Publish snapshots to Maven
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'Warfactory-Official/CrankShaft'
         env:
           MAVEN_USER: ${{ secrets.MAVEN_USER }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
           MAVEN_URL: https://repo.warfactory.co/snapshots
-          RELEASE_VERSION: ${{ env.SNAPSHOT_VERSION }}
-          VANILLIN_RELEASE_VERSION: ${{ env.VANILLIN_SNAPSHOT_VERSION }}
         run: |
           ./gradlew \
-            publishCrankshaftPublicationToWarfactoryRepository \
+            -Pbuild.snapshot=true \
             publishVanillatePublicationToWarfactoryRepository \
+            publishCrankshaftPublicationToWarfactoryRepository \
             --no-daemon \
             --stacktrace

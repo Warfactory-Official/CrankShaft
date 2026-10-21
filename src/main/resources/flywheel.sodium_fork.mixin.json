@@ -5,7 +5,10 @@
   "compatibilityLevel": "JAVA_8",
   "target": "@env(MOD)",
   "client": [
-    "MixinSodiumWorldRenderer"
+    "MixinSodiumWorldRenderer",
+    "NativeMultidrawMixin",
+    "NativeOneshotMixin",
+    "NativeProgramCleanupMixin"
   ],
   "mixins": [],
   "server": [],

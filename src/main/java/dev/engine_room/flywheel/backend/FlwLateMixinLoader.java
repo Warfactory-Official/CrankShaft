@@ -9,13 +9,22 @@ import java.util.List;
 @SuppressWarnings("deprecation") // Cleanroom shaded ILateMixinLoader
 public class FlwLateMixinLoader implements ILateMixinLoader {
 
+    private static boolean isSodiumForkPresent(Context context) {
+        return context.isModPresent("neonium") || context.isModPresent("vintagium") || context.isModPresent(
+                "relictium");
+    }
+
     @Override
     public List<String> getMixinConfigs() {
         return Arrays.asList(
                 "flywheel.sodium_fork.mixin.json",
                 "flywheel.cdl_sodium_fork.mixin.json",
                 "flywheel.celeritas.mixin.json",
-                "flywheel.renderlib.mixin.json"
+                "flywheel.renderlib.mixin.json",
+                "flywheel.ausm.mixin.json",
+                "flywheel.ausm_nothirium.mixin.json",
+                "flywheel.nothirium.mixin.json",
+                "flywheel.vanilla_terrain.mixin.json"
         );
     }
 
@@ -23,14 +32,16 @@ public class FlwLateMixinLoader implements ILateMixinLoader {
     public boolean shouldMixinConfigQueue(Context context) {
         return switch (context.mixinConfig()) {
             case "flywheel.sodium_fork.mixin.json" -> isSodiumForkPresent(context);
-            case "flywheel.cdl_sodium_fork.mixin.json" -> context.isModPresent("celeritasdynamiclights") && isSodiumForkPresent(context);
+            case "flywheel.cdl_sodium_fork.mixin.json" ->
+                    context.isModPresent("celeritasdynamiclights") && isSodiumForkPresent(context);
             case "flywheel.celeritas.mixin.json" -> context.isModPresent("celeritas");
             case "flywheel.renderlib.mixin.json" -> context.isModPresent("renderlib");
+            case "flywheel.nothirium.mixin.json" -> context.isModPresent("nothirium");
+            case "flywheel.ausm.mixin.json" -> context.isModPresent("ausm");
+            case "flywheel.ausm_nothirium.mixin.json" -> context.isModPresent("ausm") && context.isModPresent("nothirium");
+            case "flywheel.vanilla_terrain.mixin.json" -> !isSodiumForkPresent(context)
+                    && (!context.isModPresent("celeritas") || context.isModPresent("ausm"));
             default -> true;
         };
-    }
-
-    private static boolean isSodiumForkPresent(Context context) {
-        return context.isModPresent("neonium") || context.isModPresent("vintagium") || context.isModPresent("relictium");
     }
 }

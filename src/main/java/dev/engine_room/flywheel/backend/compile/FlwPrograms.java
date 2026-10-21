@@ -2,6 +2,8 @@ package dev.engine_room.flywheel.backend.compile;
 
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.backend.NoiseTextures;
+import dev.engine_room.flywheel.backend.engine.shaderpack.GuestBackends;
+import dev.engine_room.flywheel.backend.engine.NativeChunkOit;
 import dev.engine_room.flywheel.backend.glsl.ShaderSources;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
@@ -26,6 +28,8 @@ public final class FlwPrograms {
     }
 
     public static void reload(IResourceManager manager) {
+        NativeChunkOit.clear();
+        GuestBackends.rearm();
         // Reset the programs in case the ubershader load fails.
         InstancingPrograms.setInstance(null);
         IndirectPrograms.setInstance(null);

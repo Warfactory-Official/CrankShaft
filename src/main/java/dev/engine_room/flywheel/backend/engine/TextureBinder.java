@@ -50,7 +50,7 @@ public class TextureBinder {
         Samplers.DIFFUSE.makeActive();
     }
 
-    private static int overlayTextureId() {
+    public static int overlayTextureId() {
         if (overlayTexture == null) {
             overlayTexture = new DynamicTexture(16, 16);
             OverlayTexture.fillTextureData(overlayTexture.getTextureData());

@@ -8,6 +8,7 @@ import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import dev.engine_room.flywheel.lib.util.ResourceReloadHolder;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.IReloadableResourceManager;
+import net.minecraft.command.CommandHandler;
 import net.minecraftforge.client.ClientCommandHandler;
 import net.minecraftforge.client.resource.ISelectiveResourceReloadListener;
 import net.minecraftforge.client.resource.VanillaResourceType;
@@ -37,7 +38,8 @@ public final class FlywheelMod {
         registerShaderReload();
         registerCrashCallable();
         MinecraftForge.EVENT_BUS.register(FlwEvents.INSTANCE);
-        ClientCommandHandler.instance.registerCommand(new CommandFlywheel());
+        // 1.12.2: name the vanilla owner for inherited-method reobfuscation.
+        ((CommandHandler) ClientCommandHandler.instance).registerCommand(new CommandFlywheel());
         SmartAnimatedTextureCompat.register();
         FlwImpl.LOGGER.info("CrankShaft loaded");
     }

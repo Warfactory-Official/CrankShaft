@@ -1,0 +1,25 @@
+{
+  "required": true,
+  "package": "dev.engine_room.flywheel.backend.mixin.mod.ausm",
+  "refmap": "mixins.flywheel.refmap.json",
+  "compatibilityLevel": "JAVA_8",
+  "target": "@env(MOD)",
+  "client": [
+    "ReplayCompositeMixin",
+    "ReplayComputeCompilerMixin",
+    "ReplayComputeMixin",
+    "ReplayFullscreenMixin",
+    "ReplayLifecycleMixin",
+    "ReplayProgramBindingMixin",
+    "ReplayProgramDiscoveryMixin",
+    "ShaderCompilerMixin",
+    "ShaderOptionScannerMixin",
+    "ShaderPropertiesLoaderMixin",
+    "ShaderPropertiesMixin",
+    "ShaderTransformPipelineMixin",
+    "ShadowEntityCullingMixin",
+    "ShadowRenderingMixin",
+    "VboRenderListMixin"
+  ],
+  "minVersion": "0.8.7"
+}

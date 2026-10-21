@@ -1,8 +1,10 @@
 package dev.engine_room.flywheel.backend.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
-import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.engine.SectionPos;
+import dev.engine_room.flywheel.backend.engine.shaderpack.GuestRenderPass;
 import dev.engine_room.flywheel.impl.RenderContextImpl;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
 import dev.engine_room.flywheel.lib.compat.DynamicLightProvider;
@@ -13,23 +15,24 @@ import net.minecraft.client.renderer.BufferBuilder;
 import net.minecraft.client.renderer.DestroyBlockProgress;
 import net.minecraft.client.renderer.RenderGlobal;
 import net.minecraft.client.renderer.Tessellator;
+import net.minecraft.client.renderer.chunk.ChunkRenderDispatcher;
+import net.minecraft.client.renderer.chunk.RenderChunk;
 import net.minecraft.client.renderer.culling.ICamera;
 import net.minecraft.entity.Entity;
 import net.minecraft.tileentity.TileEntity;
-import net.minecraft.util.BlockRenderLayer;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.EnumSkyBlock;
 import net.minecraft.world.World;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.Map;
+import java.util.Set;
 
 // need to be late to fire after alfheim's @Overwrite
 @Mixin(value = RenderGlobal.class, priority = 1500)
@@ -40,6 +43,31 @@ public abstract class MixinRenderGlobal {
     @Shadow
     @Final
     private Map<Integer, DestroyBlockProgress> damagedBlocks;
+    @Shadow
+    private Set<RenderChunk> chunksToUpdate;
+    @Unique
+    private Set<RenderChunk> flw$previousChunkUpdates;
+
+    @Inject(method = "setupTerrain", at = @At("HEAD"))
+    private void flw$captureChunkUpdates(Entity entity, double partialTicks, ICamera camera, int frame,
+                                         boolean spectator, CallbackInfo ci) {
+        flw$previousChunkUpdates = chunksToUpdate;
+    }
+
+    // Vanilla merges the old queue back after rebuilding nearby sections; retire completed entries before that merge.
+    @WrapOperation(method = "setupTerrain", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/chunk/ChunkRenderDispatcher;updateChunkNow(Lnet/minecraft/client/renderer/chunk/RenderChunk;)Z"))
+    private boolean flw$retireSynchronousChunk(ChunkRenderDispatcher dispatcher, RenderChunk chunk,
+                                               Operation<Boolean> original) {
+        var completed = original.call(dispatcher, chunk);
+        if (completed) flw$previousChunkUpdates.remove(chunk);
+        return completed;
+    }
+
+    @Inject(method = "setupTerrain", at = @At("TAIL"))
+    private void flw$releaseChunkUpdates(Entity entity, double partialTicks, ICamera camera, int frame,
+                                         boolean spectator, CallbackInfo ci) {
+        flw$previousChunkUpdates = null;
+    }
 
     @Inject(method = "notifyLightSet", at = @At("TAIL"), require = 1)
     private void flw$notifyLightUpdate(BlockPos pos, CallbackInfo ci) {
@@ -69,7 +97,8 @@ public abstract class MixinRenderGlobal {
     }
 
     @Inject(method = "notifyBlockUpdate", at = @At("TAIL"), require = 1)
-    private void flw$blockEntityUpdate(World worldIn, BlockPos pos, IBlockState oldState, IBlockState newState, int flags, CallbackInfo ci) {
+    private void flw$blockEntityUpdate(World worldIn, BlockPos pos, IBlockState oldState, IBlockState newState,
+                                       int flags, CallbackInfo ci) {
         if (worldIn != world) {
             return;
         }
@@ -91,8 +120,10 @@ public abstract class MixinRenderGlobal {
 
     @Inject(method = "setupTerrain", at = @At("HEAD"), require = 1)
     private void flw$onStartLevelRender(Entity viewEntity, double partialTicks, ICamera camera,
-                                                 int frameCount, boolean playerSpectator,
-                                                 CallbackInfo ci) {
+                                        int frameCount, boolean playerSpectator,
+                                        CallbackInfo ci) {
+        // AUSM's direct shadow draw has its own frame dispatch after light-space terrain setup.
+        if (GuestRenderPass.shadowActive()) return;
         VisualizationManagerImpl impl = VisualizationManagerImpl.get(world);
         if (impl == null) {
             return;
@@ -108,50 +139,20 @@ public abstract class MixinRenderGlobal {
 
     @Inject(method = "renderEntities", at = @At("HEAD"), require = 1)
     private void flw$cacheSupports(Entity renderViewEntity, ICamera camera, float partialTicks,
-                                            CallbackInfo ci) {
+                                   CallbackInfo ci) {
         VisualizationHelper.cacheSupportsVisualization(world);
     }
 
     @Inject(method = "renderEntities", at = @At("TAIL"), require = 1)
     private void flw$afterEntities(Entity renderViewEntity, ICamera camera, float partialTicks,
-                                            CallbackInfo ci) {
+                                   CallbackInfo ci) {
         VisualizationHelper.dispatchAfterEntities(world);
-    }
-
-    // TAIL of the public 4-arg overload so we cover both EntityRenderer's direct call and any
-    // forge mod that hits the same entry point.
-    @Inject(method = "renderBlockLayer(Lnet/minecraft/util/BlockRenderLayer;DILnet/minecraft/entity/Entity;)I",
-            at = @At("TAIL"), require = 1)
-    private void flw$afterTranslucent(BlockRenderLayer layer, double partialTicks, int pass, Entity entity,
-                                      CallbackInfoReturnable<Integer> cir) {
-        if (layer != BlockRenderLayer.TRANSLUCENT) {
-            return;
-        }
-        VisualizationHelper.dispatchAfterTranslucent(world);
-    }
-
-    // Suppress vanilla's translucent chunk draw when chunk-OIT replay will re-issue the same VBOs
-    // through the OIT pipeline (renderOit, fired by the TAIL inject above).
-    @Redirect(method = "renderBlockLayer(Lnet/minecraft/util/BlockRenderLayer;DILnet/minecraft/entity/Entity;)I",
-            at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/client/renderer/RenderGlobal;renderBlockLayer(Lnet/minecraft/util/BlockRenderLayer;)V"),
-            require = 1)
-    private void flw$maybeSkipTranslucentDraw(RenderGlobal self, BlockRenderLayer layer) {
-        // Suppress vanilla TRANSLUCENT when chunk-OIT will actually replay it.
-        // ChunkTranslucentOit.replay redraws these chunks through the OIT pipeline when
-        // renderOit fires at the TAIL inject above.
-        if (layer == BlockRenderLayer.TRANSLUCENT && FlwPrograms.chunkOitPrograms() != null
-                && VisualizationManager.supportsVisualization(world)) {
-            return;
-        }
-        // AT-widened to public so we can call the original draw helper directly.
-        self.renderBlockLayer(layer);
     }
 
     @Inject(method = "drawBlockDamageTexture", at = @At("HEAD"), require = 1)
     private void flw$beforeCrumbling(Tessellator tessellatorIn,
-                                              BufferBuilder bufferBuilderIn,
-                                              Entity entityIn, float partialTicks, CallbackInfo ci) {
+                                     BufferBuilder bufferBuilderIn,
+                                     Entity entityIn, float partialTicks, CallbackInfo ci) {
         VisualizationHelper.dispatchBeforeCrumbling(world, damagedBlocks);
     }
 }

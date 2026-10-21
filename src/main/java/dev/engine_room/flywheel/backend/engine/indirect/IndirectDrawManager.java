@@ -71,7 +71,8 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     @SuppressWarnings("unchecked")
     @Override
     protected <I extends Instance> void initialize(InstancerKey<I> key, IndirectInstancer<?> instancer) {
-        var group = (IndirectCullingGroup<I>) cullingGroups.computeIfAbsent(key.type(), t -> new IndirectCullingGroup<>(t, programs));
+        var group = (IndirectCullingGroup<I>) cullingGroups.computeIfAbsent(key.type(),
+                t -> new IndirectCullingGroup<>(t, programs));
         group.add((IndirectInstancer<I>) instancer, key, meshPool);
     }
 
@@ -81,19 +82,19 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
         // Flush instance counts, page mappings, and prune empty groups.
         cullingGroups.values()
-                .removeIf(IndirectCullingGroup::flushInstancers);
+                     .removeIf(IndirectCullingGroup::flushInstancers);
 
         // Instancers may have been emptied in the above call, now remove them here.
         instancers.values()
-                .removeIf(instancer -> {
-                    if (instancer.instanceCount() > 0) {
-                        return false;
-                    }
-                    // CrankShaft: also sweeps instancers that never joined a culling group;
-                    // free their native pages. No-op for ones flushInstancers just deleted.
-                    instancer.clear();
-                    return true;
-                });
+                  .removeIf(instancer -> {
+                      if (instancer.instanceCount() > 0) {
+                          return false;
+                      }
+                      // CrankShaft: also sweeps instancers that never joined a culling group;
+                      // free their native pages. No-op for ones flushInstancers just deleted.
+                      instancer.clear();
+                      return true;
+                  });
 
         meshPool.flush();
 
@@ -158,13 +159,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
     @Override
     public void renderOit(LightStorage lightStorage, EnvironmentStorage environmentStorage) {
-        boolean useOit = false;
-        for (var group : cullingGroups.values()) {
-            if (group.hasOitDraws()) {
-                useOit = true;
-                break;
-            }
-        }
+        boolean useOit = hasOitDraws();
         ChunkOitPrograms chunkOit = FlwPrograms.chunkOitPrograms();
         // Only route chunks when there is actually a visible translucent chunk to replay; an empty
         // list means MixinRenderGlobal suppressed nothing, so skipping the whole OIT chain on an
@@ -218,17 +213,22 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         TextureBinder.resetLightAndOverlay();
     }
 
+    @Override public boolean hasOitDraws() {
+        for (var group : cullingGroups.values()) if (group.hasOitDraws()) return true;
+        return false;
+    }
+
     @Override
     public void delete() {
-        // Per-instancer GL cleanup (SlabBuffer, draws, mapping, heap pages) must run before
+        // Per-instancer cleanup (host pages, draws and mappings) must run before
         // super.delete() clears the instancers map. Mirrors InstancedDrawManager.delete order.
         instancers.values()
-                .forEach(IndirectInstancer::delete);
+                  .forEach(IndirectInstancer::delete);
 
         super.delete();
 
         cullingGroups.values()
-                .forEach(IndirectCullingGroup::delete);
+                     .forEach(IndirectCullingGroup::delete);
         cullingGroups.clear();
 
         stagingBuffer.delete();
@@ -271,7 +271,8 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
         // Set up the crumbling program buffers. Nothing changes here between draws.
         GlBufferType.DRAW_INDIRECT_BUFFER.bind(crumblingDrawBuffer.handle());
-        glBindBufferRange(GL_SHADER_STORAGE_BUFFER, BufferBindings.DRAW, crumblingDrawBuffer.handle(), 0, IndirectBuffers.DRAW_COMMAND_STRIDE);
+        glBindBufferRange(GL_SHADER_STORAGE_BUFFER, BufferBindings.DRAW, crumblingDrawBuffer.handle(), 0,
+                IndirectBuffers.DRAW_COMMAND_STRIDE);
 
         for (var groupEntry : byType.entrySet()) {
             var byProgress = groupEntry.getValue();

@@ -134,9 +134,7 @@ public class VisualizationManagerImpl implements VisualizationManager {
                 enginePhase = NestedPlan.of(parallel);
             }
 
-            // 1.12.2: updateRenderOrigin mutates origin + returns true on snap. No re-entrancy
-            // guard needed: beginFrame can't fire again until render() unblocks on frameFlag,
-            // which is raised at the framePlan tail — strictly after recreate's workers complete.
+            // 1.12.2: origin snaps rebuild storage; beginFrame fences the previous worker plan before re-entering.
             framePlan = IfElsePlan.on((RenderContext ctx) -> engine.updateRenderOrigin(ctx.camera()))
                     .ifTrue(recreate)
                     .ifFalse(update)
@@ -274,12 +272,13 @@ public class VisualizationManagerImpl implements VisualizationManager {
      * Begin execution of the frame plan.
      */
     private void beginFrame(RenderContext context) {
-        this.lastFrameCtx = context;
-
         // Make sure we're done with the last tick.
         // Note we don't lower here because many frames may happen per tick.
         taskExecutor.syncUntil(tickFlag::isRaised);
 
+        // Compat with shader hosts: another world pass can start without the previous pass reaching render().
+        taskExecutor.syncUntil(frameFlag::isRaised);
+        this.lastFrameCtx = context;
         frameFlag.lower();
 
         frameLimiter.tick();

@@ -23,6 +23,9 @@ public final class ArbCallSiteTransformer {
     private static final String TRACKER_DOT = "dev.engine_room.flywheel.backend.gl.GlStateTracker";
     private static final String WRAP_USE_PROGRAM = "arbUseProgram";
     private static final String WRAP_BIND_BUFFER = "arbBindBuffer";
+    private static final String AUSM_PREFIX = "com.luna.ausm.";
+    private static final String ACTIVE_TEXTURE = "glActiveTexture";
+    private static final String BIND_TEXTURE = "glBindTexture";
 
     private ArbCallSiteTransformer() {
     }
@@ -36,7 +39,9 @@ public final class ArbCallSiteTransformer {
         // scan (intrinsified) saves the parse cost. ISO_8859_1 = 1:1 byte→char, so ASCII method
         // names survive verbatim.
         String pool = new String(basicClass, StandardCharsets.ISO_8859_1);
-        if (!pool.contains(USE_PROGRAM) && !pool.contains(BIND_BUFFER)) {
+        var ausm = transformedName.startsWith(AUSM_PREFIX);
+        if (!pool.contains(USE_PROGRAM) && !pool.contains(BIND_BUFFER)
+                && !(ausm && (pool.contains(ACTIVE_TEXTURE) || pool.contains(BIND_TEXTURE)))) {
             return basicClass;
         }
 
@@ -62,6 +67,16 @@ public final class ArbCallSiteTransformer {
                         && BIND_BUFFER_DESC.equals(call.desc)) {
                     call.owner = TRACKER;
                     call.name = WRAP_BIND_BUFFER;
+                    changed = true;
+                } else if (ausm && "org/lwjgl/opengl/GL13".equals(call.owner)
+                        && ACTIVE_TEXTURE.equals(call.name) && USE_PROGRAM_DESC.equals(call.desc)) {
+                    call.owner = TRACKER;
+                    call.name = "hostActiveTexture";
+                    changed = true;
+                } else if (ausm && "org/lwjgl/opengl/GL11".equals(call.owner)
+                        && BIND_TEXTURE.equals(call.name) && BIND_BUFFER_DESC.equals(call.desc)) {
+                    call.owner = TRACKER;
+                    call.name = "hostBindTexture";
                     changed = true;
                 }
             }

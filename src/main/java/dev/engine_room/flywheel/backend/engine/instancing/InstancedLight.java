@@ -2,10 +2,12 @@ package dev.engine_room.flywheel.backend.engine.instancing;
 
 import dev.engine_room.flywheel.backend.Samplers;
 import dev.engine_room.flywheel.backend.engine.LightStorage;
+import dev.engine_room.flywheel.backend.gl.GlStateTracker;
 import dev.engine_room.flywheel.backend.gl.TextureBuffer;
 import dev.engine_room.flywheel.backend.gl.buffer.GlBuffer;
 import dev.engine_room.flywheel.backend.gl.buffer.GlBufferUsage;
 import dev.engine_room.flywheel.lib.memory.MemoryBlock;
+import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.system.MemoryUtil;
 
@@ -23,10 +25,18 @@ public class InstancedLight {
     }
 
     public void bind() {
-        Samplers.LIGHT_LUT.makeActive();
-        lutTexture.bind(lut.handle());
-        Samplers.LIGHT_SECTIONS.makeActive();
-        sectionsTexture.bind(sections.handle());
+        bind(Samplers.LIGHT_LUT.number, Samplers.LIGHT_SECTIONS.number);
+    }
+
+    public void bind(int lutUnit, int sectionsUnit) {
+        if (lutUnit >= 0) {
+            GlStateTracker.hostActiveTexture(GL13.GL_TEXTURE0 + lutUnit);
+            lutTexture.bind(lut.handle());
+        }
+        if (sectionsUnit >= 0) {
+            GlStateTracker.hostActiveTexture(GL13.GL_TEXTURE0 + sectionsUnit);
+            sectionsTexture.bind(sections.handle());
+        }
     }
 
     public void flush(LightStorage light) {

@@ -11,11 +11,16 @@ import java.util.Collection;
 import java.util.Collections;
 
 public class InstanceStructComponent implements SourceComponent {
-    private static final String STRUCT_NAME = "FlwInstance";
+    private final String STRUCT_NAME;
 
     private final Layout layout;
 
     public InstanceStructComponent(InstanceType<?> type) {
+        this(type, "FlwInstance");
+    }
+
+    public InstanceStructComponent(InstanceType<?> type, String structName) {
+        STRUCT_NAME = structName;
         layout = type.layout();
     }
 

@@ -25,7 +25,11 @@ import org.jspecify.annotations.Nullable;
  * result is set on the consumer before {@code quad.pipe(lighter)} runs.
  */
 final class CapturingVertexConsumer implements IVertexConsumer {
-    // BLOCK element indices match DefaultVertexFormats.BLOCK declaration: pos, color, uv, lightmap.
+    // OptiFine replaces BLOCK on shader toggles; Forge's lighter caches its gathering layout separately.
+    private static final VertexFormat CAPTURE_FORMAT = new VertexFormat().addElement(DefaultVertexFormats.POSITION_3F)
+                                                                         .addElement(DefaultVertexFormats.COLOR_4UB)
+                                                                         .addElement(DefaultVertexFormats.TEX_2F)
+                                                                         .addElement(DefaultVertexFormats.TEX_2S);
     private static final int E_POSITION = 0;
     private static final int E_COLOR = 1;
     private static final int E_UV = 2;
@@ -41,9 +45,12 @@ final class CapturingVertexConsumer implements IVertexConsumer {
     private final float[][] uvs = new float[4][2];
     private final float[][] lightmaps = new float[4][2];
 
-    @Nullable private Material currentMaterial;
-    @Nullable private Matrix4f currentPose;
-    @Nullable private Matrix3f currentNormalMatrix;
+    @Nullable
+    private Material currentMaterial;
+    @Nullable
+    private Matrix4f currentPose;
+    @Nullable
+    private Matrix3f currentNormalMatrix;
     private int currentVertex;
 
     CapturingVertexConsumer(MeshAccumulator accumulator) {
@@ -63,7 +70,7 @@ final class CapturingVertexConsumer implements IVertexConsumer {
 
     @Override
     public VertexFormat getVertexFormat() {
-        return DefaultVertexFormats.BLOCK;
+        return CAPTURE_FORMAT;
     }
 
     @Override
@@ -104,8 +111,19 @@ final class CapturingVertexConsumer implements IVertexConsumer {
     // The lighter handles tint / orientation / diffuse internally — these arrive at the consumer
     // only as informational pass-throughs. Material + diffuse routing happened in the caller
     // before pipe(), so we don't need to retain them here.
-    @Override public void setQuadTint(int tint) {}
-    @Override public void setQuadOrientation(EnumFacing orientation) {}
-    @Override public void setApplyDiffuseLighting(boolean diffuse) {}
-    @Override public void setTexture(TextureAtlasSprite texture) {}
+    @Override
+    public void setQuadTint(int tint) {
+    }
+
+    @Override
+    public void setQuadOrientation(EnumFacing orientation) {
+    }
+
+    @Override
+    public void setApplyDiffuseLighting(boolean diffuse) {
+    }
+
+    @Override
+    public void setTexture(TextureAtlasSprite texture) {
+    }
 }

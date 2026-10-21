@@ -153,7 +153,7 @@ public final class MaterialRenderState {
         resetWriteMask();
     }
 
-    private static void resetTexture() {
+    public static void resetTexture() {
         GlTextureUnit.T0.makeActive();
         GlStateManager.bindTexture(0);
     }

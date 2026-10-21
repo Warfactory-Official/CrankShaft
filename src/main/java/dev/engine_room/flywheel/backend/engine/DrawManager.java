@@ -21,9 +21,10 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Function;
 
 public abstract class DrawManager<N extends AbstractInstancer<?>> {
-    private static final boolean MODEL_WARNINGS = Boolean.getBoolean("flywheel.modelWarnings");
-    public static final int CRUMBLING_STAGES = 10;
+    public boolean hasOitDraws() { return false; }
 
+    public static final int CRUMBLING_STAGES = 10;
+    private static final boolean MODEL_WARNINGS = Boolean.getBoolean("flywheel.modelWarnings");
     /**
      * A map of instancer keys to instancers.
      *
@@ -36,14 +37,91 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
      * <p>All new instancers land here before having resources allocated in {@link #render}.
      */
     protected final Queue<UninitializedInstancer<N, ?>> initializationQueue = new ConcurrentLinkedQueue<>();
-
     /**
      * Function object to pass into computeIfAbsent.
      * <p>Create once and cache to avoid allocating every time.
      */
     protected final Function<InstancerKey<?>, N> createAndDeferInit = this::createAndDeferInit;
 
-    public <I extends Instance> AbstractInstancer<I> getInstancer(Environment environment, InstanceType<I> type, Model model, int bias) {
+    private static boolean modelHasNoIssues(Model model) {
+        // No point in setting up resources for something that will never be rendered.
+        if (model.meshes().isEmpty()) {
+            if (MODEL_WARNINGS) {
+                StringBuilder builder = new StringBuilder();
+                builder.append("Creating an instancer for a model with no meshes! Stack trace:");
+
+                StackWalker.getInstance()
+                           .forEach(f -> builder.append("\n\t")
+                                                .append(f.toString()));
+
+                FlwBackend.LOGGER.warn(builder.toString());
+            }
+            return false;
+        }
+
+        // Catch nullability issues here so the backend doesn't explode later.
+        List<Model.ConfiguredMesh> meshes = model.meshes();
+        for (int i = 0; i < meshes.size(); i++) {
+            var mesh = meshes.get(i);
+            if (!MaterialRenderState.materialIsAllNonNull(mesh.material())) {
+                if (MODEL_WARNINGS) {
+                    StringBuilder builder = new StringBuilder();
+                    builder.append("ConfiguredMesh at index ")
+                           .append(i)
+                           .append(" has null components in its material! Stack trace:");
+
+                    StackWalker.getInstance()
+                               .forEach(f -> builder.append("\n\t")
+                                                    .append(f.toString()));
+
+                    FlwBackend.LOGGER.warn(builder.toString());
+                }
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    protected static <I extends AbstractInstancer<?>> Map<GroupKey<?>, Int2ObjectMap<List<Pair<I, InstanceHandleImpl<?>>>>> doCrumblingSort(
+            List<Engine.CrumblingBlock> crumblingBlocks, State2Instancer<I> cast) {
+        Map<GroupKey<?>, Int2ObjectMap<List<Pair<I, InstanceHandleImpl<?>>>>> byType = new HashMap<>();
+        for (Engine.CrumblingBlock block : crumblingBlocks) {
+            int progress = block.progress();
+
+            if (progress < 0 || progress >= CRUMBLING_STAGES) {
+                continue;
+            }
+
+            for (Instance instance : block.instances()) {
+                // Filter out instances that weren't created by this engine.
+                // If all is well, we probably shouldn't take the `continue`
+                // branches but better to do checked casts.
+                if (!(instance.handle() instanceof InstanceHandleImpl<?> impl)) {
+                    continue;
+                }
+
+                var instancer = cast.apply(impl.state);
+
+                if (instancer == null) {
+                    continue;
+                }
+
+                byType.computeIfAbsent(new GroupKey<>(instancer.type, instancer.environment),
+                              $ -> new Int2ObjectArrayMap<>())
+                      .computeIfAbsent(progress, $ -> new ArrayList<>())
+                      .add(Pair.of(instancer, impl));
+            }
+        }
+        return byType;
+    }
+
+    public boolean supportsRenderIdentity() {
+        return false;
+    }
+
+    public <I extends Instance> AbstractInstancer<I> getInstancer(Environment environment, InstanceType<I> type,
+                                                                  Model model, int bias) {
         return getInstancer(new InstancerKey<>(environment, type, model, bias));
     }
 
@@ -74,13 +152,15 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
         initializationQueue.clear();
     }
 
-    /** Default no-op; backends with an OIT pipeline override. */
+    /**
+     * Default no-op; backends with an OIT pipeline override.
+     */
     public void renderOit(LightStorage lightStorage, EnvironmentStorage environmentStorage) {
     }
 
     public void onRenderOriginChanged() {
         instancers.values()
-                .forEach(AbstractInstancer::clear);
+                  .forEach(AbstractInstancer::clear);
     }
 
     public abstract void renderCrumbling(List<Engine.CrumblingBlock> crumblingBlocks);
@@ -102,83 +182,6 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
         return out;
     }
 
-    private static boolean modelHasNoIssues(Model model) {
-        // No point in setting up resources for something that will never be rendered.
-        if (model.meshes().isEmpty()) {
-            if (MODEL_WARNINGS) {
-                StringBuilder builder = new StringBuilder();
-                builder.append("Creating an instancer for a model with no meshes! Stack trace:");
-
-                StackWalker.getInstance()
-                        .forEach(f -> builder.append("\n\t")
-                                .append(f.toString()));
-
-                FlwBackend.LOGGER.warn(builder.toString());
-            }
-            return false;
-        }
-
-        // Catch nullability issues here so the backend doesn't explode later.
-        List<Model.ConfiguredMesh> meshes = model.meshes();
-        for (int i = 0; i < meshes.size(); i++) {
-            var mesh = meshes.get(i);
-            if (!MaterialRenderState.materialIsAllNonNull(mesh.material())) {
-                if (MODEL_WARNINGS) {
-                    StringBuilder builder = new StringBuilder();
-                    builder.append("ConfiguredMesh at index ")
-                            .append(i)
-                            .append(" has null components in its material! Stack trace:");
-
-                    StackWalker.getInstance()
-                            .forEach(f -> builder.append("\n\t")
-                                    .append(f.toString()));
-
-                    FlwBackend.LOGGER.warn(builder.toString());
-                }
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    @FunctionalInterface
-    protected interface State2Instancer<I extends AbstractInstancer<?>> {
-        // I tried using a plain Function<State<?>, I> here, but it exploded with type errors.
-        @Nullable I apply(InstanceHandleImpl.State<?> state);
-    }
-
-    protected static <I extends AbstractInstancer<?>> Map<GroupKey<?>, Int2ObjectMap<List<Pair<I, InstanceHandleImpl<?>>>>> doCrumblingSort(List<Engine.CrumblingBlock> crumblingBlocks, State2Instancer<I> cast) {
-        Map<GroupKey<?>, Int2ObjectMap<List<Pair<I, InstanceHandleImpl<?>>>>> byType = new HashMap<>();
-        for (Engine.CrumblingBlock block : crumblingBlocks) {
-            int progress = block.progress();
-
-            if (progress < 0 || progress >= CRUMBLING_STAGES) {
-                continue;
-            }
-
-            for (Instance instance : block.instances()) {
-                // Filter out instances that weren't created by this engine.
-                // If all is well, we probably shouldn't take the `continue`
-                // branches but better to do checked casts.
-                if (!(instance.handle() instanceof InstanceHandleImpl<?> impl)) {
-                    continue;
-                }
-
-                var instancer = cast.apply(impl.state);
-
-                if (instancer == null) {
-                    continue;
-                }
-
-                byType.computeIfAbsent(new GroupKey<>(instancer.type, instancer.environment), $ -> new Int2ObjectArrayMap<>())
-                        .computeIfAbsent(progress, $ -> new ArrayList<>())
-                        .add(Pair.of(instancer, impl));
-            }
-        }
-        return byType;
-    }
-
     public void delete() {
         instancers.clear();
         initializationQueue.clear();
@@ -190,6 +193,12 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
 
     public Map<InstancerKey<?>, N> instancers() {
         return instancers;
+    }
+
+    @FunctionalInterface
+    protected interface State2Instancer<I extends AbstractInstancer<?>> {
+        // I tried using a plain Function<State<?>, I> here, but it exploded with type errors.
+        @Nullable I apply(InstanceHandleImpl.State<?> state);
     }
 
     protected record UninitializedInstancer<N, I extends Instance>(InstancerKey<I> key, N instancer) {

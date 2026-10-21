@@ -23,6 +23,8 @@ public class EmbeddedEnvironment implements VisualEmbedding, Environment {
     @Nullable
     private final EmbeddedEnvironment parent;
     private final InstancerProvider instancerProvider;
+    @Nullable
+    private final RenderIdentity identity;
 
     private final Matrix4f pose = new Matrix4f();
     private final Matrix3f normal = new Matrix3f();
@@ -34,9 +36,15 @@ public class EmbeddedEnvironment implements VisualEmbedding, Environment {
     private boolean deleted = false;
 
     public EmbeddedEnvironment(EngineImpl engine, Vec3i renderOrigin, @Nullable EmbeddedEnvironment parent) {
+        this(engine, renderOrigin, parent, parent == null ? null : parent.identity);
+    }
+
+    public EmbeddedEnvironment(EngineImpl engine, Vec3i renderOrigin, @Nullable EmbeddedEnvironment parent,
+                               @Nullable RenderIdentity identity) {
         this.engine = engine;
         this.renderOrigin = renderOrigin;
         this.parent = parent;
+        this.identity = identity;
 
         instancerProvider = new InstancerProvider() {
             @Override
@@ -71,13 +79,18 @@ public class EmbeddedEnvironment implements VisualEmbedding, Environment {
     public VisualEmbedding createEmbedding(Vec3i renderOrigin) {
         var out = new EmbeddedEnvironment(engine, renderOrigin, this);
         engine.environmentStorage()
-                .track(out);
+              .track(out);
         return out;
     }
 
     @Override
     public ContextShader contextShader() {
         return ContextShader.EMBEDDED;
+    }
+
+    @Override
+    public @Nullable RenderIdentity identity() {
+        return identity;
     }
 
     @Override

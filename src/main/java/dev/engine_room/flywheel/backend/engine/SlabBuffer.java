@@ -10,14 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class SlabBuffer {
-    // No GL_CLIENT_STORAGE_BIT on purpose. Drivers place this in VRAM and expose the mapped
-    // pointer as a write-combined PCIe (BAR) window. Per-byte WC writes are slower than cached
-    // host writes in isolation, but instance writers run in parallel across worker threads
-    // touching independent pages, so aggregate issue rate hides the cost. In exchange the
-    // indirect path's upload step is a cheap VRAM->VRAM glCopyNamedBufferSubData per dirty page
-    // (no compute scatter, no host staging round-trip). Adding GL_CLIENT_STORAGE_BIT would force
-    // host placement, turning that copy into a PCIe upload and shifting RAM pressure off VRAM --
-    // do not "fix" it.
+    // Instancing samples these mapped GPU pages as a texture buffer. Indirect rendering uses HostSlab snapshots instead.
     private static final int STORAGE_FLAGS = GL44C.GL_MAP_PERSISTENT_BIT | GL30C.GL_MAP_WRITE_BIT;
     private static final int MAP_FLAGS = GL44C.GL_MAP_PERSISTENT_BIT | GL30C.GL_MAP_WRITE_BIT | GL30C.GL_MAP_FLUSH_EXPLICIT_BIT;
 

@@ -40,6 +40,7 @@ public final class BlockModelBuilder {
     private final Iterable<BlockPos> positions;
     private @Nullable Matrix4f pose;
     private boolean renderFluids = false;
+    private int cullMask;
     private @Nullable BlockMaterialFunction materialFunc;
 
     public BlockModelBuilder(IBlockAccess level, Iterable<BlockPos> positions) {
@@ -52,8 +53,10 @@ public final class BlockModelBuilder {
         return this;
     }
 
-    /** Include vanilla BlockLiquid (water / lava) via {@link FluidBakePipeline}. Modded Forge fluids
-     *  (BlockFluidBase) are emitted via the regular IBakedModel path regardless of this flag. */
+    /**
+     * Include vanilla BlockLiquid (water / lava) via {@link FluidBakePipeline}. Modded Forge fluids
+     * (BlockFluidBase) are emitted via the regular IBakedModel path regardless of this flag.
+     */
     public BlockModelBuilder renderFluids(boolean renderFluids) {
         this.renderFluids = renderFluids;
         return this;
@@ -61,6 +64,14 @@ public final class BlockModelBuilder {
 
     public BlockModelBuilder materialFunc(@Nullable BlockMaterialFunction materialFunc) {
         this.materialFunc = materialFunc;
+        return this;
+    }
+
+    /**
+     * Omit directional quad buckets from every block, using bits in {@link EnumFacing#ordinal()} order.
+     */
+    public BlockModelBuilder cullFaces(int cullMask) {
+        this.cullMask = cullMask;
         return this;
     }
 
@@ -95,6 +106,7 @@ public final class BlockModelBuilder {
                     Material fluidMaterial = func.apply(fluidLayer, false, false);
                     if (fluidMaterial != null) {
                         Matrix4f effectivePose = composePose(pos, scratchPose);
+                        accumulator.block(actualState, effectivePose);
                         ForgeHooksClient.setRenderLayer(fluidLayer);
                         try {
                             fluidBaker.bake(level, actualState, pos, accumulator, fluidMaterial,
@@ -109,14 +121,17 @@ public final class BlockModelBuilder {
             if (renderType != EnumBlockRenderType.MODEL) continue;
 
             // null -> missing model
-            IBakedModel model = Minecraft.getMinecraft().getBlockRendererDispatcher().getBlockModelShapes().getModelForState(actualState);
+            IBakedModel model = Minecraft.getMinecraft().getBlockRendererDispatcher().getBlockModelShapes()
+                                         .getModelForState(actualState);
             // extendedState is what getQuads receives — gives blocks access to connection /
             // surrounding info (fences, redstone wires, etc).
             IBlockState extendedState = actualState.getBlock().getExtendedState(actualState, level, pos);
             boolean ao = model.isAmbientOcclusion(extendedState);
-            boolean useAo = ao && FlwConfig.INSTANCE.emissiveBlockAoBakingFix().shouldApplyAo(actualState.getLightValue(level, pos));
+            boolean useAo = ao && FlwConfig.INSTANCE.emissiveBlockAoBakingFix()
+                                                    .shouldApplyAo(actualState.getLightValue(level, pos));
 
             Matrix4f effectivePose = composePose(pos, scratchPose);
+            accumulator.block(actualState, effectivePose);
             long seed = MathHelper.getPositionRandom(pos);
 
             pipeline.setupBlock(level, extendedState, pos);
@@ -162,7 +177,8 @@ public final class BlockModelBuilder {
                            Matrix4f effectivePose, @Nullable Matrix3f normalMatrix,
                            LighterPipeline pipeline) {
         for (EnumFacing dir : ModelUtil.DIRECTIONS) {
-            if (dir != null && !actualState.shouldSideBeRendered(level, pos, dir)) continue;
+            if (dir != null && ((cullMask & (1 << dir.ordinal())) != 0 || !actualState.shouldSideBeRendered(level, pos,
+                    dir))) continue;
 
             List<BakedQuad> quads = model.getQuads(extendedState, dir, seed);
             for (BakedQuad quad : quads) {

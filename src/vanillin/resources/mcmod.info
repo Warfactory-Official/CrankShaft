@@ -3,7 +3,7 @@
     "modid": "${vanillinId}",
     "name": "${vanillinName}",
     "description": "Unofficial backport of Vanillin, an instanced rendering for entities and block entities via Crankshaft.",
-    "version": "${vanillinVersion}",
+    "version": "${modVersion}",
     "mcversion": "${minecraftVersion}",
     "url": "https://github.com/Warfactory-Official/CrankShaft",
     "updateUrl": "",

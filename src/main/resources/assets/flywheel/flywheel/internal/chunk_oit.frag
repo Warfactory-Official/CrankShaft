@@ -42,18 +42,7 @@ float tented_blue_noise(float normalizedDepth) {
     return b * tent;
 }
 
-void main() {
-    vec4 atlas = texture(_flw_atlas, v_uv0);
-    vec4 lightmap = texture(_flw_lightmap, v_uv1);
-    vec4 color = atlas * v_color * lightmap;
-
-    // Chunk renderer pre-sorts translucent quads; any fragment with near-zero alpha is invisible.
-    if (color.a < 1e-3) discard;
-
-    // Vanilla translucency is fogged in the fixed-function draw we suppressed; reapply it so water
-    // etc. fade like the rest of the scene, matching the instanced path's flw_fogFilter.
-    color.rgb = mix(color.rgb, flw_fogColor.rgb, flw_fogFactor(v_fogDistance) * flw_fogColor.a);
-
+void _flw_writeChunkOit(vec4 color) {
     float linearDepth = linearize_depth(gl_FragCoord.z, _flw_cullData.znear, _flw_cullData.zfar);
 
     #ifdef _FLW_DEPTH_RANGE
@@ -87,4 +76,18 @@ void main() {
     float transmittance = signal_corrected_transmittance(_flw_coefficients, our_depth, our_transmittance);
     _flw_accumulate = vec4(color.rgb * color.a, color.a) * transmittance;
     #endif
+}
+
+void main() {
+    vec4 atlas = texture(_flw_atlas, v_uv0);
+    vec4 lightmap = texture(_flw_lightmap, v_uv1);
+    vec4 color = atlas * v_color * lightmap;
+
+    // Chunk renderer pre-sorts translucent quads; any fragment with near-zero alpha is invisible.
+    if (color.a < 1e-3) discard;
+
+    // Vanilla translucency is fogged in the fixed-function draw we suppressed; reapply it so water
+    // etc. fade like the rest of the scene, matching the instanced path's flw_fogFilter.
+    color.rgb = mix(color.rgb, flw_fogColor.rgb, flw_fogFactor(v_fogDistance) * flw_fogColor.a);
+    _flw_writeChunkOit(color);
 }

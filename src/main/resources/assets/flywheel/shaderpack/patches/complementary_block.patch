@@ -1,0 +1,26 @@
+diff --git a/program/gbuffers_block.glsl b/program/gbuffers_block.glsl
+--- a/program/gbuffers_block.glsl
++++ b/program/gbuffers_block.glsl
+@@ -9,4 +9,8 @@
+ #ifdef FRAGMENT_SHADER
+ 
+ in vec2 texCoord;
++#ifdef CRANKSHAFT_CLRWL_BLOCK
++vec2 lmCoord;
++#else
+ in vec2 lmCoord;
++#endif
+@@ -106,5 +110,13 @@
+     vec4 color = texture2D(tex, texCoord);
+     #ifdef GENERATED_NORMALS
+         vec3 colorP = color.rgb;
+     #endif
++#ifdef CRANKSHAFT_CLRWL_BLOCK
++    float clrwlAo;
++    vec4 clrwlOverlay;
++    clrwl_computeFragment(color, color, lmCoord, clrwlAo, clrwlOverlay);
++    color.rgb = mix(color.rgb, clrwlOverlay.rgb, clrwlOverlay.a);
++    lmCoord = clamp((lmCoord - 1.0 / 32.0) * 32.0 / 30.0, 0.0, 1.0);
++#else
+     color *= glColor;
++#endif

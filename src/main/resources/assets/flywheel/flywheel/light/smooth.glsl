@@ -4,7 +4,7 @@ void flw_shaderLight() {
         flw_fragLight = max(flw_fragLight, light.light);
 
         if (flw_material.ambientOcclusion) {
-            flw_fragColor.rgb *= light.ao;
+            flw_applyAo(light.ao);
         }
     }
 }

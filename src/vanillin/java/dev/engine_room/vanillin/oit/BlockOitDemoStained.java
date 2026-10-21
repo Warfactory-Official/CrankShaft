@@ -6,20 +6,20 @@ import net.minecraft.block.state.IBlockState;
 import net.minecraft.creativetab.CreativeTabs;
 import net.minecraft.item.EnumDyeColor;
 import net.minecraft.item.ItemStack;
+import net.minecraft.util.BlockRenderLayer;
 import net.minecraft.util.NonNullList;
 
-/**
- * Shared base for the 16-meta stained-glass demo markers. The two concrete subclasses
- * ({@link BlockOitDemoStainedGlass} cube / {@link BlockOitDemoStainedGlassPane} pane) stay
- * distinct classes — never a subtype of each other — because {@link OitDemoVisual} and
- * {@link OitDemoRenderer} dispatch on the concrete type via {@code instanceof} (cube checked
- * before pane), so collapsing them would route panes to the cube model.
- */
+// Cube and pane markers remain separate types so their vanilla model identities cannot overlap.
 public abstract class BlockOitDemoStained extends BlockOitDemoGlass {
     public static final PropertyEnum<EnumDyeColor> COLOR = PropertyEnum.create("color", EnumDyeColor.class);
 
     protected BlockOitDemoStained() {
         setDefaultState(blockState.getBaseState().withProperty(COLOR, EnumDyeColor.WHITE));
+    }
+
+    @Override
+    public BlockRenderLayer getRenderLayer() {
+        return BlockRenderLayer.TRANSLUCENT;
     }
 
     @Override

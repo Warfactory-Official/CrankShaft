@@ -20,10 +20,10 @@ public class GlProgram extends GlObject {
 
     public GlProgram(int handle) {
         handle(handle);
+        uniformLocationCache.defaultReturnValue(Integer.MIN_VALUE);
     }
 
-    public void bind() {
-        int h = handle();
+    public static void bind(int h) {
         if (h != GlStateTracker.getProgram()) {
             glUseProgram(h);
             GlStateTracker._setProgram(h);
@@ -31,10 +31,11 @@ public class GlProgram extends GlObject {
     }
 
     public static void unbind() {
-        if (GlStateTracker.getProgram() != 0) {
-            glUseProgram(0);
-            GlStateTracker._setProgram(0);
-        }
+        bind(0);
+    }
+
+    public void bind() {
+        bind(handle());
     }
 
     public void setFloat(String glslName, float value) {
@@ -132,14 +133,14 @@ public class GlProgram extends GlObject {
     }
 
     public int getUniformLocation(String uniform) {
-        return uniformLocationCache.computeIfAbsent(uniform, s -> {
-            int index = glGetUniformLocation(this.handle(), uniform);
-
-            if (index < 0) {
-                LOGGER.debug("No active uniform '{}' exists. Could be unused.", uniform);
-            }
-            return index;
-        });
+        var index = uniformLocationCache.getInt(uniform);
+        if (index != Integer.MIN_VALUE) return index;
+        index = glGetUniformLocation(this.handle(), uniform);
+        if (index < 0) {
+            LOGGER.debug("No active uniform '{}' exists. Could be unused.", uniform);
+        }
+        uniformLocationCache.put(uniform, index);
+        return index;
     }
 
     public void setSamplerBinding(String name, GlTextureUnit binding) {

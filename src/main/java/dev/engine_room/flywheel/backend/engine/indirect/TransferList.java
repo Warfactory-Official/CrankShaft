@@ -9,6 +9,7 @@ public class TransferList {
     private int length;
 
     public void push(int vbo, long srcOffset, long dstOffset, long size) {
+        if (size == 0) return;
         if (continuesLast(vbo, srcOffset, dstOffset)) {
             int lastIndex = length - 1;
             size(lastIndex, size(lastIndex) + size);
@@ -63,7 +64,8 @@ public class TransferList {
         }
         int lastIndex = length - 1;
         var lastSize = size(lastIndex);
-        return vbo(lastIndex) == vbo && dstOffset(lastIndex) + lastSize == dstOffset && srcOffset(lastIndex) + lastSize == srcOffset;
+        return vbo(lastIndex) == vbo && dstOffset(lastIndex) + lastSize == dstOffset && srcOffset(
+                lastIndex) + lastSize == srcOffset;
     }
 
     private void vbo(int index, int vbo) {

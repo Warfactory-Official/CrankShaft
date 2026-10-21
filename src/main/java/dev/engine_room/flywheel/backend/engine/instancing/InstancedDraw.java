@@ -46,6 +46,10 @@ public class InstancedDraw {
         return mesh;
     }
 
+    public InstancedInstancer<?> instancer() {
+        return instancer;
+    }
+
     public void render(TextureBuffer buffer) {
         if (mesh.isInvalid()) {
             return;

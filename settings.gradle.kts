@@ -23,8 +23,10 @@ pluginManagement {
         mavenLocal()
     }
     val rfgVersion: String by settings
+    val tenonVersion = providers.gradleProperty("tenon_version").get()
     plugins {
         id("com.gtnewhorizons.retrofuturagradle") version rfgVersion
+        id("mov.movblock.tenon") version tenonVersion
     }
 }
 

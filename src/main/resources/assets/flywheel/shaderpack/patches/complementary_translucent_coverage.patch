@@ -1,0 +1,12 @@
+diff --git a/program/gbuffers_water.glsl b/program/gbuffers_water.glsl
+--- a/program/gbuffers_water.glsl
++++ b/program/gbuffers_water.glsl
+@@ -288,3 +288,8 @@
+     /* DRAWBUFFERS:03 */
+     gl_FragData[0] = color;
+     gl_FragData[1] = vec4(1.0 - translucentMult.rgb, translucentMult.a);
++    #ifdef GBUFFERS_COLORWHEEL_TRANSLUCENT
++    // Ordinary models carry final coverage without adding a terrain transmission filter.
++    if (!_flw_borrowedBlock())
++        gl_FragData[1] = vec4(vec3(0.0), color.a);
++    #endif

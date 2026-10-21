@@ -2,11 +2,15 @@ package dev.engine_room.flywheel.lib.visual;
 
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
+import dev.engine_room.flywheel.lib.model.PackIdentity;
+import dev.engine_room.flywheel.lib.model.PackTaggedModel;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
 import dev.engine_room.flywheel.lib.util.LightTexture;
 import dev.engine_room.flywheel.lib.util.OverlayTexture;
 import net.minecraft.client.model.ModelBase;
 import org.joml.Matrix4fc;
+
+import java.util.List;
 
 /**
  * A fullbright emissive overlay (spider/enderman/blaze eyes): the body's geometry re-instanced with an
@@ -21,9 +25,12 @@ public final class EmissiveLayer<M extends ModelBase> implements LivingLayer {
     // beginFrame only runs for un-culled visuals, which keeps a culled spawn from ghosting eyes at the origin.
     private boolean posed;
 
-    public EmissiveLayer(VisualizationContext ctx, InstanceTree body, EntityModel<M> model, Material material, String cacheKey, int bias) {
+    public EmissiveLayer(VisualizationContext ctx, InstanceTree body, EntityModel<M> model, Material material,
+                         String cacheKey, int bias) {
         this.body = body;
-        this.overlay = InstanceTree.create(ctx.instancerProvider(), AbstractLivingEntityVisual.buildTree(model, material, cacheKey), bias);
+        this.overlay = InstanceTree.create(ctx.instancerProvider(),
+                PackTaggedModel.tag(AbstractLivingEntityVisual.buildTree(model, material, cacheKey),
+                        List.of(PackIdentity.SPIDER_EYES)), bias);
         overlay.visible(false);
     }
 

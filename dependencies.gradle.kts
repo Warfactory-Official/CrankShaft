@@ -1,4 +1,7 @@
 dependencies {
+    add("embed", "org.anarres:jcpp:1.4.14") { isTransitive = false }
+    add("embed", "io.github.douira:glsl-transformer:3.0.0-pre3") { isTransitive = false }
+    add("embed", "org.antlr:antlr4-runtime:4.13.1") { isTransitive = false }
     // Cleanroom shades its API
 //    compileOnly("zone.rong:mixinbooter:10.7")
     annotationProcessor("zone.rong:mixinbooter:10.7")
