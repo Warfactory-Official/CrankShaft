@@ -18,7 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class FabricVanillinConfig {
+public class FabricVanillinConfig implements VanillinConfig {
     public static final Path PATH = FabricLoader.getInstance()
                                                 .getConfigDir()
                                                 .resolve("vanillate.json");
@@ -38,7 +38,7 @@ public class FabricVanillinConfig {
     private static void apply(Configurator.ConfiguredVisual configured, Map<String, VisualConfigValue> config,
                               Map<String, List<VisualOverride>> overrides, boolean masterEnabled) {
         var key = configured.configKey();
-        var enabled = config.computeIfAbsent(key, $ -> VisualConfigValue.DEFAULT);
+        var enabled = config.computeIfAbsent(key, _ -> VisualConfigValue.DEFAULT);
 
         if (masterEnabled) {
             configured.set(enabled, overrides.get(key));
@@ -112,6 +112,37 @@ public class FabricVanillinConfig {
         }
     }
 
+    @Override
+    public boolean enabled() {
+        return config.enabled;
+    }
+
+    @Override
+    public void setEnabled(boolean value) {
+        config.enabled = value;
+    }
+
+    @Override
+    public boolean configurable(boolean _, String _) {
+        return true;
+    }
+
+    @Override
+    public VisualConfigValue visual(boolean blockEntity, String key) {
+        return (blockEntity ? config.blockEntities : config.entities).getOrDefault(key, VisualConfigValue.DEFAULT);
+    }
+
+    @Override
+    public void setVisual(boolean blockEntity, String key, VisualConfigValue value) {
+        (blockEntity ? config.blockEntities : config.entities).put(key, value);
+    }
+
+    @Override
+    public void saveAndApply() {
+        save();
+        apply(VanillaVisuals.CONFIGURATOR);
+    }
+
     public void load() {
         if (file.exists()) {
             try (FileReader reader = new FileReader(file)) {
@@ -133,14 +164,14 @@ public class FabricVanillinConfig {
         }
 
         var blockEntities = config.blockEntities;
-        var blockEntityOverrides = this.overrides.blockEntities();
+        var blockEntityOverrides = overrides.blockEntities();
 
         for (Configurator.ConfiguredVisual configured : configurator.blockEntities.values()) {
             apply(configured, blockEntities, blockEntityOverrides, masterEnabled);
         }
 
         var entities = config.entities;
-        var entityOverrides = this.overrides.entities();
+        var entityOverrides = overrides.entities();
         for (Configurator.ConfiguredVisual configured : configurator.entities.values()) {
             apply(configured, entities, entityOverrides, masterEnabled);
         }

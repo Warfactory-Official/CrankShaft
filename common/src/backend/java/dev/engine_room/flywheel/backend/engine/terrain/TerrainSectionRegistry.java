@@ -409,7 +409,7 @@ public final class TerrainSectionRegistry implements TerrainSectionListener {
         return presentMaskBuffers[pass].deviceAddress();
     }
 
-    public long presentMaskByteCapacity(int pass) {
+    public long presentMaskByteCapacity(int _) {
         return (long) presentMaskRegionCap * GEOMETRY_MASK_WORDS * Integer.BYTES;
     }
 

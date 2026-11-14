@@ -10,6 +10,7 @@ import com.mojang.renderpearl.api.textures.GpuTextureView;
 import com.mojang.renderpearl.backend.vulkan.VulkanConst;
 import com.mojang.renderpearl.backend.vulkan.VulkanRenderPass;
 import com.mojang.renderpearl.frontend.FrontendRenderPass;
+import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.compile.VkNativePipelineCompiler;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
@@ -36,8 +37,6 @@ import java.util.function.Supplier;
  * borrowed for recording, and every frontend facade must close before advancing to the next subpass.
  */
 public final class VkNativeOitPass {
-    public static final boolean ENABLED =
-            Boolean.parseBoolean(System.getProperty("crankshaft.nativeOit.vulkan.subpasses", "true"));
     private static final int FRAMEBUFFER_STAGES = VK12.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
             | VK12.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK12.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT
             | VK12.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -63,10 +62,9 @@ public final class VkNativeOitPass {
     private static final int[] SLOT_EMISSION = {0};
     // DEPTH_TERRAIN, DEPTH_MAIN precede the cull; B0 dies there.
     private static final int CULL_SUBPASS = 2;
-    private static @Nullable VkNativeOitPass active;
     private static final Map<Spec, VkNativeOitPass> SPECS = new HashMap<>();
     private static final Map<Spec, VkNativeOitPass> EMISSION_SPECS = new HashMap<>();
-
+    private static @Nullable VkNativeOitPass active;
     private final List<Node> nodes = new ArrayList<>();
     private final Runnable facadeClosed = () -> this.openFacades--;
     private long renderPass;
@@ -89,9 +87,6 @@ public final class VkNativeOitPass {
     private boolean clouds;
     private boolean emission;
 
-    public record Spec(int mainDepthFormat, boolean water, boolean clouds, boolean customClouds, boolean insert) {
-    }
-
     public static Spec spec(Targets targets, boolean insert) {
         return new Spec(VulkanConst.toVk(targets.mainDepth().texture().getFormat()), targets.waterDepth() != null,
                 targets.cloudDepth() != null, targets.customClouds(), insert);
@@ -101,12 +96,16 @@ public final class VkNativeOitPass {
         return active != null;
     }
 
-    /** Fused subpass graph, else separate native passes; engine folded producers need negotiated local reads. */
+    /**
+     * Fused subpass graph, else separate native passes; engine folded producers need negotiated local reads.
+     */
     public static boolean fused(VkPrograms programs) {
-        return ENABLED && programs.localRead();
+        return programs.localRead();
     }
 
-    /** Loading/configuration warmup and runtime obtain the same render-pass compatibility objects. */
+    /**
+     * Loading/configuration warmup and runtime obtain the same render-pass compatibility objects.
+     */
     public static VkNativeOitPass get(Spec spec) {
         return SPECS.computeIfAbsent(spec, key -> {
             VkNativeOitPass pass = new VkNativeOitPass();
@@ -116,7 +115,9 @@ public final class VkNativeOitPass {
         });
     }
 
-    /** Separate pass, main features only: no vanilla terrain or cloud producer is additive. */
+    /**
+     * Separate pass, main features only: no vanilla terrain or cloud producer is additive.
+     */
     public static VkNativeOitPass getEmission(int mainDepthFormat) {
         return EMISSION_SPECS.computeIfAbsent(new Spec(mainDepthFormat, false, false, false, false), key -> {
             VkNativeOitPass pass = new VkNativeOitPass();
@@ -126,7 +127,9 @@ public final class VkNativeOitPass {
         });
     }
 
-    /** Call after native pipeline reset; no recorded producer may retain a borrowed facade. */
+    /**
+     * Call after native pipeline reset; no recorded producer may retain a borrowed facade.
+     */
     public static void resetSpecs() {
         for (VkNativeOitPass pass : SPECS.values()) pass.delete();
         for (VkNativeOitPass pass : EMISSION_SPECS.values()) pass.delete();
@@ -134,106 +137,45 @@ public final class VkNativeOitPass {
         EMISSION_SPECS.clear();
     }
 
-    /** World/frame-target teardown releases view-dependent objects while keeping warmed pipeline specs. */
+    /**
+     * World/frame-target teardown releases view-dependent objects while keeping warmed pipeline specs.
+     */
     public static void releaseFramebuffers() {
         for (VkNativeOitPass pass : SPECS.values()) pass.deleteFramebuffer();
         for (VkNativeOitPass pass : EMISSION_SPECS.values()) pass.deleteFramebuffer();
     }
 
-    /** No view is owned by this record or by the pass; its lifetime is the prepared level frame. */
-    public record Targets(GpuTextureView originalBounds, GpuTextureView culledBounds,
-                          GpuTextureView[] coefficients, @Nullable GpuTextureView accumulation,
-                          GpuTextureView mainDepth, @Nullable GpuTextureView waterDepth,
-                          @Nullable GpuTextureView cloudDepth, boolean customClouds,
-                          @Nullable GpuTextureView emission) {
-        public Targets {
-            coefficients = coefficients.clone();
+    private static VkAttachmentReference2.Buffer references(MemoryStack stack, int[] indices,
+                                                            int @Nullable [] aspects) {
+        VkAttachmentReference2.Buffer references = VkAttachmentReference2.calloc(indices.length, stack);
+        for (int i = 0; i < indices.length; i++)
+            references.get(i).sType$Default().attachment(indices[i])
+                      .layout(VK12.VK_IMAGE_LAYOUT_GENERAL).aspectMask(aspects == null ? 0 : aspects[i]);
+        return references;
+    }
+
+    /**
+     * Explicitly used by OIT bind sites; ordinary pipeline handles and classic paths remain direct.
+     */
+    public static long enginePipeline(VkGraphicsPipeline pipeline) {
+        return active == null ? pipeline.handle()
+                : pipeline.subpassHandle(active.nodes.get(active.subpass).engineCompatibility);
+    }
+
+    public static long enginePipeline(VkMeshPipeline pipeline) {
+        return active == null ? pipeline.handle()
+                : pipeline.subpassHandle(active.nodes.get(active.subpass).engineCompatibility);
+    }
+
+    private static void check(int result, String operation) {
+        if (result != VK12.VK_SUCCESS) {
+            throw new IllegalStateException("Vulkan error " + result + " creating " + operation);
         }
     }
 
-    /** Loader boundary: NeoForge adds the stencil flag to the native backend constructor. */
-    @FunctionalInterface
-    public interface BackendFactory {
-        VulkanRenderPass create(VkCommandBuffer commandBuffer, RenderPass.RenderArea area, int width, int height,
-                                boolean stencil, Supplier<String> label);
-    }
-
-    public enum Phase {
-        DEPTH_TERRAIN("depth/terrain_water", OitMode.DEPTH_RANGE),
-        DEPTH_MAIN("depth/main_features", OitMode.DEPTH_RANGE),
-        CULL_BOUNDS("depth/copy_cull_main", OitMode.DEPTH_RANGE),
-        DEPTH_CUSTOM_CLOUD("depth/custom_cloud_main", OitMode.DEPTH_RANGE),
-        DEPTH_CLOUD("depth/cloud_seed_and_bounds", OitMode.DEPTH_RANGE),
-        WATER_MASK("depth/water_rebuild", OitMode.DEPTH_RANGE),
-        COEFFICIENT_TERRAIN("coefficients/terrain_water", OitMode.GENERATE_COEFFICIENTS),
-        COEFFICIENT_MAIN("coefficients/main_features", OitMode.GENERATE_COEFFICIENTS),
-        COEFFICIENT_CLOUD("coefficients/cloud", OitMode.GENERATE_COEFFICIENTS),
-        EVALUATE_TERRAIN("evaluate/terrain_water", OitMode.EVALUATE),
-        EVALUATE_MAIN("evaluate/main_features", OitMode.EVALUATE),
-        EVALUATE_CLOUD("evaluate/cloud", OitMode.EVALUATE),
-        INSERT_TERRAIN("insert/terrain_water", OitMode.EVALUATE),
-        INSERT_MAIN("insert/main_features", OitMode.EVALUATE),
-        INSERT_CLOUD("insert/cloud", OitMode.EVALUATE),
-        EMISSION_MAIN("emission/main_features", OitMode.EVALUATE);
-
-        private final String label;
-        private final OitMode mode;
-
-        Phase(String label, OitMode mode) {
-            this.label = "flywheel:vk/native_oit/" + label;
-            this.mode = mode;
-        }
-
-        public OitMode mode() {
-            return mode;
-        }
-
-        public boolean emission() {
-            return this == EMISSION_MAIN;
-        }
-
-        public boolean insert() {
-            return this == INSERT_TERRAIN || this == INSERT_MAIN || this == INSERT_CLOUD;
-        }
-
-        /** Main-feature phases: engine instances and native features share their main depth. */
-        public boolean main() {
-            return this == DEPTH_MAIN || this == COEFFICIENT_MAIN || this == EVALUATE_MAIN || this == INSERT_MAIN
-                    || this == EMISSION_MAIN;
-        }
-    }
-
-    private static final class Node {
-        final Phase phase;
-        final int depth;
-        final int[] colors;
-        final int[] inputs;
-        final int[] inputAspects;
-        final int[] sourceColors;
-        final GpuTextureView[] inputViews;
-        VkGraphicsPipeline.Subpass engineCompatibility;
-        List<ColorTargetState> ordinaryTargets;
-        VkNativePipelineCompiler.Compatibility nativeCompatibility;
-
-        Node(Phase phase, int depth, int[] colors, int[] inputs, int[] inputAspects, int[] sourceColors) {
-            this.phase = phase;
-            this.depth = depth;
-            this.colors = colors;
-            this.inputs = inputs;
-            this.inputAspects = inputAspects;
-            this.sourceColors = sourceColors;
-            inputViews = new GpuTextureView[inputs.length];
-        }
-
-        boolean uses(int attachment) {
-            if (depth == attachment) return true;
-            for (int color : colors) if (color == attachment) return true;
-            for (int input : inputs) if (input == attachment) return true;
-            return false;
-        }
-    }
-
-    /** Creates compatibility/framebuffer objects before recording, without acquiring ownership of any image. */
+    /**
+     * Creates compatibility/framebuffer objects before recording, without acquiring ownership of any image.
+     */
     private void prepare(Targets next, BackendFactory backendFactory, boolean insert, int width, int height) {
         if (commandBuffer != null) throw new IllegalStateException("Cannot prepare an active native OIT pass");
         long previousRenderPass = renderPass;
@@ -272,8 +214,10 @@ public final class VkNativeOitPass {
             deleteFramebuffer();
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VkFramebufferCreateInfo info = VkFramebufferCreateInfo.calloc(stack).sType$Default()
-                        .renderPass(renderPass).pAttachments(stack.longs(nextViews)).width(width).height(height)
-                        .layers(1);
+                                                                      .renderPass(renderPass)
+                                                                      .pAttachments(stack.longs(nextViews)).width(width)
+                                                                      .height(height)
+                                                                      .layers(1);
                 var handle = stack.mallocLong(1);
                 check(VK12.vkCreateFramebuffer(VkContext.vkDevice(), info, null, handle), "native OIT framebuffer");
                 framebuffer = handle.get(0);
@@ -289,7 +233,9 @@ public final class VkNativeOitPass {
         }
     }
 
-    /** Image-free compatibility creation; selected-algorithm PSOs can compile before the first world draw. */
+    /**
+     * Image-free compatibility creation; selected-algorithm PSOs can compile before the first world draw.
+     */
     public void prepareCompatibility(int mainDepthFormat, boolean water, boolean clouds, boolean customClouds,
                                      boolean insert) {
         if (commandBuffer != null) throw new IllegalStateException("Cannot replace an active native OIT spec");
@@ -350,8 +296,9 @@ public final class VkNativeOitPass {
 
     private void add(Phase phase, int depth, int[] colors, int[] inputs, int[] sourceColors) {
         int[] aspects = new int[inputs.length];
-        for (int i = 0; i < inputs.length; i++) aspects[i] = inputs[i] >= mainIndex
-                ? VK12.VK_IMAGE_ASPECT_DEPTH_BIT : VK12.VK_IMAGE_ASPECT_COLOR_BIT;
+        for (int i = 0; i < inputs.length; i++)
+            aspects[i] = inputs[i] >= mainIndex
+                    ? VK12.VK_IMAGE_ASPECT_DEPTH_BIT : VK12.VK_IMAGE_ASPECT_COLOR_BIT;
         nodes.add(new Node(phase, depth, colors, inputs, aspects, sourceColors));
     }
 
@@ -361,16 +308,17 @@ public final class VkNativeOitPass {
             for (int i = 0; i < formats.length; i++) {
                 boolean depth = i >= mainIndex;
                 attachments.get(i).sType$Default().format(formats[i]).samples(VK12.VK_SAMPLE_COUNT_1_BIT)
-                        .loadOp(i == mainIndex || i == waterIndex || emission && i == cloudIndex
-                                ? VK12.VK_ATTACHMENT_LOAD_OP_LOAD
-                                : !depth && i != CULLED ? VK12.VK_ATTACHMENT_LOAD_OP_CLEAR
-                                : VK12.VK_ATTACHMENT_LOAD_OP_DONT_CARE)
-                        .storeOp(i == BOUNDS && !emission ? VK12.VK_ATTACHMENT_STORE_OP_DONT_CARE
-                        : VK12.VK_ATTACHMENT_STORE_OP_STORE)
-                        .stencilLoadOp(depth ? VK12.VK_ATTACHMENT_LOAD_OP_LOAD : VK12.VK_ATTACHMENT_LOAD_OP_DONT_CARE)
-                        .stencilStoreOp(depth ? VK12.VK_ATTACHMENT_STORE_OP_STORE
-                        : VK12.VK_ATTACHMENT_STORE_OP_DONT_CARE)
-                        .initialLayout(VK12.VK_IMAGE_LAYOUT_GENERAL).finalLayout(VK12.VK_IMAGE_LAYOUT_GENERAL);
+                           .loadOp(i == mainIndex || i == waterIndex || emission && i == cloudIndex
+                                   ? VK12.VK_ATTACHMENT_LOAD_OP_LOAD
+                                   : !depth && i != CULLED ? VK12.VK_ATTACHMENT_LOAD_OP_CLEAR
+                                   : VK12.VK_ATTACHMENT_LOAD_OP_DONT_CARE)
+                           .storeOp(i == BOUNDS && !emission ? VK12.VK_ATTACHMENT_STORE_OP_DONT_CARE
+                                   : VK12.VK_ATTACHMENT_STORE_OP_STORE)
+                           .stencilLoadOp(
+                                   depth ? VK12.VK_ATTACHMENT_LOAD_OP_LOAD : VK12.VK_ATTACHMENT_LOAD_OP_DONT_CARE)
+                           .stencilStoreOp(depth ? VK12.VK_ATTACHMENT_STORE_OP_STORE
+                                   : VK12.VK_ATTACHMENT_STORE_OP_DONT_CARE)
+                           .initialLayout(VK12.VK_IMAGE_LAYOUT_GENERAL).finalLayout(VK12.VK_IMAGE_LAYOUT_GENERAL);
             }
             VkSubpassDescription2.Buffer subpasses = VkSubpassDescription2.calloc(nodes.size(), stack);
             for (int i = 0; i < nodes.size(); i++) {
@@ -378,7 +326,8 @@ public final class VkNativeOitPass {
                 VkAttachmentReference2.Buffer colors = references(stack, node.colors, null);
                 VkAttachmentReference2.Buffer inputs = references(stack, node.inputs, node.inputAspects);
                 VkAttachmentReference2 depth = VkAttachmentReference2.calloc(stack).sType$Default()
-                        .attachment(node.depth).layout(VK12.VK_IMAGE_LAYOUT_GENERAL);
+                                                                     .attachment(node.depth)
+                                                                     .layout(VK12.VK_IMAGE_LAYOUT_GENERAL);
                 int[] preserves = new int[formats.length];
                 int preserveCount = 0;
                 for (int attachment = 0; attachment < formats.length; attachment++) {
@@ -389,23 +338,24 @@ public final class VkNativeOitPass {
                 }
                 // LWJGL cannot infer the shared color/resolve attachment count from either pointer setter.
                 subpasses.get(i).sType$Default().pipelineBindPoint(VK12.VK_PIPELINE_BIND_POINT_GRAPHICS)
-                        .colorAttachmentCount(colors.remaining())
-                        .pColorAttachments(colors).pInputAttachments(inputs).pDepthStencilAttachment(depth)
-                        .pPreserveAttachments(stack.ints(Arrays.copyOf(preserves, preserveCount)));
+                         .colorAttachmentCount(colors.remaining())
+                         .pColorAttachments(colors).pInputAttachments(inputs).pDepthStencilAttachment(depth)
+                         .pPreserveAttachments(stack.ints(Arrays.copyOf(preserves, preserveCount)));
             }
             VkSubpassDependency2.Buffer dependencies = VkSubpassDependency2.calloc(nodes.size(), stack);
             int storageAccess = insert ? VK12.VK_ACCESS_SHADER_READ_BIT | VK12.VK_ACCESS_SHADER_WRITE_BIT : 0;
             for (int i = 0; i < nodes.size(); i++) {
                 dependencies.get(i).sType$Default()
-                        .srcSubpass(i == 0 ? VK12.VK_SUBPASS_EXTERNAL : i - 1)
-                        .dstSubpass(i)
-                        .srcStageMask(FRAMEBUFFER_STAGES).dstStageMask(FRAMEBUFFER_STAGES)
-                        .srcAccessMask(FRAMEBUFFER_READS | FRAMEBUFFER_WRITES | storageAccess)
-                        .dstAccessMask(FRAMEBUFFER_READS | FRAMEBUFFER_WRITES | storageAccess)
-                        .dependencyFlags(VK12.VK_DEPENDENCY_BY_REGION_BIT);
+                            .srcSubpass(i == 0 ? VK12.VK_SUBPASS_EXTERNAL : i - 1)
+                            .dstSubpass(i)
+                            .srcStageMask(FRAMEBUFFER_STAGES).dstStageMask(FRAMEBUFFER_STAGES)
+                            .srcAccessMask(FRAMEBUFFER_READS | FRAMEBUFFER_WRITES | storageAccess)
+                            .dstAccessMask(FRAMEBUFFER_READS | FRAMEBUFFER_WRITES | storageAccess)
+                            .dependencyFlags(VK12.VK_DEPENDENCY_BY_REGION_BIT);
             }
             VkRenderPassCreateInfo2 info = VkRenderPassCreateInfo2.calloc(stack).sType$Default()
-                    .pAttachments(attachments).pSubpasses(subpasses).pDependencies(dependencies);
+                                                                  .pAttachments(attachments).pSubpasses(subpasses)
+                                                                  .pDependencies(dependencies);
             var handle = stack.mallocLong(1);
             check(VK12.vkCreateRenderPass2(VkContext.vkDevice(), info, null, handle), "native OIT render pass");
             renderPass = handle.get(0);
@@ -418,26 +368,21 @@ public final class VkNativeOitPass {
                 List<ColorTargetState> states = new ArrayList<>();
                 Optional<BlendFunction> blend = Optional.of(node.phase.mode() == OitMode.DEPTH_RANGE
                         ? BlendFunction.MAX : BlendFunction.ADDITIVE);
-                for (int color : node.colors) states.add(new ColorTargetState(blend,
-                        formats[color] == VK12.VK_FORMAT_R32G32B32A32_SFLOAT ? GpuFormat.RGBA32_FLOAT
-                        : GpuFormat.RGBA16_FLOAT, -1));
+                for (int color : node.colors)
+                    states.add(new ColorTargetState(blend,
+                            formats[color] == VK12.VK_FORMAT_R32G32B32A32_SFLOAT ? GpuFormat.RGBA32_FLOAT
+                                    : GpuFormat.RGBA16_FLOAT, -1));
                 node.ordinaryTargets = List.copyOf(states);
                 node.nativeCompatibility =
                         new VkNativePipelineCompiler.Compatibility(renderPass, i, formats[node.depth],
-                        states);
+                                states);
             }
         }
     }
 
-    private static VkAttachmentReference2.Buffer references(MemoryStack stack, int[] indices,
-            int @Nullable [] aspects) {
-        VkAttachmentReference2.Buffer references = VkAttachmentReference2.calloc(indices.length, stack);
-        for (int i = 0; i < indices.length; i++) references.get(i).sType$Default().attachment(indices[i])
-                .layout(VK12.VK_IMAGE_LAYOUT_GENERAL).aspectMask(aspects == null ? 0 : aspects[i]);
-        return references;
-    }
-
-    /** {@code prepare -> begin -> subpass per phase -> close}; closes on failure too. */
+    /**
+     * {@code prepare -> begin -> subpass per phase -> close}; closes on failure too.
+     */
     public void record(Targets next, BackendFactory backendFactory, boolean insert, int width, int height, float far,
                        Consumer<VkNativeOitPass> subpass) {
         prepare(next, backendFactory, insert, width, height);
@@ -462,10 +407,12 @@ public final class VkNativeOitPass {
                 clears.get(BOUNDS).color().float32(0, -far).float32(1, -far).float32(2, 0.0f).float32(3, 0.0f);
             }
             VkRenderPassBeginInfo info = VkRenderPassBeginInfo.calloc(stack).sType$Default()
-                    .renderPass(renderPass).framebuffer(framebuffer).pClearValues(clears);
+                                                              .renderPass(renderPass).framebuffer(framebuffer)
+                                                              .pClearValues(clears);
             info.renderArea().extent().set(width, height);
             VK12.vkCmdBeginRenderPass2(commandBuffer, info, VkSubpassBeginInfo.calloc(stack).sType$Default()
-                    .contents(VK12.VK_SUBPASS_CONTENTS_INLINE));
+                                                                              .contents(
+                                                                                      VK12.VK_SUBPASS_CONTENTS_INLINE));
         }
         active = this;
         subpass = 0;
@@ -492,6 +439,46 @@ public final class VkNativeOitPass {
 
     public VkGraphicsPipeline.Subpass engineCompatibility(int index) {
         return nodes.get(index).engineCompatibility;
+    }
+
+    /**
+     * Render thread: every prepared pass's subpasses drawing uber wavelet producers of {@code mode} (as
+     * {@code NativeVkEngineWarmup} warms them); {@code emission}: the additive emission producer's.
+     */
+    public static List<VkGraphicsPipeline.Subpass> engineSubpasses(OitMode mode, boolean emission) {
+        List<VkGraphicsPipeline.Subpass> subpasses = new ArrayList<>();
+        for (var spec : SPECS.entrySet()) {
+            if (spec.getKey().insert()) continue;
+            for (Node node : spec.getValue().nodes) {
+                if (emission ? node.phase == Phase.EMISSION_MAIN : node.phase.mode() == mode
+                        && (node.phase == Phase.DEPTH_MAIN || node.phase == Phase.COEFFICIENT_MAIN
+                        || node.phase == Phase.EVALUATE_MAIN)) {
+                    subpasses.add(node.engineCompatibility);
+                }
+            }
+        }
+        if (emission) {
+            for (VkNativeOitPass pass : EMISSION_SPECS.values()) {
+                for (Node node : pass.nodes) {
+                    if (node.phase == Phase.EMISSION_MAIN) subpasses.add(node.engineCompatibility);
+                }
+            }
+        }
+        return subpasses;
+    }
+
+    /**
+     * Render thread: every prepared pass's subpasses drawing uber insert producers.
+     */
+    public static List<VkGraphicsPipeline.Subpass> engineSubpasses(OitInsertMode _) {
+        List<VkGraphicsPipeline.Subpass> subpasses = new ArrayList<>();
+        for (var spec : SPECS.entrySet()) {
+            if (!spec.getKey().insert()) continue;
+            for (Node node : spec.getValue().nodes) {
+                if (node.phase == Phase.INSERT_MAIN) subpasses.add(node.engineCompatibility);
+            }
+        }
+        return subpasses;
     }
 
     public VkCommandBuffer commandBuffer() {
@@ -522,18 +509,20 @@ public final class VkNativeOitPass {
                 VkContext.stencilFormat(formats[nodes.get(subpass).depth]) != VK12.VK_FORMAT_UNDEFINED, label);
     }
 
-    /** Closing this facade never ends rendering; the pass owner advances or ends the one outer render pass. */
+    /**
+     * Closing this facade never ends rendering; the pass owner advances or ends the one outer render pass.
+     */
     public RenderPass borrow(Supplier<String> label) {
         Node node = nodes.get(subpass);
         var builder = RenderPassDescriptor.builder(label)
-                .withRenderArea(new RenderPass.RenderArea(0, 0, width, height));
+                                          .withRenderArea(new RenderPass.RenderArea(0, 0, width, height));
         for (int color : node.colors) builder.withColorAttachment(view(color));
         builder.withDepthAttachment(view(node.depth));
         var descriptor = builder.build();
         openFacades++;
         FrontendRenderPass pass =
                 new FrontendRenderPass(backend(label), VkContext.device(), descriptor.colorAttachments(),
-                true, facadeClosed, descriptor.renderArea());
+                        true, facadeClosed, descriptor.renderArea());
         RenderSystem.bindDefaultUniforms(pass);
         return pass;
     }
@@ -567,17 +556,6 @@ public final class VkNativeOitPass {
         if (attachment == cloudIndex) return targets.cloudDepth();
         if (attachment == ACCUMULATION) return targets.accumulation();
         return targets.coefficients()[attachment - COEFFICIENT_0];
-    }
-
-    /** Explicitly used by OIT bind sites; ordinary pipeline handles and classic paths remain direct. */
-    public static long enginePipeline(VkGraphicsPipeline pipeline) {
-        return active == null ? pipeline.handle()
-                : pipeline.subpassHandle(active.nodes.get(active.subpass).engineCompatibility);
-    }
-
-    public static long enginePipeline(VkMeshPipeline pipeline) {
-        return active == null ? pipeline.handle()
-                : pipeline.subpassHandle(active.nodes.get(active.subpass).engineCompatibility);
     }
 
     private void requireClosedFacades() {
@@ -631,9 +609,105 @@ public final class VkNativeOitPass {
         }
     }
 
-    private static void check(int result, String operation) {
-        if (result != VK12.VK_SUCCESS) {
-            throw new IllegalStateException("Vulkan error " + result + " creating " + operation);
+    public enum Phase {
+        DEPTH_TERRAIN("depth/terrain_water", OitMode.DEPTH_RANGE),
+        DEPTH_MAIN("depth/main_features", OitMode.DEPTH_RANGE),
+        CULL_BOUNDS("depth/copy_cull_main", OitMode.DEPTH_RANGE),
+        DEPTH_CUSTOM_CLOUD("depth/custom_cloud_main", OitMode.DEPTH_RANGE),
+        DEPTH_CLOUD("depth/cloud_seed_and_bounds", OitMode.DEPTH_RANGE),
+        WATER_MASK("depth/water_rebuild", OitMode.DEPTH_RANGE),
+        COEFFICIENT_TERRAIN("coefficients/terrain_water", OitMode.GENERATE_COEFFICIENTS),
+        COEFFICIENT_MAIN("coefficients/main_features", OitMode.GENERATE_COEFFICIENTS),
+        COEFFICIENT_CLOUD("coefficients/cloud", OitMode.GENERATE_COEFFICIENTS),
+        EVALUATE_TERRAIN("evaluate/terrain_water", OitMode.EVALUATE),
+        EVALUATE_MAIN("evaluate/main_features", OitMode.EVALUATE),
+        EVALUATE_CLOUD("evaluate/cloud", OitMode.EVALUATE),
+        INSERT_TERRAIN("insert/terrain_water", OitMode.EVALUATE),
+        INSERT_MAIN("insert/main_features", OitMode.EVALUATE),
+        INSERT_CLOUD("insert/cloud", OitMode.EVALUATE),
+        EMISSION_MAIN("emission/main_features", OitMode.EVALUATE);
+
+        private final String label;
+        private final OitMode mode;
+
+        Phase(String label, OitMode mode) {
+            this.label = "flywheel:vk/native_oit/" + label;
+            this.mode = mode;
+        }
+
+        public OitMode mode() {
+            return mode;
+        }
+
+        public boolean emission() {
+            return this == EMISSION_MAIN;
+        }
+
+        public boolean insert() {
+            return this == INSERT_TERRAIN || this == INSERT_MAIN || this == INSERT_CLOUD;
+        }
+
+        /**
+         * Main-feature phases: engine instances and native features share their main depth.
+         */
+        public boolean main() {
+            return this == DEPTH_MAIN || this == COEFFICIENT_MAIN || this == EVALUATE_MAIN || this == INSERT_MAIN
+                    || this == EMISSION_MAIN;
+        }
+    }
+
+    /**
+     * Loader boundary: NeoForge adds the stencil flag to the native backend constructor.
+     */
+    @FunctionalInterface
+    public interface BackendFactory {
+        VulkanRenderPass create(VkCommandBuffer commandBuffer, RenderPass.RenderArea area, int width, int height,
+                                boolean stencil, Supplier<String> label);
+    }
+
+    public record Spec(int mainDepthFormat, boolean water, boolean clouds, boolean customClouds, boolean insert) {
+    }
+
+    /**
+     * No view is owned by this record or by the pass; its lifetime is the prepared level frame.
+     */
+    public record Targets(GpuTextureView originalBounds, GpuTextureView culledBounds,
+                          GpuTextureView[] coefficients, @Nullable GpuTextureView accumulation,
+                          GpuTextureView mainDepth, @Nullable GpuTextureView waterDepth,
+                          @Nullable GpuTextureView cloudDepth, boolean customClouds,
+                          @Nullable GpuTextureView emission) {
+        public Targets {
+            coefficients = coefficients.clone();
+        }
+    }
+
+    private static final class Node {
+        final Phase phase;
+        final int depth;
+        final int[] colors;
+        final int[] inputs;
+        final int[] inputAspects;
+        final int[] sourceColors;
+        final GpuTextureView[] inputViews;
+        VkGraphicsPipeline.Subpass engineCompatibility;
+        List<ColorTargetState> ordinaryTargets;
+        VkNativePipelineCompiler.Compatibility nativeCompatibility;
+
+        Node(Phase phase, int depth, int[] colors, int[] inputs, int[] inputAspects, int[] sourceColors) {
+            this.phase = phase;
+            this.depth = depth;
+            this.colors = colors;
+            this.inputs = inputs;
+            this.inputAspects = inputAspects;
+            this.sourceColors = sourceColors;
+            inputViews = new GpuTextureView[inputs.length];
+        }
+
+        boolean uses(int attachment) {
+            if (depth == attachment) return true;
+            for (int color : colors) if (color == attachment) return true;
+            for (int input : inputs) if (input == attachment) return true;
+            return false;
         }
     }
 }

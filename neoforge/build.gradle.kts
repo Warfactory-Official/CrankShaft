@@ -90,6 +90,8 @@ dependencies {
     // Shared class metadata contains Fabric's CLASS-retained Environment annotation.
     compileOnly("net.fabricmc:fabric-loader:${fabricLoaderVersion}") { isTransitive = false }
     compileOnly(sodiumNeoforgeImplementation)
+    // Shared accessor generation resolves the optional Voxy water target against its pinned class layout.
+    compileOnly("maven.modrinth:voxy:$voxyCompileVersion") { isTransitive = false }
     compileOnly("maven.modrinth:lambdynamiclights:$lambDynLightsVersion") { isTransitive = false }
     compileOnly("maven.modrinth:polytone:$polytoneCompileVersion") { isTransitive = false }
     compileOnly(nestedModLibraries("maven.modrinth:polytone:$polytoneCompileVersion", "codecui"))

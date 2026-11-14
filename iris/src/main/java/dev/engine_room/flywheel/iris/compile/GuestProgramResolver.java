@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.iris.compile.patches.ContractPatches;
 import dev.engine_room.flywheel.iris.compile.patches.SundialTranslucent;
+import dev.engine_room.flywheel.iris.mixin.BlendModeOverrideAccessor;
 import dev.engine_room.flywheel.iris.mixin.IrisRenderingPipelineAccessor;
 import dev.engine_room.flywheel.iris.mixin.ProgramFallbackResolverAccessor;
 import dev.engine_room.flywheel.lib.material.FogShaders;
@@ -24,6 +25,7 @@ import org.lwjgl.opengl.GL11C;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
@@ -48,6 +50,8 @@ final class GuestProgramResolver {
     }
 
     static @Nullable ContractProperties oitProperties(IrisRenderingPipeline pipeline, boolean shadow) {
+        var forward = contractSet(pipeline).flywheel$forwardOit();
+        if (!shadow && forward != null) return forward.properties;
         ContractProperties authored = ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack()
                                                                                 .flywheel$contractProperties();
         if (authored.oit(shadow).explicitlyDisabled()) return authored;
@@ -61,10 +65,38 @@ final class GuestProgramResolver {
     static boolean depthWrite(IrisRenderingPipeline pipeline, ProgramKey program, boolean requested) {
         var pack = ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack();
         PackRole role = program.role();
-        boolean gbuffer = (role == PackRole.ADDITIVE || role.blockRole() == PackRole.TRANSLUCENT)
+        // The flatten target's own depth copy takes the nearest kept layer's (GuestParticleFlatten).
+        if (role == PackRole.PARTICLES_FLATTEN || role == PackRole.PARTICLES_HANDOFF) return true;
+        boolean forward = program.oit() != null && !role.shadow && contractSet(pipeline).flywheel$forwardOit() != null;
+        boolean gbuffer = !forward && (role == PackRole.ADDITIVE || role.blockRole() == PackRole.TRANSLUCENT)
                 && (role == PackRole.ADDITIVE ? pack.flywheel$deferredEmissive() : pack.flywheel$deferredTranslucent()
                 && !forwardUnlit(contractSet(pipeline), program));
-        return role.shadow || gbuffer || role == PackRole.ENTITIES || requested;
+        return role.shadow || gbuffer || role == PackRole.ENTITIES || role == PackRole.PARTICLES_TRANSLUCENT
+                || requested;
+    }
+
+    static boolean deferredCapture(ContractProgramSet contracts) {
+        var profile = contracts.flywheel$deferredOit();
+        return profile != null && profile.capturesTerrain();
+    }
+
+    /**
+     * The pack's translucent particle program overwrites rather than blends: it keeps one record per pixel (iterationRP's
+     * {@code gbuffers_textured} packs a single translucent texel), so a cloud reaches it composited
+     * ({@link PackRole#PARTICLES_FLATTEN}, then {@link PackRole#PARTICLES_HANDOFF}). Both rasterize its vertex stage
+     * alone.
+     */
+    static boolean singleRecordParticles(IrisRenderingPipeline pipeline) {
+        ProgramSource particles = ((IrisRenderingPipelineAccessor) pipeline).flywheel$resolver()
+                                                                            .resolveNullable(ProgramId.ParticlesTrans);
+        if (particles == null || !particles.getDirectives().getBufferBlendOverrides().isEmpty()
+                || particles.getGeometrySource().isPresent() || particles.getTessControlSource().isPresent()
+                || particles.getTessEvalSource().isPresent()) return false;
+        BlendModeOverride blend = particles.getDirectives().getBlendModeOverride().orElse(null);
+        if (blend == BlendModeOverride.OFF) return true;
+        // A replace written out (Sundial, SEUS: ONE ZERO ONE ZERO).
+        BlendMode mode = blend == null ? null : ((BlendModeOverrideAccessor) blend).flywheel$blendMode();
+        return mode != null && mode.srcRgb() == GL11C.GL_ONE && mode.dstRgb() == GL11C.GL_ZERO;
     }
 
     private static ContractProgramSet contractSet(IrisRenderingPipeline pipeline) {
@@ -89,7 +121,8 @@ final class GuestProgramResolver {
                 : ContractProgram.of(key.role(), Objects.requireNonNull(key.transparency()),
                 contractSet::flywheel$hasContract);
         ProgramSource contract = key.role() == PackRole.EYES || key.role() == PackRole.ENTITIES_TRANSLUCENT
-                || key.role() == PackRole.ENTITIES
+                || key.role() == PackRole.ENTITIES || key.role() == PackRole.PARTICLES_TRANSLUCENT
+                || key.role() == PackRole.PARTICLES_FLATTEN || key.role() == PackRole.PARTICLES_HANDOFF
                 || (key.role() == PackRole.ADDITIVE || key.role() == PackRole.GLINT)
                 && !contractSet.flywheel$hasContract(wanted) ? null : contractSet.flywheel$contractSource(wanted);
         if (contract != null && (contract.getTessControlSource()
@@ -104,7 +137,17 @@ final class GuestProgramResolver {
                     contract.getName());
             contract = null;
         }
-        return contract;
+        var forward = contractSet.flywheel$forwardOit();
+        return contract != null && key.oit() != null && !key.role().shadow && forward != null
+                ? forward.source(contract) : contract;
+    }
+
+    static @Nullable ProgramSource oitSource(IrisRenderingPipeline pipeline, boolean shadow) {
+        var contracts = contractSet(pipeline);
+        var source = contracts.flywheel$contractSource(shadow ? ContractProgram.SHADOW_TRANSLUCENT
+                : ContractProgram.GBUFFERS_TRANSLUCENT);
+        var forward = contracts.flywheel$forwardOit();
+        return !shadow && forward != null ? forward.source(source) : source;
     }
 
     static boolean forwardUnlit(ContractProgramSet contracts, ProgramKey key) {
@@ -121,6 +164,9 @@ final class GuestProgramResolver {
     }
 
     private static ProgramSource nativeSource(IrisRenderingPipeline pipeline, PackRole role) {
+        if (role == PackRole.PARTICLES_FLATTEN) {
+            return GuestParticleFlatten.source(nativeSource(pipeline, PackRole.PARTICLES_TRANSLUCENT));
+        }
         if (role == PackRole.ADDITIVE) {
             ProgramSource beam = resolveExactly(pipeline, ProgramId.BeaconBeam);
             if (beam != null && (((IrisRenderingPipelineAccessor) pipeline).flywheel$pack().flywheel$deferredEmissive()
@@ -177,6 +223,8 @@ final class GuestProgramResolver {
                                                               .getDirectives().getAlphaTestOverride()
                                                               .orElse(ShaderKey.SODIUM_TERRAIN_TRANSLUCENT.getAlphaTest());
         }
+        if (key.oit() != null && !key.role().shadow && contractSet(pipeline).flywheel$forwardOit() != null)
+            alpha = AlphaTests.OFF;
         if (contract != null && (nativeShadowAdapter || source.getFragmentSource().orElseThrow()
                                                               .contains(SundialTranslucent.SHADOW_MARKER))) {
             alpha = ((IrisRenderingPipelineAccessor) pipeline).flywheel$resolver()
@@ -204,11 +252,10 @@ final class GuestProgramResolver {
         } else {
             bufferBlendInformation = source.getDirectives()
                                            .getBufferBlendOverrides();
-            blend = source.getDirectives()
-                          .getBlendModeOverride()
-                          .orElse(key.role() == PackRole.GLINT ? GLINT_BLEND
-                                  : key.role() == PackRole.ENTITIES_TRANSLUCENT ? ENTITY_TRANSLUCENT_BLEND
-                                  : key.role().programId.getBlendModeOverride());
+            Optional<BlendModeOverride> directive = source.getDirectives().getBlendModeOverride();
+            blend = directive.orElse(key.role() == PackRole.GLINT ? GLINT_BLEND
+                    : key.role() == PackRole.ENTITIES_TRANSLUCENT ? ENTITY_TRANSLUCENT_BLEND
+                    : key.role().programId.getBlendModeOverride());
         }
         if (blend == null && key.role() == PackRole.ADDITIVE && ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack()
                                                                                                           .flywheel$deferredEmissive()) {

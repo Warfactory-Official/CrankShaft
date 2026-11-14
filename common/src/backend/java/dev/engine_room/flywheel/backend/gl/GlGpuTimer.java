@@ -1,9 +1,13 @@
 package dev.engine_room.flywheel.backend.gl;
 
 import dev.engine_room.flywheel.backend.GpuTimer;
+
 import dev.engine_room.flywheel.backend.util.GpuTimerReport;
+import net.minecraft.network.chat.Component;
 import org.lwjgl.opengl.GL15C;
 import org.lwjgl.opengl.GL33C;
+
+import java.util.Arrays;
 
 /**
  * OpenGL timestamp-query stream keyed by {@link GlCompat#pushDebugGroup}, in a ring of per-frame query sets
@@ -75,6 +79,7 @@ public final class GlGpuTimer {
             slot.endQueries[scopeIndex] = endQuery;
             slot.depths[scopeIndex] = stackDepth;
             GL33C.glQueryCounter(slot.queries[beginQuery], GL33C.GL_TIMESTAMP);
+            slot.lastWritten = beginQuery;
         } else {
             slot.droppedScopes++;
         }
@@ -106,6 +111,8 @@ public final class GlGpuTimer {
         }
         Slot slot = slots[writeSlot];
         GL33C.glQueryCounter(slot.queries[slot.endQueries[scopeIndex]], GL33C.GL_TIMESTAMP);
+        slot.lastWritten = slot.endQueries[scopeIndex];
+        slot.ended[scopeIndex] = true;
     }
 
     // The current write slot, lazily opened; terrain's push can precede the frame's beginFrame.
@@ -119,6 +126,12 @@ public final class GlGpuTimer {
     }
 
     public static void beginFrame() {
+        if (!GlGpuTimerLog.ENABLED) {
+            rotate();
+        }
+    }
+
+    static void rotate() {
         if (!available()) {
             return;
         }
@@ -171,11 +184,13 @@ public final class GlGpuTimer {
         }
     }
 
-    public static String commandReport() {
+    static GpuTimerReport report() {
+        return report;
+    }
+
+    public static Component commandReport() {
         collectFreshest();
-        StringBuilder out = new StringBuilder(1024);
-        report.appendSummary(out, true, enabled, oneShot);
-        return out.toString();
+        return report.commandReport(enabled, oneShot);
     }
 
     public static void appendDebugInfo(StringBuilder out) {
@@ -191,6 +206,11 @@ public final class GlGpuTimer {
         long minBegin = Long.MAX_VALUE;
         long maxEnd = Long.MIN_VALUE;
         for (int i = 0; i < slot.scopeCount; i++) {
+            // A scope popped after a rotation, or never, has no end timestamp: reading it is a GL error.
+            if (!slot.ended[i]) {
+                report.lastIncompleteScopes++;
+                continue;
+            }
             long begin = slot.readQuery(slot.beginQueries[i]);
             long end = slot.readQuery(slot.endQueries[i]);
             if (end < begin) {
@@ -228,8 +248,10 @@ public final class GlGpuTimer {
         final int[] beginQueries = new int[MAX_SCOPES];
         final int[] endQueries = new int[MAX_SCOPES];
         final int[] depths = new int[MAX_SCOPES];
+        final boolean[] ended = new boolean[MAX_SCOPES];
         long frameId = Long.MIN_VALUE;
         int queryCount;
+        int lastWritten = -1;
         int scopeCount;
         int droppedScopes;
         boolean pending;
@@ -242,6 +264,8 @@ public final class GlGpuTimer {
         void begin() {
             frameId = frameSeq++;
             queryCount = 0;
+            lastWritten = -1;
+            Arrays.fill(ended, false);
             scopeCount = 0;
             droppedScopes = 0;
             pending = false;
@@ -249,10 +273,10 @@ public final class GlGpuTimer {
         }
 
         boolean resultsAvailable() {
-            if (queryCount == 0) {
+            if (lastWritten < 0) {
                 return true;
             }
-            return GL15C.glGetQueryObjecti(queries[queryCount - 1], GL15C.GL_QUERY_RESULT_AVAILABLE) != 0;
+            return GL15C.glGetQueryObjecti(queries[lastWritten], GL15C.GL_QUERY_RESULT_AVAILABLE) != 0;
         }
 
         long readQuery(int index) {

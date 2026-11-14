@@ -1,25 +1,33 @@
 package dev.engine_room.flywheel.backend;
 
-#if MC >= 26.3
-import dev.engine_room.flywheel.backend.compile.NativeOitWarmup;
-#endif
+import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.engine.indirect.GlInsertOitChain;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.vk.VkCaps;
 import dev.engine_room.flywheel.backend.vk.VkContext;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.util.StringRepresentable;
 import org.jspecify.annotations.Nullable;
 
 import java.util.Arrays;
 import java.util.Locale;
+import java.util.function.BooleanSupplier;
 
-/** Loader persistence: register writer via {@link #setSaver}; seed startup values via {@link #loadState}. */
+/**
+ * Loader persistence: register writer via {@link #setSaver}; seed startup values via {@link #loadState}.
+ */
 public final class OitConfig {
     public static final int MAX_LAYERS = 32;
     private static final int[] PRESET = {0, 0, 4, 8, 16};
     private static final int[] layers = new int[Path.values().length];
     private static volatile Path path = Path.AUTO;
+    private static ShaderpackMode shaderpackMode = ShaderpackMode.DEFERRED;
+    private static BooleanSupplier shaderpackAvailable = () -> false;
+    private static Runnable shaderpackReload = () -> {
+    };
     #if MC < 26.3
     private static volatile boolean exactFabulous = false;
     #endif
@@ -33,13 +41,15 @@ public final class OitConfig {
         saver = r;
     }
 
-    public static void loadState(Path p, int kbuffer, int mlab, int abuffer #if MC < 26.3 , boolean exact #endif) {
-        #if MC >= 26.3
-        NativeOitWarmup.configure(() -> applyState(p, kbuffer, mlab, abuffer));
-        #else
-        applyState(p, kbuffer, mlab, abuffer);
-        exactFabulous = exact;
-        #endif
+    public static void loadState(Path p, int kbuffer, int mlab, int abuffer, ShaderpackMode shaderpack
+                                #if MC < 26.3 , boolean exact #endif) {
+        shaderpackMode = shaderpack;
+        ShaderWarmup.configure(() -> {
+            applyState(p, kbuffer, mlab, abuffer);
+            #if MC < 26.3
+            exactFabulous = exact;
+            #endif
+        });
     }
 
     private static void applyState(Path p, int kbuffer, int mlab, int abuffer) {
@@ -47,6 +57,37 @@ public final class OitConfig {
         layers[Path.KBUFFER.ordinal()] = clampLayers(kbuffer);
         layers[Path.MLAB.ordinal()] = clampLayers(mlab);
         layers[Path.ABUFFER.ordinal()] = clampLayers(abuffer);
+    }
+
+    /**
+     * Iris registers active-pack detection and pipeline reload once during client backend registration.
+     */
+    public static void registerShaderpackOit(BooleanSupplier available, Runnable reload) {
+        shaderpackAvailable = available;
+        shaderpackReload = reload;
+    }
+
+    /**
+     * Queried by the client settings screen; inactive or unsupported packs hide the selector.
+     */
+    public static boolean shaderpackOitAvailable() {
+        return shaderpackAvailable.getAsBoolean();
+    }
+
+    public static ShaderpackMode shaderpackMode() {
+        return shaderpackMode;
+    }
+
+    public static void setShaderpackMode(ShaderpackMode mode) {
+        shaderpackMode = mode;
+        saver.run();
+    }
+
+    /**
+     * Sodium invokes this on the client thread after Apply has persisted the new mode.
+     */
+    public static void reloadShaderpackOit() {
+        shaderpackReload.run();
     }
 
     #if MC < 26.3
@@ -69,15 +110,10 @@ public final class OitConfig {
     }
 
     public static void setPath(Path p) {
-        #if MC >= 26.3
-        NativeOitWarmup.configure(() -> {
+        ShaderWarmup.configure(() -> {
             path = p;
             saver.run();
         });
-        #else
-        path = p;
-        saver.run();
-        #endif
     }
 
     private static boolean hostSupportsInterlock() {
@@ -103,9 +139,16 @@ public final class OitConfig {
     }
 
     public static Path resolvePath() {
+        return resolvePath(path);
+    }
+
+    /**
+     * Resolves a candidate without publishing it to the active renderer configuration.
+     */
+    public static Path resolvePath(Path requested) {
         boolean interlock = hostSupportsInterlock();
         boolean insert = hostSupportsInsert();
-        Path p = path == Path.AUTO ? (interlock && insert ? Path.MLAB : Path.WAVELET) : path;
+        Path p = requested == Path.AUTO ? (interlock && insert ? Path.MLAB : Path.WAVELET) : requested;
         if (p == Path.MLAB && (!interlock || !supportsInsertMode(OitInsertMode.MLAB))
                 || p == Path.KBUFFER && !supportsInsertMode(OitInsertMode.KBUFFER)
                 || p == Path.ABUFFER && !supportsInsertMode(OitInsertMode.ABUFFER)
@@ -164,11 +207,35 @@ public final class OitConfig {
         return m;
     }
 
+    /**
+     * Client-thread command feedback; {@link #status()} retains the diagnostic log format.
+     */
+    public static MutableComponent statusComponent() {
+        var result = Component.translatable("command.flywheel.oit.status", path.getSerializedName());
+        Path resolved = resolvePath();
+        if (resolved != path)
+            result.append(Component.translatable("command.flywheel.oit.resolved", resolved.getSerializedName()));
+        var budgets = Component.empty();
+        for (OitInsertMode mode : OitInsertMode.values()) {
+            if (!budgets.getSiblings().isEmpty()) budgets.append(", ");
+            budgets.append(Component.translatable("command.flywheel.oit.layer_budget",
+                    mode.name().toLowerCase(Locale.ROOT), layersFor(mode)));
+            if (layers[pathOf(mode).ordinal()] == 0)
+                budgets.append(Component.translatable("command.flywheel.oit.preset"));
+        }
+        result.append(Component.translatable("command.flywheel.oit.layers", budgets));
+        #if MC < 26.3
+        result.append(Component.translatable("command.flywheel.oit.weather", Component.translatable(exactFabulous
+                ? "command.flywheel.oit.weather.exact" : "command.flywheel.oit.weather.layered")));
+        #endif
+        return result;
+    }
+
     public static String status() {
-        StringBuilder sb = new StringBuilder("OIT: path=").append(path.name().toLowerCase(Locale.ROOT));
+        StringBuilder sb = new StringBuilder("OIT: path=").append(path.getSerializedName());
         Path resolved = resolvePath();
         if (resolved != path) {
-            sb.append(" (-> ").append(resolved.name().toLowerCase(Locale.ROOT)).append(')');
+            sb.append(" (-> ").append(resolved.getSerializedName()).append(')');
         }
         sb.append(" | layers:");
         for (OitInsertMode m : OitInsertMode.values()) {
@@ -184,7 +251,21 @@ public final class OitConfig {
         return sb.toString();
     }
 
-    public enum Path {
-        AUTO, WAVELET, KBUFFER, MLAB, ABUFFER
+    public enum ShaderpackMode implements StringRepresentable {
+        FORWARD, DEFERRED;
+
+        @Override
+        public String getSerializedName() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+    }
+
+    public enum Path implements StringRepresentable {
+        AUTO, WAVELET, KBUFFER, MLAB, ABUFFER;
+
+        @Override
+        public String getSerializedName() {
+            return name().toLowerCase(Locale.ROOT);
+        }
     }
 }

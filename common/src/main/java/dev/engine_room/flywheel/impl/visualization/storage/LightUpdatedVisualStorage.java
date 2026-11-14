@@ -118,7 +118,7 @@ public class LightUpdatedVisualStorage {
         var updater = createUpdater(visual, sections.size());
 
         for (long section : sections) {
-            section2Updaters.computeIfAbsent(section, $ -> new ObjectArrayList<>())
+            section2Updaters.computeIfAbsent(section, _ -> new ObjectArrayList<>())
                             .add(updater);
         }
     }

@@ -238,7 +238,7 @@ public abstract class Storage<T> {
         }
 
         @Override
-        public void onCompletion(CountedCompleter<?> caller) {
+        public void onCompletion(CountedCompleter<?> _) {
             if (getCompleter() != null) {
                 return;
             }

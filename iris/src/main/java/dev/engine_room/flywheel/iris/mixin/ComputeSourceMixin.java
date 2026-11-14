@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.iris.mixin;
 
+import dev.engine_room.flywheel.iris.compile.patches.DeferredOitProfile;
 import net.irisshaders.iris.shaderpack.programs.ComputeSource;
 import net.irisshaders.iris.shaderpack.programs.ProgramSet;
 import org.spongepowered.asm.mixin.Final;
@@ -25,5 +26,7 @@ abstract class ComputeSourceMixin {
     private void flywheel$adaptCompute(CallbackInfoReturnable<Optional<String>> cir) {
         String source = parent.flywheel$patchedFragment(name + ".csh");
         if (source != null) cir.setReturnValue(Optional.of(source));
+        else if (parent.flywheel$lightDemand() != null)
+            cir.setReturnValue(cir.getReturnValue().map(DeferredOitProfile::enableLightDemand));
     }
 }

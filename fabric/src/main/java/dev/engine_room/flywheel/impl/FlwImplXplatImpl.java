@@ -65,7 +65,7 @@ public class FlwImplXplatImpl implements FlwImplXplat {
                 new VkNativeFrontendCompiler.BackendFactory() {
                     @Override
                     public VulkanRenderPipeline create(
-                            VulkanDevice device, long stencil, long depth,
+                            VulkanDevice device, long _, long depth,
                             long withoutDepth, long layout, long descriptorSetLayout,
                             LongList modules,
                             List<BindGroupLayout.UniformDescription> uniforms) {
@@ -74,27 +74,27 @@ public class FlwImplXplatImpl implements FlwImplXplat {
                     }
 
                     @Override
-                    public void configureStencil(DepthStencilState nativeState,
-                                                 VkPipelineDepthStencilStateCreateInfo target) {
+                    public void configureStencil(DepthStencilState _,
+                                                 VkPipelineDepthStencilStateCreateInfo _) {
                     }
                 });
     }
 
     @Override
-    public boolean renderCustomWeatherOit(LevelRenderState level, OitStage stage, RenderPass pass) {
+    public boolean renderCustomWeatherOit(LevelRenderState _, OitStage _, RenderPass _) {
         return false;
     }
 
     @Override
-    public boolean renderCustomCloudsOit(LevelRenderState level, CloudStatus status, OitStage stage,
-                                        GpuTextureView mainDepth, OitRenderPassProvider.Parameters parameters) {
+    public boolean renderCustomCloudsOit(LevelRenderState _, CloudStatus _, OitStage _,
+                                        GpuTextureView _, OitRenderPassProvider.Parameters _) {
         return false;
     }
 
     @Override
-    public void dispatchNativeOitStage(LevelRenderer renderer, LevelRenderState level,
-                                      List<SectionRenderDispatcher.RenderSection> visibleSections,
-                                      OitStage stage, RenderPass pass) {
+    public void dispatchNativeOitStage(LevelRenderer _, LevelRenderState _,
+                                      List<SectionRenderDispatcher.RenderSection> _,
+                                      OitStage _, RenderPass _) {
     }
 
     @Override
@@ -106,7 +106,7 @@ public class FlwImplXplatImpl implements FlwImplXplat {
     @Override
     public VulkanRenderPass createNativeOitVulkanPass(
             VkCommandBuffer commandBuffer, RenderPass.RenderArea area,
-            int width, int height, boolean stencil, Supplier<String> label) {
+            int width, int height, boolean _, Supplier<String> label) {
         var encoder = VkContext.encoder();
         return new VulkanRenderPass(
                 VkContext.device(), encoder, commandBuffer,

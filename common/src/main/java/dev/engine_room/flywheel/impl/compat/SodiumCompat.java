@@ -83,7 +83,7 @@ public final class SodiumCompat {
 
     private static final class Internals {
         static <T extends BlockEntity> Object addPredicate(BlockEntityType<T> type) {
-            BlockEntityRenderPredicate<T> predicate = (getter, pos, be) -> !VisualizationHelper.tryAddBlockEntity(be);
+            BlockEntityRenderPredicate<T> predicate = (_, _, be) -> !VisualizationHelper.tryAddBlockEntity(be);
             BlockEntityRenderHandler.instance().addRenderPredicate(type, predicate);
             return predicate;
         }

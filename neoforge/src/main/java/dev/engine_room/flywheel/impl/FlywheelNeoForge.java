@@ -49,13 +49,13 @@ public final class FlywheelNeoForge {
         FlwImplXplatImpl.registerNativeVulkanFactories();
         #endif
         NeoForgeFlwConfig.INSTANCE.registerSpecs(modContainer);
-        modEventBus.addListener((ModConfigEvent.Loading e) -> NeoForgeFlwConfig.INSTANCE.syncOitToRuntime());
-        modEventBus.addListener((ModConfigEvent.Reloading e) -> NeoForgeFlwConfig.INSTANCE.syncOitToRuntime());
+        modEventBus.addListener((ModConfigEvent.Loading _) -> NeoForgeFlwConfig.INSTANCE.syncOitToRuntime());
+        modEventBus.addListener((ModConfigEvent.Reloading _) -> NeoForgeFlwConfig.INSTANCE.syncOitToRuntime());
         FlwImpl.init();
 
         if (!FMLEnvironment.isProduction()) {
             OitDemoRegistration.register(modEventBus);
-            modEventBus.addListener((FMLClientSetupEvent e) ->
+            modEventBus.addListener((FMLClientSetupEvent _) ->
                     SimpleBlockEntityVisualizer
                             .builder(OitDemoRegistration.OIT_DEMO_BE.get())
                             .factory(OitDemoVisual::new)
@@ -72,7 +72,7 @@ public final class FlywheelNeoForge {
         }));
         modEventBus.addListener((RegisterDebugEntriesEvent e) -> {
             Identifier debugId = Identifier.fromNamespaceAndPath(Flywheel.ID, "debug_info");
-            e.register(debugId, (displayer, entryLevel, clientChunk, serverChunk) -> {
+            e.register(debugId, (displayer, _, _, _) -> {
                 List<String> lines = new ArrayList<>();
                 FlwDebugInfo.addDebugInfo(Minecraft.getInstance(), lines);
                 displayer.addToGroup(debugId, lines);

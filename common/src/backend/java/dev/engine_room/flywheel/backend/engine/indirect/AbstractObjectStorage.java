@@ -46,7 +46,7 @@ public abstract class AbstractObjectStorage {
     }
 
     private void freePage(int slot, int pageBytes) {
-        freeSlots.computeIfAbsent(pageBytes, k -> new IntArrayList())
+        freeSlots.computeIfAbsent(pageBytes, _ -> new IntArrayList())
                  .add(slot);
         writeDescriptor(slot, 0, 0, 0, 0);
     }
@@ -64,6 +64,7 @@ public abstract class AbstractObjectStorage {
         private final int strideUints;
         private final int pageBytes;
         private int[] pages = EMPTY_ALLOCATION;
+        private int slotVersion;
 
         private Mapping(InstanceType<?> type) {
             long strideBytes = MoreMath.align4(type.layout()
@@ -86,6 +87,7 @@ public abstract class AbstractObjectStorage {
             if (slot == INVALID_PAGE) {
                 slot = allocPage(pageBytes);
                 pages[index] = slot;
+                slotVersion++;
             }
             writeDescriptor(slot, modelIndex, validBits, (int) (slotBaseByte[slot] >> 2), typeInfo);
         }
@@ -95,6 +97,7 @@ public abstract class AbstractObjectStorage {
             if (slot != INVALID_PAGE) {
                 freePage(slot, pageBytes);
                 pages[index] = INVALID_PAGE;
+                slotVersion++;
             }
         }
 
@@ -113,6 +116,9 @@ public abstract class AbstractObjectStorage {
                     writeDescriptor(pages[i], 0, 0, 0, 0);
                 }
             }
+            if (oldLength != newLength) {
+                slotVersion++;
+            }
         }
 
         @Override
@@ -124,6 +130,16 @@ public abstract class AbstractObjectStorage {
         public long page2ByteOffset(int index) {
             int slot = pages[index];
             return slot == INVALID_PAGE ? -1 : slotBaseByte[slot];
+        }
+
+        @Override
+        public int pageSlot(int index) {
+            return pages[index];
+        }
+
+        @Override
+        public int slotVersion() {
+            return slotVersion;
         }
 
         @Override

@@ -21,7 +21,7 @@ public final class LlamaSpitVisual extends EntityModelVisual<LlamaSpit, LlamaSpi
     }
 
     @Override
-    protected Identifier texture(LlamaSpitRenderState state) {
+    protected Identifier texture(LlamaSpitRenderState _) {
         return TEXTURE;
     }
 

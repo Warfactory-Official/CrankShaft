@@ -205,7 +205,7 @@ public final class NameTagComponent implements EntityComponent {
         float half = width / 2.0f;
 
         boolean[] obfuscated = {false};
-        text.accept((position, style, codepoint) -> {
+        text.accept((_, style, codepoint) -> {
             if (style.isObfuscated() && codepoint != 32) {
                 obfuscated[0] = true;
                 return false;
@@ -415,30 +415,30 @@ public final class NameTagComponent implements EntityComponent {
         }
 
         @Override
-        public VertexConsumer setUv1(int pu, int pv) {
+        public VertexConsumer setUv1(int _, int _) {
             return this;
         }
 
         #if MC >= 26.3
         @Override
-        public VertexConsumer setUv3(float pu, float pv) {
+        public VertexConsumer setUv3(float _, float _) {
             // 26.3: glyphs use the primary atlas coordinates and carry no foil layer.
             return this;
         }
         #endif
 
         @Override
-        public VertexConsumer setUv2(int pu, int pv) {
+        public VertexConsumer setUv2(int _, int _) {
             return this;
         }
 
         @Override
-        public VertexConsumer setNormal(float nx, float ny, float nz) {
+        public VertexConsumer setNormal(float _, float _, float _) {
             return this;
         }
 
         @Override
-        public VertexConsumer setLineWidth(float width) {
+        public VertexConsumer setLineWidth(float _) {
             return this;
         }
 

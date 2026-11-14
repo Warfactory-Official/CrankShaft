@@ -13,7 +13,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(BlazeVanillaFadeRenderer.class)
 abstract class DhBlazeVanillaFadeRendererMixin {
     @Inject(method = "render", at = @At("HEAD"))
-    private void flywheel$prepareFadeMask(RenderParams params, CallbackInfo ci) {
+    private void flywheel$prepareFadeMask(RenderParams params, CallbackInfo _) {
         DistantHorizonsFade.prepare(params);
     }
 
@@ -24,7 +24,7 @@ abstract class DhBlazeVanillaFadeRendererMixin {
             #else
             target = "Lcom/mojang/blaze3d/pipeline/RenderTarget;getDepthTexture()Lcom/mojang/blaze3d/textures/GpuTexture;"))
             #endif
-    private GpuTexture flywheel$fadeMask(GpuTexture original) {
+    private GpuTexture flywheel$fadeMask(GpuTexture _) {
         return DistantHorizonsFade.mask();
     }
 }

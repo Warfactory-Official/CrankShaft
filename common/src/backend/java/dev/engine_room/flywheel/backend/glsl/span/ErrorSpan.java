@@ -19,7 +19,7 @@ public class ErrorSpan extends Span {
     }
 
     @Override
-    public Span subSpan(int from, int to) {
+    public Span subSpan(int _, int _) {
         return new ErrorSpan(in, start, end); // the sub-span of an error is an error in the same location
     }
 

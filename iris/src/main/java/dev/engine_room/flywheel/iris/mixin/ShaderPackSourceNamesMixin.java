@@ -14,13 +14,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(ShaderPackSourceNames.class)
 abstract class ShaderPackSourceNamesMixin {
     @Shadow
-    private static void addStarts(ImmutableList.Builder<String> potentialFileNames, String baseName) {
+    private static void addStarts(ImmutableList.Builder<String> _, String _) {
         throw new AssertionError();
     }
 
     @Inject(method = "findPotentialStarts", at = @At(value = "INVOKE",
             target = "Lcom/google/common/collect/ImmutableList$Builder;build()Lcom/google/common/collect/ImmutableList;"))
-    private static void flywheel$addContractStarts(CallbackInfoReturnable<ImmutableList<String>> cir,
+    private static void flywheel$addContractStarts(CallbackInfoReturnable<ImmutableList<String>> _,
                                                    @Local ImmutableList.Builder<String> potentialFileNames) {
         for (ContractProgram program : ContractProgram.values()) {
             addStarts(potentialFileNames, program.sourceName);

@@ -31,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class SpecialItemModels {
     private static final RendererReloadCache<Boolean, Map<SupportKey, Boolean>> SUPPORT_CACHE =
-            new RendererReloadCache<>($ -> new ConcurrentHashMap<>());
+            new RendererReloadCache<>(_ -> new ConcurrentHashMap<>());
 
     private SpecialItemModels() {
     }
@@ -43,7 +43,7 @@ public final class SpecialItemModels {
                                       int seed) {
         return SUPPORT_CACHE.get(true).computeIfAbsent(
                 new SupportKey(stack.getItem(), stack.get(DataComponents.ITEM_MODEL), displayContext),
-                $ -> !resolve(stack, displayContext, owner, seed).isEmpty());
+                _ -> !resolve(stack, displayContext, owner, seed).isEmpty());
     }
 
     public static List<Resolved> resolve(ItemStack stack, ItemDisplayContext displayContext, @Nullable ItemOwner owner,

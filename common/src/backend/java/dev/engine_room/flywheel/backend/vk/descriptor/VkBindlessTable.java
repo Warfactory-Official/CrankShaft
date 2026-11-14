@@ -23,7 +23,10 @@ public final class VkBindlessTable {
     private static final long[] set = new long[2];
     private static long[][] writtenView;
     private static long[][] writtenSampler;
-    private static long setLayout;
+    private static VulkanGpuTextureView[][] writtenOwnerView;
+    private static VulkanGpuSampler[][] writtenOwnerSampler;
+    // Volatile: read by pipeline-layout creation off the render thread (existingSetLayout).
+    private static volatile long setLayout;
     private static long pool;
     private static int parity;
 
@@ -52,15 +55,26 @@ public final class VkBindlessTable {
         }
         for (int i = 0; i < count; i++) {
             BindlessSlots.Key key = BindlessSlots.key(i);
-            long view = ((VulkanGpuTextureView) textureManager.getTexture(key.texture())
-                                                              .getTextureView()).vkImageView();
-            long sampler = ((VulkanGpuSampler) MaterialSamplers.get(key.texture(), key.blur(),
-                    key.mipmap())).vkSampler();
+            var viewObject = (VulkanGpuTextureView) textureManager.getTexture(key.texture()).getTextureView();
+            var samplerObject = (VulkanGpuSampler) MaterialSamplers.get(key.texture(), key.blur(),
+                    key.mipmap(), key.useTextureSampler());
+            long view = viewObject.vkImageView();
+            long sampler = samplerObject.vkSampler();
+            if (key.useTextureSampler() && writtenOwnerView == null) {
+                writtenOwnerView = new VulkanGpuTextureView[2][VkCaps.BINDLESS_TABLE_CAPACITY];
+                writtenOwnerSampler = new VulkanGpuSampler[2][VkCaps.BINDLESS_TABLE_CAPACITY];
+            }
             int s = i + BindlessSlots.FIRST_MATERIAL_SLOT;
-            if (writtenView[parity][s] == view && writtenSampler[parity][s] == sampler) {
+            if (writtenView[parity][s] == view && writtenSampler[parity][s] == sampler
+                    && (!key.useTextureSampler() || writtenOwnerView[parity][s] == viewObject
+                    && writtenOwnerSampler[parity][s] == samplerObject)) {
                 continue;
             }
             writeSlot(parity, s, view, sampler);
+            if (key.useTextureSampler()) {
+                writtenOwnerView[parity][s] = viewObject;
+                writtenOwnerSampler[parity][s] = samplerObject;
+            }
         }
     }
 
@@ -73,7 +87,7 @@ public final class VkBindlessTable {
             VkDescriptorImageInfo.Buffer info = VkDescriptorImageInfo.calloc(1, stack)
                                                                      .imageView(view)
                                                                      .sampler(sampler)
-                                                                     .imageLayout(VK12.VK_IMAGE_LAYOUT_GENERAL);
+                                                                     .imageLayout(VK10.VK_IMAGE_LAYOUT_GENERAL);
             VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack)
                                                                     .sType$Default()
                                                                     .dstSet(set[parity])
@@ -81,19 +95,30 @@ public final class VkBindlessTable {
                                                                     .dstArrayElement(slot)
                                                                     .descriptorCount(1)
                                                                     .descriptorType(
-                                                                            VK12.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                                                                            VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                                                                     .pImageInfo(info);
-            VK12.vkUpdateDescriptorSets(VkContext.vkDevice(), write, null);
+            VK10.vkUpdateDescriptorSets(VkContext.vkDevice(), write, null);
         }
         writtenView[parity][slot] = view;
         writtenSampler[parity][slot] = sampler;
     }
 
     public static void bind(VkCommandBuffer cmd, long pipelineLayout) {
+        bind(cmd, pipelineLayout, 1);
+    }
+
+    public static void bind(VkCommandBuffer cmd, long pipelineLayout, int setIndex) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            VK12.vkCmdBindDescriptorSets(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1,
+            VK10.vkCmdBindDescriptorSets(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, setIndex,
                     stack.longs(set[parity]), null);
         }
+    }
+
+    /**
+     * 0 until the render thread initialized the table; never initializes it.
+     */
+    public static long existingSetLayout() {
+        return setLayout;
     }
 
     public static long setLayoutHandle() {
@@ -108,14 +133,16 @@ public final class VkBindlessTable {
         if (setLayout == 0L) {
             return;
         }
-        VK12.vkDestroyDescriptorPool(VkContext.vkDevice(), pool, null);
-        VK12.vkDestroyDescriptorSetLayout(VkContext.vkDevice(), setLayout, null);
+        VK10.vkDestroyDescriptorPool(VkContext.vkDevice(), pool, null);
+        VK10.vkDestroyDescriptorSetLayout(VkContext.vkDevice(), setLayout, null);
         pool = 0L;
         setLayout = 0L;
         set[0] = 0L;
         set[1] = 0L;
         writtenView = null;
         writtenSampler = null;
+        writtenOwnerView = null;
+        writtenOwnerSampler = null;
     }
 
     private static void ensureInit() {
@@ -129,10 +156,11 @@ public final class VkBindlessTable {
             VkDescriptorSetLayoutBinding.Buffer binding = VkDescriptorSetLayoutBinding.calloc(1, stack)
                                                                                       .binding(0)
                                                                                       .descriptorType(
-                                                                                              VK12.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                                                                                              VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                                                                                       .descriptorCount(capacity)
                                                                                       .stageFlags(
-                                                                                              VK12.VK_SHADER_STAGE_FRAGMENT_BIT);
+                                                                                              VK10.VK_SHADER_STAGE_VERTEX_BIT
+                                                                                                      | VK10.VK_SHADER_STAGE_FRAGMENT_BIT);
             VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlags = VkDescriptorSetLayoutBindingFlagsCreateInfo.calloc(
                                                                                                                           stack)
                                                                                                                   .sType$Default()
@@ -147,11 +175,11 @@ public final class VkBindlessTable {
                                                                                         .flags(VK12.VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT)
                                                                                         .pBindings(binding);
             var pLayout = stack.callocLong(1);
-            check(VK12.vkCreateDescriptorSetLayout(VkContext.vkDevice(), layoutInfo, null, pLayout), "set layout");
+            check(VK10.vkCreateDescriptorSetLayout(VkContext.vkDevice(), layoutInfo, null, pLayout), "set layout");
             setLayout = pLayout.get(0);
 
             VkDescriptorPoolSize.Buffer poolSize = VkDescriptorPoolSize.calloc(1, stack)
-                                                                       .type(VK12.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                                                                       .type(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                                                                        .descriptorCount(capacity * 2);
             VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack)
                                                                             .sType$Default()
@@ -159,7 +187,7 @@ public final class VkBindlessTable {
                                                                             .maxSets(2)
                                                                             .pPoolSizes(poolSize);
             var pPool = stack.callocLong(1);
-            check(VK12.vkCreateDescriptorPool(VkContext.vkDevice(), poolInfo, null, pPool), "pool");
+            check(VK10.vkCreateDescriptorPool(VkContext.vkDevice(), poolInfo, null, pPool), "pool");
             pool = pPool.get(0);
 
             VkDescriptorSetAllocateInfo alloc = VkDescriptorSetAllocateInfo.calloc(stack)
@@ -168,14 +196,14 @@ public final class VkBindlessTable {
                                                                            .pSetLayouts(
                                                                                    stack.longs(setLayout, setLayout));
             var pSets = stack.callocLong(2);
-            check(VK12.vkAllocateDescriptorSets(VkContext.vkDevice(), alloc, pSets), "set");
+            check(VK10.vkAllocateDescriptorSets(VkContext.vkDevice(), alloc, pSets), "set");
             set[0] = pSets.get(0);
             set[1] = pSets.get(1);
         }
     }
 
     private static void check(int result, String what) {
-        if (result != VK12.VK_SUCCESS) {
+        if (result != VK10.VK_SUCCESS) {
             throw new IllegalStateException("Vulkan error " + result + " creating bindless texture " + what);
         }
     }

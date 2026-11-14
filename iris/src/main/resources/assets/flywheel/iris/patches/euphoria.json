@@ -27,5 +27,8 @@
   ],
   "wrappers": [],
   "blends": [],
+  "patches": [
+    "euphoria_instances.patch"
+  ],
   "properties": ""
 }

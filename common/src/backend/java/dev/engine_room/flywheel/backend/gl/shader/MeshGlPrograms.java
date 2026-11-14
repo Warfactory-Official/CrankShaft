@@ -12,10 +12,19 @@ public final class MeshGlPrograms {
     private MeshGlPrograms() {
     }
 
-    public static int compileShader(String tag, int glType, String name, String source) {
+    /**
+     * The text {@link #compileShader} hands the driver.
+     */
+    public static String driverSource(String tag, int glType, String name, String source) {
         #if MC >= 26.3
-        source = NativeShaderPreprocessor.preprocess(source, tag + ":" + name, glType, ShaderDefines.EMPTY);
+        return NativeShaderPreprocessor.preprocess(source, tag + ":" + name, glType, ShaderDefines.EMPTY);
+        #else
+        return source;
         #endif
+    }
+
+    public static int compileShader(String tag, int glType, String name, String source) {
+        source = driverSource(tag, glType, name, source);
         int handle = GL20C.glCreateShader(glType);
         GL20C.glShaderSource(handle, source);
         GL20C.glCompileShader(handle);

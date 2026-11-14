@@ -47,11 +47,14 @@ public class VkPrograms extends AtomicReferenceCounted {
     private static final Identifier CULL_MAIN = ResourceUtil.rl("internal/indirect/cull.glsl");
 
     private static final Identifier APPLY_MAIN = ResourceUtil.rl("internal/indirect/apply.glsl");
+    private static final Identifier ORDER_MAIN = ResourceUtil.rl("internal/indirect/order.glsl");
     private static final Identifier SCATTER_MAIN = ResourceUtil.rl("internal/indirect/vk_scatter.glsl");
     private static final Identifier DOWNSAMPLE_FIRST = ResourceUtil.rl("internal/indirect/downsample_first.glsl");
     private static final Identifier DOWNSAMPLE_SECOND = ResourceUtil.rl("internal/indirect/downsample_second.glsl");
-    private static final Identifier DOWNSAMPLE_FIRST_SMALL = ResourceUtil.rl("internal/indirect/vk_downsample_first_small.glsl");
-    private static final Identifier DOWNSAMPLE_SECOND_SMALL = ResourceUtil.rl("internal/indirect/vk_downsample_second_small.glsl");
+    private static final Identifier DOWNSAMPLE_FIRST_SMALL = ResourceUtil.rl(
+            "internal/indirect/vk_downsample_first_small.glsl");
+    private static final Identifier DOWNSAMPLE_SECOND_SMALL = ResourceUtil.rl(
+            "internal/indirect/vk_downsample_second_small.glsl");
     @Nullable
     private static VkPrograms instance;
     private static boolean activeBindlessTextures;
@@ -82,10 +85,12 @@ public class VkPrograms extends AtomicReferenceCounted {
     private final VkOitPipelines oit;
     private final VkMeshVisualPipelines meshVisual = new VkMeshVisualPipelines();
     private final VkTerrainPrograms terrain;
-    private final Map<Integer, VkComputePipeline> cullCache = new HashMap<>();
-    private final Map<Integer, VkComputePipeline> cullPass2Cache = new HashMap<>();
+    private final ProgramVersions<VkAsyncBuilds.Build<?>[]> cull = new ProgramVersions<>(VkAsyncBuilds.GROUP);
+    private final Map<GpuProgramKey, VkComputePipeline> gpuComputePipelines = new HashMap<>();
     @Nullable
     private VkComputePipeline applyPipeline;
+    @Nullable
+    private VkComputePipeline orderPipeline;
     @Nullable
     private VkComputePipeline scatterPipeline;
     @Nullable
@@ -106,7 +111,7 @@ public class VkPrograms extends AtomicReferenceCounted {
         hiZRoute = VkCaps.MULTI_MIP_HIZ && ProgramAvailability.allows(ProgramAvailability.Feature.HIZ_MULTI)
                 ? HiZRoute.MULTI_MIP
                 : VkCaps.SINGLE_MIP_HIZ && ProgramAvailability.allows(ProgramAvailability.Feature.HIZ_SINGLE)
-                        ? HiZRoute.SINGLE_MIP : HiZRoute.NONE;
+                ? HiZRoute.SINGLE_MIP : HiZRoute.NONE;
         instanceRoute = VkCaps.GPU_INSTANCE_CULL && hiZRoute != HiZRoute.NONE
                 && ProgramAvailability.allows(ProgramAvailability.Feature.INSTANCE_CULL)
                 ? InstanceRoute.INDIRECT : InstanceRoute.DIRECT;
@@ -267,7 +272,14 @@ public class VkPrograms extends AtomicReferenceCounted {
     }
 
     static <T> T bindless(Supplier<T> factory) {
-        return activeBindlessTextures ? optional(ProgramAvailability.Feature.BINDLESS, factory) : factory.get();
+        return bindless(activeBindlessTextures, factory);
+    }
+
+    /**
+     * {@link #bindless(Supplier)} with the mode the render thread sampled, for worker builds.
+     */
+    static <T> T bindless(boolean bindless, Supplier<T> factory) {
+        return bindless ? optional(ProgramAvailability.Feature.BINDLESS, factory) : factory.get();
     }
 
     private static void destroyModule(long module) {
@@ -318,6 +330,14 @@ public class VkPrograms extends AtomicReferenceCounted {
         return b;
     }
 
+    private static List<Binding> orderBindings() {
+        List<Binding> b = new ArrayList<>();
+        for (int binding : new int[]{0, 1, 2, 3, 4, 6}) {
+            b.add(new Binding(binding, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
+        }
+        return b;
+    }
+
     private static List<Binding> downsampleFirstBindings() {
         List<Binding> b = new ArrayList<>();
         b.add(new Binding(1, TYPE_STORAGE_IMAGE, STAGE_COMPUTE));
@@ -349,16 +369,30 @@ public class VkPrograms extends AtomicReferenceCounted {
         return terrain;
     }
 
-    public VkComputePipeline cullPipeline() {
+    /**
+     * The newest instance type snapshot's cull pipelines (pass 1 and pass 2) once both are built, null before the
+     * first; builds the current snapshot's. Instances of later types get arbitrary visibility.
+     */
+    public @Nullable CullPipelines cullPipelines() {
         var snapshot = InstanceTypeIds.snapshot();
-        return cullCache.computeIfAbsent(snapshot.types().size(),
-                $ -> optional(ProgramAvailability.Feature.INSTANCE_CULL, () -> buildCull(snapshot, false)));
+        var group = cull.select(new ProgramGeneration(snapshot.types().size(), 0, 0), snapshot, this::requestCull);
+        return group == null ? null : new CullPipelines((VkComputePipeline) group[0].result(),
+                (VkComputePipeline) group[1].result(), cull.generation().types());
     }
 
-    public VkComputePipeline cullPass2Pipeline() {
-        var snapshot = InstanceTypeIds.snapshot();
-        return cullPass2Cache.computeIfAbsent(snapshot.types().size(),
-                $ -> optional(ProgramAvailability.Feature.INSTANCE_CULL, () -> buildCull(snapshot, true)));
+    private VkAsyncBuilds.Build<?>[] requestCull(InstanceTypeIds.Snapshot snapshot) {
+        return new VkAsyncBuilds.Build<?>[]{requestCull(snapshot, false), requestCull(snapshot, true)};
+    }
+
+    private VkAsyncBuilds.Build<?> requestCull(InstanceTypeIds.Snapshot snapshot, boolean pass2) {
+        return VkAsyncBuilds.request(() -> optional(ProgramAvailability.Feature.INSTANCE_CULL,
+                () -> buildCull(snapshot, pass2)), VkComputePipeline::delete);
+    }
+
+    /**
+     * {@code types}: the instance types both cover.
+     */
+    public record CullPipelines(VkComputePipeline pass1, VkComputePipeline pass2, int types) {
     }
 
     public VkComputePipeline applyPipeline() {
@@ -367,6 +401,14 @@ public class VkPrograms extends AtomicReferenceCounted {
                     () -> buildComputePipeline("utilities/apply", APPLY_MAIN, applyBindings(), Integer.BYTES));
         }
         return applyPipeline;
+    }
+
+    public VkComputePipeline orderPipeline() {
+        if (orderPipeline == null) {
+            orderPipeline = optional(ProgramAvailability.Feature.INSTANCE_CULL,
+                    () -> buildComputePipeline("utilities/order", ORDER_MAIN, orderBindings(), 0));
+        }
+        return orderPipeline;
     }
 
     public VkComputePipeline scatterPipeline() {
@@ -378,6 +420,57 @@ public class VkPrograms extends AtomicReferenceCounted {
                                     new Binding(2, TYPE_STORAGE_BUFFER, STAGE_COMPUTE)), Integer.BYTES));
         }
         return scatterPipeline;
+    }
+
+    public VkComputePipeline gpuSimulationPipeline(Identifier source, boolean doublePrecision, List<String> defines) {
+        return gpuComputePipelines.computeIfAbsent(new GpuProgramKey(source, 8, 12, doublePrecision, defines),
+                this::buildGpuComputePipeline);
+    }
+
+    public VkComputePipeline gpuSortPipeline(Identifier source) {
+        return gpuComputePipelines.computeIfAbsent(new GpuProgramKey(source, 5, 4, false, List.of()),
+                this::buildGpuComputePipeline);
+    }
+
+    public VkComputePipeline gpuPublishPipeline(Identifier source) {
+        return gpuComputePipelines.computeIfAbsent(new GpuProgramKey(source, 4, 4, false, List.of()),
+                this::buildGpuComputePipeline);
+    }
+
+    private VkComputePipeline buildGpuComputePipeline(GpuProgramKey key) {
+        Compilation compilation = new Compilation();
+        compilation.version(GlslVersion.V460);
+        compilation.define(ShaderType.COMPUTE.define);
+        compilation.define("_FLW_VK");
+        for (String define : key.defines()) {
+            compilation.define(define);
+        }
+        if (key.doublePrecision()) {
+            compilation.requireExtension("GL_ARB_gpu_shader_fp64");
+        }
+        ShaderCache.expand(List.of(sources.get(key.source())), compilation::appendComponent);
+        String source = VkShaderTransform.toVulkan(compilation.assembledSource(), VkShaderTransform.Stage.COMPUTE);
+        long module = VkShaderCompiler.compileModule("population/" + key.source(), source,
+                VkShaderCompiler.KIND_COMPUTE);
+        List<Binding> bindings = new ArrayList<>();
+        for (int i = 0; i < key.bindings(); i++) {
+            bindings.add(new Binding(i, TYPE_STORAGE_BUFFER, STAGE_COMPUTE));
+        }
+        VkDescriptorLayout layout = null;
+        try {
+            layout = new VkDescriptorLayout(bindings, key.pushBytes(), key.pushBytes() == 0 ? 0 : STAGE_COMPUTE);
+            return new VkComputePipeline(layout, module);
+        } catch (Throwable failure) {
+            if (layout != null) {
+                layout.delete();
+            }
+            destroyModule(module);
+            throw failure;
+        }
+    }
+
+    private record GpuProgramKey(Identifier source, int bindings, int pushBytes, boolean doublePrecision,
+                                 List<String> defines) {
     }
 
     public VkComputePipeline downsampleFirstPipeline() {
@@ -421,7 +514,8 @@ public class VkPrograms extends AtomicReferenceCounted {
         return downsampleSecondPipeline;
     }
 
-    private VkComputePipeline buildComputePipeline(String name, Identifier source, List<Binding> bindings, int pushBytes) {
+    private VkComputePipeline buildComputePipeline(String name, Identifier source, List<Binding> bindings,
+                                                   int pushBytes) {
         long module = compileCompute(name, List.of(sources.get(source)));
         VkDescriptorLayout layout = null;
         try {
@@ -458,13 +552,17 @@ public class VkPrograms extends AtomicReferenceCounted {
 
     @Override
     protected void _delete() {
-        cullCache.values().forEach(VkComputePipeline::delete);
-        cullCache.clear();
-        cullPass2Cache.values().forEach(VkComputePipeline::delete);
-        cullPass2Cache.clear();
+        gpuComputePipelines.values().forEach(VkComputePipeline::delete);
+        gpuComputePipelines.clear();
+        VkAsyncBuilds.join();
+        cull.release();
         if (applyPipeline != null) {
             applyPipeline.delete();
             applyPipeline = null;
+        }
+        if (orderPipeline != null) {
+            orderPipeline.delete();
+            orderPipeline = null;
         }
         if (scatterPipeline != null) {
             scatterPipeline.delete();

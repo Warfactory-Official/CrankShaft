@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.impl.visualization;
 
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
+import dev.engine_room.flywheel.impl.far.FarVisuals;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
@@ -48,5 +49,6 @@ public final class VisualizationEventHandler {
             return;
         }
         VisualizationManagerImpl.reset(level);
+        FarVisuals.unload(level);
     }
 }

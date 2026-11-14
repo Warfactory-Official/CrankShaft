@@ -37,15 +37,15 @@ vec4 flw_sampleNearest(sampler2D source, vec2 uv, vec2 pixelSize, vec2 du, vec2 
     return textureGrad(source, uv, du, dv);
 }
 vec4 flw_sampleAtlas(sampler2D source, vec2 uv) {
-#ifdef FLW_PIXEL_FILTER_LINEAR
+    #ifdef FLW_PIXEL_FILTER_LINEAR
     return texture(source, uv);
-#else
+    #else
     vec2 pixelSize = 1.0 / vec2(textureSize(source, 0));
     vec2 du = dFdx(uv);
     vec2 dv = dFdy(uv);
     vec2 texelScreenSize = sqrt(du * du + dv * dv);
     return flw_sampleNearest(source, uv, pixelSize, du, dv, texelScreenSize);
-#endif
+    #endif
 }
 
 #ifndef _FLW_DEPTH_RANGE
@@ -189,28 +189,41 @@ layout(location = 0) out vec4 _flw_accumulate;
 #endif
 
 void main() {
+    #ifdef _FLW_TERRAIN_OVERLAY
+    _flw_terrainPrepare();
+    #endif
     float linearDepth = -v_in.misc.z;
 
     vec4 atlasTexel = flw_sampleAtlas(Sampler0, v_in.misc.xy);
     vec4 color = atlasTexel * v_in.color;
     color = mix(FogColor * vec4(1.0, 1.0, 1.0, color.a), color, v_in.misc.w);
-    if (color.a < 0.1) {
-        discard;
-    }
+    float alpha = color.a;
+    #ifdef _FLW_TERRAIN_OVERLAY
+    alpha = _flw_terrainAlpha(alpha);
+    if (alpha <= 0.0) discard;
+    #else
+    if (alpha < 0.1) discard;
+    #endif
 
-#ifdef _FLW_OIT_INSERT
+    #ifdef _FLW_OIT_INSERT
     color = apply_fog(color, v_in.fog.x, v_in.fog.y,
             FogEnvironmentalStart, FogEnvironmentalEnd,
             FogRenderDistanceStart, FogRenderDistanceEnd, FogColor);
+    #ifdef _FLW_TERRAIN_OVERLAY
+    color = _flw_terrainShade(color);
+    #endif
     _flw_mlabInsert(color, gl_FragCoord.z);
-#elif defined(_FLW_DEPTH_RANGE)
+    #elif defined(_FLW_DEPTH_RANGE)
     _flw_depthRange_out = vec4(-linearDepth + 1e-5, linearDepth + 1e-2, gl_FragCoord.z,
-            color.a > 0.99 ? gl_FragCoord.z : 0.0);
-#else
+            alpha > 0.99 ? gl_FragCoord.z : 0.0);
+    #else
     color = apply_fog(color, v_in.fog.x, v_in.fog.y,
             FogEnvironmentalStart, FogEnvironmentalEnd,
             FogRenderDistanceStart, FogRenderDistanceEnd, FogColor);
 
+    #ifdef _FLW_TERRAIN_OVERLAY
+    color = _flw_terrainShade(color);
+    #endif
     vec2 depthRange = texelFetch(_flw_depthRange, ivec2(gl_FragCoord.xy), 0).rg;
     float delta = depthRange.x + depthRange.y;
     float our_depth = (linearDepth + depthRange.x) / delta;

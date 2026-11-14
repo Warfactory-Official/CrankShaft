@@ -5,6 +5,7 @@ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.textures.GpuSampler;
 import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
+import dev.engine_room.flywheel.impl.compat.VoxyCompat;
 import dev.engine_room.flywheel.impl.extension.SodiumChunkSectionExtension;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
 import net.caffeinemc.mods.sodium.client.render.SodiumWorldRenderer;
@@ -79,8 +80,12 @@ abstract class SodiumChunkSectionMixin implements SodiumChunkSectionExtension {
                                             ChunkSectionLayerGroup group, ChunkRenderMatrices matrices,
                                             double x, double y, double z, GpuSampler sampler,
                                             @Nullable OitStage stage, Operation<Void> original) {
-        if (group == ChunkSectionLayerGroup.OPAQUE && flywheel$opaqueDrawn
-                || group == ChunkSectionLayerGroup.TRANSLUCENT && flywheel$translucentDrawn) {
+        if (group == ChunkSectionLayerGroup.OPAQUE && flywheel$opaqueDrawn) {
+            VoxyCompat.renderInPlaceOfCutout(matrices,
+                    ((SodiumWorldRendererAccessor) renderer).flywheel$lastFogParameters(), x, y, z);
+            return;
+        }
+        if (group == ChunkSectionLayerGroup.TRANSLUCENT && flywheel$translucentDrawn) {
             return;
         }
         original.call(renderer, pass, group, matrices, x, y, z, sampler, stage);

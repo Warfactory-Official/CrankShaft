@@ -5,128 +5,128 @@ import dev.engine_room.flywheel.lib.util.OverlayTexture;
 
 public interface DefaultVertexList extends MutableVertexList {
     @Override
-    default float x(int index) {
+    default float x(int _) {
         return 0.0f;
     }
 
     @Override
-    default float y(int index) {
+    default float y(int _) {
         return 0.0f;
     }
 
     @Override
-    default float z(int index) {
+    default float z(int _) {
         return 0.0f;
     }
 
     @Override
-    default float r(int index) {
+    default float r(int _) {
         return 1.0f;
     }
 
     @Override
-    default float g(int index) {
+    default float g(int _) {
         return 1.0f;
     }
 
     @Override
-    default float b(int index) {
+    default float b(int _) {
         return 1.0f;
     }
 
     @Override
-    default float a(int index) {
+    default float a(int _) {
         return 1.0f;
     }
 
     @Override
-    default float u(int index) {
+    default float u(int _) {
         return 0.0f;
     }
 
     @Override
-    default float v(int index) {
+    default float v(int _) {
         return 0.0f;
     }
 
     @Override
-    default int overlay(int index) {
+    default int overlay(int _) {
         return OverlayTexture.NO_OVERLAY;
     }
 
     @Override
-    default int light(int index) {
+    default int light(int _) {
         return 0;
     }
 
     @Override
-    default float normalX(int index) {
+    default float normalX(int _) {
         return 0.0f;
     }
 
     @Override
-    default float normalY(int index) {
+    default float normalY(int _) {
         return 1.0f;
     }
 
     @Override
-    default float normalZ(int index) {
+    default float normalZ(int _) {
         return 0.0f;
     }
 
     @Override
-    default void x(int index, float x) {
+    default void x(int _, float _) {
     }
 
     @Override
-    default void y(int index, float y) {
+    default void y(int _, float _) {
     }
 
     @Override
-    default void z(int index, float z) {
+    default void z(int _, float _) {
     }
 
     @Override
-    default void r(int index, float r) {
+    default void r(int _, float _) {
     }
 
     @Override
-    default void g(int index, float g) {
+    default void g(int _, float _) {
     }
 
     @Override
-    default void b(int index, float b) {
+    default void b(int _, float _) {
     }
 
     @Override
-    default void a(int index, float a) {
+    default void a(int _, float _) {
     }
 
     @Override
-    default void u(int index, float u) {
+    default void u(int _, float _) {
     }
 
     @Override
-    default void v(int index, float v) {
+    default void v(int _, float _) {
     }
 
     @Override
-    default void overlay(int index, int overlay) {
+    default void overlay(int _, int _) {
     }
 
     @Override
-    default void light(int index, int light) {
+    default void light(int _, int _) {
     }
 
     @Override
-    default void normalX(int index, float normalX) {
+    default void normalX(int _, float _) {
     }
 
     @Override
-    default void normalY(int index, float normalY) {
+    default void normalY(int _, float _) {
     }
 
     @Override
-    default void normalZ(int index, float normalZ) {
+    default void normalZ(int _, float _) {
     }
 }

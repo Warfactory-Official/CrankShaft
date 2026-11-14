@@ -154,12 +154,12 @@ public abstract class GlVertexArrayGL3 extends GlVertexArray {
 
     public static class Core extends GlVertexArrayGL3 {
         @Override
-        protected void setDivisor(int attribIndex, int divisor) {
+        protected void setDivisor(int _, int _) {
             throw new UnsupportedOperationException("Instanced arrays are not supported");
         }
 
         @Override
-        public void setBindingDivisor(int bindingIndex, int divisor) {
+        public void setBindingDivisor(int _, int _) {
             throw new UnsupportedOperationException("Instanced arrays are not supported");
         }
     }

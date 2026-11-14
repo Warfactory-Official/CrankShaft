@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.backend.compile;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.MaterialShaderIndices;
@@ -9,6 +10,7 @@ import dev.engine_room.flywheel.backend.compile.component.*;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.BerFamily;
 import dev.engine_room.flywheel.backend.engine.indirect.InstanceTypeIds;
+import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainVertexFormat;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
@@ -16,6 +18,7 @@ import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.glsl.GlslVersion;
 import dev.engine_room.flywheel.backend.glsl.ShaderSources;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
+import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.LightShaders;
 import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
@@ -77,6 +80,9 @@ public final class RenderPassShaders {
     private static final Identifier FRAGMENT = ResourceUtil.rl("renderpass/flw_indirect.frag");
     private static final Identifier DRAW_COMMAND = ResourceUtil.rl("internal/indirect/draw_command.glsl");
     private static final Identifier MATRICES = ResourceUtil.rl("internal/indirect/matrices.glsl");
+    private static final Identifier FAR = ResourceUtil.rl("internal/far/far.glsl");
+    private static final Identifier FAR_IMPOSTOR_VERTEX = ResourceUtil.rl("internal/far/impostor.vert");
+    private static final Identifier FAR_IMPOSTOR_FRAGMENT = ResourceUtil.rl("internal/far/impostor.frag");
     private static final Identifier MATERIAL = ResourceUtil.rl("internal/material.glsl");
     static final Identifier RENDER_ORIGIN = ResourceUtil.rl("internal/render_origin.glsl");
     private static final Identifier PACKED_MATERIAL = ResourceUtil.rl("internal/packed_material.glsl");
@@ -89,6 +95,8 @@ public final class RenderPassShaders {
     private static final Identifier OIT_COMPOSITE = ResourceUtil.rl("internal/oit_composite.frag");
     private static final Identifier OIT_EMISSION = ResourceUtil.rl("internal/oit_emission.frag");
     private static final Identifier OIT_DEPTH = ResourceUtil.rl("internal/oit_depth.frag");
+    private static final Identifier OIT_NEAREST_DEPTH = ResourceUtil.rl("internal/oit_nearest_depth.glsl");
+    private static final Identifier OIT_BOUNDS_MERGE = ResourceUtil.rl("internal/oit_bounds_merge.frag");
     private static final Identifier FULLSCREEN_VERT = ResourceUtil.rl("internal/fullscreen.vert");
     private static final Identifier MLAB_RESOLVE = ResourceUtil.rl("internal/mlab_resolve.frag");
     private static final Identifier MLAB_NEAREST_DEPTH = ResourceUtil.rl("internal/mlab_nearest_depth.frag");
@@ -108,19 +116,20 @@ public final class RenderPassShaders {
     #endif
     private static final Consumer<Compilation> INDIRECT_PREAMBLE = ctx -> ctx.requireExtension(
             "GL_ARB_shader_draw_parameters");
-    private static final Consumer<Compilation> INSTANCING_PREAMBLE = ctx -> {
+    private static final Consumer<Compilation> INSTANCING_PREAMBLE = _ -> {
     };
     private static final Consumer<Compilation> INSTANCING_VERTEX_PREAMBLE = ctx -> {
         if (GlCompat.USE_INSTANCING_SELECTOR) {
             ctx.define("_FLW_INSTANCING_SELECTOR");
         }
     };
-    private static final Consumer<Compilation> INSTANCING_CRUMBLING_PREAMBLE = INSTANCING_VERTEX_PREAMBLE.andThen(ctx -> {
-        if (!GlCompat.USE_INSTANCING_SELECTOR) {
-            ctx.requireExtension("GL_ARB_shader_draw_parameters");
-        }
-        ctx.define("_FLW_CRUMBLING");
-    });
+    private static final Consumer<Compilation> INSTANCING_CRUMBLING_PREAMBLE = INSTANCING_VERTEX_PREAMBLE.andThen(
+            ctx -> {
+                if (!GlCompat.USE_INSTANCING_SELECTOR) {
+                    ctx.requireExtension("GL_ARB_shader_draw_parameters");
+                }
+                ctx.define("_FLW_CRUMBLING");
+            });
     private static final Consumer<Compilation> INDIRECT_CRUMBLING_PREAMBLE = INDIRECT_PREAMBLE.andThen(
             ctx -> ctx.define("_FLW_CRUMBLING"));
     private static final Consumer<Compilation> INSTANCING_EMBEDDED_PREAMBLE = INSTANCING_VERTEX_PREAMBLE.andThen(
@@ -132,7 +141,9 @@ public final class RenderPassShaders {
     private RenderPassShaders() {
     }
 
-    /** Populate on render thread before Vulkan warm workers; reload-generation cache. */
+    /**
+     * Populate on render thread before Vulkan warm workers; reload-generation cache.
+     */
     public static boolean readsEmbedded(Material material) {
         if (readsEmbeddedSources != FlwPrograms.SOURCES) {
             readsEmbeddedSources = FlwPrograms.SOURCES;
@@ -190,7 +201,16 @@ public final class RenderPassShaders {
         ctx.define(mode.define);
     }
 
-    private static void mlabResolveDefines(Compilation ctx, OitInsertMode mode) {
+    private static void mlabEmissionDefines(Compilation ctx, OitInsertMode mode) {
+        ctx.define("_FLW_OIT_INSERT");
+        ctx.define("_FLW_MLAB_EMISSION");
+        ctx.define(mode.define);
+    }
+
+    /**
+     * Shared insert-resolve capacity and ordering defines for frontend and raw producers.
+     */
+    public static void mlabResolveDefines(Compilation ctx, OitInsertMode mode) {
         ctx.define(mode.define);
         ctx.define("_FLW_MLAB_MAX", "32");
         if (mode == OitInsertMode.ABUFFER) {
@@ -210,6 +230,13 @@ public final class RenderPassShaders {
         return flattened;
     }
 
+    /**
+     * The far bake variant of the far uber vertex and of the uber fragment.
+     */
+    public static final Consumer<Compilation> FAR_BAKE = ctx -> ctx.define("_FLW_FAR_BAKE");
+    public static final Consumer<Compilation> FAR_SURFACE = ctx -> ctx.define("_FLW_FAR_SURFACE");
+    private static final Consumer<Compilation> FAR_IMPOSTOR = ctx -> ctx.define("_FLW_FAR_NO_ROWS");
+
     public static Consumer<Compilation> maybeBindlessGl() {
         return GlCompat.SUPPORTS_BINDLESS_TEXTURES ? BINDLESS_GL : ShaderAssembly.NO_EXTRA;
     }
@@ -223,18 +250,86 @@ public final class RenderPassShaders {
 
     public static String assembleUberIndirectVertex(MaterialShaders materialShaders, boolean debug,
                                                     Consumer<Compilation> extra) {
-        List<SourceComponent> roots = new ArrayList<>();
+        return assembleUberIndirectVertex(materialShaders, debug, extra, false);
+    }
+
+    /**
+     * {@code far}: far rows, each instance preceded by its record ({@code internal/far/far.glsl}).
+     */
+    public static String assembleUberIndirectVertex(MaterialShaders materialShaders, boolean debug,
+                                                    Consumer<Compilation> extra, boolean far) {
+        List<SourceComponent> roots = uberIndirectVertexRoots(materialShaders, far);
+
+        return assemble("indirect_uber_" + (far ? "far_" : "") + ResourceUtil.toDebugFileNameNoExtension(
+                        materialShaders.vertexSource()) + debugVertexSuffix(debug) + ".vsh",
+                INDIRECT_PREAMBLE.andThen(ctx -> ctx.define("_FLW_UBER_VERTEX")).andThen(debugVertexExtra(debug))
+                                 .andThen(far ? ctx -> ctx.define("_FLW_FAR") : ShaderAssembly.NO_EXTRA)
+                                 .andThen(extra), roots);
+    }
+
+    private static List<SourceComponent> uberIndirectVertexRoots(MaterialShaders material, boolean far) {
+        var roots = new ArrayList<SourceComponent>();
         roots.add(FlwPrograms.SOURCES.get(HEADER));
         roots.add(FlwPrograms.SOURCES.get(DRAW_COMMAND));
         roots.add(FlwPrograms.SOURCES.get(MATRICES));
         roots.add(new UberInstanceComponent(InstanceTypeIds.snapshot().types(), FlwPrograms.SOURCES));
-        roots.add(FlwPrograms.SOURCES.get(materialShaders.vertexSource()));
+        if (far) roots.add(FlwPrograms.SOURCES.get(FAR));
+        roots.add(FlwPrograms.SOURCES.get(material.vertexSource()));
         roots.add(FlwPrograms.SOURCES.get(INDIRECT_MAIN));
+        return roots;
+    }
 
-        return assemble("indirect_uber_" + ResourceUtil.toDebugFileNameNoExtension(
-                        materialShaders.vertexSource()) + debugVertexSuffix(debug) + ".vsh",
-                INDIRECT_PREAMBLE.andThen(ctx -> ctx.define("_FLW_UBER_VERTEX")).andThen(debugVertexExtra(debug))
-                                 .andThen(extra), roots);
+    /**
+     * Mutable assembly for native raw near-tier producers; append defines/components before driverSource.
+     */
+    public static Compilation farLayerMeshVertex(MaterialShaders material, Consumer<Compilation> extra) {
+        var compilation = new Compilation();
+        compilation.version(ShaderAssembly.glslVersion());
+        INDIRECT_PREAMBLE.accept(compilation);
+        maybeBindlessGl().accept(compilation);
+        compilation.define("_FLW_UBER_VERTEX");
+        compilation.define("_FLW_FAR");
+        compilation.define("_FLW_FAR_RAW_OIT");
+        extra.accept(compilation);
+        ShaderAssembly.appendComponents(compilation, uberIndirectVertexRoots(material, true));
+        return compilation;
+    }
+
+    /**
+     * Native material evaluation with the shared raw OIT emission hook; caller appends RawOitShaders equations.
+     */
+    public static Compilation farLayerMeshFragment(LightShader light, MaterialShaders material,
+                                                   LightSmoothness smoothness, Consumer<Compilation> extra) {
+        return farLayerMeshFragment(light, material, smoothness, extra, false);
+    }
+
+    /**
+     * Unshaded near-tier pack capture, reusing the same material/light/cutout evaluation as far surfaces.
+     */
+    public static Compilation farLayerIrisMeshFragment(LightShader light, MaterialShaders material,
+                                                       LightSmoothness smoothness, Consumer<Compilation> extra) {
+        return farLayerMeshFragment(light, material, smoothness, extra, true);
+    }
+
+    private static Compilation farLayerMeshFragment(LightShader light, MaterialShaders material,
+                                                    LightSmoothness smoothness, Consumer<Compilation> extra,
+                                                    boolean iris) {
+        var compilation = new Compilation();
+        compilation.version(ShaderAssembly.glslVersion());
+        fragmentImports(compilation);
+        lightingDefines(compilation, true, smoothness);
+        maybeBindlessGl().accept(compilation);
+        compilation.define("_FLW_UBER_FRAGMENT");
+        if (iris) {
+            compilation.define("_FLW_FAR_SURFACE");
+            compilation.define("_FLW_FAR_IRIS_CAPTURE");
+        } else {
+            compilation.define("_FLW_FAR_RAW_OIT");
+            compilation.define("_flw_rawOut0", "fragColor");
+        }
+        extra.accept(compilation);
+        ShaderAssembly.appendComponents(compilation, uberFragmentRoots(light, material));
+        return compilation;
     }
 
     public static String assembleInstancingVertex(InstanceType<?> type, MaterialShaders materialShaders,
@@ -356,11 +451,7 @@ public final class RenderPassShaders {
 
     public static String uberFragment(LightShader light, MaterialShaders materialShaders, LightSmoothness smoothness,
                                       DebugMode debug, Consumer<Compilation> extra) {
-        List<SourceComponent> roots = new ArrayList<>(lightingRoots(light, true));
-        roots.add(FlwPrograms.SOURCES.get(materialShaders.fragmentSource()));
-        roots.add(new RawSource("flw_frag_clip_varyings", FRAG_CLIP_VARYINGS));
-        roots.add(new UberMaterialShaderComponent(FlwPrograms.SOURCES));
-        roots.add(FlwPrograms.SOURCES.get(FRAGMENT));
+        List<SourceComponent> roots = uberFragmentRoots(light, materialShaders);
 
         return assemble("fragment_uber_" + ResourceUtil.toDebugFileNameNoExtension(light.source()) + "_"
                         + ResourceUtil.toDebugFileNameNoExtension(materialShaders.fragmentSource())
@@ -374,19 +465,24 @@ public final class RenderPassShaders {
                 }, roots);
     }
 
+    private static List<SourceComponent> uberFragmentRoots(LightShader light, MaterialShaders material) {
+        var roots = new ArrayList<SourceComponent>(lightingRoots(light, true));
+        roots.add(FlwPrograms.SOURCES.get(material.fragmentSource()));
+        roots.add(new RawSource("flw_frag_clip_varyings", FRAG_CLIP_VARYINGS));
+        roots.add(new UberMaterialShaderComponent(FlwPrograms.SOURCES));
+        roots.add(FlwPrograms.SOURCES.get(FRAGMENT));
+        return roots;
+    }
+
     public static String assembleUberOitFragment(OitMode mode, LightShader light, MaterialShaders materialShaders,
                                                  LightSmoothness smoothness, DebugMode debug,
                                                  Consumer<Compilation> extra) {
-        boolean depthRange = mode == OitMode.DEPTH_RANGE;
-
         List<SourceComponent> roots = new ArrayList<>();
         roots.add(FlwPrograms.SOURCES.get(WAVELET));
-        if (!depthRange) {
-            roots.addAll(lightingRoots(light, true));
-            roots.add(FlwPrograms.SOURCES.get(materialShaders.fragmentSource()));
-            roots.add(new RawSource("flw_frag_clip_varyings", FRAG_CLIP_VARYINGS));
-            roots.add(new UberMaterialShaderComponent(FlwPrograms.SOURCES));
-        }
+        roots.addAll(lightingRoots(light, true));
+        roots.add(FlwPrograms.SOURCES.get(materialShaders.fragmentSource()));
+        roots.add(new RawSource("flw_frag_clip_varyings", FRAG_CLIP_VARYINGS));
+        roots.add(new UberMaterialShaderComponent(FlwPrograms.SOURCES));
         roots.add(FlwPrograms.SOURCES.get(OIT_FRAGMENT));
 
         return assemble("oit_uber" + mode.name + "_" + ResourceUtil.toDebugFileNameNoExtension(light.source()) + "_"
@@ -398,11 +494,12 @@ public final class RenderPassShaders {
                     if (!mode.define.isEmpty()) {
                         ctx.define(mode.define);
                     }
-                    if (!depthRange) {
-                        fragmentImports(ctx);
-                        lightingDefines(ctx, true, smoothness);
-                        ctx.define("_FLW_UBER_FRAGMENT");
-                        debugDefine(ctx, debug);
+                    fragmentImports(ctx);
+                    lightingDefines(ctx, true, smoothness);
+                    ctx.define("_FLW_UBER_FRAGMENT");
+                    debugDefine(ctx, debug);
+                    if (mode == OitMode.DEPTH_RANGE) {
+                        ctx.define("_FLW_DEPTH_RANGE_DISCARD");
                     }
                     extra.accept(ctx);
                 }, roots);
@@ -411,6 +508,23 @@ public final class RenderPassShaders {
     public static String assembleUberMlabFragment(OitInsertMode oitMode, LightShader light,
                                                   MaterialShaders materialShaders, LightSmoothness smoothness,
                                                   DebugMode debug, Consumer<Compilation> extra) {
+        return assembleUberMlab("mlab_uber_", ctx -> mlabProducerDefines(ctx, oitMode), oitMode, light,
+                materialShaders, smoothness, debug, extra);
+    }
+
+    /**
+     * {@code ORDER_INDEPENDENT_ADDITIVE} after the inserts: reads the finished samples, writes the emission target.
+     */
+    public static String assembleUberMlabEmissionFragment(OitInsertMode oitMode, LightShader light,
+                                                          MaterialShaders materialShaders, LightSmoothness smoothness,
+                                                          DebugMode debug, Consumer<Compilation> extra) {
+        return assembleUberMlab("mlab_uber_emission_", ctx -> mlabEmissionDefines(ctx, oitMode), oitMode, light,
+                materialShaders, smoothness, debug, extra);
+    }
+
+    private static String assembleUberMlab(String dumpPrefix, Consumer<Compilation> insertDefines,
+                                           OitInsertMode oitMode, LightShader light, MaterialShaders materialShaders,
+                                           LightSmoothness smoothness, DebugMode debug, Consumer<Compilation> extra) {
         List<SourceComponent> roots = new ArrayList<>();
         roots.add(FlwPrograms.SOURCES.get(MLAB));
         roots.addAll(lightingRoots(light, true));
@@ -419,12 +533,12 @@ public final class RenderPassShaders {
         roots.add(new UberMaterialShaderComponent(FlwPrograms.SOURCES));
         roots.add(FlwPrograms.SOURCES.get(OIT_FRAGMENT));
 
-        return assemble("mlab_uber_" + oitMode.name().toLowerCase(Locale.ROOT) + "_"
+        return assemble(dumpPrefix + oitMode.name().toLowerCase(Locale.ROOT) + "_"
                         + ResourceUtil.toDebugFileNameNoExtension(light.source()) + "_"
                         + ResourceUtil.toDebugFileNameNoExtension(materialShaders.fragmentSource())
                         + "_" + smoothness.getSerializedName() + debugSuffix(debug) + ".fsh",
                 ctx -> {
-                    mlabProducerDefines(ctx, oitMode);
+                    insertDefines.accept(ctx);
                     ctx.define("_FLW_OIT");
                     fragmentImports(ctx);
                     lightingDefines(ctx, true, smoothness);
@@ -434,20 +548,69 @@ public final class RenderPassShaders {
                 }, roots);
     }
 
+    /**
+     * The instancing twin of {@link #assembleUberMlabFragment}; {@code emission}: the
+     * {@link #assembleUberMlabEmissionFragment} reader.
+     */
+    public static String assembleMlabFragment(OitInsertMode oitMode, boolean emission, LightShader light,
+                                              MaterialShaders materialShaders, LightSmoothness smoothness,
+                                              CutoutShader cutout, FogShader fog, DebugMode debug,
+                                              Consumer<Compilation> extra) {
+        boolean useDiscard = cutout != CutoutShaders.OFF;
+
+        List<SourceComponent> roots = new ArrayList<>();
+        roots.add(FlwPrograms.SOURCES.get(MLAB));
+        // 26.2: GlStateManager tracks 12 texture units; light texel buffers would push the emission variant's
+        // layer samplers past them, so light reads the storage-buffer transport.
+        roots.addAll(lightingRoots(light, true));
+        roots.add(FlwPrograms.SOURCES.get(materialShaders.fragmentSource()));
+        if (useDiscard) {
+            roots.add(new RawSource("flw_frag_clip_varyings", FRAG_CLIP_VARYINGS));
+            roots.add(FlwPrograms.SOURCES.get(cutout.source()));
+        }
+        roots.add(FlwPrograms.SOURCES.get(fog.source()));
+        roots.add(FlwPrograms.SOURCES.get(OIT_FRAGMENT));
+
+        return assemble((emission ? "mlab_emission_" : "mlab_") + oitMode.name().toLowerCase(Locale.ROOT) + "_"
+                        + ResourceUtil.toDebugFileNameNoExtension(light.source()) + "_"
+                        + ResourceUtil.toDebugFileNameNoExtension(materialShaders.fragmentSource())
+                        + "_" + ResourceUtil.toDebugFileNameNoExtension(cutout.source())
+                        + "_" + ResourceUtil.toDebugFileNameNoExtension(fog.source())
+                        + "_instancing_" + smoothness.getSerializedName() + debugSuffix(debug) + ".fsh",
+                ctx -> {
+                    if (emission) {
+                        mlabEmissionDefines(ctx, oitMode);
+                    } else {
+                        mlabProducerDefines(ctx, oitMode);
+                    }
+                    ctx.define("_FLW_OIT");
+                    fragmentImports(ctx);
+                    lightingDefines(ctx, true, smoothness);
+                    debugDefine(ctx, debug);
+                    if (useDiscard) {
+                        ctx.define("_FLW_USE_DISCARD");
+                    }
+                    extra.accept(ctx);
+                }, roots);
+    }
+
     public static String assembleChunkMlabFragment(OitInsertMode oitMode, boolean linear) {
         return assembleChunkMlabFragment(oitMode, linear, ShaderAssembly.NO_EXTRA);
     }
 
     public static String assembleChunkMlabFragment(OitInsertMode oitMode, boolean linear, Consumer<Compilation> extra) {
-        List<SourceComponent> roots = List.of(
-                FlwPrograms.SOURCES.get(MLAB),
-                FlwPrograms.SOURCES.get(TEXEL_FILTER),
-                FlwPrograms.SOURCES.get(CHUNK_OIT_FRAGMENT));
+        return assembleChunkMlabFragment(oitMode, linear, extra, List.of());
+    }
+
+    public static String assembleChunkMlabFragment(OitInsertMode oitMode, boolean linear, Consumer<Compilation> extra,
+                                                   List<Identifier> overlays) {
+        var roots = terrainFragmentRoots(MLAB, overlays);
 
         return assemble(
                 "chunk_mlab_" + oitMode.name().toLowerCase(Locale.ROOT) + (linear ? "_linear" : "") + ".fsh",
                 ctx -> {
                     mlabProducerDefines(ctx, oitMode);
+                    terrainOverlayDefines(ctx, overlays, false);
                     ctx.define("_FLW_OIT");
                     ctx.mojImport("minecraft:globals.glsl");
                     if (linear) {
@@ -469,12 +632,21 @@ public final class RenderPassShaders {
                 }, roots);
     }
 
-    public static String assembleMlabResolve(OitInsertMode oitMode) {
+    /**
+     * {@code emission}: adds the emission target inside the resolve write.
+     */
+    public static String assembleMlabResolve(OitInsertMode oitMode, boolean emission) {
         List<SourceComponent> roots = List.of(
                 FlwPrograms.SOURCES.get(MLAB),
                 FlwPrograms.SOURCES.get(MLAB_RESOLVE));
-        return assemble("mlab_resolve_" + oitMode.name().toLowerCase(Locale.ROOT) + ".fsh",
-                ctx -> mlabResolveDefines(ctx, oitMode), roots);
+        return assemble("mlab_resolve_" + oitMode.name().toLowerCase(Locale.ROOT) + (emission ? "_emission" : "")
+                        + ".fsh",
+                ctx -> {
+                    mlabResolveDefines(ctx, oitMode);
+                    if (emission) {
+                        EMISSION_PRODUCER.accept(ctx);
+                    }
+                }, roots);
     }
 
     private static List<SourceComponent> lightingRoots(LightShader light, boolean indirect) {
@@ -513,20 +685,17 @@ public final class RenderPassShaders {
                                              MaterialShaders materialShaders, LightSmoothness smoothness,
                                              CutoutShader cutout, FogShader fog, DebugMode debug,
                                              Consumer<Compilation> extra) {
-        boolean depthRange = mode == OitMode.DEPTH_RANGE;
-        boolean useDiscard = !depthRange && cutout != CutoutShaders.OFF;
+        boolean useDiscard = cutout != CutoutShaders.OFF;
 
         List<SourceComponent> roots = new ArrayList<>();
         roots.add(FlwPrograms.SOURCES.get(WAVELET));
-        if (!depthRange) {
-            roots.addAll(lightingRoots(light, indirect));
-            roots.add(FlwPrograms.SOURCES.get(materialShaders.fragmentSource()));
-            if (useDiscard) {
-                roots.add(new RawSource("flw_frag_clip_varyings", FRAG_CLIP_VARYINGS));
-                roots.add(FlwPrograms.SOURCES.get(cutout.source()));
-            }
-            roots.add(FlwPrograms.SOURCES.get(fog.source()));
+        roots.addAll(lightingRoots(light, indirect));
+        roots.add(FlwPrograms.SOURCES.get(materialShaders.fragmentSource()));
+        if (useDiscard) {
+            roots.add(new RawSource("flw_frag_clip_varyings", FRAG_CLIP_VARYINGS));
+            roots.add(FlwPrograms.SOURCES.get(cutout.source()));
         }
+        roots.add(FlwPrograms.SOURCES.get(fog.source()));
         roots.add(FlwPrograms.SOURCES.get(OIT_FRAGMENT));
 
         return assemble("oit" + mode.name + "_" + ResourceUtil.toDebugFileNameNoExtension(light.source()) + "_"
@@ -541,13 +710,14 @@ public final class RenderPassShaders {
                     if (!mode.define.isEmpty()) {
                         ctx.define(mode.define);
                     }
-                    if (!depthRange) {
-                        fragmentImports(ctx);
-                        lightingDefines(ctx, indirect, smoothness);
-                        debugDefine(ctx, debug);
-                        if (useDiscard) {
-                            ctx.define("_FLW_USE_DISCARD");
-                        }
+                    fragmentImports(ctx);
+                    lightingDefines(ctx, indirect, smoothness);
+                    debugDefine(ctx, debug);
+                    if (useDiscard) {
+                        ctx.define("_FLW_USE_DISCARD");
+                    }
+                    if (mode == OitMode.DEPTH_RANGE) {
+                        ctx.define("_FLW_DEPTH_RANGE_DISCARD");
                     }
                     extra.accept(ctx);
                 }, roots);
@@ -558,6 +728,10 @@ public final class RenderPassShaders {
     }
 
     public static String assembleChunkOitVertex(boolean multidraw) {
+        return assembleChunkOitVertex(multidraw, List.of());
+    }
+
+    public static String assembleChunkOitVertex(boolean multidraw, List<Identifier> overlays) {
         return assemble("chunk_oit" + (multidraw ? "_multidraw" : "") + ".vsh", ctx -> {
             INSTANCING_PREAMBLE.accept(ctx);
             #if MC >= 26.3
@@ -565,7 +739,8 @@ public final class RenderPassShaders {
             ctx.define("_FLW_CHUNK_VISIBLE_RANGE");
             #endif
             if (multidraw) ctx.define("MULTIDRAW_TERRAIN");
-        }, List.of(FlwPrograms.SOURCES.get(CHUNK_OIT_VERTEX)));
+            terrainOverlayDefines(ctx, overlays, true);
+        }, terrainVertexRoots(CHUNK_OIT_VERTEX, overlays));
     }
 
     public static String assembleSodiumChunkOitVertex(boolean mdi, boolean fade) {
@@ -573,6 +748,11 @@ public final class RenderPassShaders {
     }
 
     public static String assembleSodiumChunkOitVertex(boolean mdi, boolean fade, Consumer<Compilation> extra) {
+        return assembleSodiumChunkOitVertex(mdi, fade, extra, List.of());
+    }
+
+    public static String assembleSodiumChunkOitVertex(boolean mdi, boolean fade, Consumer<Compilation> extra,
+                                                      List<Identifier> overlays) {
         return assemble("chunk_oit_sodium" + (mdi ? (fade ? "_mdi_fade" : "_mdi") : "") + ".vsh",
                 ctx -> {
                     if (mdi) {
@@ -586,7 +766,8 @@ public final class RenderPassShaders {
                     }
                     TerrainVertexFormat.appendDefines(ctx);
                     extra.accept(ctx);
-                }, List.of(FlwPrograms.SOURCES.get(CHUNK_OIT_SODIUM_VERTEX)));
+                    terrainOverlayDefines(ctx, overlays, true);
+                }, terrainVertexRoots(CHUNK_OIT_SODIUM_VERTEX, overlays));
     }
 
     public static String assembleChunkOitFragment(OitMode mode, boolean linear) {
@@ -594,10 +775,12 @@ public final class RenderPassShaders {
     }
 
     public static String assembleChunkOitFragment(OitMode mode, boolean linear, Consumer<Compilation> extra) {
-        List<SourceComponent> roots = List.of(
-                FlwPrograms.SOURCES.get(WAVELET),
-                FlwPrograms.SOURCES.get(TEXEL_FILTER),
-                FlwPrograms.SOURCES.get(CHUNK_OIT_FRAGMENT));
+        return assembleChunkOitFragment(mode, linear, extra, List.of());
+    }
+
+    public static String assembleChunkOitFragment(OitMode mode, boolean linear, Consumer<Compilation> extra,
+                                                  List<Identifier> overlays) {
+        var roots = terrainFragmentRoots(WAVELET, overlays);
 
         return assemble("chunk_oit" + mode.name + (linear ? "_linear" : "") + ".fsh",
                 ctx -> {
@@ -611,7 +794,31 @@ public final class RenderPassShaders {
                         ctx.define(mode.define);
                     }
                     extra.accept(ctx);
+                    terrainOverlayDefines(ctx, overlays, false);
                 }, roots);
+    }
+
+    private static List<SourceComponent> terrainVertexRoots(Identifier source, List<Identifier> overlays) {
+        var result = new ArrayList<SourceComponent>();
+        result.add(FlwPrograms.SOURCES.get(source));
+        if (!overlays.isEmpty()) result.addAll(TerrainOverlayPipelines.vertexTail());
+        return result;
+    }
+
+    private static List<SourceComponent> terrainFragmentRoots(Identifier library, List<Identifier> overlays) {
+        var result = new ArrayList<SourceComponent>();
+        result.add(FlwPrograms.SOURCES.get(library));
+        result.add(FlwPrograms.SOURCES.get(TEXEL_FILTER));
+        if (!overlays.isEmpty()) result.addAll(TerrainOverlayPipelines.prelude(overlays, "0.1"));
+        result.add(FlwPrograms.SOURCES.get(CHUNK_OIT_FRAGMENT));
+        return result;
+    }
+
+    private static void terrainOverlayDefines(Compilation ctx, List<Identifier> overlays, boolean vertex) {
+        if (overlays.isEmpty()) return;
+        ctx.define("_FLW_TERRAIN_OVERLAY");
+        if (vertex) ctx.define("main", "_flw_terrainVertexBase");
+        if (VkContext.isVulkanHost()) ctx.define("_FLW_TERRAIN_EXPLICIT_VARYINGS");
     }
 
     private static Identifier berVertexSource(BerFamily family) {
@@ -716,11 +923,66 @@ public final class RenderPassShaders {
     }
 
     public static String assembleOitDepth() {
-        return assembleFullscreenFragment(OIT_DEPTH, "oit_depth.fsh", ShaderAssembly.NO_EXTRA);
+        if (OitFramebuffer.depthBoundsFormat().componentCount() != 2) {
+            return assembleFullscreenFragment(OIT_DEPTH, "oit_depth.fsh", ShaderAssembly.NO_EXTRA);
+        }
+        return assembleNearestDepthFragment(OIT_DEPTH, "oit_depth.fsh", ctx -> ctx.define("_FLW_DEPTH_BOUNDS_RG"));
+    }
+
+    public static String assembleOitBoundsMerge() {
+        return assembleNearestDepthFragment(OIT_BOUNDS_MERGE, "oit_bounds_merge.fsh", ShaderAssembly.NO_EXTRA);
+    }
+
+    private static String assembleNearestDepthFragment(Identifier location, String dumpName,
+                                                       Consumer<Compilation> extra) {
+        return assemble(dumpName, INSTANCING_PREAMBLE.andThen(ctx -> {
+            ctx.mojImport("minecraft:projection.glsl");
+            if (RenderSystem.getDevice().getDeviceInfo().isZZeroToOne()) ctx.define("_FLW_DEPTH_ZERO_TO_ONE");
+        }).andThen(extra), List.of(
+                FlwPrograms.SOURCES.get(OIT_NEAREST_DEPTH),
+                FlwPrograms.SOURCES.get(location)));
     }
 
     public static String assembleMlabNearestDepth() {
         return assembleFullscreenFragment(MLAB_NEAREST_DEPTH, "mlab_nearest_depth.fsh", ShaderAssembly.NO_EXTRA);
+    }
+
+    public static String assembleFarLayerCaptureVertex(MaterialShaders material) {
+        return assembleUberIndirectVertex(material, false, maybeBindlessGl().andThen(FAR_BAKE)
+                                                                            .andThen(ctx -> ctx.define(
+                                                                                    "_FLW_FAR_LAYER_CAPTURE")), true);
+    }
+
+    public static String assembleFarLayerCaptureFragment(LightShader light, MaterialShaders material,
+                                                         LightSmoothness smoothness) {
+        return uberFragment(light, material, smoothness, DebugMode.OFF, maybeBindlessGl().andThen(FAR_BAKE)
+                                                                                         .andThen(ctx -> {
+                                                                                             ctx.define(
+                                                                                                     "_FLW_FAR_LAYER_CAPTURE");
+                                                                                             ctx.define(
+                                                                                                     "_FLW_FAR_NO_ROWS");
+                                                                                         }));
+    }
+
+    /**
+     * Vertex partner for producers consuming internal/far/layer_sample.glsl.
+     */
+    public static String assembleFarLayerBoxVertex() {
+        return assemble("far_layer_box.vsh", FAR_IMPOSTOR,
+                List.of(FlwPrograms.SOURCES.get(ResourceUtil.rl("internal/far/layer_box.vert"))));
+    }
+
+    public static String assembleFarImpostorVertex(boolean surface) {
+        return assemble("far_impostor.vsh", FAR_IMPOSTOR.andThen(ctx -> {
+                    ctx.mojImport("minecraft:projection.glsl");
+                    ctx.mojImport("minecraft:dynamictransforms.glsl");
+                }).andThen(surface ? FAR_SURFACE : ShaderAssembly.NO_EXTRA),
+                List.of(FlwPrograms.SOURCES.get(FAR_IMPOSTOR_VERTEX)));
+    }
+
+    public static String assembleFarImpostorFragment(boolean surface) {
+        return assemble("far_impostor.fsh", FAR_IMPOSTOR.andThen(surface ? FAR_SURFACE : ShaderAssembly.NO_EXTRA),
+                List.of(FlwPrograms.SOURCES.get(FAR_IMPOSTOR_FRAGMENT)));
     }
 
     public static String fullscreenVertex() {
@@ -748,7 +1010,7 @@ public final class RenderPassShaders {
             roots.add(FlwPrograms.SOURCES.get(MATRICES));
         }
         roots.add(new InstanceStructComponent(type));
-        roots.add(FlwPrograms.SOURCES.get(type.vertexShader()));
+        roots.add(InstanceStructComponent.typeShader(type, FlwPrograms.SOURCES.get(type.vertexShader())));
         roots.add(assembler);
         roots.add(FlwPrograms.SOURCES.get(materialShaders.vertexSource()));
         roots.add(FlwPrograms.SOURCES.get(mainLocation));

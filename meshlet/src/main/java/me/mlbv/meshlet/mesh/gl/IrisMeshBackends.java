@@ -27,6 +27,7 @@ final class IrisMeshBackends {
     static final Backend MESH = SimpleBackend.builder()
                                              .engineFactory(MeshGuest::new)
                                              .priority(895)
+                                             .automaticSelection(false)
                                              .gpuDriven(true)
                                              .supported(
                                                      () -> !IrisRuntime.EXPERIMENTAL && GuestTerrainGate.meshEnabled() && !VkContext.isVulkanHost()

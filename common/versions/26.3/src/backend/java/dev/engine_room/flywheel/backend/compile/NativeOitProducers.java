@@ -21,7 +21,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
-/** Native Improved Transparency producer variants and source assembly shared by the GL and Vulkan adapters. */
+/**
+ * Native Improved Transparency producer variants and source assembly shared by the GL and Vulkan adapters.
+ */
 final class NativeOitProducers {
     static final String DEPTH_BOUNDS = "OIT_DEPTH_BOUNDS";
     static final String TRANSMITTANCE = "OIT_TRANSMITTANCE";
@@ -42,7 +44,9 @@ final class NativeOitProducers {
         return defines.flags().contains(name) || defines.values().containsKey(name);
     }
 
-    /** Null: not a native OIT producer. */
+    /**
+     * Null: not a native OIT producer.
+     */
     static @Nullable OitMode stage(ShaderDefines defines) {
         if (defined(defines, DEPTH_BOUNDS)) return OitMode.DEPTH_RANGE;
         if (defined(defines, TRANSMITTANCE)) return OitMode.GENERATE_COEFFICIENTS;
@@ -59,7 +63,9 @@ final class NativeOitProducers {
                 + base.getLocation().getNamespace() + "/" + base.getLocation().getPath());
     }
 
-    /** {@code projection}: append {@code Projection} when no kept group declares it. */
+    /**
+     * {@code projection}: append {@code Projection} when no kept group declares it.
+     */
     static List<BindGroupLayout> layouts(RenderPipeline base, Predicate<String> dropped, boolean projection) {
         List<BindGroupLayout> result = new ArrayList<>();
         boolean declared = false;
@@ -73,29 +79,43 @@ final class NativeOitProducers {
         return result;
     }
 
-    /** {@link #readShader}, cached until {@link #reset}. */
+    /**
+     * {@link #readShader}, cached until {@link #reset}.
+     */
     static String rawShader(Identifier id, ShaderType type) {
         return RAW_SHADERS.computeIfAbsent(new ShaderKey(id, type), key -> readShader(key.id, key.type));
     }
 
-    /** Native source with its {@code #version} line removed; assembly supplies the engine's version. */
+    /**
+     * Native source with its {@code #version} line removed; assembly supplies the engine's version.
+     */
     static String readShader(Identifier id, ShaderType type) {
         try {
             return VERSION.matcher(Minecraft.getInstance().getResourceManager()
-                    .getResource(type.idConverter().idToFile(id)).orElseThrow().readAllAsString()).replaceFirst("");
+                                            .getResource(type.idConverter().idToFile(id)).orElseThrow()
+                                            .readAllAsString()).replaceFirst("");
         } catch (IOException failure) {
             throw new IllegalStateException("Could not read native shader " + id, failure);
         }
     }
 
-    /** Resource invalidation. */
+    /**
+     * Resource invalidation.
+     */
     static void reset() {
         RAW_SHADERS.clear();
     }
 
-    /** Producer fragment: engine prologue, native source, then the stage wrapper. */
+    /**
+     * Producer fragment: engine prologue, native source, then the stage wrapper.
+     */
     static void assembleFragment(Compilation compilation, Variant variant, boolean localRead, boolean coefficientArray,
                                  Identifier id) {
+        assembleFragment(compilation, variant, localRead, coefficientArray, id, List.of(), "0.0");
+    }
+
+    static void assembleFragment(Compilation compilation, Variant variant, boolean localRead, boolean coefficientArray,
+                                 Identifier id, List<Identifier> overlays, String cutoff) {
         compilation.define("MINECRAFT_OIT_GLSL");
         compilation.define("main", "_flw_nativeMain");
         if (localRead) compilation.define("_FLW_OIT_LOCAL_READ");
@@ -112,14 +132,21 @@ final class NativeOitProducers {
             }
         }
         ShaderAssembly.appendComponents(compilation, List.of(FlwPrograms.SOURCES.get(ADAPTER)));
+        if (!overlays.isEmpty()) {
+            compilation.define("_FLW_TERRAIN_OVERLAY");
+            compilation.define("_FLW_TERRAIN_EXPLICIT_VARYINGS");
+            ShaderAssembly.appendComponents(compilation,
+                    TerrainOverlayPipelines.nativePrelude(overlays, cutoff, false));
+        }
         compilation.appendComponent(new ShaderAssembly.RawSource(id.toString(), rawShader(id, ShaderType.FRAGMENT)));
+        if (!overlays.isEmpty())
+            ShaderAssembly.appendComponents(compilation, TerrainOverlayPipelines.nativePostlude(false));
         ShaderAssembly.appendComponents(compilation, List.of(FlwPrograms.SOURCES.get(WRAPPER)));
     }
 
-    private record ShaderKey(Identifier id, ShaderType type) {
-    }
-
-    /** {@code mode}: engine stage, {@code OFF} for insert; {@code nativeStage}: required native producer stage. */
+    /**
+     * {@code mode}: engine stage, {@code OFF} for insert; {@code nativeStage}: required native producer stage.
+     */
     enum Variant {
         ORIGINAL(OitMode.OFF, null, null),
         DEPTH(OitMode.DEPTH_RANGE, OitMode.DEPTH_RANGE, null),
@@ -160,12 +187,17 @@ final class NativeOitProducers {
             };
         }
 
-        /** Throws unless {@code pipeline} is a producer of this variant's native stage. */
+        /**
+         * Throws unless {@code pipeline} is a producer of this variant's native stage.
+         */
         void requireStage(RenderPipeline pipeline) {
             if (stage(pipeline.getShaderDefines()) != nativeStage) {
                 throw new IllegalStateException("Native OIT pipeline " + pipeline
                         + " belongs to another producer stage");
             }
         }
+    }
+
+    private record ShaderKey(Identifier id, ShaderType type) {
     }
 }

@@ -68,6 +68,7 @@ public class IndirectCullingGroup<I extends Instance> {
                     drawManager.drawTags(key.environment(), key.model(), entry.material(), entry.mesh()));
             indirectDraws.add(draw);
             instancer.addDraw(draw);
+            instancer.ordered |= drawManager.keepsSubmissionOrder(draw);
             drawManager.warmUp(entry.material(), draw.embeddedVariant());
         }
 

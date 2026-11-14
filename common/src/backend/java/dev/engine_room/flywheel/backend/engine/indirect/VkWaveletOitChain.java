@@ -78,17 +78,24 @@ final class VkWaveletOitChain extends VkOitChain {
     private static void byRegionBarrier(VkCommandBuffer cmd) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             var b = VkMemoryBarrier.calloc(1, stack)
-                                                    .sType$Default()
-                                                    .srcAccessMask(VK12.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
-                                                    .dstAccessMask(VK12.VK_ACCESS_INPUT_ATTACHMENT_READ_BIT);
-            VK12.vkCmdPipelineBarrier(cmd, VK12.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                    VK12.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK12.VK_DEPENDENCY_BY_REGION_BIT, b, null, null);
+                                   .sType$Default()
+                                   .srcAccessMask(VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+                                   .dstAccessMask(VK10.VK_ACCESS_INPUT_ATTACHMENT_READ_BIT);
+            VK10.vkCmdPipelineBarrier(cmd, VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK10.VK_DEPENDENCY_BY_REGION_BIT, b, null, null);
         }
+    }
+
+    private static boolean splitBounds(VkOitRenderer.ChainInputs in) {
+        return OitFramebuffer.SPLIT_INSTANCE_BOUNDS && in.hasInstanceOit();
     }
 
     void render(VkOitRenderer.ChainInputs in, boolean hasAdditive, boolean folded) {
         VkOitRenderer.OitFrame frame = in.frame();
         NativeOitReplay nativeReplay = in.nativeReplay();
+        if (splitBounds(in)) {
+            instanceBounds(in);
+        }
         if (folded && nativeReplay != null) {
             frame = nativeFoldedProducers(in, nativeReplay);
         } else if (folded) {
@@ -171,11 +178,11 @@ final class VkWaveletOitChain extends VkOitChain {
             setViewportScissor(cmd, width, height);
             VkContext.pushLabel(cmd, "flywheel:vk/oit/emission_composite");
             VkGraphicsPipeline pipeline = m.programs.oit().emissionPipeline();
-            VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+            VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
             m.writer.sampler(28, frame.accumulateView(), frame.oitSampler());
             m.writer.sampler(38, VkContext.imageView(framebuffer.emissionView()), frame.oitSampler());
-            m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
-            VK12.vkCmdDraw(cmd, 3, 1, 0, 0);
+            m.writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            VK10.vkCmdDraw(cmd, 3, 1, 0, 0);
             VkContext.popLabel(cmd);
         } finally {
             FlwPassBarrier.clear();
@@ -191,7 +198,9 @@ final class VkWaveletOitChain extends VkOitChain {
             setViewportScissor(cmd, in.width(), in.height());
             VkContext.pushLabel(cmd, "flywheel:vk/oit/producer/" + mode.name);
             try {
-                if (in.hasInstanceOit()) {
+                if (mode == OitMode.DEPTH_RANGE && splitBounds(in)) {
+                    mergeInstanceBounds(cmd, frame, false);
+                } else if (in.hasInstanceOit()) {
                     bindInstances(cmd, in.vertexVk(), in.indexVk());
                     m.drawOitProducerGeometry(cmd, mode, frame, false, false);
                 }
@@ -283,7 +292,7 @@ final class VkWaveletOitChain extends VkOitChain {
             VkCommandBuffer cmd = VkContext.renderPass(pass).commandBuffer;
             setViewportScissor(cmd, width, height);
             VkContext.pushLabel(cmd, "flywheel:vk/oit/composite");
-            VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+            VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
             m.writer.sampler(28, frame.accumulateView(), frame.oitSampler());
             if (emission) {
                 m.writer.sampler(38, VkContext.imageView(framebuffer.emissionView()), frame.oitSampler());
@@ -292,14 +301,15 @@ final class VkWaveletOitChain extends VkOitChain {
             for (int i = 0; i < 4; i++) {
                 m.writer.sampler(24 + i, frame.coefficientViews()[i], frame.oitSampler());
             }
-            m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
-            VK12.vkCmdDraw(cmd, 3, 1, 0, 0);
+            m.writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            VK10.vkCmdDraw(cmd, 3, 1, 0, 0);
             VkGraphicsPipeline depth = m.programs.oit().oitDepthPipeline();
-            VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, depth.handle());
+            VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, depth.handle());
             m.writer.sampler(28, frame.accumulateView(), frame.oitSampler());
             m.writer.sampler(14, frame.depthRangeView(), frame.oitSampler());
-            m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, depth.layout());
-            VK12.vkCmdDraw(cmd, 3, 1, 0, 0);
+            if (OitFramebuffer.depthBoundsFormat().componentCount() == 2) m.writer.uniform(16, frame.projection());
+            m.writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, depth.layout());
+            VK10.vkCmdDraw(cmd, 3, 1, 0, 0);
             VkContext.popLabel(cmd);
         } finally {
             FlwPassBarrier.clear();
@@ -314,11 +324,11 @@ final class VkWaveletOitChain extends VkOitChain {
         VkCommandBuffer cmd = VkContext.beginCommands();
         VkContext.pushLabel(cmd, "flywheel:vk/oit/folded");
         memoryBarrier(cmd,
-                VK12.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK12.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK12.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                VK12.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK12.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK12.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                VK12.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK12.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                VK12.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK12.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
-                        | VK12.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK12.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                VK10.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                VK10.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK10.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                        | VK10.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             long[] views = {frame.depthRangeView(), frame.coefficientViews()[0], frame.coefficientViews()[1],
@@ -331,9 +341,9 @@ final class VkWaveletOitChain extends VkOitChain {
                 color.get(i)
                      .sType$Default()
                      .imageView(views[i])
-                     .imageLayout(VK12.VK_IMAGE_LAYOUT_GENERAL)
-                     .loadOp(VK12.VK_ATTACHMENT_LOAD_OP_CLEAR)
-                     .storeOp(VK12.VK_ATTACHMENT_STORE_OP_STORE)
+                     .imageLayout(VK10.VK_IMAGE_LAYOUT_GENERAL)
+                     .loadOp(VK10.VK_ATTACHMENT_LOAD_OP_CLEAR)
+                     .storeOp(VK10.VK_ATTACHMENT_STORE_OP_STORE)
                      .clearValue(clear);
             }
             VkRenderingInfo rendering = VkRenderingInfo.calloc(stack).sType$Default();
@@ -350,28 +360,81 @@ final class VkWaveletOitChain extends VkOitChain {
                                                                                                                         VkOitPipelines.FOLDED_INPUT_INDICES));
             KHRDynamicRenderingLocalRead.vkCmdSetRenderingInputAttachmentIndicesKHR(cmd, inputIndices);
         }
-        setViewportScissor(cmd, width, height);
+        try {
+            setViewportScissor(cmd, width, height);
 
-        VkContext.pushLabel(cmd, "flywheel:vk/oit/folded/stage/depth_range");
-        foldedStage(cmd, OitMode.DEPTH_RANGE, in);
-        VkContext.popLabel(cmd);
-        byRegionBarrier(cmd);
-        VkContext.pushLabel(cmd, "flywheel:vk/oit/folded/stage/coefficients");
-        foldedStage(cmd, OitMode.GENERATE_COEFFICIENTS, in);
-        VkContext.popLabel(cmd);
-        byRegionBarrier(cmd);
-        VkContext.pushLabel(cmd, "flywheel:vk/oit/folded/stage/evaluate");
-        foldedStage(cmd, OitMode.EVALUATE, in);
-        VkContext.popLabel(cmd);
+            VkContext.pushLabel(cmd, "flywheel:vk/oit/folded/stage/depth_range");
+            foldedStage(cmd, OitMode.DEPTH_RANGE, in);
+            VkContext.popLabel(cmd);
+            byRegionBarrier(cmd);
+            VkContext.pushLabel(cmd, "flywheel:vk/oit/folded/stage/coefficients");
+            foldedStage(cmd, OitMode.GENERATE_COEFFICIENTS, in);
+            VkContext.popLabel(cmd);
+            byRegionBarrier(cmd);
+            VkContext.pushLabel(cmd, "flywheel:vk/oit/folded/stage/evaluate");
+            foldedStage(cmd, OitMode.EVALUATE, in);
+            VkContext.popLabel(cmd);
 
-        KHRDynamicRendering.vkCmdEndRenderingKHR(cmd);
+        } finally {
+            KHRDynamicRendering.vkCmdEndRenderingKHR(cmd);
+        }
         memoryBarrier(cmd,
-                VK12.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK12.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                VK12.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK12.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-                VK12.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK12.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                VK12.VK_ACCESS_SHADER_READ_BIT | VK12.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK12.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+                VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK10.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK10.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+                VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                VK10.VK_ACCESS_SHADER_READ_BIT | VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
         VkContext.popLabel(cmd);
         VkContext.submitCommands(cmd);
+    }
+
+    private void instanceBounds(VkOitRenderer.ChainInputs in) {
+        VkCommandBuffer cmd = VkContext.beginCommands();
+        VkContext.pushLabel(cmd, "flywheel:vk/oit/producer/instance_depth_range");
+        memoryBarrier(cmd,
+                VK10.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                VK10.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK10.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                VK10.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK10.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
+                        | VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkClearValue clear = VkClearValue.calloc(stack);
+            clear.color().float32(0, -in.far()).float32(1, -in.far()).float32(2, 0.0f).float32(3, 0.0f);
+            VkRenderingAttachmentInfo.Buffer color = VkRenderingAttachmentInfo.calloc(1, stack);
+            color.get(0)
+                 .sType$Default()
+                 .imageView(VkContext.imageView(framebuffer.instanceBoundsView()))
+                 .imageLayout(VK10.VK_IMAGE_LAYOUT_GENERAL)
+                 .loadOp(VK10.VK_ATTACHMENT_LOAD_OP_CLEAR)
+                 .storeOp(VK10.VK_ATTACHMENT_STORE_OP_STORE)
+                 .clearValue(clear);
+            VkRenderingInfo rendering = VkRenderingInfo.calloc(stack).sType$Default();
+            rendering.renderArea().extent().set(in.width(), in.height());
+            rendering.layerCount(1)
+                     .pColorAttachments(color);
+            VkContext.attachDepth(stack, rendering, in.depthView());
+            KHRDynamicRendering.vkCmdBeginRenderingKHR(cmd, rendering);
+        }
+        try {
+            setViewportScissor(cmd, in.width(), in.height());
+            bindInstances(cmd, in.vertexVk(), in.indexVk());
+            m.drawOitProducerGeometry(cmd, OitMode.DEPTH_RANGE, in.frame(), false, false);
+        } finally {
+            KHRDynamicRendering.vkCmdEndRenderingKHR(cmd);
+        }
+        memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK10.VK_ACCESS_SHADER_READ_BIT);
+        VkContext.popLabel(cmd);
+        VkContext.submitCommands(cmd);
+    }
+
+    private void mergeInstanceBounds(VkCommandBuffer cmd, VkOitRenderer.OitFrame frame, boolean folded) {
+        VkGraphicsPipeline pipeline = m.programs.oit().boundsMergePipeline(folded);
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, VkIndirectDrawManager.oitPipeline(pipeline));
+        m.writer.sampler(43, VkContext.imageView(framebuffer.instanceBoundsView()), frame.oitSampler());
+        m.writer.uniform(16, frame.projection());
+        m.writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+        VK10.vkCmdDraw(cmd, 3, 1, 0, 0);
     }
 
     private VkOitRenderer.OitFrame nativeFoldedProducers(VkOitRenderer.ChainInputs in, NativeOitReplay replay) {
@@ -381,7 +444,9 @@ final class VkWaveletOitChain extends VkOitChain {
         VkNativeOitPass.get(VkNativeOitPass.spec(targets, false)).record(targets, replay.vulkanBackendFactory(), false,
                 in.width(), in.height(), in.far(), owner -> {
                     var phase = owner.phase();
-                    if (in.hasInstanceOit() && phase.main()) {
+                    if (phase == VkNativeOitPass.Phase.DEPTH_MAIN && splitBounds(in)) {
+                        mergeInstanceBounds(owner.commandBuffer(), frame[0], true);
+                    } else if (in.hasInstanceOit() && phase.main()) {
                         bindInstances(owner.commandBuffer(), in.vertexVk(), in.indexVk());
                         m.drawOitProducerGeometry(owner.commandBuffer(), phase.mode(), frame[0], true, false);
                     }
@@ -406,7 +471,9 @@ final class VkWaveletOitChain extends VkOitChain {
         VkOitRenderer.OitFrame frame = in.frame();
         VkOitRenderer.OitReplay replay = in.replay();
         setFoldedLocations(cmd, mode);
-        if (in.hasInstanceOit()) {
+        if (mode == OitMode.DEPTH_RANGE && splitBounds(in)) {
+            mergeInstanceBounds(cmd, frame, true);
+        } else if (in.hasInstanceOit()) {
             bindInstances(cmd, in.vertexVk(), in.indexVk());
             m.drawOitProducerGeometry(cmd, mode, frame, true, false);
         }
@@ -474,7 +541,7 @@ final class VkWaveletOitChain extends VkOitChain {
         }
         VkContext.pushLabel(cmd, "flywheel:vk/oit/chunk/" + mode.name);
         VkGraphicsPipeline pipeline = m.programs.oit().chunkFoldedPipeline(mode);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
         boolean nonDepthRange = mode != OitMode.DEPTH_RANGE;
         long atlasView = VkContext.imageView(chunks.textureView());
         long sharedIndexBuffer = chunkSharedIndexBuffer(chunks);
@@ -484,8 +551,8 @@ final class VkWaveletOitChain extends VkOitChain {
                 if (nonDepthRange) {
                     writeFoldedExtraReads(mode, frame);
                 }
-                m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
-                VK12.vkCmdDrawIndexed(cmd, draw.indexCount(), 1, draw.firstIndex(), draw.baseVertex(), 0);
+                m.writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+                VK10.vkCmdDrawIndexed(cmd, draw.indexCount(), 1, draw.firstIndex(), draw.baseVertex(), 0);
             }
         }
         VkContext.popLabel(cmd);
@@ -501,15 +568,15 @@ final class VkWaveletOitChain extends VkOitChain {
                 continue;
             }
             VkGraphicsPipeline pipeline = m.programs.oit().berFoldedPipeline(family, mode);
-            VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+            VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
             for (BerTranslucentCapture.CapturedDraw draw : draws) {
                 bindBerDraw(cmd, frame, family, draw);
                 if (nonDepthRange) {
                     writeFoldedExtraReads(mode, frame);
                 }
-                m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+                m.writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
                 StagedVertexBuffer.ExecuteInfo info = draw.info();
-                VK12.vkCmdDrawIndexed(cmd, info.indexCount(), 1, info.firstIndex(), info.baseVertex(), 0);
+                VK10.vkCmdDrawIndexed(cmd, info.indexCount(), 1, info.firstIndex(), info.baseVertex(), 0);
             }
         }
         VkContext.popLabel(cmd);
@@ -521,7 +588,7 @@ final class VkWaveletOitChain extends VkOitChain {
         boolean nonDepthRange = mode != OitMode.DEPTH_RANGE;
         if (fab.hasClouds() || fab.hasItemLayer() || fab.hasParticleLayer()) {
             VkGraphicsPipeline pipeline = m.programs.oit().fabulous().layerFoldedPipeline(mode);
-            VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+            VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
             if (fab.hasClouds()) {
                 drawFoldedLayer(cmd, mode, frame, pipeline, nonDepthRange,
                         VkContext.imageView(framebuffer.cloudsColorView()),
@@ -541,18 +608,18 @@ final class VkWaveletOitChain extends VkOitChain {
         if (fab.hasWeather()) {
             if (!OitConfig.exactFabulous()) {
                 VkGraphicsPipeline pipeline = m.programs.oit().fabulous().layerFoldedPipeline(mode);
-                VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+                VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
                 drawFoldedLayer(cmd, mode, frame, pipeline, nonDepthRange,
                         VkContext.imageView(framebuffer.weatherColorView()),
                         VkContext.imageView(framebuffer.weatherDepthView()));
             } else {
                 VkGraphicsPipeline pipeline = m.programs.oit().fabulous().weatherFoldedPipeline(mode);
-                VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+                VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
                 bindVertexBuffer(cmd, VkContext.buffer(fab.weatherVertices));
                 RenderSystem.AutoStorageIndexBuffer indices = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS);
                 GpuBuffer indexGpu = indices.getBuffer(6 * (fab.rainColumns + fab.snowColumns));
-                int indexType = indices.type() == IndexType.SHORT ? VK12.VK_INDEX_TYPE_UINT16 : VK12.VK_INDEX_TYPE_UINT32;
-                VK12.vkCmdBindIndexBuffer(cmd, VkContext.buffer(indexGpu), 0L, indexType);
+                int indexType = indices.type() == IndexType.SHORT ? VK10.VK_INDEX_TYPE_UINT16 : VK10.VK_INDEX_TYPE_UINT32;
+                VK10.vkCmdBindIndexBuffer(cmd, VkContext.buffer(indexGpu), 0L, indexType);
 
                 TextureManager textureManager = frame.textureManager();
                 drawFoldedWeatherRange(cmd, mode, frame, fab, pipeline,
@@ -573,8 +640,8 @@ final class VkWaveletOitChain extends VkOitChain {
         if (nonDepthRange) {
             writeFoldedExtraReads(mode, frame);
         }
-        m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
-        VK12.vkCmdDraw(cmd, 3, 1, 0, 0);
+        m.writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+        VK10.vkCmdDraw(cmd, 3, 1, 0, 0);
     }
 
     private void drawFoldedWeatherRange(VkCommandBuffer cmd, OitMode mode, VkOitRenderer.OitFrame frame,
@@ -592,8 +659,8 @@ final class VkWaveletOitChain extends VkOitChain {
         if (nonDepthRange) {
             writeFoldedExtraReads(mode, frame);
         }
-        m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
-        VK12.vkCmdDrawIndexed(cmd, columnCount * 6, 1, startColumn * 6, 0, 0);
+        m.writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+        VK10.vkCmdDrawIndexed(cmd, columnCount * 6, 1, startColumn * 6, 0, 0);
     }
     #endif
 }

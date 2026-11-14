@@ -15,7 +15,7 @@ abstract class VulkanStencilTextureLayoutMixin {
             at = @At(value = "INVOKE",
                     target = "Lorg/lwjgl/vulkan/VkImageSubresourceRange;aspectMask(I)Lorg/lwjgl/vulkan/VkImageSubresourceRange;"),
             index = 0)
-    private int flywheel$initializeAllImageAspects(int aspectMask) {
+    private int flywheel$initializeAllImageAspects(int _) {
         return VulkanConst.formatAspectMask(((GpuTexture) (Object) this).getFormat());
     }
 }

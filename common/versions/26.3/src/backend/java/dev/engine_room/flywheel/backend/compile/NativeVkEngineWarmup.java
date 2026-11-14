@@ -16,14 +16,18 @@ import org.jspecify.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Cold preparation of actual engine producer PSOs for the retained native render-pass specifications. */
+/**
+ * Cold preparation of actual engine producer PSOs for the retained native render-pass specifications.
+ */
 public final class NativeVkEngineWarmup {
     private static final List<TerrainHook> TERRAIN_HOOKS = new ArrayList<>();
 
     private NativeVkEngineWarmup() {
     }
 
-    /** Module initialization only; hooks warm their live terrain owner without creating visualization levels. */
+    /**
+     * Module initialization only; hooks warm their live terrain owner without creating visualization levels.
+     */
     public static void registerTerrain(TerrainHook hook) {
         TERRAIN_HOOKS.add(hook);
     }
@@ -33,7 +37,9 @@ public final class NativeVkEngineWarmup {
         void warm(VkNativeOitPass pass, @Nullable OitInsertMode insert);
     }
 
-    /** One registry snapshot per loading/configuration operation; no draw path consumes this object. */
+    /**
+     * One registry snapshot per loading/configuration operation; no draw path consumes this object.
+     */
     static Snapshot snapshot() {
         RenderSystem.assertOnRenderThread();
         return new Snapshot();
@@ -47,7 +53,8 @@ public final class NativeVkEngineWarmup {
         private final boolean mesh =
                 Backends.VK_MESH_SHADER_ID.equals(Backend.REGISTRY.getIdOrThrow(BackendManager.currentBackend()));
         private final boolean sodium = NativeVkEngineWarmup.class.getClassLoader()
-                .getResource("net/caffeinemc/mods/sodium/client/SodiumClientMod.class") != null;
+                                                                 .getResource(
+                                                                         "net/caffeinemc/mods/sodium/client/SodiumClientMod.class") != null;
 
         void warm(VkNativeOitPass pass, @Nullable OitInsertMode insert) {
             for (int i = 0; i < pass.phaseCount(); i++) {
@@ -81,18 +88,18 @@ public final class NativeVkEngineWarmup {
                 for (boolean embedded : new boolean[]{false, true}) {
                     if (mesh) {
                         for (InstanceType<?> type : types) {
-                            var pipeline = insert == null
+                            var selection = insert == null
                                     ? programs.meshVisual().oitPipeline(type, material, embedded, mode,
-                                            programs.depthFormat(), folded)
+                                    programs.depthFormat(), folded)
                                     : programs.meshVisual().mlabPipeline(type, material, embedded, insert,
-                                            programs.depthFormat());
-                            pipeline.subpassHandle(compatibility);
+                                    programs.depthFormat());
+                            selection.pipeline().subpassHandle(compatibility);
                         }
                     } else {
-                        var pipeline = insert == null
+                        var selection = insert == null
                                 ? programs.uber().oitProducerPipeline(material, embedded, smoothness, mode, folded)
                                 : programs.uber().mlabProducerPipeline(insert, material, embedded, smoothness);
-                        pipeline.subpassHandle(compatibility);
+                        selection.pipeline().subpassHandle(compatibility);
                     }
                 }
             }
@@ -105,7 +112,7 @@ public final class NativeVkEngineWarmup {
             var terrain = programs.terrain();
             var pipeline = insert == null
                     ? gpu ? terrain.translucentProducerPipeline(mode, true)
-                            : terrain.classicTranslucentProducerPipeline(mode, true)
+                    : terrain.classicTranslucentProducerPipeline(mode, true)
                     : gpu ? terrain.translucentMlabPipeline(insert) : terrain.classicTranslucentMlabPipeline(insert);
             pipeline.subpassHandle(compatibility);
         }

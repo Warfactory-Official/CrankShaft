@@ -1,6 +1,12 @@
+#ifdef _FLW_BINDLESS
+layout(set = 1, binding = 0) uniform sampler2D _flw_textures[_FLW_BINDLESS_CAPACITY];
+#endif
+
 #ifdef _FLW_DEPTH_RANGE
 
+#ifndef _FLW_OIT_OUTPUTS_EXTERNAL
 layout(location = 0) out vec4 _flw_depthRange_out;
+#endif
 
 void _flw_writeDepthRange(float linearDepth, float deviceDepth) {
     _flw_depthRange_out = vec4(-linearDepth + 1e-5, linearDepth + 1e-2, deviceDepth, 0.0);
@@ -13,10 +19,6 @@ void _flw_writeDepthRange(float linearDepth, float deviceDepth, float alpha) {
 }
 
 #else
-
-#ifdef _FLW_BINDLESS
-layout(set = 1, binding = 0) uniform sampler2D _flw_textures[_FLW_BINDLESS_CAPACITY];
-#endif
 
 #ifndef _FLW_OIT_INSERT
 
@@ -53,10 +55,12 @@ float tented_blue_noise(float normalizedDepth) {
 
 #ifdef _FLW_COLLECT_COEFFS
 
+#ifndef _FLW_OIT_OUTPUTS_EXTERNAL
 layout(location = 0) out vec4 _flw_coeffs0;
 layout(location = 1) out vec4 _flw_coeffs1;
 layout(location = 2) out vec4 _flw_coeffs2;
 layout(location = 3) out vec4 _flw_coeffs3;
+#endif
 
 #endif
 
@@ -97,7 +101,9 @@ uniform sampler2D _flw_coefficients3;
     dst[3] = texelFetch(_flw_coefficients3, ivec2(gl_FragCoord.xy), 0)
 #endif
 
+#ifndef _FLW_OIT_OUTPUTS_EXTERNAL
 layout(location = 0) out vec4 _flw_accumulate;
+#endif
 
 #endif
 
@@ -164,7 +170,7 @@ void _flw_oitEmitAdditive(vec3 premultiplied, float linearDepth) {
 #define _flw_oitEmit(color, linearDepth) _flw_mlabInsert(color, gl_FragCoord.z)
 #else
 void _flw_oitEmit(vec4 color, float linearDepth) {
-    _flw_oitEmitPremul(color.rgb * color.a, color.a, linearDepth);
+_flw_oitEmitPremul(color.rgb * color.a, color.a, linearDepth);
 }
 #endif
 

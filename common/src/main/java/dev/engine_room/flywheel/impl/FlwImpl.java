@@ -3,7 +3,6 @@ package dev.engine_room.flywheel.impl;
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.impl.compat.DistantHorizonsCompat;
 import dev.engine_room.flywheel.impl.compat.LambDynLightsCompat;
-import dev.engine_room.flywheel.impl.compat.VoxyCompat;
 import dev.engine_room.flywheel.impl.registry.IdRegistryImpl;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.material.Materials;
@@ -21,7 +20,6 @@ public final class FlwImpl {
         BackendManagerImpl.init();
         LambDynLightsCompat.init();
         DistantHorizonsCompat.init();
-        VoxyCompat.init();
         InstanceTypes.TRANSFORMED.hashCode();
         Materials.SOLID_BLOCK.hashCode();
         freezeRegistries();

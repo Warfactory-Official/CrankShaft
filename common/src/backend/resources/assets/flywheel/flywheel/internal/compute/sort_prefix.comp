@@ -1,0 +1,42 @@
+layout(local_size_x = 16) in;
+
+layout(std430, binding = 2) readonly buffer FlwSortControl {
+    uint flw_sortControl[];
+};
+
+layout(std430, binding = 3) readonly buffer FlwSortHistogram {
+    uint flw_sortHistogram[];
+};
+
+layout(std430, binding = 4) writeonly buffer FlwSortPrefix {
+    uint flw_sortPrefix[];
+};
+
+shared uint flw_bucketTotals[16];
+
+void main() {
+    uint count = flw_sortControl[0];
+    if (flw_sortControl[2] == 0u) {
+        return;
+    }
+
+    uint groupCount = (count + 127u) / 128u;
+    uint bucket = gl_LocalInvocationID.x;
+    uint total = 0u;
+    for (uint group = 0u; group < groupCount; ++group) {
+        total += flw_sortHistogram[group * 16u + bucket];
+    }
+    flw_bucketTotals[bucket] = total;
+    barrier();
+
+    uint offset = 0u;
+    for (uint lowerBucket = 0u; lowerBucket < bucket; ++lowerBucket) {
+        offset += flw_bucketTotals[lowerBucket];
+    }
+
+    for (uint group = 0u; group < groupCount; ++group) {
+        uint histogramIndex = group * 16u + bucket;
+        flw_sortPrefix[histogramIndex] = offset;
+        offset += flw_sortHistogram[histogramIndex];
+    }
+}

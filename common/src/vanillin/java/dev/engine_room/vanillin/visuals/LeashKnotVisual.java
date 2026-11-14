@@ -18,12 +18,12 @@ public final class LeashKnotVisual extends EntityModelVisual<LeashFenceKnotEntit
     }
 
     @Override
-    protected Identifier texture(EntityRenderState state) {
+    protected Identifier texture(EntityRenderState _) {
         return TEXTURE;
     }
 
     @Override
-    protected void setupRootPose(PoseStack pose, EntityRenderState state) {
+    protected void setupRootPose(PoseStack pose, EntityRenderState _) {
         pose.scale(-1.0F, -1.0F, 1.0F);
     }
 }

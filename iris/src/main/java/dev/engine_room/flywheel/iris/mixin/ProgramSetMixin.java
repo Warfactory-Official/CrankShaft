@@ -5,8 +5,13 @@ import dev.engine_room.flywheel.iris.compile.ContractProgram;
 import dev.engine_room.flywheel.iris.compile.ContractProgramSet;
 import dev.engine_room.flywheel.iris.compile.ContractProperties;
 import dev.engine_room.flywheel.iris.compile.ContractShaderPack;
+import dev.engine_room.flywheel.iris.compile.ForwardOit;
+import dev.engine_room.flywheel.iris.compile.LightDemandSources;
+import dev.engine_room.flywheel.iris.IrisRuntime;
 import dev.engine_room.flywheel.iris.compile.patches.ContractPatches;
 import dev.engine_room.flywheel.iris.compile.patches.DeferredOitProfile;
+import dev.engine_room.flywheel.iris.compile.patches.ForwardOitShaders;
+import net.irisshaders.iris.gl.blending.BlendModeOverride;
 import net.irisshaders.iris.shaderpack.ShaderPack;
 import net.irisshaders.iris.shaderpack.include.AbsolutePackPath;
 import net.irisshaders.iris.shaderpack.loading.ProgramId;
@@ -21,7 +26,10 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
@@ -42,19 +50,25 @@ abstract class ProgramSetMixin implements ContractProgramSet {
     private @Nullable DeferredOitProfile flywheel$deferredOit;
 
     @Unique
+    private @Nullable ForwardOit flywheel$forward;
+
+    @Unique
     private @Nullable Map<String, String> flywheel$patchedFragments;
 
+    @Unique
+    private @Nullable LightDemandSources flywheel$lightDemand;
+
     @Shadow
-    private static ProgramSource readProgramSource(AbsolutePackPath directory,
-                                                   Function<AbsolutePackPath, String> sourceProvider, String program,
-                                                   ProgramSet programSet, ShaderProperties properties,
-                                                   boolean readTesselation) {
+    private static ProgramSource readProgramSource(AbsolutePackPath _,
+                                                   Function<AbsolutePackPath, String> _, String _,
+                                                   ProgramSet _, ShaderProperties _,
+                                                   boolean _) {
         throw new AssertionError();
     }
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void flywheel$readContract(AbsolutePackPath directory, Function<AbsolutePackPath, String> sourceProvider,
-                                       ShaderProperties shaderProperties, ShaderPack pack, CallbackInfo ci) {
+                                       ShaderProperties shaderProperties, ShaderPack pack, CallbackInfo _) {
         ProgramSet self = (ProgramSet) (Object) this;
         for (ContractProgram program : ContractProgram.values()) {
             ProgramSource source = readProgramSource(directory, sourceProvider, program.sourceName, self,
@@ -72,7 +86,11 @@ abstract class ProgramSetMixin implements ContractProgramSet {
         DeferredOitProfile deferred = pack.flywheel$deferredOit();
         if (deferred != null) {
             try {
-                flywheel$patchedFragments = deferred.fragments(self, flywheel$contract);
+                flywheel$patchedFragments = new HashMap<>(deferred.fragments(self, flywheel$contract));
+                if (!IrisRuntime.EXPERIMENTAL) {
+                    flywheel$lightDemand = deferred.lightDemand(self, flywheel$patchedFragments);
+                    flywheel$patchedFragments.replaceAll((_, source) -> DeferredOitProfile.enableLightDemand(source));
+                }
                 flywheel$deferredOit = deferred;
                 FlwBackend.LOGGER.info("Deferred OIT adapter ready: {} {}", deferred, directory);
             } catch (UnsupportedOperationException e) {
@@ -80,6 +98,24 @@ abstract class ProgramSetMixin implements ContractProgramSet {
                 FlwBackend.LOGGER.warn("Deferred OIT adapter rejected; retaining native translucency: {}",
                         e.getMessage());
             }
+        }
+        if (pack.flywheel$forwardProfile() != null) {
+            var forward = new ForwardOit(pack.flywheel$forwardProfile(), self);
+            var originals = new ArrayList<ProgramSource>();
+            originals.add(self.get(ProgramId.Water).orElseThrow());
+            for (var id : List.of(ContractProgram.GBUFFERS_TRANSLUCENT, ContractProgram.GBUFFERS_UNLIT_TRANSLUCENT)) {
+                if (flywheel$contract.containsKey(id)) originals.add(flywheel$contract.get(id));
+            }
+            for (var source : originals) {
+                var variant = readProgramSource(directory, sourceProvider, ForwardOit.PREFIX + source.getName(), self,
+                        shaderProperties, false);
+                String fragment = ForwardOitShaders.material(variant.getFragmentSource().orElseThrow(), forward.profile,
+                        self, forward.waterBuffers().length);
+                forward.source(source, new ProgramSource(source.getName(), variant.getVertexSource().orElseThrow(),
+                        null, null, null, fragment, self, shaderProperties, BlendModeOverride.OFF));
+            }
+            flywheel$forward = forward;
+            FlwBackend.LOGGER.info("Forward wavelet OIT adapter ready: {} {}", forward.profile, directory);
         }
     }
 
@@ -106,8 +142,18 @@ abstract class ProgramSetMixin implements ContractProgramSet {
     }
 
     @Override
+    public @Nullable ForwardOit flywheel$forwardOit() {
+        return flywheel$forward;
+    }
+
+    @Override
     public @Nullable String flywheel$patchedFragment(String program) {
         return flywheel$patchedFragments == null ? null : flywheel$patchedFragments.get(program);
+    }
+
+    @Override
+    public @Nullable LightDemandSources flywheel$lightDemand() {
+        return flywheel$lightDemand;
     }
 
     @Override

@@ -17,7 +17,6 @@ import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
-import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.NoiseTextures;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.*;
@@ -46,6 +45,7 @@ import org.lwjgl.system.MemoryStack;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 
 public final class MeshVisualDrawManager extends IndirectDrawManager {
     private static final int UNIT_ATLAS = 0;
@@ -62,9 +62,9 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
     private static final int SSBO_MESH_VERTICES = 13;
     private static final int SSBO_MESH_INDICES = 14;
     private static final int SSBO_MESHLET_BOUNDS = 16;
-    private final Map<MeshProgramKey, Integer> meshPrograms = new HashMap<>();
-    private final Map<CrumblingProgramKey, Integer> crumblingPrograms = new HashMap<>();
-    private final Map<MeshProgramKey, int[]> oitPrograms = new HashMap<>();
+    private final Map<MeshProgramKey, ProgramVersions<GlProgramBuild>> meshPrograms = new HashMap<>();
+    private final Map<CrumblingProgramKey, ProgramVersions<GlProgramBuild>> crumblingPrograms = new HashMap<>();
+    private final Map<OitProgramKey, ProgramVersions<@Nullable GlProgramBuild[]>> oitPrograms = new HashMap<>();
     private int commandBuilderProgram = -1;
     private int commandBuilderDrawCountLoc = -1;
     private int commandBuilderWriteOffsetLoc = -1;
@@ -140,119 +140,82 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         };
     }
 
-    private static int buildMeshProgram(MeshProgramKey key) {
-        int program = 0;
+    private static Stages meshStages(MeshProgramKey key) {
         var stages = MeshVisualShaders.clipExtra(key.type()).andThen(embeddedExtra(key.embedded()));
-        int mesh = MeshGlPrograms.compileShader("meshvisual", NVMeshShader.GL_MESH_SHADER_NV, "meshvisual mesh",
-                MeshVisualShaders.assembleMesh(key.type(), key.shaders()
-                                                              .vertexSource(),
-                        RenderPassShaders.maybeBindlessGl().andThen(stages)
-                                         .andThen(RenderPassShaders.debugExtra(key.debug()))));
-        int task = MeshGlPrograms.compileShader("meshvisual", NVMeshShader.GL_TASK_SHADER_NV, "meshvisual task",
-                MeshVisualShaders.assembleTask(key.type()));
-        int frag = MeshGlPrograms.compileShader("meshvisual", GL20C.GL_FRAGMENT_SHADER, "meshvisual frag",
-                MeshVisualShaders.assembleFragment(key.light(), key.shaders()
-                                                                   .fragmentSource(), key.smoothness(),
-                        RenderPassShaders.maybeBindlessGl().andThen(MeshVisualShaders.GL_MESH_F16).andThen(stages)
-                                         .andThen(RenderPassShaders.debugExtra(key.debug()))));
-        if (mesh != 0 && task != 0 && frag != 0) {
-            program = MeshGlPrograms.linkProgram("meshvisual", "meshvisual:" + key.type() + ":" + key.shaders()
-                            + ":" + key.light().source() + (key.embedded() ? ":embedded" : "")
-                            + (key.debug() == DebugMode.OFF ? "" : ":debug_" + key.debug().getSerializedName()), task, mesh,
-                    frag);
-        }
-        if (task != 0) {
-            GL20C.glDeleteShader(task);
-        }
-        if (mesh != 0) {
-            GL20C.glDeleteShader(mesh);
-        }
-        if (frag != 0) {
-            GL20C.glDeleteShader(frag);
-        }
-
-        if (program != 0) {
-            bindCommonProgramState(program);
-            GlStateTracker.useProgram(0);
-        }
-        return program;
+        return new Stages("meshvisual:" + key.type() + ":" + key.shaders() + ":" + key.light().source()
+                + (key.embedded() ? ":embedded" : "")
+                + (key.debug() == DebugMode.OFF ? "" : ":debug_" + key.debug().getSerializedName()),
+                new int[]{NVMeshShader.GL_TASK_SHADER_NV, NVMeshShader.GL_MESH_SHADER_NV, GL20C.GL_FRAGMENT_SHADER},
+                new String[]{"meshvisual task", "meshvisual mesh", "meshvisual frag"},
+                new String[]{MeshVisualShaders.assembleTask(key.type()),
+                        MeshVisualShaders.assembleMesh(key.type(), key.shaders().vertexSource(),
+                                RenderPassShaders.maybeBindlessGl().andThen(stages)
+                                                 .andThen(RenderPassShaders.debugExtra(key.debug()))),
+                        MeshVisualShaders.assembleFragment(key.light(), key.shaders().fragmentSource(),
+                                key.smoothness(), RenderPassShaders.maybeBindlessGl()
+                                                                   .andThen(MeshVisualShaders.GL_MESH_F16)
+                                                                   .andThen(stages)
+                                                                   .andThen(RenderPassShaders.debugExtra(
+                                                                           key.debug())))});
     }
 
-    private static int buildCrumblingProgram(CrumblingProgramKey key) {
-        int program = 0;
+    private static void meshSetup(int program) {
+        bindCommonProgramState(program);
+        GlStateTracker.useProgram(0);
+    }
+
+    private static Stages crumblingStages(CrumblingProgramKey key) {
         var debug = RenderPassShaders.debugExtra(key.debug());
-        int mesh = MeshGlPrograms.compileShader("meshvisual", NVMeshShader.GL_MESH_SHADER_NV,
-                "meshvisual crumbling mesh", MeshVisualShaders.assembleCrumblingMesh(key.type(), debug));
-        int frag = MeshGlPrograms.compileShader("meshvisual", GL20C.GL_FRAGMENT_SHADER, "meshvisual crumbling frag",
-                MeshVisualShaders.assembleCrumblingFragment(key.smoothness(), debug));
-        if (mesh != 0 && frag != 0) {
-            program = MeshGlPrograms.linkProgram("meshvisual", "meshvisual:crumbling:" + key.type()
-                    + (key.debug() == DebugMode.OFF ? "" : ":debug_" + key.debug().getSerializedName()), mesh, frag);
-        }
-        if (mesh != 0) {
-            GL20C.glDeleteShader(mesh);
-        }
-        if (frag != 0) {
-            GL20C.glDeleteShader(frag);
-        }
-        if (program != 0) {
-            bindCommonProgramState(program);
-            setSampler(program, "_flw_crumblingTex", UNIT_CRACK);
-            GlStateTracker.useProgram(0);
-        }
-        return program;
+        return new Stages("meshvisual:crumbling:" + key.type()
+                + (key.debug() == DebugMode.OFF ? "" : ":debug_" + key.debug().getSerializedName()),
+                new int[]{NVMeshShader.GL_MESH_SHADER_NV, GL20C.GL_FRAGMENT_SHADER},
+                new String[]{"meshvisual crumbling mesh", "meshvisual crumbling frag"},
+                new String[]{MeshVisualShaders.assembleCrumblingMesh(key.type(), debug),
+                        MeshVisualShaders.assembleCrumblingFragment(key.smoothness(), debug)});
+    }
+
+    private static void crumblingSetup(int program) {
+        bindCommonProgramState(program);
+        setSampler(program, "_flw_crumblingTex", UNIT_CRACK);
+        GlStateTracker.useProgram(0);
     }
 
     private static Consumer<Compilation> embeddedExtra(boolean embedded) {
         return embedded ? RenderPassShaders.EMBEDDED : ShaderAssembly.NO_EXTRA;
     }
 
-    private static int buildOitProgram(MeshProgramKey key, OitMode mode, boolean emission) {
-        int program = 0;
+    private static Stages oitStages(MeshProgramKey key, OitMode mode, boolean emission) {
         var stages = MeshVisualShaders.clipExtra(key.type()).andThen(embeddedExtra(key.embedded()));
         var debug = RenderPassShaders.debugExtra(key.debug());
-        int mesh = MeshGlPrograms.compileShader("meshvisual", NVMeshShader.GL_MESH_SHADER_NV, "meshvisual oit mesh",
-                MeshVisualShaders.assembleMesh(key.type(), key.shaders()
-                                                              .vertexSource(),
-                        RenderPassShaders.maybeBindlessGl().andThen(stages).andThen(debug)));
-        int task = MeshGlPrograms.compileShader("meshvisual", NVMeshShader.GL_TASK_SHADER_NV, "meshvisual oit task",
-                MeshVisualShaders.assembleTask(key.type()));
-        int frag = MeshGlPrograms.compileShader("meshvisual", GL20C.GL_FRAGMENT_SHADER,
-                "meshvisual oit frag" + mode.name, MeshVisualShaders.assembleOitFragment(mode, key.light(),
-                        key.shaders().fragmentSource(), key.smoothness(), false,
-                        RenderPassShaders.maybeBindlessGl().andThen(MeshVisualShaders.GL_MESH_F16).andThen(stages)
-                                         .andThen(debug)
-                                         .andThen(emission ? RenderPassShaders.EMISSION_PRODUCER
-                                                 : ShaderAssembly.NO_EXTRA)));
-        if (mesh != 0 && task != 0 && frag != 0) {
-            program = MeshGlPrograms.linkProgram("meshvisual",
-                    "meshvisual:oit" + mode.name + ":" + key.type() + ":" + key.shaders() + ":" + key.light().source()
-                            + (key.embedded() ? ":embedded" : "")
-                            + (key.debug() == DebugMode.OFF ? "" : ":debug_" + key.debug().getSerializedName()), task,
-                    mesh, frag);
+        return new Stages("meshvisual:oit" + mode.name + ":" + key.type() + ":" + key.shaders() + ":"
+                + key.light().source() + (key.embedded() ? ":embedded" : "")
+                + (key.debug() == DebugMode.OFF ? "" : ":debug_" + key.debug().getSerializedName()),
+                new int[]{NVMeshShader.GL_TASK_SHADER_NV, NVMeshShader.GL_MESH_SHADER_NV, GL20C.GL_FRAGMENT_SHADER},
+                new String[]{"meshvisual oit task", "meshvisual oit mesh", "meshvisual oit frag" + mode.name},
+                new String[]{MeshVisualShaders.assembleTask(key.type()),
+                        MeshVisualShaders.assembleMesh(key.type(), key.shaders().vertexSource(),
+                                RenderPassShaders.maybeBindlessGl().andThen(stages).andThen(debug)),
+                        MeshVisualShaders.assembleOitFragment(mode, key.light(), key.shaders().fragmentSource(),
+                                key.smoothness(), false, RenderPassShaders.maybeBindlessGl()
+                                                                          .andThen(MeshVisualShaders.GL_MESH_F16)
+                                                                          .andThen(stages)
+                                                                          .andThen(debug)
+                                                                          .andThen(emission
+                                                                                  ? RenderPassShaders.EMISSION_PRODUCER
+                                                                                  : ShaderAssembly.NO_EXTRA))});
+    }
+
+    private static void oitSetup(int program) {
+        bindCommonProgramState(program);
+        setSampler(program, "_flw_depthRange", UNIT_OIT_DEPTH_RANGE);
+        setSampler(program, "_flw_blueNoise", UNIT_OIT_BLUE_NOISE);
+        if (!OitConfig.coefficientArray()) {
+            setSampler(program, "_flw_coefficients0", UNIT_OIT_COEFF0);
+            setSampler(program, "_flw_coefficients1", UNIT_OIT_COEFF0 + 1);
+            setSampler(program, "_flw_coefficients2", UNIT_OIT_COEFF0 + 2);
+            setSampler(program, "_flw_coefficients3", UNIT_OIT_COEFF0 + 3);
         }
-        if (task != 0) {
-            GL20C.glDeleteShader(task);
-        }
-        if (mesh != 0) {
-            GL20C.glDeleteShader(mesh);
-        }
-        if (frag != 0) {
-            GL20C.glDeleteShader(frag);
-        }
-        if (program != 0) {
-            bindCommonProgramState(program);
-            setSampler(program, "_flw_depthRange", UNIT_OIT_DEPTH_RANGE);
-            setSampler(program, "_flw_blueNoise", UNIT_OIT_BLUE_NOISE);
-            if (!OitConfig.coefficientArray()) {
-                setSampler(program, "_flw_coefficients0", UNIT_OIT_COEFF0);
-                setSampler(program, "_flw_coefficients1", UNIT_OIT_COEFF0 + 1);
-                setSampler(program, "_flw_coefficients2", UNIT_OIT_COEFF0 + 2);
-                setSampler(program, "_flw_coefficients3", UNIT_OIT_COEFF0 + 3);
-            }
-            GlStateTracker.useProgram(0);
-        }
-        return program;
+        GlStateTracker.useProgram(0);
     }
 
     private static void bindCommonProgramState(int program) {
@@ -276,10 +239,10 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
     }
 
     public static void warmUp(List<InstanceType<?>> types, List<InstanceType<?>> crumblingTypes,
-                              List<Material> materials) {
+                              List<Material> materials, boolean wavelet) {
         deleteWarm(buildCommandBuilder());
         for (InstanceType<?> type : crumblingTypes) {
-            deleteWarm(buildCrumblingProgram(CrumblingProgramKey.of(type, DebugMode.OFF)));
+            linkAndDelete(crumblingStages(CrumblingProgramKey.of(type, DebugMode.OFF)));
         }
         Set<MeshProgramKey> solidDone = new HashSet<>();
         Set<MeshProgramKey> oitDone = new HashSet<>();
@@ -288,17 +251,42 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                 MeshProgramKey key = MeshProgramKey.of(type, material, false, DebugMode.OFF);
                 if (!OitTransparency.orderIndependent(material)) {
                     if (solidDone.add(key)) {
-                        deleteWarm(buildMeshProgram(key));
+                        linkAndDelete(meshStages(key));
                     }
-                } else if (oitDone.add(key)) {
+                } else if (wavelet && oitDone.add(key)) {
                     for (OitMode mode : OitMode.values()) {
                         if (mode != OitMode.OFF) {
-                            deleteWarm(buildOitProgram(key, mode, false));
+                            linkAndDelete(oitStages(key, mode, false));
                         }
                     }
                 }
             }
         }
+    }
+
+    // Warms the driver's shader cache.
+    private static void linkAndDelete(Stages stages) {
+        int[] shaders = new int[stages.types().length];
+        boolean compiled = true;
+        for (int i = 0; i < shaders.length; i++) {
+            shaders[i] = MeshGlPrograms.compileShader("meshvisual", stages.types()[i], stages.stageLabels()[i],
+                    stages.sources()[i]);
+            compiled &= shaders[i] != 0;
+        }
+        if (compiled) deleteWarm(MeshGlPrograms.linkProgram("meshvisual", stages.label(), shaders));
+        for (int shader : shaders) {
+            if (shader != 0) GL20C.glDeleteShader(shader);
+        }
+    }
+
+    private static GlProgramBuild request(Stages stages, IntConsumer setup) {
+        String[] sources = new String[stages.types().length];
+        for (int i = 0; i < sources.length; i++) {
+            sources[i] = MeshGlPrograms.driverSource("meshvisual", stages.types()[i], stages.stageLabels()[i],
+                    stages.sources()[i]);
+        }
+        return GlProgramBuild.request(stages.label(), stages.types(), sources, stages.stageLabels(),
+                ProgramAvailability.Feature.MESH, setup);
     }
 
     private static void deleteWarm(int program) {
@@ -368,12 +356,6 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         return true;
     }
 
-    // The mesh task cull reads the carried pyramid.
-    @Override
-    boolean occlusionOptional() {
-        return false;
-    }
-
     @Override
     void submitSolid(Matrix4fc modelView) {
         builtDraws = 0;
@@ -430,7 +412,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         CommandEncoder encoder = RenderSystem.getDevice()
                                              .createCommandEncoder();
 
-        try (RenderPass pass = encoder.createRenderPass(() -> "flywheel:meshvisual/opaque",
+        try (RenderPass _ = encoder.createRenderPass(() -> "flywheel:meshvisual/opaque",
                 colorView, Optional.empty(), depthView, OptionalDouble.empty())) {
             setupOpaqueState();
             bindTextureCoherent(UNIT_LIGHTMAP, lightmapView);
@@ -455,15 +437,19 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
             GpuSampler lastSampler = null;
             for (var run : meshMultiDraws) {
                 Material material = run.material();
-                int program = meshProgram(MeshProgramKey.of(run.type(), material, run.embedded(),
-                        FrameUniforms.debugMode()));
-                if (program == 0) {
+                var key = MeshProgramKey.of(run.type(), material, run.embedded(), FrameUniforms.debugMode());
+                var versions = meshPrograms.computeIfAbsent(key, _ -> new ProgramVersions<>(GlProgramBuild.TRACKER));
+                GlProgramBuild build = versions.select(ProgramGeneration.current().materials(), key,
+                        MeshVisualDrawManager::requestMeshProgram);
+                if (build == null) {
                     continue;
                 }
+                int program = build.handle();
                 applyMaterialState(material);
                 if (program != lastProgram) {
                     lastProgram = program;
                     GlStateTracker.useProgram(program);
+                    configureMainDepth(program);
                     baseDrawLoc = GL20C.glGetUniformLocation(program, "_flw_baseDraw");
                 }
                 if (!GlCompat.SUPPORTS_BINDLESS_TEXTURES) {
@@ -479,12 +465,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                         GL33C.glBindSampler(UNIT_ATLAS, ((GlSampler) sampler).getId());
                     }
                 }
-                if (baseDrawLoc >= 0) {
-                    GL30C.glUniform1ui(baseDrawLoc, run.start());
-                }
-                long indirect = (long) run.start() * MESH_TASK_COMMAND_STRIDE;
-                int count = run.end() - run.start();
-                NVMeshShader.glMultiDrawMeshTasksIndirectNV(indirect, count, MESH_TASK_COMMAND_STRIDE);
+                drawCovered(run, versions.generation(), baseDrawLoc);
             }
             setupOpaqueState();
             GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
@@ -493,7 +474,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
     }
 
     @Override
-    void submitOitProducerGeometry(RenderPass pass, OitMode mode, OitFrame f, boolean additive) {
+    void submitOitProducerGeometry(RenderPass _, OitMode mode, OitFrame f, boolean additive) {
         GpuBuffer vertexBuffer = meshPool.vertexBuffer();
         GpuBuffer indexBuffer = meshPool.indexBuffer();
         if (vertexBuffer == null || indexBuffer == null) {
@@ -502,7 +483,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         if (commandBuffer == 0 || builtDraws == 0) {
             return;
         }
-        depthPyramid.bindForCull();
+        bindMainDepth();
 
         TextureManager textureManager = f.textureManager();
         int vertexId = ((GlBuffer) vertexBuffer).handle();
@@ -520,9 +501,13 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
 
         GlStateManager._enableDepthTest();
         GlStateManager._depthMask(false);
-        GlStateManager._enableBlend(0);
+        // 26.3: GL_BLEND per draw buffer (glEnablei); 26.2 toggles it globally.
+        for (int i = 0; i < (mode == OitMode.GENERATE_COEFFICIENTS ? 4 : 1); i++) {
+            GlStateManager._enableBlend(i);
+        }
         GlStateManager._blendFuncSeparate(GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE);
-        GL14C.glBlendEquation(depthRange ? GL14C.GL_MAX : GL14C.GL_FUNC_ADD);
+        int equation = depthRange ? GL14C.GL_MAX : GL14C.GL_FUNC_ADD;
+        GlStateManager._blendEquationSeparate(equation, equation);
 
         if (mode == OitMode.GENERATE_COEFFICIENTS) {
             GL20C.glDrawBuffers(
@@ -568,15 +553,20 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         int lastProgram = 0;
         int baseDrawLoc = -1;
         for (var run : additive ? meshOitAdditiveMultiDraws : meshOitMultiDraws) {
-            int program = oitProgram(MeshProgramKey.of(run.type(), run.material(), run.embedded(),
-                    FrameUniforms.debugMode()), mode, additive);
-            if (program == 0) {
+            var key = new OitProgramKey(MeshProgramKey.of(run.type(), run.material(), run.embedded(),
+                    FrameUniforms.debugMode()), additive);
+            var versions = oitPrograms.computeIfAbsent(key, _ -> new ProgramVersions<>(GlProgramBuild.GROUP));
+            GlProgramBuild[] group = versions.select(ProgramGeneration.current().materials(), key,
+                    MeshVisualDrawManager::requestOitPrograms);
+            if (group == null) {
                 continue;
             }
+            int program = group[additive ? 0 : mode.ordinal() - 1].handle();
             applyOitMaterialState(run.material());
             if (program != lastProgram) {
                 lastProgram = program;
                 GlStateTracker.useProgram(program);
+                configureMainDepth(program);
                 baseDrawLoc = GL20C.glGetUniformLocation(program, "_flw_baseDraw");
             }
             if (!depthRange && !GlCompat.SUPPORTS_BINDLESS_TEXTURES) {
@@ -584,17 +574,12 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                                                                              .texture())
                                                               .getTextureView());
             }
-            if (baseDrawLoc >= 0) {
-                GL30C.glUniform1ui(baseDrawLoc, run.start());
-            }
-            long indirect = (long) run.start() * MESH_TASK_COMMAND_STRIDE;
-            int count = run.end() - run.start();
-            NVMeshShader.glMultiDrawMeshTasksIndirectNV(indirect, count, MESH_TASK_COMMAND_STRIDE);
+            drawCovered(run, versions.generation(), baseDrawLoc);
         }
 
         GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
         GlStateTracker.useProgram(0);
-        GL14C.glBlendEquation(GL14C.GL_FUNC_ADD);
+        GlStateManager._blendEquationSeparate(GL14C.GL_FUNC_ADD, GL14C.GL_FUNC_ADD);
         GlStateManager._disablePolygonOffset();
     }
 
@@ -638,7 +623,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                                              .createCommandEncoder();
 
         GlCompat.pushDebugGroup("flywheel:gl/crumbling");
-        try (RenderPass pass = encoder.createRenderPass(() -> "flywheel:meshvisual/crumbling",
+        try (RenderPass _ = encoder.createRenderPass(() -> "flywheel:meshvisual/crumbling",
                 colorView, Optional.empty(), depthView, OptionalDouble.empty())) {
             // Positive offset under reversed-Z: toward the camera, wins the z-fight with the coplanar block.
             GlStateManager._enableBlend(0);
@@ -663,10 +648,14 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
             for (var groupEntry : byType.entrySet()) {
                 InstanceType<?> instanceType = groupEntry.getKey()
                                                          .instanceType();
-                int program = crumblingProgram(instanceType);
-                if (program == 0) {
+                var key = CrumblingProgramKey.of(instanceType, FrameUniforms.debugMode());
+                GlProgramBuild build = crumblingPrograms.computeIfAbsent(key,
+                        _ -> new ProgramVersions<>(GlProgramBuild.TRACKER)).select(ProgramGeneration.NONE, key,
+                        MeshVisualDrawManager::requestCrumblingProgram);
+                if (build == null) {
                     continue;
                 }
+                int program = build.handle();
                 for (var progressEntry : groupEntry.getValue()
                                                    .int2ObjectEntrySet()) {
                     GpuTextureView crackView = tm.getTexture(
@@ -723,36 +712,50 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         NVMeshShader.glDrawMeshTasksNV(0, (triCount + 63) / 64);
     }
 
-    private int meshProgram(MeshProgramKey key) {
-        Integer cached = meshPrograms.get(key);
-        if (cached != null) {
-            return cached;
+    // The run's draws its program generation and the frame's cull program cover.
+    private void drawCovered(MeshDrawRun run, ProgramGeneration generation, int baseDrawLoc) {
+        ProgramGeneration coverage = generation.culledBy(cullTypes());
+        if (coverage.covers(run.required())) {
+            drawMeshTasks(run.start(), run.end(), baseDrawLoc);
+            return;
         }
-        int program = buildMeshProgram(key);
-        meshPrograms.put(key, program);
-        return program;
+        int start = run.start();
+        for (int i = run.start(); i < run.end(); i++) {
+            if (coverage.covers(draw(i).required())) continue;
+            if (start < i) drawMeshTasks(start, i, baseDrawLoc);
+            start = i + 1;
+        }
+        if (start < run.end()) drawMeshTasks(start, run.end(), baseDrawLoc);
     }
 
-    private int crumblingProgram(InstanceType<?> type) {
-        CrumblingProgramKey key = CrumblingProgramKey.of(type, FrameUniforms.debugMode());
-        Integer cached = crumblingPrograms.get(key);
-        if (cached != null) {
-            return cached;
+    private static void drawMeshTasks(int start, int end, int baseDrawLoc) {
+        if (baseDrawLoc >= 0) {
+            GL30C.glUniform1ui(baseDrawLoc, start);
         }
-        int program = buildCrumblingProgram(key);
-        crumblingPrograms.put(key, program);
-        return program;
+        NVMeshShader.glMultiDrawMeshTasksIndirectNV((long) start * MESH_TASK_COMMAND_STRIDE, end - start,
+                MESH_TASK_COMMAND_STRIDE);
     }
 
-    private int oitProgram(MeshProgramKey key, OitMode mode, boolean emission) {
-        int idx = emission ? 3 : mode.ordinal() - 1;
-        int[] arr = oitPrograms.computeIfAbsent(key, k -> new int[]{-1, -1, -1, -1});
-        if (arr[idx] != -1) {
-            return arr[idx];
+    private static GlProgramBuild requestMeshProgram(MeshProgramKey key) {
+        return request(meshStages(key), MeshVisualDrawManager::meshSetup);
+    }
+
+    private static GlProgramBuild requestCrumblingProgram(CrumblingProgramKey key) {
+        return request(crumblingStages(key), MeshVisualDrawManager::crumblingSetup);
+    }
+
+    private static @Nullable GlProgramBuild[] requestOitPrograms(OitProgramKey key) {
+        if (key.emission()) {
+            return new GlProgramBuild[]{request(oitStages(key.key(), OitMode.EVALUATE, true),
+                    MeshVisualDrawManager::oitSetup)};
         }
-        int program = buildOitProgram(key, mode, emission);
-        arr[idx] = program;
-        return program;
+        GlProgramBuild[] group = new GlProgramBuild[OitMode.values().length - 1];
+        for (OitMode mode : OitMode.values()) {
+            if (mode != OitMode.OFF) {
+                group[mode.ordinal() - 1] = request(oitStages(key.key(), mode, false), MeshVisualDrawManager::oitSetup);
+            }
+        }
+        return group;
     }
 
     private int ensureCommandBuilder() {
@@ -783,6 +786,7 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
             scratch.putFloat(76, FrameUniforms.partialTick());
             scratch.putFloat(80, FrameUniforms.renderTicks());
             scratch.putFloat(84, FrameUniforms.renderSeconds());
+            scratch.putInt(88, FrameUniforms.gameMillis());
             GL45C.glNamedBufferSubData(matrixUbo, 0L, scratch);
         }
     }
@@ -859,25 +863,11 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
     @Override
     public void delete() {
         super.delete();
-        for (int program : meshPrograms.values()) {
-            if (program != 0) {
-                GL20C.glDeleteProgram(program);
-            }
-        }
+        meshPrograms.values().forEach(ProgramVersions::release);
         meshPrograms.clear();
-        for (int program : crumblingPrograms.values()) {
-            if (program != 0) {
-                GL20C.glDeleteProgram(program);
-            }
-        }
+        crumblingPrograms.values().forEach(ProgramVersions::release);
         crumblingPrograms.clear();
-        for (int[] arr : oitPrograms.values()) {
-            for (int program : arr) {
-                if (program > 0) {
-                    GL20C.glDeleteProgram(program);
-                }
-            }
-        }
+        oitPrograms.values().forEach(ProgramVersions::release);
         oitPrograms.clear();
         if (commandBuilderProgram > 0) {
             GL20C.glDeleteProgram(commandBuilderProgram);
@@ -908,18 +898,21 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         }
     }
 
-    private record MeshProgramKey(InstanceType<?> type, MaterialShaders shaders, LightShader light, int cutoutGen,
-                                  int fogGen, DebugMode debug, boolean embedded, LightSmoothness smoothness) {
+    private record MeshProgramKey(InstanceType<?> type, MaterialShaders shaders, LightShader light, DebugMode debug,
+                                  boolean embedded, LightSmoothness smoothness) {
         static MeshProgramKey of(InstanceType<?> type, Material material, boolean embedded, DebugMode debug) {
-            return new MeshProgramKey(type, material.shaders(), material.light(),
-                    MaterialShaderIndices.cutoutSources()
-                                         .all()
-                                         .size(),
-                    MaterialShaderIndices.fogSources()
-                                         .all()
-                                         .size(),
-                    debug, embedded, BackendConfig.INSTANCE.lightSmoothness());
+            return new MeshProgramKey(type, material.shaders(), material.light(), debug, embedded,
+                    BackendConfig.INSTANCE.lightSmoothness());
         }
+    }
+
+    /**
+     * {@code emission}: the additive pass's evaluate program alone; otherwise one program per wavelet mode.
+     */
+    private record OitProgramKey(MeshProgramKey key, boolean emission) {
+    }
+
+    private record Stages(String label, int[] types, String[] stageLabels, String[] sources) {
     }
 
     private record CrumblingProgramKey(InstanceType<?> type, DebugMode debug, LightSmoothness smoothness) {

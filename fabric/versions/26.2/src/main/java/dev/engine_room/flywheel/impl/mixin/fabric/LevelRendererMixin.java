@@ -23,7 +23,7 @@ abstract class LevelRendererMixin {
                     "Lnet/minecraft/client/renderer/feature/FeatureRenderDispatcher$PreparedFrame;executeSolid()V",
                     shift = At.Shift.AFTER),
             require = 1)
-    private void flywheel$afterSolidFeatures(CallbackInfo ci) {
+    private void flywheel$afterSolidFeatures(CallbackInfo _) {
         Minecraft minecraft = Minecraft.getInstance();
         if (!(minecraft.level instanceof ClientLevel level)) {
             return;

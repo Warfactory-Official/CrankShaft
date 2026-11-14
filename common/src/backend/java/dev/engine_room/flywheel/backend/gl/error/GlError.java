@@ -37,6 +37,6 @@ public enum GlError {
         return errorLookup.get(GL11.glGetError());
     }
 
-    public static void pollAndThrow(Supplier<String> context) {
+    public static void pollAndThrow(Supplier<String> _) {
     }
 }

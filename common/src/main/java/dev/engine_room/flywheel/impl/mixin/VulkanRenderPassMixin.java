@@ -31,20 +31,20 @@ abstract class VulkanRenderPassMixin {
     @WrapWithCondition(method = "pushDescriptors",
             at = @At(value = "INVOKE",
                     target = "Lorg/lwjgl/vulkan/KHRPushDescriptor;vkCmdPushDescriptorSetKHR(Lorg/lwjgl/vulkan/VkCommandBuffer;IJILorg/lwjgl/vulkan/VkWriteDescriptorSet$Buffer;)V"))
-    private boolean flywheel$pushNonemptyDescriptors(VkCommandBuffer commandBuffer, int bindPoint,
-                                                     long layout, int set, VkWriteDescriptorSet.Buffer writes) {
+    private boolean flywheel$pushNonemptyDescriptors(VkCommandBuffer _, int _,
+                                                     long _, int _, VkWriteDescriptorSet.Buffer writes) {
         // 26.3: a native OIT utility can expose only engine input descriptors, which the RETURN hook supplies.
         return writes.hasRemaining();
     }
 
     @Inject(method = "pushDescriptors", at = @At("RETURN"))
-    private void flywheel$pushNativeOitDescriptors(CallbackInfo ci) {
+    private void flywheel$pushNativeOitDescriptors(CallbackInfo _) {
         VkNativeOitPipelines.pushDescriptors(commandBuffer, pipeline);
     }
     #endif
 
     @Inject(method = "pushDescriptors", at = @At("HEAD"))
-    private void flywheel$notePushDescriptors(CallbackInfo ci) {
+    private void flywheel$notePushDescriptors(CallbackInfo _) {
         if (anyDescriptorDirty) {
             VkDescriptorHeap.notifyForeignBind();
         }

@@ -8,7 +8,7 @@ import org.jspecify.annotations.Nullable;
 @FunctionalInterface
 public interface AssembledShaderSource extends ShaderSource {
     @Override
-    default @Nullable CachedIncludeSource getInclude(Identifier id) {
+    default @Nullable CachedIncludeSource getInclude(Identifier _) {
         return null;
     }
 

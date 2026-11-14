@@ -13,7 +13,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(CommonUniforms.class)
 abstract class CommonUniformsMixin {
     @Inject(method = "addDynamicUniforms", at = @At("RETURN"))
-    private static void flywheel$deferredEnabled(DynamicUniformHolder uniforms, FogMode fogMode, CallbackInfo ci) {
+    private static void flywheel$deferredEnabled(DynamicUniformHolder uniforms, FogMode _, CallbackInfo _) {
         uniforms.uniform1b(UniformUpdateFrequency.PER_FRAME, "flw_oitActive", BackendManagerImpl::isBackendOn);
     }
 }

@@ -21,7 +21,7 @@ final class EmfArmPoseCompat {
         try {
             EMFAnimationApi.registerAnimationHook(new EMFAnimationApi.EMFAnimationHook() {
                 @Override
-                public boolean onAnimationStart(AnimationContext context, boolean cancelled) {
+                public boolean onAnimationStart(AnimationContext context, boolean _) {
                     EMFModelPartRoot root = context.animatingModelRoot();
                     if (playerRoot(root) && !context.activeState().isFirstPersonHand()
                             && EMFAnimationApi.getCurrentEntity() instanceof LivingEntity entity
@@ -42,7 +42,7 @@ final class EmfArmPoseCompat {
                 }
 
                 @Override
-                public void onAnimationEnd(AnimationContext context, boolean cancelled) {
+                public void onAnimationEnd(AnimationContext context, boolean _) {
                     if (!playerRoot(context.animatingModelRoot())) return;
                     Arms arms = ARMS.get();
                     if (arms.root != context.animatingModelRoot()) return;

@@ -6,17 +6,25 @@
 
 #ifdef MESHLET_BARYCENTRIC
 layout(std430, binding = 12) restrict readonly buffer GeometryPointers {
-    restrict Vertex *geometryPtrs[];
+    restrict Vertex * geometryPtrs[];
 };
 layout(location = 1) in PerVertex {
     flat uvec2 quadRef;
     vec2 fog;
+#ifdef _FLW_TERRAIN_OVERLAY
+    vec3 terrainPosition;
+    flat uint terrainReceiver;
+#endif
 } v_in;
 #else
 layout(location = 1) in PerVertex {
     vec4 uvLight;
     vec3 colour;
     vec2 fog;
+#ifdef _FLW_TERRAIN_OVERLAY
+    vec3 terrainPosition;
+    flat uint terrainReceiver;
+#endif
 } v_in;
 #endif
 
@@ -81,7 +89,7 @@ vec4 sampleRGSS(vec2 uv, vec2 du, vec2 dv, vec2 texelScreenSize) {
     float mipLevelExact = max(0.0, log2(effectiveDerivative / minPixelSize));
 
     const vec2 offsets[4] = vec2[](
-        vec2(0.125, 0.375), vec2(-0.125, -0.375), vec2(0.375, -0.125), vec2(-0.375, 0.125));
+            vec2(0.125, 0.375), vec2(-0.125, -0.375), vec2(0.375, -0.125), vec2(-0.375, 0.125));
     vec4 rgssColor = vec4(0.0);
     for (int i = 0; i < 4; ++i) {
         rgssColor += textureLod(Sampler0, uv + offsets[i] * texelSize, mipLevelExact);
@@ -94,7 +102,7 @@ vec4 sampleRGSS(vec2 uv, vec2 du, vec2 dv, vec2 texelScreenSize) {
 #endif
 
 void main() {
-#ifdef MESHLET_BARYCENTRIC
+    #ifdef MESHLET_BARYCENTRIC
     restrict Vertex *qp = geometryPtrs[v_in.quadRef.x] + v_in.quadRef.y;
     uvec3 ti = ((gl_PrimitiveID & 1) == 0) ? uvec3(0u, 1u, 2u) : uvec3(0u, 2u, 3u);
     Vertex V0 = qp[ti.x];
@@ -109,20 +117,20 @@ void main() {
 
     vec2 lightUV = bary.x * decodeLightUV(V0) + bary.y * decodeLightUV(V1) + bary.z * decodeLightUV(V2);
     vec3 tint = bary.x * decodeVertexColour(V0).rgb + bary.y * decodeVertexColour(V1).rgb
-              + bary.z * decodeVertexColour(V2).rgb;
+    + bary.z * decodeVertexColour(V2).rgb;
     float fade = float((uint(gl_PrimitiveID) >> 4u) & 0xFFFu) * (1.0 / 4095.0);
     vec2 fogDist = v_in.fog;
-#else
+    #else
     vec2 uv = v_in.uvLight.xy;
     vec2 lightUV = v_in.uvLight.zw;
     vec3 tint = v_in.colour;
     float fade = float((uint(gl_PrimitiveID) >> 4u) & 0xFFFu) * (1.0 / 4095.0);
     vec2 fogDist = v_in.fog;
-#endif
+    #endif
 
-#ifdef FLW_PIXEL_FILTER_LINEAR
+    #ifdef FLW_PIXEL_FILTER_LINEAR
     vec4 texel = texture(Sampler0, uv);
-#else
+    #else
     texelSize = 1.0 / vec2(textureSize(Sampler0, 0));
     #ifdef MESHLET_BARYCENTRIC
     vec2 du = dFdx(uvr);
@@ -137,14 +145,14 @@ void main() {
     #else
     vec4 texel = sampleNearest(uv, du, dv, texelScreenSize);
     #endif
-#endif
+    #endif
 
-#ifndef MESHLET_SOLID_PASS
+    #ifndef MESHLET_SOLID_PASS
     // Sodium 26.2's cutout material: HALF only (= terrain_cutout.frag).
     if (texel.a < 0.5) {
         discard;
     }
-#endif
+    #endif
 
     vec3 light = texture(Sampler2, lightUV).rgb;
     vec4 color = vec4(texel.rgb * tint * light, 1.0);

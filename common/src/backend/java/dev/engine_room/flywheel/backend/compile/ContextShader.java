@@ -9,10 +9,10 @@ import java.util.Locale;
 import java.util.function.Consumer;
 
 public enum ContextShader {
-    DEFAULT(null, $ -> {
+    DEFAULT(null, _ -> {
     }),
     CRUMBLING("_FLW_CRUMBLING", program -> program.setSamplerBinding("_flw_crumblingTex", Samplers.CRUMBLING)),
-    EMBEDDED("FLW_EMBEDDED", $ -> {
+    EMBEDDED("FLW_EMBEDDED", _ -> {
     });
 
     @Nullable

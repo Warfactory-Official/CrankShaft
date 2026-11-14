@@ -14,6 +14,7 @@ public class SimpleMaterial implements Material {
     protected final Identifier texture;
     protected final boolean blur;
     protected final boolean mipmap;
+    protected final boolean useTextureSampler;
 
     protected final boolean backfaceCulling;
     protected final boolean polygonOffset;
@@ -35,6 +36,7 @@ public class SimpleMaterial implements Material {
         texture = builder.texture();
         blur = builder.blur();
         mipmap = builder.mipmap();
+        useTextureSampler = builder.useTextureSampler();
         backfaceCulling = builder.backfaceCulling();
         polygonOffset = builder.polygonOffset();
         depthTest = builder.depthTest();
@@ -87,6 +89,11 @@ public class SimpleMaterial implements Material {
     @Override
     public boolean mipmap() {
         return mipmap;
+    }
+
+    @Override
+    public boolean useTextureSampler() {
+        return useTextureSampler;
     }
 
     @Override
@@ -143,6 +150,7 @@ public class SimpleMaterial implements Material {
         protected Identifier texture;
         protected boolean blur;
         protected boolean mipmap;
+        protected boolean useTextureSampler;
 
         protected boolean backfaceCulling;
         protected boolean polygonOffset;
@@ -187,6 +195,7 @@ public class SimpleMaterial implements Material {
             texture = material.texture();
             blur = material.blur();
             mipmap = material.mipmap();
+            useTextureSampler = material.useTextureSampler();
             backfaceCulling = material.backfaceCulling();
             polygonOffset = material.polygonOffset();
             depthTest = material.depthTest();
@@ -200,77 +209,82 @@ public class SimpleMaterial implements Material {
         }
 
         public Builder shaders(MaterialShaders value) {
-            this.shaders = value;
+            shaders = value;
             return this;
         }
 
         public Builder cutout(CutoutShader value) {
-            this.cutout = value;
+            cutout = value;
             return this;
         }
 
         public Builder light(LightShader value) {
-            this.light = value;
+            light = value;
             return this;
         }
 
         public Builder fog(FogShader value) {
-            this.fog = value;
+            fog = value;
             return this;
         }
 
         public Builder texture(Identifier value) {
-            this.texture = value;
+            texture = value;
             return this;
         }
 
         public Builder blur(boolean value) {
-            this.blur = value;
+            blur = value;
             return this;
         }
 
         public Builder mipmap(boolean value) {
-            this.mipmap = value;
+            mipmap = value;
+            return this;
+        }
+
+        public Builder useTextureSampler(boolean value) {
+            useTextureSampler = value;
             return this;
         }
 
         public Builder backfaceCulling(boolean value) {
-            this.backfaceCulling = value;
+            backfaceCulling = value;
             return this;
         }
 
         public Builder polygonOffset(boolean value) {
-            this.polygonOffset = value;
+            polygonOffset = value;
             return this;
         }
 
         public Builder depthTest(DepthTest value) {
-            this.depthTest = value;
+            depthTest = value;
             return this;
         }
 
         public Builder transparency(Transparency value) {
-            this.transparency = value;
+            transparency = value;
             return this;
         }
 
         public Builder writeMask(WriteMask value) {
-            this.writeMask = value;
+            writeMask = value;
             return this;
         }
 
         public Builder useOverlay(boolean value) {
-            this.useOverlay = value;
+            useOverlay = value;
             return this;
         }
 
         public Builder useLight(boolean value) {
-            this.useLight = value;
+            useLight = value;
             return this;
         }
 
         public Builder cardinalLightingMode(CardinalLightingMode value) {
-            this.cardinalLightingMode = value;
+            cardinalLightingMode = value;
             return this;
         }
 
@@ -312,6 +326,11 @@ public class SimpleMaterial implements Material {
         @Override
         public boolean mipmap() {
             return mipmap;
+        }
+
+        @Override
+        public boolean useTextureSampler() {
+            return useTextureSampler;
         }
 
         @Override

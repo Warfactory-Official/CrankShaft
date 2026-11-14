@@ -8,7 +8,7 @@ import net.minecraft.world.level.Level;
  */
 public interface LevelExtension {
     static Iterable<Entity> getAllLoadedEntities(Level level) {
-        return ((LevelExtension) level).flywheel$getAllLoadedEntities();
+        return level.flywheel$getAllLoadedEntities();
     }
 
     Iterable<Entity> flywheel$getAllLoadedEntities();

@@ -24,11 +24,13 @@ import io.github.douira.glsl_transformer.ast.print.ASTPrinter;
 import io.github.douira.glsl_transformer.ast.print.PrintType;
 import io.github.douira.glsl_transformer.ast.query.Root;
 import io.github.douira.glsl_transformer.ast.query.RootSupplier;
+import io.github.douira.glsl_transformer.ast.transform.ASTInjectionPoint;
 import io.github.douira.glsl_transformer.ast.transform.JobParameters;
 import io.github.douira.glsl_transformer.ast.transform.SingleASTTransformer;
 import net.irisshaders.iris.gl.blending.AlphaTest;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.pipeline.transform.PatchShaderType;
+import net.irisshaders.iris.shaderpack.preprocessor.JcppProcessor;
 import net.irisshaders.iris.shaderpack.programs.ProgramSource;
 import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
@@ -44,12 +46,24 @@ final class GuestTerrainMeshShaders {
     private static final Pattern VERSION = Pattern.compile("#version\\s+(\\d+)");
     private static final Pattern FORMAT = Pattern.compile("(R|RG|RGB|RGBA)(8|16|32)_(UINT|SINT|UNORM|SNORM|FLOAT)");
     private static final int QUADS = 8;
+    private static final boolean DIRECT = false;
+    private static final String OVERLAY_VERTEX = """
+            void main() {
+                _flw_terrainVertexBase();
+                %1$sPosition = getVertexPosition().xyz;
+                %1$sReceiver = _flw_terrainReceiverAt(_flw_regionSlot, uint(gl_VertexID));
+            }
+            """;
 
     private GuestTerrainMeshShaders() {
     }
 
+    /**
+     * {@code translucent}: overlays compose with coverage, for a non-OIT translucent producer.
+     */
     static Stages build(IrisRenderingPipeline pipeline, ProgramSource source, AlphaTest alpha, boolean shadow,
-                        int[] sourceTargets, GuestShaders.@Nullable OitSpec oit) {
+                        int[] sourceTargets, GuestShaders.@Nullable OitSpec oit, List<Identifier> overlays,
+                        boolean translucent) {
         Map<PatchShaderType, String> patched = GuestTerrainShaders.patch(pipeline, source, alpha, shadow);
         if (Compilation.DUMP_SHADER_SOURCE) {
             GuestPipelines.dump("flywheel:iris/" + source.getName() + "_mesh_input", new GuestShaders.Stages(
@@ -58,10 +72,28 @@ final class GuestTerrainMeshShaders {
         }
         boolean hasGeometry = patched.get(PatchShaderType.GEOMETRY) != null;
         // Lightweight vertex programs can cost less than the task handoff and temporal-recovery machinery.
-        boolean direct = !shadow && oit == null && !hasGeometry && Boolean.getBoolean("crankshaft.iris.mesh.direct");
+        boolean direct = DIRECT && !shadow && oit == null && !hasGeometry;
         if (patched.get(PatchShaderType.TESS_CONTROL) != null
                 || patched.get(PatchShaderType.TESS_EVAL) != null) {
             throw new IllegalStateException("Mesh terrain does not support tessellation stages: " + source.getName());
+        }
+        String vertexSource = shift(patched.get(PatchShaderType.VERTEX));
+        String geometrySource = hasGeometry ? shift(patched.get(PatchShaderType.GEOMETRY)) : null;
+        String fragmentSource = shift(patched.get(PatchShaderType.FRAGMENT));
+        var fusion = GuestTerrainShaders.fuse(source, geometrySource, fragmentSource, "main", overlays,
+                translucent || oit != null, "");
+        if (fusion != null) {
+            String outputs = hasGeometry ? "_flw_terrainVertex" : "_flw_terrain";
+            geometrySource = fusion.geometry();
+            fragmentSource = JcppProcessor.glslPreprocessSource(fusion.fragment(), List.of());
+            SingleASTTransformer<JobParameters> overlay = transformer();
+            overlay.setTransformation((tree, root) -> {
+                tree.parseAndInjectNodes(overlay, ASTInjectionPoint.BEFORE_DECLARATIONS,
+                        Stream.of("out vec3 " + outputs + "Position;", "flat out uint " + outputs + "Receiver;"));
+                root.rename("main", "_flw_terrainVertexBase");
+                tree.parseAndInjectNode(overlay, ASTInjectionPoint.END, OVERLAY_VERTEX.formatted(outputs));
+            });
+            vertexSource = overlay.transform(vertexSource);
         }
         Stage vertex = new Stage();
         Stage fragment = new Stage();
@@ -80,22 +112,19 @@ final class GuestTerrainMeshShaders {
             transformInterface(transformer, tree, vertex, true);
             tree.setVersionStatement(null);
         });
-        String vertexBody = transformer.transform(shift(patched.get(PatchShaderType.VERTEX)));
-        GuestGeometryStage.Result geometry = hasGeometry ? GuestGeometryStage.build(
-                shift(patched.get(PatchShaderType.GEOMETRY)),
+        String vertexBody = transformer.transform(vertexSource);
+        GuestGeometryStage.Result geometry = hasGeometry ? GuestGeometryStage.build(geometrySource,
                 vertex.sharedDeclarations) : null;
         // Rebuilding the indirect stream can change gl_DrawID between phases; it is not a stable position input.
-        boolean taskCull = !direct && !shadow && !hasGeometry && !vertex.sideEffects && !vertex.resourceReads && !vertex.drawIdSensitive
-                && !Boolean.getBoolean("crankshaft.iris.mesh.taskOff");
+        boolean taskCull = !direct && !shadow && !hasGeometry && !vertex.sideEffects && !vertex.resourceReads && !vertex.drawIdSensitive;
         transformer.setTransformation((tree, root) -> {
             transformInterface(transformer, tree, fragment, false);
             if (oit != null) fragment.fragmentOutputs = GuestShaders.demoteOutputs(tree, root);
             else root.rename("main", "_flw_fragmentMain");
             tree.setVersionStatement(null);
         });
-        String fragmentBody = transformer.transform(shift(patched.get(PatchShaderType.FRAGMENT)));
-        boolean depthSafe = !fragment.sideEffects && !fragment.depthWrites && !fragment.resourceReads
-                && !Boolean.getBoolean("crankshaft.iris.mesh.hizOff");
+        String fragmentBody = transformer.transform(fragmentSource);
+        boolean depthSafe = !fragment.sideEffects && !fragment.depthWrites && !fragment.resourceReads;
         int quads = geometry == null ? QUADS : geometryQuads(geometry, fragment.inputs.size() + (oit == null ? 0 : 1));
         int taskQuads = direct ? quads : taskCull ? QUADS : 64;
 
@@ -122,7 +151,6 @@ final class GuestTerrainMeshShaders {
             String qualification = input.interpolation().isEmpty() ? "" : input.interpolation() + " ";
             location++;
             boolean constant = !hasGeometry && !vertex.sideEffects && !vertex.resourceReads
-                    && !Boolean.getBoolean("crankshaft.iris.mesh.constantsOff")
                     && vertex.constants.contains(output.name().split("[.\\[]", 2)[0]);
             StringBuilder members = constant ? primitiveMembers : vertexMembers;
             members.append(constant ? "" : qualification).append(vector).append(' ').append(packed).append(";\n");
@@ -177,9 +205,9 @@ final class GuestTerrainMeshShaders {
             if (taskCull) ctx.define("_FLW_TASK_CULL");
             if (quadConstants) ctx.define("_FLW_QUAD_CONSTANTS");
             if (depthSafe) ctx.define("_FLW_TASK_DEPTH_SAFE");
-            if (Boolean.getBoolean("crankshaft.iris.mesh.forceRecovery")) ctx.define("_FLW_FORCE_RECOVERY");
             if (GuestTerrainGate.CACHE_RECOVERY) ctx.define("_FLW_CACHE_RECOVERY");
             if (direct) ctx.define("_FLW_MESH_DIRECT");
+            if (fusion != null) ctx.define("_FLW_TERRAIN_OVERLAYS");
         };
         Consumer<Compilation> meshExtensions = defines.andThen(ctx -> {
             ctx.requireExtension("GL_NV_mesh_shader");
@@ -438,8 +466,7 @@ final class GuestTerrainMeshShaders {
                             array = tail(array);
                             access += "[_flw_gsVertex]";
                         }
-                        String original = stage.geometry && name.startsWith(GuestGeometryStage.PREFIX)
-                                ? name.substring(GuestGeometryStage.PREFIX.length()) : name;
+                        String original = stage.geometry ? GuestGeometryStage.original(name) : name;
                         varying(input ? stage.inputs : stage.outputs, access, typed.getType().getTypeSpecifier(),
                                 key(qualifiers, original), interpolation(qualifiers), stage.structTypes, array);
                     }
@@ -654,9 +681,8 @@ final class GuestTerrainMeshShaders {
            .append("    ivec3 origin = _flw_unpackRegionOrigin(region);\n");
         for (String region : vertex.regions) {
             out.append(switch (region) {
-                case GuestTerrainShaders.REGION_OFFSET ->
-                        "    " + GuestTerrainShaders.REGION_OFFSET
-                                + " = vec3(origin * 16 - _flw_sodiumCameraInt) - _flw_sodiumCameraFrac;\n";
+                case GuestTerrainShaders.REGION_OFFSET -> "    " + GuestTerrainShaders.REGION_OFFSET
+                        + " = vec3(origin * 16 - _flw_sodiumCameraInt) - _flw_sodiumCameraFrac;\n";
                 case GuestTerrainShaders.REGION_ID -> "    " + GuestTerrainShaders.REGION_ID + " = region.z;\n";
                 case GuestTerrainShaders.REGION_TIME ->
                         "    " + GuestTerrainShaders.REGION_TIME + " = _flw_regionTime[_flw_regionSlot];\n";

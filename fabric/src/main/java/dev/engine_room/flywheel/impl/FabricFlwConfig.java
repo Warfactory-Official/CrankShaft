@@ -1,19 +1,22 @@
 package dev.engine_room.flywheel.impl;
 
 import com.google.gson.*;
+
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.backend.BackendConfig;
-import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.TerrainMode;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
+import dev.engine_room.flywheel.backend.compile.ShaderCompilationMode;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.IdentifierException;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
+import net.minecraft.util.StringRepresentable;
 
 import java.io.File;
+
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.nio.file.Path;
@@ -36,15 +39,15 @@ public final class FabricFlwConfig implements FlwConfig {
     public static final FabricFlwConfig INSTANCE = new FabricFlwConfig(PATH.toFile());
 
     private final File file;
-
     public Backend backend = BackendManager.offBackend();
     public boolean useDefaultBackend = true;
     public boolean limitUpdates = LIMIT_UPDATES_DEFAULT;
     public int workerThreads = WORKER_THREADS_DEFAULT;
     public boolean useCommonPool = USE_COMMON_POOL_DEFAULT;
     public boolean concurrentExtraction = CONCURRENT_EXTRACTION_DEFAULT;
-
     public final FabricBackendConfig backendConfig = new FabricBackendConfig();
+    private boolean batching;
+    private boolean pendingSave;
 
     public FabricFlwConfig(File file) {
         this.file = file;
@@ -61,8 +64,18 @@ public final class FabricFlwConfig implements FlwConfig {
     }
 
     @Override
+    public String backendString() {
+        return useDefaultBackend ? DEFAULT_BACKEND_STR : Backend.REGISTRY.getIdOrThrow(backend).toString();
+    }
+
+    @Override
     public boolean limitUpdates() {
         return limitUpdates;
+    }
+
+    @Override
+    public int workerThreads() {
+        return workerThreads;
     }
 
     @Override
@@ -89,6 +102,7 @@ public final class FabricFlwConfig implements FlwConfig {
         return backendConfig;
     }
 
+    @Override
     public void setBackendString(String value) {
         if (value.equals(DEFAULT_BACKEND_STR)) {
             backend = BackendManager.offBackend();
@@ -100,16 +114,37 @@ public final class FabricFlwConfig implements FlwConfig {
         save();
     }
 
+    @Override
     public void setLimitUpdates(boolean value) {
         limitUpdates = value;
         save();
     }
 
+    @Override
+    public void setWorkerThreads(int value) {
+        workerThreads = value;
+        save();
+    }
+
+    @Override
+    public void setUseCommonPool(boolean value) {
+        useCommonPool = value;
+        save();
+    }
+
+    @Override
+    public void setConcurrentExtraction(boolean value) {
+        concurrentExtraction = value;
+        save();
+    }
+
+    @Override
     public void setLightSmoothness(LightSmoothness value) {
         backendConfig.lightSmoothness = value;
         save();
     }
 
+    @Override
     public void setTerrainMode(TerrainMode value) {
         backendConfig.terrainMode = value;
         save();
@@ -129,6 +164,10 @@ public final class FabricFlwConfig implements FlwConfig {
     }
 
     public void save() {
+        if (batching) {
+            pendingSave = true;
+            return;
+        }
         try (FileWriter writer = new FileWriter(file)) {
             GSON.toJson(toJson(), writer);
         } catch (Exception e) {
@@ -136,23 +175,33 @@ public final class FabricFlwConfig implements FlwConfig {
         }
     }
 
+    @Override
+    public void beginBatch() {
+        batching = true;
+    }
+
+    @Override
+    public void endBatch(boolean persist) {
+        batching = false;
+        var save = pendingSave && persist;
+        pendingSave = false;
+        if (save) save();
+    }
+
     public void fromJson(JsonElement json) {
-        if (!(json instanceof JsonObject object)) {
+        JsonObject object;
+        if (json instanceof JsonObject config) {
+            object = config;
+        } else {
             FlwImpl.CONFIG_LOGGER.warn("Config JSON must be an object");
-            backend = BackendManager.offBackend();
-            useDefaultBackend = true;
-            limitUpdates = LIMIT_UPDATES_DEFAULT;
-            workerThreads = WORKER_THREADS_DEFAULT;
-            useCommonPool = USE_COMMON_POOL_DEFAULT;
-            concurrentExtraction = CONCURRENT_EXTRACTION_DEFAULT;
-            return;
+            object = new JsonObject();
         }
 
         readBackend(object);
-        readLimitUpdates(object);
+        limitUpdates = readBoolean(object, "limitUpdates", LIMIT_UPDATES_DEFAULT);
         readWorkerThreads(object);
-        readUseCommonPool(object);
-        readConcurrentExtraction(object);
+        useCommonPool = readBoolean(object, "useCommonPool", USE_COMMON_POOL_DEFAULT);
+        concurrentExtraction = readBoolean(object, "concurrentExtraction", CONCURRENT_EXTRACTION_DEFAULT);
         readFlwBackends(object);
     }
 
@@ -169,14 +218,14 @@ public final class FabricFlwConfig implements FlwConfig {
             }
 
             try {
-                this.backend = Backend.REGISTRY.getOrThrow(Identifier.parse(value));
+                backend = Backend.REGISTRY.getOrThrow(Identifier.parse(value));
                 useDefaultBackend = false;
                 return;
-            } catch (IdentifierException e) {
+            } catch (IdentifierException _) {
                 msg = "'backend' value '" + value + "' is not a valid resource location";
-            } catch (IllegalArgumentException e) {
+            } catch (IllegalArgumentException _) {
                 msg = "Backend with ID '" + value + "' is not registered";
-            } catch (Exception e) {
+            } catch (Exception _) {
                 // Something else went wrong? This should be dead code.
                 msg = "'backend' value '" + value + "' is invalid";
             }
@@ -192,64 +241,45 @@ public final class FabricFlwConfig implements FlwConfig {
         useDefaultBackend = true;
     }
 
-    private void readLimitUpdates(JsonObject object) {
-        var limitUpdatesJson = object.get("limitUpdates");
-
-        if (limitUpdatesJson instanceof JsonPrimitive primitive && primitive.isBoolean()) {
-            limitUpdates = primitive.getAsBoolean();
-            return;
-        } else if (limitUpdatesJson != null) {
-            FlwImpl.CONFIG_LOGGER.warn("'limitUpdates' value must be a boolean");
-        }
-
-        limitUpdates = LIMIT_UPDATES_DEFAULT;
-    }
-
     private void readWorkerThreads(JsonObject object) {
-        var workerThreadsJson = object.get("workerThreads");
-
-        if (workerThreadsJson instanceof JsonPrimitive primitive && primitive.isNumber()) {
-            int value = primitive.getAsInt();
-            int clamped = Mth.clamp(value, WORKER_THREADS_MIN, WORKER_THREADS_MAX);
-
-            if (clamped != value) {
-                FlwImpl.CONFIG_LOGGER.warn("'workerThreads' value of {} is out of range, clamping to {}", value,
-                        clamped);
-            }
-
-            workerThreads = clamped;
-            return;
-        } else if (workerThreadsJson != null) {
-            FlwImpl.CONFIG_LOGGER.warn("'workerThreads' value must be an integer");
+        var value = readInt(object, "workerThreads", WORKER_THREADS_DEFAULT);
+        workerThreads = Mth.clamp(value, WORKER_THREADS_MIN, WORKER_THREADS_MAX);
+        if (workerThreads != value) {
+            FlwImpl.CONFIG_LOGGER.warn("'workerThreads' value of {} is out of range, clamping to {}", value,
+                    workerThreads);
         }
-
-        workerThreads = WORKER_THREADS_DEFAULT;
     }
 
-    private void readConcurrentExtraction(JsonObject object) {
-        var json = object.get("concurrentExtraction");
-
+    private static boolean readBoolean(JsonObject object, String key, boolean defaultValue) {
+        var json = object.get(key);
         if (json instanceof JsonPrimitive primitive && primitive.isBoolean()) {
-            concurrentExtraction = primitive.getAsBoolean();
-            return;
-        } else if (json != null) {
-            FlwImpl.CONFIG_LOGGER.warn("'concurrentExtraction' value must be a boolean");
+            return primitive.getAsBoolean();
         }
-
-        concurrentExtraction = CONCURRENT_EXTRACTION_DEFAULT;
+        if (json != null) FlwImpl.CONFIG_LOGGER.warn("'{}' value must be a boolean", key);
+        return defaultValue;
     }
 
-    private void readUseCommonPool(JsonObject object) {
-        var useCommonPoolJson = object.get("useCommonPool");
-
-        if (useCommonPoolJson instanceof JsonPrimitive primitive && primitive.isBoolean()) {
-            useCommonPool = primitive.getAsBoolean();
-            return;
-        } else if (useCommonPoolJson != null) {
-            FlwImpl.CONFIG_LOGGER.warn("'useCommonPool' value must be a boolean");
+    private static int readInt(JsonObject object, String key, int defaultValue) {
+        var json = object.get(key);
+        if (json instanceof JsonPrimitive primitive && primitive.isNumber()) {
+            return primitive.getAsInt();
         }
+        if (json != null) FlwImpl.CONFIG_LOGGER.warn("'{}' value must be an integer", key);
+        return defaultValue;
+    }
 
-        useCommonPool = USE_COMMON_POOL_DEFAULT;
+    private static <E extends Enum<E> & StringRepresentable> E readEnum(JsonObject object, String key, E defaultValue) {
+        var json = object.get(key);
+        if (json instanceof JsonPrimitive primitive && primitive.isString()) {
+            var value = primitive.getAsString();
+            for (var candidate : defaultValue.getDeclaringClass().getEnumConstants()) {
+                if (candidate.getSerializedName().equalsIgnoreCase(value)) return candidate;
+            }
+            FlwImpl.CONFIG_LOGGER.warn("Unknown '{}' value: {}", key, value);
+        } else if (json != null) {
+            FlwImpl.CONFIG_LOGGER.warn("'{}' value must be a string", key);
+        }
+        return defaultValue;
     }
 
     private void readFlwBackends(JsonObject object) {
@@ -276,52 +306,24 @@ public final class FabricFlwConfig implements FlwConfig {
 
     public static final class FabricBackendConfig implements BackendConfig {
         public static final LightSmoothness LIGHT_SMOOTHNESS_DEFAULT = LightSmoothness.SMOOTH;
+        public static final ShaderCompilationMode SHADER_COMPILATION_DEFAULT = ShaderCompilationMode.PRECOMPILE;
         public static final TerrainMode TERRAIN_MODE_DEFAULT = TerrainMode.TRANSLUCENT_OIT;
 
         public LightSmoothness lightSmoothness = LIGHT_SMOOTHNESS_DEFAULT;
+        public ShaderCompilationMode shaderCompilation = SHADER_COMPILATION_DEFAULT;
         public TerrainMode terrainMode = TERRAIN_MODE_DEFAULT;
 
         private static void readOit(JsonObject object) {
-            OitConfig.Path path = OitConfig.Path.AUTO;
-            int kbuffer = 0;
-            int mlab = 0;
-            int abuffer = 0;
-            if (object.get("oit") instanceof JsonObject oit) {
-                if (oit.get("path") instanceof JsonPrimitive p && p.isString()) {
-                    for (OitConfig.Path v : OitConfig.Path.values()) {
-                        if (v.name().equalsIgnoreCase(p.getAsString())) {
-                            path = v;
-                            break;
-                        }
-                    }
-                }
-                kbuffer = readInt(oit, "kbufferLayers");
-                mlab = readInt(oit, "mlabLayers");
-                abuffer = readInt(oit, "abufferLayers");
-            }
+            var oit = object.get("oit") instanceof JsonObject config ? config : new JsonObject();
+            var path = readEnum(oit, "path", OitConfig.Path.AUTO);
+            var kbuffer = readInt(oit, "kbufferLayers", 0);
+            var mlab = readInt(oit, "mlabLayers", 0);
+            var abuffer = readInt(oit, "abufferLayers", 0);
+            var shaderpack = readEnum(oit, "shaderpack", OitConfig.ShaderpackMode.DEFERRED);
             #if MC < 26.3
-            boolean exactWeather = object.get("oit") instanceof JsonObject oit
-                    && oit.get("exactWeather") instanceof JsonPrimitive e && e.isBoolean() && e.getAsBoolean();
+            var exactWeather = readBoolean(oit, "exactWeather", false);
             #endif
-            OitConfig.loadState(path, kbuffer, mlab, abuffer #if MC < 26.3 , exactWeather #endif);
-        }
-
-        private static int readInt(JsonObject object, String key) {
-            return object.get(key) instanceof JsonPrimitive p && p.isNumber() ? p.getAsInt() : 0;
-        }
-
-        private static TerrainMode readTerrainMode(JsonObject object) {
-            var json = object.get("terrain");
-            if (json instanceof JsonPrimitive primitive && primitive.isString()) {
-                TerrainMode mode = TerrainMode.byToken(primitive.getAsString());
-                if (mode != null) {
-                    return mode;
-                }
-                FlwBackend.LOGGER.warn("Unknown 'terrain' value: {}", primitive.getAsString());
-            } else if (json != null) {
-                FlwBackend.LOGGER.warn("'terrain' value must be a string");
-            }
-            return TERRAIN_MODE_DEFAULT;
+            OitConfig.loadState(path, kbuffer, mlab, abuffer, shaderpack #if MC < 26.3 , exactWeather #endif);
         }
 
         @Override
@@ -330,50 +332,31 @@ public final class FabricFlwConfig implements FlwConfig {
         }
 
         @Override
+        public ShaderCompilationMode shaderCompilation() {
+            return shaderCompilation;
+        }
+
+        @Override
         public TerrainMode terrainMode() {
             return TerrainModeGate.effective(terrainMode);
         }
 
         public void fromJson(JsonObject object) {
-            readLightSmoothness(object);
-            terrainMode = readTerrainMode(object);
+            lightSmoothness = readEnum(object, "lightSmoothness", LIGHT_SMOOTHNESS_DEFAULT);
+            shaderCompilation = readEnum(object, "shader_compilation", SHADER_COMPILATION_DEFAULT);
+            terrainMode = readEnum(object, "terrain", TERRAIN_MODE_DEFAULT);
             readOit(object);
-        }
-
-        private void readLightSmoothness(JsonObject object) {
-            var lightSmoothnessJson = object.get("lightSmoothness");
-            String msg = null;
-
-            if (lightSmoothnessJson instanceof JsonPrimitive primitive && primitive.isString()) {
-                var value = primitive.getAsString();
-
-                for (var item : LightSmoothness.values()) {
-                    if (item.name()
-                            .equalsIgnoreCase(value)) {
-                        lightSmoothness = item;
-                        return;
-                    }
-                }
-
-                msg = "Unknown 'lightSmoothness' value: " + value;
-            } else if (lightSmoothnessJson != null) {
-                msg = "'lightSmoothness' value must be a string";
-            }
-
-            // Don't log an error if the field is missing.
-            if (msg != null) {
-                FlwBackend.LOGGER.warn(msg);
-            }
-            lightSmoothness = LIGHT_SMOOTHNESS_DEFAULT;
         }
 
         public JsonObject toJson() {
             JsonObject object = new JsonObject();
             object.addProperty("lightSmoothness", lightSmoothness.getSerializedName());
-            object.addProperty("terrain", terrainMode.token());
+            object.addProperty("shader_compilation", shaderCompilation.getSerializedName());
+            object.addProperty("terrain", terrainMode.getSerializedName());
 
             JsonObject oit = new JsonObject();
-            oit.addProperty("path", OitConfig.path().name().toLowerCase(java.util.Locale.ROOT));
+            oit.addProperty("path", OitConfig.path().getSerializedName());
+            oit.addProperty("shaderpack", OitConfig.shaderpackMode().getSerializedName());
             oit.addProperty("kbufferLayers", OitConfig.rawLayers(OitConfig.Path.KBUFFER));
             oit.addProperty("mlabLayers", OitConfig.rawLayers(OitConfig.Path.MLAB));
             oit.addProperty("abufferLayers", OitConfig.rawLayers(OitConfig.Path.ABUFFER));

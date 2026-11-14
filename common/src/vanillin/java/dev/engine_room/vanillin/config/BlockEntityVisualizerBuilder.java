@@ -1,5 +1,9 @@
 package dev.engine_room.vanillin.config;
 
+import dev.engine_room.flywheel.api.visualization.FarVisualModel;
+import dev.engine_room.flywheel.api.visualization.FarVisualProvider;
+import dev.engine_room.flywheel.api.visualization.FarVisualRegistry;
+import net.minecraft.resources.Identifier;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.visual.BlockEntityVisual;
 import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
@@ -14,6 +18,8 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 public class BlockEntityVisualizerBuilder<T extends BlockEntity> {
+    private FarVisualRegistry.@Nullable Definition farDefinition;
+
     private final Configurator configurator;
     private final BlockEntityType<T> type;
     private SimpleBlockEntityVisualizer.@Nullable Factory<T> visualFactory;
@@ -48,7 +54,15 @@ public class BlockEntityVisualizerBuilder<T extends BlockEntity> {
     }
 
     public BlockEntityVisualizerBuilder<T> neverSkipVanillaRender() {
-        this.skipVanillaRender = blockEntity -> false;
+        this.skipVanillaRender = _ -> false;
+        return this;
+    }
+
+    /**
+     * Registers a block-state-only distant representation whenever this visual is enabled.
+     */
+    public BlockEntityVisualizerBuilder<T> far(Identifier id, FarVisualProvider provider) {
+        farDefinition = new FarVisualRegistry.Definition(id, provider);
         return this;
     }
 
@@ -60,7 +74,7 @@ public class BlockEntityVisualizerBuilder<T extends BlockEntity> {
     public SimpleBlockEntityVisualizer<T> apply(boolean enabledByDefault) {
         Objects.requireNonNull(visualFactory, "Visual factory cannot be null!");
         if (skipVanillaRender == null) {
-            skipVanillaRender = blockEntity -> true;
+            skipVanillaRender = _ -> true;
         }
 
         SimpleBlockEntityVisualizer.Factory<T> factory = visualFactory;
@@ -70,21 +84,31 @@ public class BlockEntityVisualizerBuilder<T extends BlockEntity> {
             SimpleBlockEntityVisualizer.Factory<T> visual = factory;
             factory = (ctx, blockEntity, partialTick) -> EntityFeatureCompat.vanillaOwns(type)
                     ? new VanillaOwned() : visual.create(ctx, blockEntity, partialTick);
-            skipRender = skipRender.and(blockEntity -> !EntityFeatureCompat.vanillaOwns(type));
+            skipRender = skipRender.and(_ -> !EntityFeatureCompat.vanillaOwns(type));
         }
         SimpleBlockEntityVisualizer<T> visualizer = new SimpleBlockEntityVisualizer<>(factory, skipRender);
-        configurator.register(type, visualizer, enabledByDefault);
+        var far = farDefinition;
+        if (far != null && EntityFeatureCompat.ACTIVE) {
+            var provider = far.provider();
+            far = new FarVisualRegistry.Definition(far.id(), state -> {
+                if (EntityFeatureCompat.vanillaOwns(type)) {
+                    return FarVisualModel.EMPTY;
+                }
+                return provider.create(state);
+            });
+        }
+        configurator.register(type, visualizer, enabledByDefault, far);
 
         return visualizer;
     }
 
     private static final class VanillaOwned implements BlockEntityVisual<BlockEntity> {
         @Override
-        public void collectCrumblingInstances(Consumer<@Nullable Instance> consumer) {
+        public void collectCrumblingInstances(Consumer<@Nullable Instance> _) {
         }
 
         @Override
-        public void update(float partialTick) {
+        public void update(float _) {
         }
 
         @Override

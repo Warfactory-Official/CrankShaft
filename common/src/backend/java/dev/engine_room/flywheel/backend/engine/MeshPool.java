@@ -29,7 +29,7 @@ public class MeshPool {
 
     private final IndexPool indexPool;
 
-    // The mesh vertex buffer, rebuilt on each pool flush and bound to the RenderPass for every draw path
+    // The mesh vertex buffer, rebuilt when vertex sources change and bound to every draw path
     // (instancing drawIndexed, plus the indirect/crumbling raw multidraws which inherit it from the pipeline VAO).
     @Nullable
     private GpuBuffer mojangVbo;
@@ -47,6 +47,7 @@ public class MeshPool {
     private GpuBuffer extrasVbo;
 
     private boolean dirty;
+    private boolean verticesDirty;
     private boolean anyToRemove;
 
     /**
@@ -57,6 +58,13 @@ public class MeshPool {
         indexPool = new IndexPool();
     }
 
+    private static Mesh canonicalVertexSource(Mesh mesh) {
+        var source = mesh.vertexSource();
+        if (source.vertexCount() != mesh.vertexCount())
+            throw new IllegalArgumentException("Vertex source count differs");
+        return source == mesh ? mesh : canonicalVertexSource(source);
+    }
+
     /**
      * Allocate a model in the arena.
      *
@@ -64,16 +72,18 @@ public class MeshPool {
      * @return A handle to the allocated model.
      */
     public PooledMesh alloc(Mesh mesh) {
-        return meshes.computeIfAbsent(mesh, this::_alloc);
-    }
-
-    private PooledMesh _alloc(Mesh m) {
-        PooledMesh bufferedModel = new PooledMesh(m);
-        meshList.add(bufferedModel);
-        recentlyAllocated.add(bufferedModel);
-
+        var existing = meshes.get(mesh);
+        if (existing != null && !existing.isDeleted()) return existing;
+        var source = canonicalVertexSource(mesh);
+        var vertices = source == mesh ? null : alloc(source);
+        if (vertices != null) vertices.acquire();
+        var allocated = new PooledMesh(mesh, vertices);
+        if (vertices == null) verticesDirty = true;
+        meshes.put(mesh, allocated);
+        meshList.add(allocated);
+        recentlyAllocated.add(allocated);
         dirty = true;
-        return bufferedModel;
+        return allocated;
     }
 
     @Nullable
@@ -89,6 +99,9 @@ public class MeshPool {
         if (anyToRemove) {
             anyToRemove = false;
             processDeletions();
+            recentlyAllocated.removeIf(PooledMesh::isDeleted);
+            indexPool.reset();
+            for (var mesh : meshList) indexPool.updateCount(mesh.mesh.indexSequence(), mesh.indexCount());
         }
 
         if (!recentlyAllocated.isEmpty()) {
@@ -96,12 +109,37 @@ public class MeshPool {
             for (PooledMesh mesh : recentlyAllocated) {
                 indexPool.updateCount(mesh.mesh.indexSequence(), mesh.indexCount());
             }
-            indexPool.flush();
             recentlyAllocated.clear();
         }
+        indexPool.flush();
 
-        uploadAll();
+        if (verticesDirty) uploadAll();
+        else uploadBounds();
+        verticesDirty = false;
         dirty = false;
+    }
+
+    private void uploadBounds() {
+        int total = 0, maxIndices = 0;
+        for (var mesh : meshList) {
+            if (mesh.vertices != null) mesh.baseVertex = mesh.vertices.baseVertex;
+            mesh.meshletBase = total;
+            total += mesh.meshletCount();
+            maxIndices = Math.max(maxIndices, mesh.indexCount());
+        }
+        if (!computeMeshletBounds || total == 0) return;
+        var bounds = MemoryBlock.malloc((long) total * 16);
+        var indices = MemoryBlock.malloc((long) maxIndices * Integer.BYTES);
+        try {
+            for (var mesh : meshList) {
+                writeMeshletBounds(mesh, mesh.vertices == null ? mesh.positions : mesh.vertices.positions,
+                        bounds.ptr() + (long) mesh.meshletBase * 16, indices.ptr());
+            }
+            uploadMeshletBounds(bounds, total);
+        } finally {
+            indices.free();
+            bounds.free();
+        }
     }
 
     private void processDeletions() {
@@ -109,7 +147,8 @@ public class MeshPool {
         meshList.removeIf(pooledMesh -> {
             boolean deleted = pooledMesh.isDeleted();
             if (deleted) {
-                meshes.remove(pooledMesh.mesh);
+                meshes.remove(pooledMesh.mesh, pooledMesh);
+                if (pooledMesh.vertices == null) verticesDirty = true;
             }
             return deleted;
         });
@@ -147,22 +186,39 @@ public class MeshPool {
             int byteIndex = 0;
             int baseVertex = 0;
             for (PooledMesh mesh : meshList) {
-                mesh.baseVertex = baseVertex;
-
-                vertexView.ptr(vertexPtr + byteIndex);
-                vertexView.vertexCount(mesh.vertexCount());
-                mesh.mesh.write(vertexView);
-                if (extrasBlock != null) {
-                    extras.write(mesh.mesh, vertexView, extrasBlock.ptr() + (long) baseVertex * extrasStride);
+                if (mesh.vertices == null) {
+                    mesh.baseVertex = baseVertex;
+                    vertexView.ptr(vertexPtr + byteIndex);
+                    vertexView.vertexCount(mesh.vertexCount());
+                    mesh.mesh.write(vertexView);
+                    if (computeMeshletBounds) {
+                        var vertexCount = mesh.vertexCount();
+                        var positions = mesh.positions;
+                        if (positions == null || positions.length != vertexCount * 3) {
+                            mesh.positions = positions = new float[vertexCount * 3];
+                        }
+                        for (var v = 0; v < vertexCount; v++) {
+                            positions[v * 3] = vertexView.x(v);
+                            positions[v * 3 + 1] = vertexView.y(v);
+                            positions[v * 3 + 2] = vertexView.z(v);
+                        }
+                    } else {
+                        mesh.positions = null;
+                    }
+                    if (extrasBlock != null) {
+                        extras.write(mesh.mesh, vertexView, extrasBlock.ptr() + (long) baseVertex * extrasStride);
+                    }
+                    byteIndex += mesh.byteSize();
+                    baseVertex += mesh.vertexCount();
+                } else {
+                    mesh.baseVertex = mesh.vertices.baseVertex;
                 }
 
                 if (boundsBlock != null) {
-                    writeMeshletBounds(mesh, vertexPtr + byteIndex, boundsBlock.ptr() + (long) mesh.meshletBase * 16L,
+                    writeMeshletBounds(mesh, mesh.vertices == null ? mesh.positions : mesh.vertices.positions,
+                            boundsBlock.ptr() + (long) mesh.meshletBase * 16L,
                             indexScratch.ptr());
                 }
-
-                byteIndex += mesh.byteSize();
-                baseVertex += mesh.vertexCount();
             }
 
             if (mojangVbo != null) {
@@ -207,7 +263,7 @@ public class MeshPool {
     // One mesh's per-meshlet model-space bounding spheres. Radius is the AABB half-diagonal (conservative -- never
     // under-covers, so a visible meshlet is never wrongly culled). Reads positions from the pooled vertex bytes
     // (InternalVertex pos = f32x3 @0) via the mesh-local index order.
-    private void writeMeshletBounds(PooledMesh mesh, long vertsPtr, long outPtr, long idxScratchPtr) {
+    private void writeMeshletBounds(PooledMesh mesh, float[] positions, long outPtr, long idxScratchPtr) {
         int indexCount = mesh.indexCount();
         int triCount = indexCount / 3;
         if (triCount == 0) {
@@ -226,10 +282,9 @@ public class MeshPool {
             for (int t = triStart; t < triEnd; t++) {
                 for (int j = 0; j < 3; j++) {
                     int vi = MemoryUtil.memGetInt(idxScratchPtr + (t * 3L + j) * Integer.BYTES);
-                    long p = vertsPtr + (long) vi * InternalVertex.STRIDE;
-                    float x = MemoryUtil.memGetFloat(p);
-                    float y = MemoryUtil.memGetFloat(p + 4L);
-                    float z = MemoryUtil.memGetFloat(p + 8L);
+                    float x = positions[vi * 3];
+                    float y = positions[vi * 3 + 1];
+                    float z = positions[vi * 3 + 2];
                     minX = Math.min(minX, x);
                     minY = Math.min(minY, y);
                     minZ = Math.min(minZ, z);
@@ -274,6 +329,7 @@ public class MeshPool {
         if (enabled != computeMeshletBounds) {
             computeMeshletBounds = enabled;
             dirty = true;
+            verticesDirty = true;
         }
     }
 
@@ -284,6 +340,7 @@ public class MeshPool {
         if (extras != this.extras) {
             this.extras = extras;
             dirty = true;
+            verticesDirty = true;
         }
     }
 
@@ -293,6 +350,7 @@ public class MeshPool {
     public void invalidateExtras() {
         if (extras != null) {
             dirty = true;
+            verticesDirty = true;
         }
     }
 
@@ -363,13 +421,16 @@ public class MeshPool {
         public static final int INVALID_BASE_VERTEX = -1;
 
         private final Mesh mesh;
+        private final @Nullable PooledMesh vertices;
+        private float @Nullable [] positions;
         private int baseVertex = INVALID_BASE_VERTEX;
         // Base index of this mesh's per-meshlet bounding spheres in the pool's meshlet-bounds SSBO; assigned in
         // uploadAll only when computeMeshletBounds. Rides the draw command (IndirectDraw.write) for the task cull.
         private int meshletBase;
 
-        private PooledMesh(Mesh mesh) {
+        private PooledMesh(Mesh mesh, @Nullable PooledMesh vertices) {
             this.mesh = mesh;
+            this.vertices = vertices;
         }
 
         public int vertexCount() {
@@ -389,7 +450,7 @@ public class MeshPool {
         }
 
         public int byteSize() {
-            return mesh.vertexCount() * InternalVertex.STRIDE;
+            return vertices == null ? mesh.vertexCount() * InternalVertex.STRIDE : 0;
         }
 
         public int indexCount() {
@@ -405,11 +466,12 @@ public class MeshPool {
         }
 
         public boolean isInvalid() {
-            return mesh.vertexCount() == 0 || baseVertex == INVALID_BASE_VERTEX || isDeleted();
+            return mesh.vertexCount() == 0 || mesh.indexCount() == 0 || baseVertex == INVALID_BASE_VERTEX || isDeleted();
         }
 
         @Override
         protected void _delete() {
+            if (vertices != null) vertices.release();
             dirty = true;
             anyToRemove = true;
         }

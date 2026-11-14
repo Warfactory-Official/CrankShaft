@@ -4,7 +4,6 @@ import dev.engine_room.flywheel.impl.mixin.PolytoneColorManagerAccessor;
 import dev.engine_room.flywheel.impl.mixin.PolytoneEntityModifiersAccessor;
 import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import net.mehvahdjukaar.polytone.Polytone;
-import net.mehvahdjukaar.polytone.content.entity.IRenderStateWithId;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.resources.Identifier;
@@ -215,7 +214,7 @@ public final class EntityFeatureCompat {
 
     private static final class PolytoneInternals {
         static void setStateId(EntityRenderState state, Entity entity) {
-            ((IRenderStateWithId) state).polytone$setId(entity.getId());
+            state.polytone$setId(entity.getId());
         }
 
         static boolean shadowsDisabled() {

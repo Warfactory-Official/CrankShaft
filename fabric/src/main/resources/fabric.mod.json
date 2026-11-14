@@ -1,7 +1,9 @@
 {
   "schemaVersion": 1,
   "id": "crankshaft",
-  "provides": ["flywheel"],
+  "provides": [
+    "flywheel"
+  ],
   "version": "${version}",
   "name": "CrankShaft",
   "description": "Dual-backend (raw OpenGL + raw Vulkan) instanced rendering engine.",
@@ -13,6 +15,9 @@
     ],
     "client": [
       "dev.engine_room.flywheel.impl.FlywheelFabric"
+    ],
+    "sodium:config_api_user": [
+      "dev.engine_room.flywheel.impl.config.SodiumConfig"
     ]
   },
   "mixins": [

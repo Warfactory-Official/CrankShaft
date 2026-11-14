@@ -1,0 +1,37 @@
+{
+  "schema": 2,
+  "name": "BSL (no Distant Horizons)",
+  "testedVersions": [
+    "Insanity Shader Universal v1.650"
+  ],
+  "matches": [
+    {
+      "path": "program/gbuffers_water.glsl",
+      "contains": [
+        "BSL Shaders",
+        "/lib/settings.glsl"
+      ],
+      "excludes": [
+        "DISTANT_HORIZONS"
+      ]
+    }
+  ],
+  "files": [],
+  "wrappers": [],
+  "blends": [],
+  "properties": "blend.clrwl_gbuffers_additive=ONE ONE ZERO ONE\n",
+  "programs": [
+    {
+      "target": "clrwl_gbuffers_additive",
+      "fragment": "bsl_light.fsh",
+      "vertex": "gbuffers_beaconbeam"
+    },
+    {
+      "target": "crankshaft_gbuffers_additive",
+      "fragment": "bsl_light.fsh",
+      "vertex": "gbuffers_beaconbeam",
+      "nativeDraw": true
+    }
+  ],
+  "emissiveLight": true
+}

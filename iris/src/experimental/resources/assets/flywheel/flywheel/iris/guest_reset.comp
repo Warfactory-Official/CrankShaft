@@ -1,0 +1,8 @@
+layout(local_size_x = 64) in;
+
+layout(std430) buffer _FlwGuestCommands { uint _flw_guestCommands[]; };
+
+void main() {
+    uint count = gl_GlobalInvocationID.x * 12u + 1u;
+    if (count < uint(_flw_guestCommands.length())) _flw_guestCommands[count] = 0u;
+}

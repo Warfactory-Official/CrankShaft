@@ -7,6 +7,11 @@
 #include "flywheel:terrain/chunk_section.glsl"
 #moj_import <minecraft:projection.glsl>
 
+#ifdef _FLW_TERRAIN_OVERLAY
+#define _FLW_TERRAIN_BASE_POSITION
+vec3 _flw_terrainBasePosition;
+#endif
+
 // Sodium CompactChunkVertex: pos uvec2 (20-bit), color RGBA8 (AO pre-baked), uv RG16,
 // light RGBA8_UINT (w = section id).
 #ifdef _FLW_TRANSLUCENT_INSTANCED
@@ -56,8 +61,8 @@ layout(std430, binding = 10) restrict readonly buffer _flw_RegionInputBuf {
 #if __VERSION__ >= 420
 layout(std140, binding = 10) uniform u_RegionChunkOrigin {
 #else
-layout(std140) uniform u_RegionChunkOrigin {
-#endif
+    layout(std140) uniform u_RegionChunkOrigin {
+    #endif
     ivec3 _flw_regionChunkOrigin;
     int _flw_regionPadding;
 };
@@ -97,13 +102,13 @@ uvec3 _deinterleave_u20x3(uvec2 data) {
 ivec3 _unpackSectionOffset(uint sectionId) {
     int idx = int(sectionId);
     return ivec3(
-        (idx >> SECTION_X_OFFSET) & 0x7,
-        (idx >> SECTION_Y_OFFSET) & 0x3,
-        (idx >> SECTION_Z_OFFSET) & 0x7);
+            (idx >> SECTION_X_OFFSET) & 0x7,
+            (idx >> SECTION_Y_OFFSET) & 0x3,
+            (idx >> SECTION_Z_OFFSET) & 0x7);
 }
 
 void main() {
-#ifdef _FLW_TRANSLUCENT_INSTANCED
+    #ifdef _FLW_TRANSLUCENT_INSTANCED
     // Bindless: draw record carries origin/fade/arena addr; gl_VertexIndex includes Sodium baseVertex.
     uint _flw_db = uint(gl_InstanceIndex) * 8u;
     ivec3 regionChunkOrigin = ivec3(int(_flw_translucentDraw[_flw_db]), int(_flw_translucentDraw[_flw_db + 1u]), int(_flw_translucentDraw[_flw_db + 2u]));
@@ -113,12 +118,12 @@ void main() {
     vec4 a_Color = unpackUnorm4x8(_flw_v.color);
     uvec2 a_TexCoord = uvec2(_flw_v.uv, _flw_v.uv >> 16u);
     uvec4 a_LightAndData = uvec4(_flw_v.light, _flw_v.light >> 8u, _flw_v.light >> 16u, _flw_v.light >> 24u) & 0xFFu;
-#elif defined(_FLW_TRANSLUCENT_MDI) && !defined(_FLW_VK)
+    #elif defined(_FLW_TRANSLUCENT_MDI) && !defined(_FLW_VK)
     uvec4 _flw_region = _flw_regionInput[gl_BaseInstanceARB];
     ivec3 regionChunkOrigin = _flw_unpackRegionOrigin(_flw_region);
-#else
+    #else
     ivec3 regionChunkOrigin = _flw_regionChunkOrigin;
-#endif
+    #endif
 
     vec3 sectionRelativeBlocks = (_deinterleave_u20x3(a_Position) * VERTEX_SCALE) + VERTEX_OFFSET;
 
@@ -126,6 +131,9 @@ void main() {
     vec3 sectionOriginBlocks = vec3(chunkOrigin * 16 - CameraBlockPos);
 
     vec3 pos = (sectionOriginBlocks + sectionRelativeBlocks) + CameraOffset;
+    #ifdef _FLW_TERRAIN_OVERLAY
+    _flw_terrainBasePosition = pos;
+    #endif
     vec4 viewPos = ModelViewMat * vec4(pos, 1.0);
     gl_Position = ProjMat * viewPos;
     flw_oitViewZ = viewPos.z;
@@ -138,13 +146,13 @@ void main() {
 
     texCoord0 = vec2(a_TexCoord & TEXTURE_MAX_VALUE) / float(TEXTURE_MAX_COORD);
 
-#if defined(_FLW_TRANSLUCENT_FADE)
+    #if defined(_FLW_TRANSLUCENT_FADE)
     flw_chunkVisibility = _flw_translucentVis[(int(_flw_region.z) << 8) + (int(a_LightAndData.w) & 0xFF)];
-#elif defined(_FLW_TRANSLUCENT_MDI)
+    #elif defined(_FLW_TRANSLUCENT_MDI)
     flw_chunkVisibility = 1.0;
-#elif defined(_FLW_TRANSLUCENT_INSTANCED)
+    #elif defined(_FLW_TRANSLUCENT_INSTANCED)
     flw_chunkVisibility = uintBitsToFloat(_flw_translucentDraw[_flw_db + 3u]);
-#else
+    #else
     flw_chunkVisibility = ChunkVisibility;
-#endif
+    #endif
 }

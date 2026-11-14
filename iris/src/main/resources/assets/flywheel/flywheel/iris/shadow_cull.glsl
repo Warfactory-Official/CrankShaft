@@ -21,33 +21,27 @@ layout(std430, binding = _FLW_MATRIX_BUFFER_BINDING) restrict readonly buffer Ma
     Matrices _flw_matrices[];
 };
 
-// Iris's shadow frustum for this frame, shadow-camera-relative (GuestShadowCull.upload).
-layout(std140) uniform _FlwShadowCull {
-    vec4 _flw_shadowPlanes[13];
-    vec3 _flw_shadowOriginOffset;
-    int _flw_shadowPlaneCount;
-    float _flw_shadowDistance; // <= 0: no distance box
-    float _flw_shadowSafeZone; // <= 0: no safe zone
+// Word 2 per page slot: an ordered model's visible bits for the ordered compaction.
+layout(std430, binding = _FLW_VIS_WORDS_BUFFER_BINDING) restrict writeonly buffer _FlwVisWordsBuffer {
+    uint _flw_visWords[];
 };
 
-bool _flw_sphereOutsideBox(vec3 center, float radius, float halfExtent) {
-    return any(greaterThan(abs(center) - radius, vec3(halfExtent)));
-}
+shared uint _flw_visWord;
 
-bool _flw_shadowVisible(vec3 center, float radius) {
-    if (_flw_shadowDistance > 0.0 && _flw_sphereOutsideBox(center, radius, _flw_shadowDistance)) {
-        return false;
+#include "flywheel:iris/shadow_frustum.glsl"
+
+bool _flw_shadowVisible(uint objectUint, uint modelIndex, uint typeId) {
+    vec3 center;
+    float radius;
+    _flw_unpackBoundingSphere(_flw_models[modelIndex].boundingSphere, center, radius);
+    _flw_transformBoundingSphereUber(typeId, objectUint, center, radius);
+
+    uint matrixIndex = _flw_models[modelIndex].matrixIndex & _FLW_MODEL_MATRIX_MASK;
+    if (matrixIndex > 0u) {
+        transformBoundingSphere(_flw_matrices[matrixIndex].pose, center, radius);
     }
-    if (_flw_shadowSafeZone > 0.0 && !_flw_sphereOutsideBox(center, radius, _flw_shadowSafeZone)) {
-        return true;
-    }
-    for (int i = 0; i < _flw_shadowPlaneCount; i++) {
-        vec4 plane = _flw_shadowPlanes[i];
-        if (dot(plane.xyz, center) + plane.w < -radius * length(plane.xyz)) {
-            return false;
-        }
-    }
-    return true;
+
+    return _flw_shadowVisible(center + _flw_shadowOriginOffset, radius);
 }
 
 void main() {
@@ -62,23 +56,31 @@ void main() {
     uint baseUint = _flw_pageFrameDescriptors[pageIndex + 2];
     uint typeInfo = _flw_pageFrameDescriptors[pageIndex + 3];
 
-    if (((1u << gl_LocalInvocationID.x) & pageValidity) == 0u) {
-        return;
+    // Uniform per workgroup; a free slot carries no valid bits.
+    bool ordered = pageValidity != 0u
+            && (_flw_models[modelIndex].matrixIndex & _FLW_MODEL_ORDERED) != 0u;
+    if (ordered) {
+        if (gl_LocalInvocationID.x == 0u) {
+            _flw_visWord = 0u;
+        }
+        barrier();
     }
 
     uint objectUint = baseUint + gl_LocalInvocationID.x * (typeInfo >> 16u);
+    bool visible = ((1u << gl_LocalInvocationID.x) & pageValidity) != 0u
+            && _flw_shadowVisible(objectUint, modelIndex, typeInfo & 0xFFFFu);
 
-    vec3 center;
-    float radius;
-    _flw_unpackBoundingSphere(_flw_models[modelIndex].boundingSphere, center, radius);
-    _flw_transformBoundingSphereUber(typeInfo & 0xFFFFu, objectUint, center, radius);
-
-    uint matrixIndex = _flw_models[modelIndex].matrixIndex & 0x7FFFFFFFu;
-    if (matrixIndex > 0u) {
-        transformBoundingSphere(_flw_matrices[matrixIndex].pose, center, radius);
+    if (ordered) {
+        if (visible) {
+            atomicOr(_flw_visWord, 1u << gl_LocalInvocationID.x);
+        }
+        barrier();
+        if (gl_LocalInvocationID.x == 0u) {
+            _flw_visWords[gl_WorkGroupID.x * 3u + 2u] = _flw_visWord;
+        }
+        return;
     }
-
-    if (!_flw_shadowVisible(center + _flw_shadowOriginOffset, radius)) {
+    if (!visible) {
         return;
     }
 

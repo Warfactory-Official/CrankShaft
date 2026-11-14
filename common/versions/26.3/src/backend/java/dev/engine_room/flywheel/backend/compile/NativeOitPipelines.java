@@ -13,7 +13,6 @@ import com.mojang.renderpearl.api.pipeline.ShaderType;
 import com.mojang.renderpearl.api.pipeline.UniformType;
 import com.mojang.renderpearl.api.vertex.VertexFormat;
 import com.mojang.renderpearl.backend.opengl.GlProgram;
-import com.mojang.renderpearl.backend.opengl.Uniform;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.NativeOitProducers.Variant;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
@@ -21,10 +20,10 @@ import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.oit.OitPipelineSet;
 import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
-import org.lwjgl.opengl.GL31C;
 
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,8 +35,6 @@ import java.util.Set;
  * Scope, pipeline compilation and resource invalidation run on the render thread.
  */
 public final class NativeOitPipelines {
-    private static final Identifier SODIUM_VERTEX =
-            Identifier.fromNamespaceAndPath("sodium", "blocks/block_layer_opaque");
     private static final BlendFunction MAX_BLEND = new BlendFunction(BlendFactor.ONE, BlendFactor.ONE, BlendOp.MAX,
             BlendFactor.ONE, BlendFactor.ONE, BlendOp.MAX);
     private static final ColorTargetState DEPTH = new ColorTargetState(Optional.of(MAX_BLEND),
@@ -47,13 +44,17 @@ public final class NativeOitPipelines {
     private static final ColorTargetState NO_COLOR = new ColorTargetState(Optional.empty(),
             GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_NONE);
     private static final Map<RenderPipeline, EnumMap<Variant, AdaptedPipeline>> PIPELINES = new IdentityHashMap<>();
+    private static final Map<List<Identifier>, Map<RenderPipeline, EnumMap<Variant, AdaptedPipeline>>> OVERLAY_PIPELINES =
+            new HashMap<>();
     // Foreign owners register their current declarations again after resource invalidation.
     private static final Set<RenderPipeline> REGISTERED = Collections.newSetFromMap(new IdentityHashMap<>());
 
     private NativeOitPipelines() {
     }
 
-    /** Render thread; registers a declaration for this resource generation's configuration warmup. */
+    /**
+     * Render thread; registers a declaration for this resource generation's configuration warmup.
+     */
     public static void register(RenderPipeline pipeline) {
         RenderSystem.assertOnRenderThread();
         if (NativeOitProducers.isProducer(pipeline.getShaderDefines())) REGISTERED.add(pipeline);
@@ -65,7 +66,9 @@ public final class NativeOitPipelines {
         register(pipelines.accumulatePipeline());
     }
 
-    /** Snapshot for configuration-boundary warmup; optional foreign declarations belong to this generation. */
+    /**
+     * Snapshot for configuration-boundary warmup; optional foreign declarations belong to this generation.
+     */
     public static List<RenderPipeline> registeredPipelines() {
         RenderSystem.assertOnRenderThread();
         for (RenderPipeline pipeline : RenderPipelines.requiredPipelines()) register(pipeline);
@@ -133,38 +136,40 @@ public final class NativeOitPipelines {
     }
 
     private static AdaptedPipeline adapted(RenderPipeline pipeline, Variant variant) {
-        var variants = PIPELINES.computeIfAbsent(pipeline, base -> {
-            REGISTERED.add(base);
-            return new EnumMap<>(Variant.class);
-        });
-        return variants.computeIfAbsent(variant, key -> new AdaptedPipeline(pipeline, key));
+        var overlays = TerrainOverlayPipelines.requestedSources();
+        var pipelines = overlays.isEmpty() ? PIPELINES
+                : OVERLAY_PIPELINES.computeIfAbsent(overlays, _ -> new IdentityHashMap<>());
+        var variants = pipelines.get(pipeline);
+        if (variants == null) {
+            REGISTERED.add(pipeline);
+            variants = new EnumMap<>(Variant.class);
+            pipelines.put(pipeline, variants);
+        }
+        var adapted = variants.get(variant);
+        if (adapted == null) {
+            adapted = new AdaptedPipeline(pipeline, variant, overlays);
+            variants.put(variant, adapted);
+        }
+        return adapted;
     }
 
-    /** Drops declarations and source bytes after the owning native pipeline cache has been invalidated. */
+    /**
+     * Drops declarations and source bytes after the owning native pipeline cache has been invalidated.
+     */
     public static void reset() {
         PIPELINES.clear();
+        OVERLAY_PIPELINES.clear();
         REGISTERED.clear();
         NativeOitProducers.reset();
     }
 
-    /** Sodium's native region draw pushes a 20-byte payload on GL as well as Vulkan. */
-    public static boolean supportsPushConstants(RenderPipeline pipeline) {
-        return pipeline instanceof AdaptedPipeline adapted && adapted.sodiumPushConstants;
-    }
-
-    public static GlProgram createProgram(RenderPipeline pipeline, int handle) {
-        return supportsPushConstants(pipeline)
-                ? new PushConstantProgram(handle, pipeline.getLocation().toString())
-                : new GlProgram(handle, pipeline.getLocation().toString());
-    }
-
-    private static List<BindGroupLayout> layouts(RenderPipeline base, Variant variant) {
+    private static List<BindGroupLayout> layouts(RenderPipeline base, Variant variant, List<Identifier> overlays) {
         List<BindGroupLayout> result =
                 NativeOitProducers.layouts(base, NativeOitProducers.NATIVE_READS::contains, true);
         if (variant == Variant.COEFFICIENTS || variant == Variant.ACCUMULATE || variant == Variant.EMISSION) {
             var reads = BindGroupLayout.builder()
-                    .withUniform("_flw_depthRange", UniformType.COMBINED_IMAGE_SAMPLER)
-                    .withUniform("_flw_blueNoise", UniformType.COMBINED_IMAGE_SAMPLER);
+                                       .withUniform("_flw_depthRange", UniformType.COMBINED_IMAGE_SAMPLER)
+                                       .withUniform("_flw_blueNoise", UniformType.COMBINED_IMAGE_SAMPLER);
             if (variant != Variant.COEFFICIENTS && !OitConfig.coefficientArray()) {
                 for (int i = 0; i < 4; i++) {
                     reads.withUniform("_flw_coefficients" + i, UniformType.COMBINED_IMAGE_SAMPLER);
@@ -172,6 +177,7 @@ public final class NativeOitPipelines {
             }
             result.add(reads.build());
         }
+        result.addAll(TerrainOverlayPipelines.layouts(overlays));
         return result;
     }
 
@@ -185,61 +191,59 @@ public final class NativeOitPipelines {
         };
     }
 
-    private static String assemble(Identifier id, ShaderType type, Variant variant, boolean sodiumPushConstants) {
+    private static String assemble(Identifier id, ShaderType type, Variant variant, boolean sodiumPushConstants,
+                                   List<Identifier> overlays, String cutoff) {
         Compilation compilation = new Compilation();
         // Insert producers need SSBOs; all native vertex layouts and stage defines remain unchanged.
         compilation.version(ShaderAssembly.glslVersion());
         compilation.polyfillFmaIfMissing();
         if (type == ShaderType.FRAGMENT) {
-            NativeOitProducers.assembleFragment(compilation, variant, false, OitConfig.coefficientArray(), id);
+            NativeOitProducers.assembleFragment(compilation, variant, false, OitConfig.coefficientArray(), id, overlays,
+                    cutoff);
             return compilation.assembledSource();
         }
         // Native SPIR-V vertex indices and GL vertex IDs both include the indexed draw's base vertex.
         compilation.define("gl_VertexIndex", "gl_VertexID");
+        if (!overlays.isEmpty()) {
+            compilation.define("main", "_flw_terrainVertexBase");
+            compilation.define("_FLW_TERRAIN_EXPLICIT_VARYINGS");
+        }
         if (sodiumPushConstants) {
             // Native GL compilation lowers this same push-constant block to a std140 UBO. Keep Sodium's
             // offsets (vec3 at 0, int at 12, uint at 16) and the frontend's original 20-byte push contract.
-            compilation.define("VULKAN", "100");
-            compilation.define("push_constant", "std140");
-            compilation.define("PC", "_push_constants");
+            GlPushConstantProgram.configure(compilation, false);
         }
         compilation.appendComponent(
                 new ShaderAssembly.RawSource(id.toString(), NativeOitProducers.rawShader(id, type)));
+        if (!overlays.isEmpty()) ShaderAssembly.appendComponents(compilation, TerrainOverlayPipelines.vertexTail());
         return compilation.assembledSource();
     }
 
-    private static final class AdaptedPipeline extends RenderPipeline {
+    private static final class AdaptedPipeline extends RenderPipeline implements GlPipelineProgram {
         private final AssembledShaderSource source;
         private final boolean sodiumPushConstants;
 
-        private AdaptedPipeline(RenderPipeline base, Variant variant) {
-            super(NativeOitProducers.location("native_oit", variant, base), base.getShaders(),
-                    base.getShaderDefines(), layouts(base, variant), colors(variant),
+        private AdaptedPipeline(RenderPipeline base, Variant variant, List<Identifier> overlays) {
+            super(TerrainOverlayPipelines.withSources(NativeOitProducers.location("native_oit", variant, base),
+                            overlays), base.getShaders(),
+                    base.getShaderDefines(), layouts(base, variant, overlays), colors(variant),
                     base.getDepthStencilState(), base.getPolygonMode(), base.isCull(),
                     base.getVertexFormatBindings().toArray(VertexFormat[]::new), base.getPrimitiveTopology(),
                     base.pushConstantSize(), base.getSortKey());
-            sodiumPushConstants = base.pushConstantSize() == 20
-                    && SODIUM_VERTEX.equals(base.getShaders().get(ShaderType.VERTEX));
-            source = (id, type) -> assemble(id, type, variant, sodiumPushConstants);
-        }
-    }
-
-    private static final class PushConstantProgram extends GlProgram {
-        private final Uniform.Ubo pushConstants = new Uniform.Ubo(0);
-
-        private PushConstantProgram(int handle, String label) {
-            super(handle, label);
-            int block = GL31C.glGetUniformBlockIndex(handle, "_push_constants");
-            if (block == GL31C.GL_INVALID_INDEX) {
-                throw new IllegalStateException("Native Sodium OIT pipeline is missing its region push-constant block: "
-                        + label);
-            }
-            GL31C.glUniformBlockBinding(handle, block, pushConstants.blockBinding());
+            sodiumPushConstants = GlPushConstantProgram.supports(base);
+            var cutoff = base.getShaderDefines().values().getOrDefault("ALPHA_CUTOUT", "0.0");
+            source = (id, type) -> assemble(id, type, variant, sodiumPushConstants, overlays, cutoff);
         }
 
         @Override
-        public Uniform.Ubo pushConstant() {
-            return pushConstants;
+        public boolean supportsGlPushConstants() {
+            return sodiumPushConstants;
+        }
+
+        @Override
+        public GlProgram createGlProgram(int handle) {
+            return sodiumPushConstants ? new GlPushConstantProgram(handle, getLocation().toString()) : new GlProgram(
+                    handle, getLocation().toString());
         }
     }
 }

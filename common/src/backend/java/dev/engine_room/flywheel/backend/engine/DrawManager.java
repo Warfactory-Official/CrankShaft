@@ -2,6 +2,8 @@ package dev.engine_room.flywheel.backend.engine;
 
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.backend.RenderContext;
+import dev.engine_room.flywheel.api.instance.GpuPopulation;
+import dev.engine_room.flywheel.api.instance.GpuSimulation;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.model.Model;
@@ -9,6 +11,7 @@ import dev.engine_room.flywheel.api.task.Plan;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.engine.embed.Environment;
 import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
+import dev.engine_room.flywheel.backend.engine.indirect.GpuIndirectInstancer;
 import dev.engine_room.flywheel.lib.task.ForEachPlan;
 import dev.engine_room.flywheel.lib.util.Pair;
 import it.unimi.dsi.fastutil.ints.Int2ObjectArrayMap;
@@ -45,12 +48,12 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
      * <p>All new instancers land here before having resources allocated in {@link #render}.
      */
     protected final Queue<UninitializedInstancer<N, ?>> initializationQueue = new ConcurrentLinkedQueue<>();
-
     /**
      * Function object to pass into computeIfAbsent.
      * <p>Create once and cache to avoid allocating every time.
      */
     protected final Function<InstancerKey<?>, N> createAndDeferInit = this::createAndDeferInit;
+    private @Nullable FaceCulling faceCulling;
 
     private static boolean modelHasNoIssues(Model model) {
         // No point in setting up resources for something that will never be rendered.
@@ -117,8 +120,8 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
                 }
 
                 byType.computeIfAbsent(new GroupKey<>(instancer.type, instancer.environment),
-                              $ -> new Int2ObjectArrayMap<>())
-                      .computeIfAbsent(progress, $ -> new ArrayList<>())
+                              _ -> new Int2ObjectArrayMap<>())
+                      .computeIfAbsent(progress, _ -> new ArrayList<>())
                       .add(Pair.of(instancer, impl));
             }
         }
@@ -134,9 +137,38 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
         return byType;
     }
 
+    final void faceCulling(FaceCulling faceCulling) {
+        this.faceCulling = faceCulling;
+    }
+
+    final <I extends Instance> void trackFaces(I instance, InstancerKey<I> key) {
+        if (faceCulling != null && instance.handle() instanceof InstanceHandleImpl<?> handle)
+            faceCulling.track(handle, instance, key);
+    }
+
     public <I extends Instance> AbstractInstancer<I> getInstancer(Environment environment, InstanceType<I> type,
                                                                   Model model, int bias) {
         return getInstancer(new InstancerKey<>(environment, type, model, bias));
+    }
+
+    public boolean supportsGpuSimulation() {
+        return false;
+    }
+
+    public GpuPopulation getGpuPopulation(Environment environment, Object identity, InstanceType<?> type, Model model,
+                                           GpuSimulation simulation, int capacity, int bias) {
+        if (!supportsGpuSimulation()) {
+            throw new UnsupportedOperationException("This backend has no GPU population support");
+        }
+        var key = new InstancerKey<>(environment, type, model, bias,
+                new GpuPopulationKey(identity, simulation, capacity));
+        var instancer = instancers.compute(key, (populationKey, current) -> {
+            if (current == null || ((GpuIndirectInstancer<?>) current).population().deleted()) {
+                return createAndDeferInit.apply(populationKey);
+            }
+            return current;
+        });
+        return ((GpuIndirectInstancer<?>) instancer).population();
     }
 
     @SuppressWarnings("unchecked")
@@ -149,8 +181,8 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
         return ForEachPlan.of(() -> new ArrayList<>(instancers.values()), AbstractInstancer::parallelUpdate);
     }
 
-    public void render(LightStorage lightStorage, EnvironmentStorage environmentStorage, Matrix4fc modelViewMatrix,
-                       Vec3i renderOrigin, boolean constantAmbientLight) {
+    public void render(LightStorage _, EnvironmentStorage _, Matrix4fc _,
+                       Vec3i _, boolean _) {
         // Thread safety: flush is called from the render thread after all visual updates have been made,
         // so there are no:tm: threads we could be racing with.
         for (var init : initializationQueue) {
@@ -158,7 +190,7 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
             if (instancer.instanceCount() > 0) {
                 initialize(init.key(), instancer);
             } else {
-                instancers.remove(init.key());
+                instancers.remove(init.key(), instancer);
                 // CrankShaft: instance data lives in native slab pages allocated before init,
                 // so dropping the instancer without clearing would leak them.
                 instancer.clear();
@@ -167,15 +199,15 @@ public abstract class DrawManager<N extends AbstractInstancer<?>> {
         initializationQueue.clear();
     }
 
-    public boolean renderOit(LightStorage lightStorage, EnvironmentStorage environmentStorage,
-                             @Nullable ChunkSectionsToRender chunks, @Nullable BerTranslucentCapture ber,
-                             #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
-                             @Nullable SodiumTerrainOitReplay terrain) {
+    public boolean renderOit(LightStorage _, EnvironmentStorage _,
+                             @Nullable ChunkSectionsToRender _, @Nullable BerTranslucentCapture _,
+                             #if MC < 26.3 @Nullable FabulousCaptures _, #endif
+                             @Nullable SodiumTerrainOitReplay _) {
         return false;
     }
 
-    public boolean renderNativeOit(LightStorage lightStorage, EnvironmentStorage environmentStorage,
-                                    NativeOitReplay replay) {
+    public boolean renderNativeOit(LightStorage _, EnvironmentStorage _,
+                                   NativeOitReplay _) {
         throw new UnsupportedOperationException("This backend has no native translucent producer bridge");
     }
 

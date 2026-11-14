@@ -11,6 +11,7 @@ import dev.engine_room.flywheel.impl.compat.EntityCullingCompat;
 import dev.engine_room.flywheel.impl.visualization.ConcurrentExtraction;
 import dev.engine_room.flywheel.impl.visualization.EntityOutlineSubmits;
 import dev.engine_room.flywheel.impl.visualization.HeldItemHosts;
+import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
 import dev.engine_room.flywheel.lib.model.Models;
 import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import dev.engine_room.flywheel.lib.visualization.VisualizationHelper;
@@ -53,19 +54,31 @@ abstract class LevelExtractorMixin {
     @Final
     private LevelRenderer levelRenderer;
 
+    #if MC < 26.3
+    @Shadow
+    @Final
+    private LevelRenderState levelRenderState;
+
+    @Inject(method = "extract", at = @At("HEAD"), require = 1)
+    private void flywheel$recordWorldPartialTicks(DeltaTracker _, Camera _, float deltaPartialTick,
+                                                  CallbackInfo _) {
+        levelRenderState.flywheel$worldPartialTicks(deltaPartialTick);
+    }
+    #endif
+
     @Inject(method = "extractVisibleEntities", at = @At("HEAD"), require = 1)
-    private void flywheel$clearOutlineSubmits(CallbackInfo ci) {
+    private void flywheel$clearOutlineSubmits(CallbackInfo _) {
         EntityOutlineSubmits.clear();
     }
 
     @Inject(method = "extract", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/extract/LevelExtractor;extractVisibleEntities(Lnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/culling/Frustum;Lnet/minecraft/client/DeltaTracker;Lnet/minecraft/client/renderer/state/level/LevelRenderState;)V"), require = 1)
-    private void flywheel$beginConcurrentExtraction(CallbackInfo ci) {
+    private void flywheel$beginConcurrentExtraction(CallbackInfo _) {
         ConcurrentExtraction.begin();
     }
 
     // Not the loops' RETURNs: Sodium and others cancel or replace the block entity loop.
     @Inject(method = "extract", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/extract/LevelExtractor;extractBlockOutline(Lnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/state/level/LevelRenderState;)V"), require = 1)
-    private void flywheel$endConcurrentExtraction(CallbackInfo ci) {
+    private void flywheel$endConcurrentExtraction(CallbackInfo _) {
         ConcurrentExtraction.end(levelRenderer.entityRenderDispatcher());
     }
 
@@ -149,7 +162,7 @@ abstract class LevelExtractorMixin {
     }
 
     @Inject(method = "allChanged", at = @At("HEAD"), require = 1)
-    private void flywheel$onAllChanged(CallbackInfo ci) {
+    private void flywheel$onAllChanged(CallbackInfo _) {
         ClientLevel level = this.level;
         if (level == null) {
             return;
@@ -162,11 +175,12 @@ abstract class LevelExtractorMixin {
     }
 
     @Inject(method = "setBlockDirty(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/world/level/block/state/BlockState;)V", at = @At("TAIL"), require = 1)
-    private void flywheel$checkUpdate(BlockPos pos, BlockState oldState, BlockState newState, CallbackInfo ci) {
-        VisualizationManager manager = VisualizationManager.get(level);
+    private void flywheel$checkUpdate(BlockPos pos, BlockState oldState, BlockState newState, CallbackInfo _) {
+        var manager = VisualizationManagerImpl.get(level);
         if (manager == null) {
             return;
         }
+        manager.onBlockChanged(pos);
 
         BlockEntity blockEntity = level.getBlockEntity(pos);
         if (blockEntity == null) {

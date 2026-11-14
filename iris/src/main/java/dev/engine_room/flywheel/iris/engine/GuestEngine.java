@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.iris.engine;
 import dev.engine_room.flywheel.iris.mixin.IrisRenderingPipelineAccessor;
 import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.api.backend.RenderContext;
+import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.BackendRecovery;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
@@ -15,7 +16,12 @@ import dev.engine_room.flywheel.backend.engine.embed.TaggedEnvironment;
 import dev.engine_room.flywheel.backend.engine.uniform.Uniforms;
 import dev.engine_room.flywheel.iris.compile.ContractProperties;
 import dev.engine_room.flywheel.iris.compile.GuestPipelines;
+import dev.engine_room.flywheel.iris.compile.GuestProgram;
 import dev.engine_room.flywheel.iris.compile.GuestSsbos;
+#if MC < 26.3
+import dev.engine_room.flywheel.iris.compile.patches.GuestLodOcclusion;
+#endif
+import dev.engine_room.flywheel.iris.compile.FarStaticShadows;
 import it.unimi.dsi.fastutil.objects.Object2IntFunction;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import net.irisshaders.iris.Iris;
@@ -37,7 +43,9 @@ import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
 
-/** Uploads before first main/shadow pass each frame. */
+/**
+ * Uploads before first main/shadow pass each frame.
+ */
 public class GuestEngine extends EngineImpl {
     private static final NamespacedId CONVERTING_VILLAGER = new NamespacedId("minecraft",
             "zombie_villager_converting");
@@ -46,6 +54,8 @@ public class GuestEngine extends EngineImpl {
     private final MeshPool meshPool;
     private final GuestVertexExtras vertexExtras = new GuestVertexExtras();
     private final boolean constantAmbientLight;
+    private final Matrix4f lastModelView = new Matrix4f();
+    private @Nullable Vec3 lastCamera;
     private @Nullable Matrix4f translucentShadowModelView;
     private boolean translucentShadowEntities;
     private boolean translucentShadowBlockEntities;
@@ -100,6 +110,9 @@ public class GuestEngine extends EngineImpl {
                 prepare(context);
             }
             preparedForMainPass = false;
+            #if MC < 26.3
+            GuestLodOcclusion.captureTerrainDepth(pipeline);
+            #endif
             guest.drawOpaque(pipeline);
         } catch (BackendUnavailableException e) {
             BackendRecovery.reject(BackendManager.currentBackend(), e);
@@ -124,6 +137,9 @@ public class GuestEngine extends EngineImpl {
                     translucentShadowModelView = modelView;
                     translucentShadowEntities = entities;
                     translucentShadowBlockEntities = blockEntities;
+                }
+                if (blockEntities) {
+                    FarStaticShadows.render(pipeline, modelView, renderOrigin(), camera, constantAmbientLight);
                 }
             }
         } catch (BackendUnavailableException e) {
@@ -152,20 +168,36 @@ public class GuestEngine extends EngineImpl {
     }
 
     private void prepare(RenderContext context) {
+        RenderPipelineCompiler.poll();
+        GuestPipelines.poll();
         if (vertexExtras.blockIdsChanged()) {
             meshPool.invalidateExtras();
         }
         Uniforms.update(context);
         GpuTimer.beginFrame();
         environmentStorage().flush();
-        guest.prepareFrame(lightStorage(), environmentStorage(), originRelative(context.modelView(),
-                context.camera()
-                       .position()), renderOrigin(), constantAmbientLight);
+        Vec3 camera = context.camera()
+                             .position();
+        if (lastCamera == null) {
+            lastModelView.set(context.modelView());
+            lastCamera = camera;
+        }
+        GuestProgram.setPreviousModelView(originRelative(lastModelView, lastCamera));
+        lastModelView.set(context.modelView());
+        lastCamera = camera;
+        guest.prepareFrame(lightStorage(), environmentStorage(), originRelative(context.modelView(), camera),
+                renderOrigin(), constantAmbientLight);
     }
 
     private Matrix4f originRelative(Matrix4fc modelView, Vec3 camera) {
         Vec3i origin = renderOrigin();
         return new Matrix4f(modelView).translate((float) (origin.getX() - camera.x),
                 (float) (origin.getY() - camera.y), (float) (origin.getZ() - camera.z));
+    }
+
+    @Override
+    public void delete() {
+        FarStaticShadows.releaseSource();
+        super.delete();
     }
 }

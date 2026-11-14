@@ -24,7 +24,7 @@ abstract class ExperimentalGlBlendEquationMixin {
     private int flywheel$alphaEquation = GL14C.GL_FUNC_ADD;
 
     @Inject(method = "<init>", at = @At("RETURN"))
-    private void flywheel$carrierEquations(CallbackInfo ci) {
+    private void flywheel$carrierEquations(CallbackInfo _) {
         var blend = ExperimentalBlendEquations.function(state.vanillaPipeline(), 0);
         if (blend != null) {
             flywheel$colorEquation = GlConst.toGl(blend.color().op());
@@ -34,13 +34,13 @@ abstract class ExperimentalGlBlendEquationMixin {
 
     @ModifyArg(method = "applyState", at = @At(value = "INVOKE",
             target = "Lcom/mojang/renderpearl/backend/opengl/GlStateManager;_blendEquationSeparate(II)V"), index = 0)
-    private int flywheel$colorEquation(int original) {
+    private int flywheel$colorEquation(int _) {
         return flywheel$colorEquation;
     }
 
     @ModifyArg(method = "applyState", at = @At(value = "INVOKE",
             target = "Lcom/mojang/renderpearl/backend/opengl/GlStateManager;_blendEquationSeparate(II)V"), index = 1)
-    private int flywheel$alphaEquation(int original) {
+    private int flywheel$alphaEquation(int _) {
         return flywheel$alphaEquation;
     }
 }

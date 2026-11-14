@@ -34,12 +34,30 @@ public final class GlCompilationBatch implements AutoCloseable {
 
     public GlCompilationBatch() {
         RenderSystem.assertOnRenderThread();
+        parallelApi = parallelApi();
+    }
+
+    /**
+     * 1: ARB, 2: KHR {@code parallel_shader_compile}; 0: compiles and links block.
+     */
+    static int parallelApi() {
         GLCapabilities caps = GL.getCapabilities();
-        parallelApi = caps.GL_ARB_parallel_shader_compile && caps.glMaxShaderCompilerThreadsARB != MemoryUtil.NULL ? 1
+        return caps.GL_ARB_parallel_shader_compile && caps.glMaxShaderCompilerThreadsARB != MemoryUtil.NULL ? 1
                 : caps.GL_KHR_parallel_shader_compile && caps.glMaxShaderCompilerThreadsKHR != MemoryUtil.NULL ? 2 : 0;
     }
 
-    /** Reports to {@link ShaderWarmupSplash}; {@code total <= 0} unknown. */
+    static int threadHint() {
+        return GL11C.glGetInteger(ARBParallelShaderCompile.GL_MAX_SHADER_COMPILER_THREADS_ARB);
+    }
+
+    static void threadHint(int api, int count) {
+        if (api == 1) ARBParallelShaderCompile.glMaxShaderCompilerThreadsARB(count);
+        else if (api == 2) KHRParallelShaderCompile.glMaxShaderCompilerThreadsKHR(count);
+    }
+
+    /**
+     * Reports to {@link ShaderWarmupSplash}; {@code total <= 0} unknown.
+     */
     public void splash(int total) {
         progress = done -> {
             ShaderWarmupSplash.progress(done, total, GlCompilationBatch::raiseFatalError);
@@ -57,13 +75,8 @@ public final class GlCompilationBatch implements AutoCloseable {
     private void hintThreads() {
         if (parallelApi == 0 || hinted) return;
         hinted = true;
-        previousThreadHint = GL11C.glGetInteger(ARBParallelShaderCompile.GL_MAX_SHADER_COMPILER_THREADS_ARB);
-        setThreadHint(-1);
-    }
-
-    private void setThreadHint(int count) {
-        if (parallelApi == 1) ARBParallelShaderCompile.glMaxShaderCompilerThreadsARB(count);
-        else if (parallelApi == 2) KHRParallelShaderCompile.glMaxShaderCompilerThreadsKHR(count);
+        previousThreadHint = threadHint();
+        threadHint(parallelApi, -1);
     }
 
     public int sharedShader(int type, String source, String label) {
@@ -78,7 +91,9 @@ public final class GlCompilationBatch implements AutoCloseable {
         return shader;
     }
 
-    /** Owned, unshared shader stage. */
+    /**
+     * Owned, unshared shader stage.
+     */
     public int shader(int type, String source, String label) {
         int shader = GlStateManager.glCreateShader(type);
         if (shader == 0) throw new IllegalStateException("Could not create shader " + label);
@@ -91,6 +106,10 @@ public final class GlCompilationBatch implements AutoCloseable {
 
     public boolean compiled(int shader) {
         return stageHandles.get(shader).compiled;
+    }
+
+    public String source(int shader) {
+        return stageHandles.computeIfAbsent(shader, GlCompilationBatch::external).source;
     }
 
     private static Stage external(int shader) {
@@ -168,7 +187,9 @@ public final class GlCompilationBatch implements AutoCloseable {
         if (progress != null) progress.accept(completed);
     }
 
-    /** Validates before shader/program ownership transfer. */
+    /**
+     * Validates before shader/program ownership transfer.
+     */
     public void finish(Runnable publishShaders) {
         int pendingAtValidation = 0;
         if (parallelApi != 0) {
@@ -205,7 +226,8 @@ public final class GlCompilationBatch implements AutoCloseable {
             if (!program.linked || program.log.contains("Failed for unknown reason")) {
                 throw failure("Failed to link " + program.label + ": " + program.log, Set.of(program.label));
             }
-            if (!program.log.isEmpty()) FlwBackend.LOGGER.info("Info log when linking {}: {}", program.label, program.log);
+            if (!program.log.isEmpty())
+                FlwBackend.LOGGER.info("Info log when linking {}: {}", program.label, program.log);
         }
         publishShaders.run();
         for (Program program : programs) {
@@ -214,7 +236,8 @@ public final class GlCompilationBatch implements AutoCloseable {
         }
         int compiledStages = 0;
         for (Stage stage : stages) if (stage.compiled) compiledStages++;
-        FlwBackend.LOGGER.info("shader batch: {} stages ({} compiled), {} reused stages, {} programs ({} from binaries, "
+        FlwBackend.LOGGER.info(
+                "shader batch: {} stages ({} compiled), {} reused stages, {} programs ({} from binaries, "
                         + "{} rejected, {} KiB stored), {} pending at validation, parallel API {}", stages.size(),
                 compiledStages, reusedStages, programs.size(), loaded, GlProgramBinaryCache.rejected - rejectedBefore,
                 (GlProgramBinaryCache.storedBytes - storedBefore) / 1024, pendingAtValidation, parallelApi);
@@ -229,10 +252,10 @@ public final class GlCompilationBatch implements AutoCloseable {
         for (Stage stage : stages) {
             if (!retainedStages.contains(stage.handle)) GlStateManager.glDeleteShader(stage.handle);
         }
-        if (hinted) setThreadHint(previousThreadHint);
+        if (hinted) threadHint(parallelApi, previousThreadHint);
     }
 
-    private static Failure failure(String message, Set<String> programs) {
+    static Failure failure(String message, Set<String> programs) {
         int error = GlStateManager._getError();
         if (error == GL11C.GL_OUT_OF_MEMORY) throw new OutOfMemoryError(message);
         if (error == GL45C.GL_CONTEXT_LOST) throw new IllegalStateException("OpenGL context lost: " + message);

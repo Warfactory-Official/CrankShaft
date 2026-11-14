@@ -95,7 +95,7 @@ public final class EntityOutlineSubmits {
                                     @Nullable UvMapping sprite, int outlineColor) {
                                     #else
                                     @Nullable TextureAtlasSprite sprite, int outlineColor,
-                                    ModelFeatureRenderer.@Nullable CrumblingOverlay crumblingOverlay) {
+                                    ModelFeatureRenderer.@Nullable CrumblingOverlay _) {
                                     #endif
             if (outlineColor == 0) {
                 return;
@@ -110,14 +110,14 @@ public final class EntityOutlineSubmits {
 
         #if MC >= 26.3
         @Override
-        public <S> void submitCrumblingOverlay(Model<? super S> model, S state, PoseStack poseStack,
-                                               RenderType renderType, int lightCoords, int overlayCoords,
-                                               int tintedColor, ModelFeatureRenderer.CrumblingOverlay overlay) {
+        public <S> void submitCrumblingOverlay(Model<? super S> _, S _, PoseStack _,
+                                               RenderType _, int _, int _,
+                                               int _, ModelFeatureRenderer.CrumblingOverlay _) {
         }
 
         @Override
-        public void submitTextBackground(PoseStack poseStack, float x0, float y0, float x1, float y1,
-                                          int color, Font.DisplayMode displayMode, int lightCoords) {
+        public void submitTextBackground(PoseStack _, float _, float _, float _, float _,
+                                          int _, Font.DisplayMode _, int _) {
         }
         #endif
 
@@ -136,14 +136,14 @@ public final class EntityOutlineSubmits {
         }
 
         @Override
-        public void submitItem(PoseStack poseStack, ItemDisplayContext displayContext, int lightCoords,
-                               int overlayCoords, int outlineColor, int[] tintLayers,
+        public void submitItem(PoseStack poseStack, ItemDisplayContext displayContext, int _,
+                               int _, int outlineColor, int[] _,
                                #if MC >= 26.3
                                ItemQuads quads,
                                #else
                                List<BakedQuad> quads,
                                #endif
-                               ItemStackRenderState.FoilType foilType) {
+                               ItemStackRenderState.FoilType _) {
             if (outlineColor == 0) {
                 return;
             }
@@ -177,45 +177,45 @@ public final class EntityOutlineSubmits {
         }
 
         @Override
-        public void submitShadow(PoseStack poseStack, float radius, List<EntityRenderState.ShadowPiece> pieces) {
+        public void submitShadow(PoseStack _, float _, List<EntityRenderState.ShadowPiece> _) {
         }
 
         @Override
-        public void submitNameTag(PoseStack poseStack, @Nullable Vec3 nameTagAttachment, int offset, Component name,
-                                  boolean seeThrough, int lightCoords, CameraRenderState camera) {
+        public void submitNameTag(PoseStack _, @Nullable Vec3 _, int _, Component _,
+                                  boolean _, int _, CameraRenderState _) {
         }
 
         @Override
-        public void submitText(PoseStack poseStack, float x, float y, FormattedCharSequence string, boolean dropShadow,
-                               Font.DisplayMode displayMode, int lightCoords, int color, int backgroundColor,
-                               int outlineColor) {
+        public void submitText(PoseStack _, float _, float _, FormattedCharSequence _, boolean _,
+                               Font.DisplayMode _, int _, int _, int _,
+                               int _) {
         }
 
         @Override
-        public void submitFlame(PoseStack poseStack, EntityRenderState renderState, Quaternionf rotation) {
+        public void submitFlame(PoseStack _, EntityRenderState _, Quaternionf _) {
         }
 
         @Override
-        public void submitLeash(PoseStack poseStack, EntityRenderState.LeashState leashState) {
+        public void submitLeash(PoseStack _, EntityRenderState.LeashState _) {
         }
 
         @Override
-        public void submitBreakingBlockModel(PoseStack poseStack, List<BlockStateModelPart> parts, int progress
-                                             #if MC >= 26.3 , boolean isBlockTranslucent #endif) {
+        public void submitBreakingBlockModel(PoseStack _, List<BlockStateModelPart> _, int _
+                                             #if MC >= 26.3 , boolean _ #endif) {
         }
 
         @Override
-        public void submitShapeOutline(PoseStack poseStack, VoxelShape shape, RenderType renderType, int color,
-                                       float width, boolean afterTerrain) {
+        public void submitShapeOutline(PoseStack _, VoxelShape _, RenderType _, int _,
+                                       float _, boolean _) {
         }
 
         @Override
-        public void submitQuadParticleGroup(QuadParticleRenderState particles) {
+        public void submitQuadParticleGroup(QuadParticleRenderState _) {
         }
 
         @Override
-        public void submitGizmoPrimitives(DrawableGizmoPrimitives.Group group, CameraRenderState camera,
-                                          boolean onTop) {
+        public void submitGizmoPrimitives(DrawableGizmoPrimitives.Group _, CameraRenderState _,
+                                          boolean _) {
         }
     }
 }

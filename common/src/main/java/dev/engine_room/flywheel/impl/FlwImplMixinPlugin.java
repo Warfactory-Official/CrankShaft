@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Set;
 
 public final class FlwImplMixinPlugin implements IMixinConfigPlugin {
+    private static final boolean NEOFORGE_PRESENT = classPresent("net.neoforged.fml.loading.FMLLoader");
     #if MC < 26.3
     private static final String MIXIN_CHUNK_SECTIONS_TO_RENDER = "dev.engine_room.flywheel.impl.mixin.MixinChunkSectionsToRender";
     private static final boolean SODIUM_PRESENT = classPresent(
@@ -22,6 +23,8 @@ public final class FlwImplMixinPlugin implements IMixinConfigPlugin {
     private static final boolean POLYTONE_PRESENT = classPresent("net.mehvahdjukaar.polytone.Polytone");
     private static final String MIXIN_EMF = "dev.engine_room.flywheel.impl.mixin.Emf";
     private static final boolean EMF_PRESENT = classPresent("traben.entity_model_features.EMFManager");
+    private static final String MIXIN_VOXY = "dev.engine_room.flywheel.impl.mixin.Voxy";
+    private static final boolean VOXY_PRESENT = classPresent("me.cortex.voxy.client.core.NormalRenderPipeline");
     private static final String MIXIN_DISTANT_HORIZONS = "dev.engine_room.flywheel.impl.mixin.Dh";
     private static final boolean DISTANT_HORIZONS_PRESENT = classPresent(
             "com.seibel.distanthorizons.core.api.internal.ClientApi");
@@ -31,7 +34,10 @@ public final class FlwImplMixinPlugin implements IMixinConfigPlugin {
     }
 
     @Override
-    public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+    public boolean shouldApplyMixin(String _, String mixinClassName) {
+        if (mixinClassName.equals("dev.engine_room.flywheel.impl.mixin.SectionCompilerReceiverMixin")) {
+            return !NEOFORGE_PRESENT;
+        }
         #if MC < 26.3
         if (MIXIN_CHUNK_SECTIONS_TO_RENDER.equals(mixinClassName)) {
             return !SODIUM_PRESENT;
@@ -49,14 +55,20 @@ public final class FlwImplMixinPlugin implements IMixinConfigPlugin {
         if (mixinClassName.startsWith(MIXIN_EMF)) {
             return EMF_PRESENT;
         }
+        if (mixinClassName.equals("dev.engine_room.flywheel.impl.mixin.DhLevelRendererMixin")) {
+            return DISTANT_HORIZONS_PRESENT && !NEOFORGE_PRESENT;
+        }
         if (mixinClassName.startsWith(MIXIN_DISTANT_HORIZONS)) {
             return DISTANT_HORIZONS_PRESENT;
+        }
+        if (mixinClassName.startsWith(MIXIN_VOXY)) {
+            return VOXY_PRESENT;
         }
         return true;
     }
 
     @Override
-    public void onLoad(String mixinPackage) {
+    public void onLoad(String _) {
     }
 
     @Override
@@ -65,7 +77,7 @@ public final class FlwImplMixinPlugin implements IMixinConfigPlugin {
     }
 
     @Override
-    public void acceptTargets(Set<String> myTargets, Set<String> otherTargets) {
+    public void acceptTargets(Set<String> _, Set<String> _) {
     }
 
     @Override
@@ -74,10 +86,10 @@ public final class FlwImplMixinPlugin implements IMixinConfigPlugin {
     }
 
     @Override
-    public void preApply(String targetClassName, ClassNode targetClass, String mixinClassName, IMixinInfo mixinInfo) {
+    public void preApply(String _, ClassNode _, String _, IMixinInfo _) {
     }
 
     @Override
-    public void postApply(String targetClassName, ClassNode targetClass, String mixinClassName, IMixinInfo mixinInfo) {
+    public void postApply(String _, ClassNode _, String _, IMixinInfo _) {
     }
 }

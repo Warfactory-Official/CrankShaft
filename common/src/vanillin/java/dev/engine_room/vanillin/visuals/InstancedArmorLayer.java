@@ -295,7 +295,7 @@ final class InstancedArmorLayer {
     static InstancerProvider orderedProvider(InstancerProvider provider, int drawBias) {
         return new InstancerProvider() {
             @Override
-            public <I extends Instance> Instancer<I> instancer(InstanceType<I> type, Model model, int ignored) {
+            public <I extends Instance> Instancer<I> instancer(InstanceType<I> type, Model model, int _) {
                 return provider.instancer(type, model, drawBias);
             }
         };

@@ -21,7 +21,7 @@ public final class EntityVisualizerBuilder<T extends Entity> {
     private SimpleEntityVisualizer.@Nullable Factory<T> visualFactory;
     @Nullable
     private Predicate<T> skipVanillaRender;
-    private Predicate<T> skipVanillaPrimary = entity -> false;
+    private Predicate<T> skipVanillaPrimary = _ -> false;
 
     public EntityVisualizerBuilder(Configurator configurator, EntityType<T> type) {
         this.configurator = configurator;
@@ -57,7 +57,7 @@ public final class EntityVisualizerBuilder<T extends Entity> {
      * @return {@code this}
      */
     public EntityVisualizerBuilder<T> skipVanillaPrimary(Predicate<T> skipVanillaPrimary) {
-        this.skipVanillaRender = entity -> false;
+        this.skipVanillaRender = _ -> false;
         this.skipVanillaPrimary = skipVanillaPrimary;
         return this;
     }
@@ -68,7 +68,7 @@ public final class EntityVisualizerBuilder<T extends Entity> {
      * @return {@code this}
      */
     public EntityVisualizerBuilder<T> neverSkipVanillaRender() {
-        this.skipVanillaRender = entity -> false;
+        this.skipVanillaRender = _ -> false;
         return this;
     }
 
@@ -80,7 +80,7 @@ public final class EntityVisualizerBuilder<T extends Entity> {
     public SimpleEntityVisualizer<T> apply(boolean enabledByDefault) {
         Objects.requireNonNull(visualFactory, "Visual factory cannot be null!");
         if (skipVanillaRender == null) {
-            skipVanillaRender = entity -> true;
+            skipVanillaRender = _ -> true;
         }
 
         Predicate<T> skipRender = skipVanillaRender;

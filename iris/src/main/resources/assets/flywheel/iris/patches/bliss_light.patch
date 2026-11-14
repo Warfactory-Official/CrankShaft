@@ -1,0 +1,16 @@
+diff --git a/dimensions/composite3.fsh b/dimensions/composite3.fsh
+--- a/dimensions/composite3.fsh
++++ b/dimensions/composite3.fsh
+@@ -23,1 +23,7 @@
+ uniform sampler2D colortex2;
++uniform sampler2D colortex17;
++/*
++const int colortex17Format = RGBA16F;
++const bool colortex17Clear = true;
++const vec4 colortex17ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
++*/
+@@ -438,2 +444,4 @@
+   color *= vl.a*cloudAlpha ;
+   color += vl.rgb;
++  // No depth: volumetrics would treat the emission as behind them.
++  color += texture2D(colortex17, texcoord).rgb;

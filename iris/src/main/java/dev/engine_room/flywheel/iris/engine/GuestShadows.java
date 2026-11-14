@@ -21,7 +21,7 @@ public final class GuestShadows {
         }
         registered = true;
         IrisApi.getInstance()
-               .registerShadowRenderCallback((modelView, projection, cameraX, cameraY, cameraZ, tickDelta) -> {
+               .registerShadowRenderCallback((modelView, _, cameraX, cameraY, cameraZ, _) -> {
                    VisualizationManagerImpl manager = VisualizationManagerImpl.get(Minecraft.getInstance().level);
                    if (manager == null || !(manager.getEngineImpl() instanceof GuestEngine)) {
                        return;

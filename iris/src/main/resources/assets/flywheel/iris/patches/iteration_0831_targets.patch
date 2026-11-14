@@ -1,0 +1,35 @@
+diff --git a/Lib/Programs/Gbuffers/Water_FS.glsl b/Lib/Programs/Gbuffers/Water_FS.glsl
+--- a/Lib/Programs/Gbuffers/Water_FS.glsl
++++ b/Lib/Programs/Gbuffers/Water_FS.glsl
+@@ -15,27 +15,14 @@
+ #if defined VS_VELOCITY && defined SR_IRIS_EXT_VELOCITY
+-	#ifdef PROGRAM_COLORWHEEL
+-		/* RENDERTARGETS: 3,4,16 */
+-		layout(location = 0) out vec4 framebuffer_gtransData;
+-		layout(location = 1) out vec4 framebuffer_gtransNormal;
+-		layout(location = 2) out vec4 framebuffer_16;
+-	#else
+ 		/* RENDERTARGETS: 0,3,4,5,16 */
+ 		layout(location = 0) out vec4 framebuffer_albedo;
+ 		layout(location = 1) out vec4 framebuffer_gtransData;
+ 		layout(location = 2) out vec4 framebuffer_gtransNormal;
+ 		layout(location = 3) out vec4 framebuffer_gwater;
+ 		layout(location = 4) out vec4 framebuffer_16;
+-	#endif
+ #else
+-	#ifdef PROGRAM_COLORWHEEL
+-		/* RENDERTARGETS: 3,4 */
+-		layout(location = 0) out vec4 framebuffer_gtransData;
+-		layout(location = 1) out vec4 framebuffer_gtransNormal;
+-	#else
+ 		/* RENDERTARGETS: 0,3,4,5 */
+ 		layout(location = 0) out vec4 framebuffer_albedo;
+ 		layout(location = 1) out vec4 framebuffer_gtransData;
+ 		layout(location = 2) out vec4 framebuffer_gtransNormal;
+ 		layout(location = 3) out vec4 framebuffer_gwater;
+-	#endif
+ #endif
+@@ -327,3 +314,1 @@
+-	#ifndef PROGRAM_COLORWHEEL
+ 		framebuffer_albedo = albedo;
+-	#endif

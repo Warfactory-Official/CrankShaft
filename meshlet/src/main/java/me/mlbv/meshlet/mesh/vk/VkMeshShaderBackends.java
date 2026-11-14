@@ -4,7 +4,10 @@
 package me.mlbv.meshlet.mesh.vk;
 
 import dev.engine_room.flywheel.api.backend.Backend;
+import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.backend.Backends;
+import dev.engine_room.flywheel.backend.BackendConfig;
+import dev.engine_room.flywheel.backend.TerrainMode;
 #if MC >= 26.3
 import dev.engine_room.flywheel.backend.compile.NativeOitWarmup;
 import dev.engine_room.flywheel.backend.compile.NativeVkEngineWarmup;
@@ -47,7 +50,8 @@ public final class VkMeshShaderBackends {
     }
 
     private static void warmUp() {
-        if (!isSupported()) {
+        if (BackendManager.currentBackend() != VK_MESH_SHADER
+                || BackendConfig.INSTANCE.terrainMode() == TerrainMode.OFF || !isSupported()) {
             return;
         }
         VkMeshPipelines pipelines = new VkMeshPipelines();
@@ -61,7 +65,9 @@ public final class VkMeshShaderBackends {
     #if MC >= 26.3
     private static void warmNativeTerrain(VkNativeOitPass pass, @Nullable OitInsertMode insert) {
         MeshEngine owner = MeshEngine.terrainOwner;
-        if (owner != null) owner.pipelines.warmNative(pass, insert);
+        if (owner != null && BackendManager.currentBackend() == VK_MESH_SHADER) {
+            owner.pipelines.warmNative(pass, insert);
+        }
     }
     #endif
 

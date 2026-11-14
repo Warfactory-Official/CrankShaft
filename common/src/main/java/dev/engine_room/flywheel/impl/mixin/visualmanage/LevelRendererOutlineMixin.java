@@ -21,7 +21,7 @@ abstract class LevelRendererOutlineMixin {
 
     @Inject(method = "submitEntities", at = @At("TAIL"), require = 1)
     private void flywheel$submitOutlineOnlyEntities(PoseStack poseStack, LevelRenderState levelRenderState,
-                                                    SubmitNodeCollector output, CallbackInfo ci) {
+                                                    SubmitNodeCollector output, CallbackInfo _) {
         EntityOutlineSubmits.submit(entityRenderDispatcher, poseStack, levelRenderState, output);
     }
 }

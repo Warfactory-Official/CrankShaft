@@ -31,6 +31,10 @@ public class VisualManagerImpl<T, S extends Storage<T>> implements VisualManager
         return storage.getAllVisuals().size();
     }
 
+    public boolean hasQueuedTransactions() {
+        return !queue.isEmpty();
+    }
+
     @Override
     public void queueAdd(T obj) {
         if (!storage.willAccept(obj)) {
@@ -73,7 +77,7 @@ public class VisualManagerImpl<T, S extends Storage<T>> implements VisualManager
     }
 
     public Plan<TickableVisual.Context> tickPlan(VisualizationContext visualizationContext) {
-        return SimplePlan.<TickableVisual.Context>of(context -> processQueue(visualizationContext, 1))
+        return SimplePlan.<TickableVisual.Context>of(_ -> processQueue(visualizationContext, 1))
                          .then(storage.tickPlan());
     }
 

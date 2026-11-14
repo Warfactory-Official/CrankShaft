@@ -1,6 +1,9 @@
 package dev.engine_room.flywheel.backend.compile.core;
 
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
+#if MC < 26.3
+import dev.engine_room.flywheel.backend.compile.MojImportPreprocessor;
+#endif
 #if MC >= 26.3
 import dev.engine_room.flywheel.backend.compile.NativeShaderPreprocessor;
 import net.minecraft.client.renderer.ShaderDefines;
@@ -60,20 +63,13 @@ public class Compilation {
     }
 
     public ShaderResult compile(ShaderType shaderType, String name) {
-        #if MC >= 26.3
-        var source =
-                NativeShaderPreprocessor.preprocess(assembledSource(), name, shaderType.glEnum, ShaderDefines.EMPTY);
+        var source = driverSource(shaderType, name);
         int handle = GL20.glCreateShader(shaderType.glEnum);
-        #else
-        int handle = GL20.glCreateShader(shaderType.glEnum);
-        var source = assembledSource();
-        #endif
 
         GlCompat.safeShaderSource(handle, source);
         GL20.glCompileShader(handle);
 
         var shaderName = name + "." + shaderType.extension;
-        dumpSource(source, shaderName);
 
         var infoLog = GL20.glGetShaderInfoLog(handle);
 
@@ -84,6 +80,22 @@ public class Compilation {
         GL20.glDeleteShader(handle);
         return ShaderResult.failure(
                 new FailedCompilation(shaderName, files, generatedSource.toString(), source, infoLog));
+    }
+
+    /**
+     * The text {@link #compile} hands the driver.
+     */
+    public String driverSource(ShaderType shaderType, String name) {
+        #if MC >= 26.3
+        var source =
+                NativeShaderPreprocessor.preprocess(assembledSource(), name, shaderType.glEnum, ShaderDefines.EMPTY);
+        #else
+        var source = assembledSource();
+        if (source.contains("#moj_import"))
+            source = MojImportPreprocessor.flatten(source);
+        #endif
+        dumpSource(source, name + "." + shaderType.extension);
+        return source;
     }
 
     public String assembledSource() {
@@ -149,6 +161,17 @@ public class Compilation {
                 && !enabledExtensions.contains("GL_ARB_gpu_shader5")) {
             define("fma(a, b, c) ((a) * (b) + (c))");
         }
+    }
+
+    /**
+     * Imports a complete host stage before any generated declarations. Its version is supplied by this compilation;
+     * host conditional extensions retain their original ordering and defines. Includes must already be resolved by
+     * the host. This does not rewrite the host's shader body.
+     */
+    public void appendNativeStage(SourceComponent component) {
+        String source = component.source().replaceAll("(?m)^[ \\t]*#version[^\\r\\n]*", "");
+        appendHeader(component, source);
+        components.append(source);
     }
 
     public void appendComponent(SourceComponent component) {

@@ -16,7 +16,7 @@ public final class UnitPlan<C> implements DirectPlan<C> {
     }
 
     @Override
-    public void execute(TaskExecutor taskExecutor, C context, Runnable onCompletion) {
+    public void execute(TaskExecutor _, C _, Runnable onCompletion) {
         onCompletion.run();
     }
 
@@ -26,7 +26,7 @@ public final class UnitPlan<C> implements DirectPlan<C> {
     }
 
     @Override
-    public void executeDirect(TaskExecutor executor, C context) {
+    public void executeDirect(TaskExecutor _, C _) {
         // No-op plan: nothing to run directly (keeps single-branch composites on the direct fast path).
     }
 

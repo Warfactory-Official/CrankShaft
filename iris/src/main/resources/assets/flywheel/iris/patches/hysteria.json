@@ -2,6 +2,7 @@
   "schema": 2,
   "name": "Hysteria",
   "testedVersions": [
+    "Hysteria v1.2.1",
     "Hysteria v1.2.2"
   ],
   "matches": [
@@ -15,7 +16,24 @@
   "files": [],
   "wrappers": [],
   "blends": [],
-  "properties": "oit.gbuffers = true\noit.gbuffers.colortex0 = 0\noit.gbuffers.colortex1 = frontmost\noit.gbuffers.colortex2 = frontmost\n",
+  "patches": [
+    "hysteria_light.patch"
+  ],
+  "properties": "oit.gbuffers = true\noit.gbuffers.colortex0 = 0\noit.gbuffers.colortex1 = frontmost\noit.gbuffers.colortex2 = frontmost\nblend.clrwl_gbuffers_additive = ONE ONE ZERO ONE\n",
+  "programs": [
+    {
+      "target": "clrwl_gbuffers_additive",
+      "fragment": "hysteria_light.fsh",
+      "vertex": "gbuffers_textured"
+    },
+    {
+      "target": "crankshaft_gbuffers_additive",
+      "fragment": "hysteria_light.fsh",
+      "vertex": "gbuffers_textured",
+      "nativeDraw": true
+    }
+  ],
+  "emissiveLight": true,
   "forwardOit": {
     "programs": [
       "gbuffers_water"

@@ -3,7 +3,8 @@
   "name": "Sundial",
   "testedVersions": [
     "Sundial Alpha Build 2026-08-28",
-    "Sundial Alpha Build 2026-09-25"
+    "Sundial Alpha Build 2026-09-25",
+    "Sundial Alpha Build 2026-10-30"
   ],
   "matches": [
     {
@@ -68,7 +69,8 @@
       ],
       "fingerprints": [
         "ed6d68e882aeaee647079ff68c1d7e82d843ef80e88556a3ab85c02e44c32dbf",
-        "a5ae1d992205ac721277d059af665e88631c3871f21f42b766db5de26f59f80a"
+        "a5ae1d992205ac721277d059af665e88631c3871f21f42b766db5de26f59f80a",
+        "586430a6349bf3879d5b2760b877f20944d996681017f175d63dbe0d5a8ef7e7"
       ]
     }
   },
@@ -77,6 +79,56 @@
     "sundial_light.patch",
     "sundial_contract.patch"
   ],
+  "nativeDepth": {
+    "patches": [
+      "sundial_native_depth.patch"
+    ],
+    "depthLines": {
+      "libs/GbufferData.glsl": "a1955ee7446da748",
+      "libs/GlobalIllumination.glsl": "066ed6f81f7c1359",
+      "libs/Reflection.glsl": "7b38a902f4e4455b",
+      "libs/Shadow.glsl": "487a2a964375d94c",
+      "libs/Uniform.glsl": "bfac335178ad1bea",
+      "programs/composite/Composite0.frag": "aeb74a3b2863590b",
+      "programs/composite/Composite1.frag": "ce32b2ed6ccec377",
+      "programs/composite/Composite10.frag": "8edc9f5345b49fad",
+      "programs/composite/Composite14.frag": "f50706327a5deaf3",
+      "programs/composite/Composite2.frag": "7186eaacce230c61",
+      "programs/composite/Composite3.frag": "ef786479d652d585",
+      "programs/composite/Composite6.frag": "5522492da22cede5",
+      "programs/composite/Composite7.frag": "a174ab12b20685f9",
+      "programs/deferred/Deferred0.frag": "2da0ce99f7df2960",
+      "programs/deferred/Deferred1.frag": "849d7e5049641afe",
+      "programs/deferred/Deferred10.frag": "066ed6f81f7c1359",
+      "programs/deferred/Deferred11.frag": "c8a0df7093dbe46a",
+      "programs/deferred/Deferred12.frag": "f153fb984337d16b",
+      "programs/deferred/Deferred2.frag": "54ce43721ea5d902",
+      "programs/deferred/Deferred99.frag": "aff4aa1e0fd856d0",
+      "programs/gbuffers/Basic.vert": "7d4276264cada031",
+      "programs/gbuffers/Overlay.vert": "7d4276264cada031",
+      "programs/gbuffers/Shadow.frag": "907e9d73a7b51cff",
+      "programs/gbuffers/Shadow.vert": "ac5fa6ffbe43e0fe",
+      "programs/gbuffers/ShadowColorwheel.frag": "f1f1d5199d3e11ac",
+      "programs/gbuffers/ShadowColorwheel.vert": "a0495c5e3727f5ed",
+      "programs/gbuffers/SkyBasic.vert": "7d4276264cada031",
+      "programs/gbuffers/Terrain.frag": "a39fcc058ef8e33f",
+      "programs/gbuffers/Terrain.geom": "07ad37c7ac0ea384",
+      "programs/gbuffers/Terrain.vert": "4cdd1525abb92bd7",
+      "programs/gbuffers/TerrainDH.vert": "090055a281cae5f5",
+      "programs/gbuffers/Textured.frag": "2fb24bcae1a5d4ab",
+      "programs/gbuffers/Textured.vert": "a0495c5e3727f5ed",
+      "programs/gbuffers/VoxySolid.frag": "0d247ada3f974421",
+      "programs/gbuffers/VoxyWater.frag": "4936e7579c07aff1",
+      "programs/gbuffers/Water.frag": "2fb24bcae1a5d4ab",
+      "programs/gbuffers/Water.vert": "ac5fa6ffbe43e0fe",
+      "programs/gbuffers/WaterDH.frag": "d7fe2689e8e825ac",
+      "programs/gbuffers/WaterDH.vert": "090055a281cae5f5",
+      "programs/gbuffers/Weather.frag": "a0756e0e9042781c",
+      "programs/gbuffers/Weather.vert": "a0495c5e3727f5ed",
+      "settings/GlobalSettings.glsl": "cbd5d23ca0e197ed",
+      "shaders.properties": "206d4ebac2edad03"
+    }
+  },
   "programs": [
     {
       "target": "clrwl_gbuffers_unlit_translucent",

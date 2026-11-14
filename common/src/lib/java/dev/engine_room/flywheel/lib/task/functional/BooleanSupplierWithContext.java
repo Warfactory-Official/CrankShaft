@@ -28,7 +28,7 @@ public interface BooleanSupplierWithContext<C> extends Predicate<C> {
         boolean getAsBoolean();
 
         @Override
-        default boolean getAsBoolean(C ignored) {
+        default boolean getAsBoolean(C _) {
             return getAsBoolean();
         }
     }

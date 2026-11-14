@@ -13,6 +13,21 @@ import java.util.List;
 public sealed interface PackIdentity {
     PackIdentity FLAME = ofIrisEntity("entity_flame");
     PackIdentity SPIDER_EYES = ofIrisProgram("spidereyes");
+    /**
+     * Vanilla's {@code TRANSLUCENT_PARTICLE} as Iris draws it ({@code particles_translucent}, falling back to
+     * {@code particles}, then {@code textured_lit}):
+     * <ul>
+     * <li>blend: the material's, unless the pack sets an explicit numeric {@code blend.<program>};</li>
+     * <li>depth: written in the colour pass, so draw back to front; every fragment the material's cutout keeps writes
+     * it;</li>
+     * <li>light: the instance's lightmap coordinates;</li>
+     * <li>shadow: none (Iris's shadow renderer draws no particles).</li>
+     * </ul>
+     * Under a pack's deferred transparency capture, whose particle program keeps one layer per pixel, the layers are
+     * captured as an untagged translucent of the material is instead, still casting no shadow. The entity's ids are
+     * kept. Shader warm-up covers the route for models built before resource apply finishes.
+     */
+    PackIdentity PARTICLES_TRANSLUCENT = ofIrisProgram("particles_translucent");
     PackIdentity ENTITIES_TRANSLUCENT = ofIrisProgram("entities_translucent");
     PackIdentity NAME_TAG = ofIrisProgram("entities_translucent", "name_tag");
     PackIdentity ENTITIES = ofIrisProgram("entities");
@@ -104,7 +119,7 @@ public sealed interface PackIdentity {
 
     /**
      * Draw through the pack program Iris routes this vanilla draw to ({@code spidereyes},
-     * {@code entities_translucent}, {@code entities}). A null entity name keeps the actor identity; a supplied
+     * {@code entities_translucent}, {@code entities}, {@code particles_translucent}). A null entity name keeps the actor identity; a supplied
      * name selects that synthetic Minecraft entity identity while retaining the requested program route.
      * Both loaders resolve it against the active pack when the model's draw tags are created on the render
      * thread. Pack reload replaces those tags; without Iris the identity has no effect.

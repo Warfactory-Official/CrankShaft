@@ -33,7 +33,7 @@ public class NoiseTextures {
             // invalid on a Vulkan host.
             NativeImage image = NativeImage.read(is);
             BLUE_NOISE = new DynamicTexture(() -> "flywheel blue noise", image);
-        } catch (IOException e) {
+        } catch (IOException _) {
         }
     }
 

@@ -72,7 +72,7 @@ public final class VkSlab implements Slab {
     }
 
     @Override
-    public void flushRange(long byteOffset, long byteSize) {
+    public void flushRange(long _, long _) {
         // Host-coherent: no explicit flush needed.
     }
 

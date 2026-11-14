@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.impl.mixin.visualmanage;
 
-import dev.engine_room.flywheel.impl.visualization.WorldRenderOwnership;
+import dev.engine_room.flywheel.backend.gl.GlGpuTimerLog;
+import dev.engine_room.flywheel.backend.vk.VkContext;
 import net.minecraft.client.renderer.GameRenderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -14,8 +15,8 @@ abstract class GameRendererMixin {
     #else
     @Inject(method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V", at = @At("HEAD"), require = 1)
     #endif
-    private void flywheel$beginLevelRender(CallbackInfo ci) {
-        WorldRenderOwnership.beginLevelRender();
+    private void flywheel$beginLevelRender(CallbackInfo _) {
+        if (GlGpuTimerLog.ENABLED && !VkContext.isVulkanHost()) GlGpuTimerLog.beginLevel();
     }
 
     #if MC >= 26.3
@@ -23,7 +24,7 @@ abstract class GameRendererMixin {
     #else
     @Inject(method = "renderLevel(Lnet/minecraft/client/DeltaTracker;)V", at = @At("RETURN"), require = 1)
     #endif
-    private void flywheel$endLevelRender(CallbackInfo ci) {
-        WorldRenderOwnership.endLevelRender();
+    private void flywheel$endLevelRender(CallbackInfo _) {
+        if (GlGpuTimerLog.ENABLED && !VkContext.isVulkanHost()) GlGpuTimerLog.endLevel();
     }
 }

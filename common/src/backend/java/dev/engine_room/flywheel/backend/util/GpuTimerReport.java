@@ -1,5 +1,8 @@
 package dev.engine_room.flywheel.backend.util;
 
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+
 import java.util.Locale;
 
 public final class GpuTimerReport {
@@ -40,36 +43,32 @@ public final class GpuTimerReport {
         return String.format(Locale.ROOT, "%.3f us", ns / 1_000.0);
     }
 
-    public void appendSummary(StringBuilder out, boolean full, boolean enabled, boolean oneShot) {
-        out.append("GPU timer").append(labelSuffix).append(": ").append(enabled ? oneShot ? "armed" : "on" : "off");
+    public MutableComponent commandReport(boolean enabled, boolean oneShot) {
+        String prefix = "command.flywheel.debug.gpu_timer.report.";
+        var state = Component.translatable(prefix + "state." + (enabled ? oneShot ? "armed" : "on" : "off"));
+        var out = Component.translatable(prefix + "state", labelSuffix, state);
         if (lastError != null) {
-            out.append("\nLast error: ").append(lastError);
+            out.append(Component.translatable(prefix + "error", lastError));
         }
         if (lastEpoch == Long.MIN_VALUE) {
-            out.append("\nNo completed GPU timer frame yet.");
-            return;
+            return out.append(Component.translatable(prefix + "waiting"));
         }
-        out.append("\nCompleted ").append(epochLabel).append(": ").append(lastEpoch)
-           .append("\nCaptured frames: ").append(capturedFrames)
-           .append("\nScopes: ").append(lastCount);
+        out.append(Component.translatable(prefix + "completed_" + epochLabel, lastEpoch, capturedFrames, lastCount));
         if (lastDroppedScopes != 0 || lastIncompleteScopes != 0) {
-            out.append("\nDropped scopes: ").append(lastDroppedScopes)
-               .append("\nIncomplete scopes: ").append(lastIncompleteScopes);
+            out.append(Component.translatable(prefix + "dropped", lastDroppedScopes, lastIncompleteScopes));
         }
-
-        appendTop(out, reportTop);
-        if (!full || lastCount == 0) {
-            return;
+        int count = sortTop(reportTop);
+        if (count == 0) return out;
+        out.append(Component.translatable(prefix + "top"));
+        for (int i = 0; i < count; i++) {
+            int index = sortScratch[i];
+            out.append("\n- " + lastNames[index] + ": " + formatNs(lastNs[index]));
         }
-
-        out.append("\n\nRecorded order:");
+        out.append(Component.translatable(prefix + "recorded"));
         for (int i = 0; i < lastCount; i++) {
-            out.append('\n');
-            for (int d = 0; d < lastDepths[i]; d++) {
-                out.append("  ");
-            }
-            out.append("- ").append(lastNames[i]).append(": ").append(formatNs(lastNs[i]));
+            out.append("\n" + "  ".repeat(lastDepths[i]) + "- " + lastNames[i] + ": " + formatNs(lastNs[i]));
         }
+        return out;
     }
 
     public void appendDebugInfo(StringBuilder out, boolean enabled, boolean oneShot) {
@@ -91,9 +90,9 @@ public final class GpuTimerReport {
         appendTop(out, Math.min(8, reportTop));
     }
 
-    private void appendTop(StringBuilder out, int limit) {
+    private int sortTop(int limit) {
         if (lastCount == 0) {
-            return;
+            return 0;
         }
         int count = Math.min(lastCount, limit);
         for (int i = 0; i < lastCount; i++) {
@@ -109,6 +108,12 @@ public final class GpuTimerReport {
             }
             sortScratch[j + 1] = v;
         }
+        return count;
+    }
+
+    private void appendTop(StringBuilder out, int limit) {
+        int count = sortTop(limit);
+        if (count == 0) return;
         out.append("\nTop scopes:");
         for (int i = 0; i < count; i++) {
             int idx = sortScratch[i];

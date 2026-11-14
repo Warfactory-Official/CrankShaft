@@ -15,6 +15,7 @@ import dev.engine_room.flywheel.impl.event.LevelRenderPassScope;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
 #endif
 import dev.engine_room.flywheel.iris.engine.GuestShadows;
+import dev.engine_room.flywheel.iris.compile.FarLayerIrisBridge;
 import net.irisshaders.iris.shadows.ShadowRenderer;
 #if MC >= 26.3
 import net.minecraft.client.Minecraft;
@@ -58,7 +59,8 @@ abstract class ShadowRendererMixin {
     @Inject(method = "renderShadows", at = @At(value = "INVOKE",
             target = "Lnet/irisshaders/iris/shadows/ShadowRenderer;copyPreTranslucentDepth(Lnet/irisshaders/iris/mixin/LevelRendererAccessor;)V",
             shift = At.Shift.AFTER))
-    private void flywheel$guestTranslucentShadows(CallbackInfo ci) {
+    private void flywheel$guestTranslucentShadows(CallbackInfo _) {
         GuestShadows.afterPreTranslucentDepth();
+        FarLayerIrisBridge.dhShadow();
     }
 }

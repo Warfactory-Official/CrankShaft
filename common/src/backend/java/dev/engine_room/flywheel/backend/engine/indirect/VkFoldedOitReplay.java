@@ -1,7 +1,9 @@
 package dev.engine_room.flywheel.backend.engine.indirect;
 
 import com.mojang.renderpearl.api.textures.GpuSampler;
+
 import com.mojang.renderpearl.api.textures.GpuTextureView;
+import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
@@ -10,6 +12,6 @@ public interface VkFoldedOitReplay {
                       GpuTextureView blueNoiseView, GpuSampler clampLinear, GpuSampler oitSampler,
                       GpuSampler noiseSampler);
 
-    void replayMlab(VkCommandBuffer cmd, dev.engine_room.flywheel.backend.compile.OitInsertMode oitMode,
+    void replayMlab(VkCommandBuffer cmd, OitInsertMode oitMode,
                     VkMlabBuffers mlab, GpuTextureView lightmapView, GpuSampler clampLinear);
 }

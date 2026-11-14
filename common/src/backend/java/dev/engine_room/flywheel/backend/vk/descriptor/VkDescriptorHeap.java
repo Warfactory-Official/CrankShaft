@@ -127,12 +127,16 @@ public final class VkDescriptorHeap {
     static void writeBufferDescriptor(int type, long vkBuffer, long offset, long range, long dstPtr) {
         bdaInfo.buffer(vkBuffer);
         addressInfo.address$(VK12.vkGetBufferDeviceAddress(VkContext.vkDevice(), bdaInfo) + offset)
-                   .range(range);
+                   .range(range).format(type == VK10.VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER
+                           ? VK10.VK_FORMAT_R32_UINT : VK10.VK_FORMAT_UNDEFINED);
         getInfo.type(type);
         int size;
-        if (type == VK12.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+        if (type == VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
             getInfo.data().pUniformBuffer(addressInfo);
             size = VkCaps.DB_UNIFORM_BUFFER_SIZE;
+        } else if (type == VK10.VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER) {
+            getInfo.data().pUniformTexelBuffer(addressInfo);
+            size = VkCaps.DB_UNIFORM_TEXEL_BUFFER_SIZE;
         } else {
             getInfo.data().pStorageBuffer(addressInfo);
             size = VkCaps.DB_STORAGE_BUFFER_SIZE;
@@ -143,13 +147,13 @@ public final class VkDescriptorHeap {
     static void writeImageDescriptor(int type, long view, long sampler, long dstPtr) {
         imageInfo.imageView(view)
                  .sampler(sampler)
-                 .imageLayout(VK12.VK_IMAGE_LAYOUT_GENERAL);
+                 .imageLayout(VK10.VK_IMAGE_LAYOUT_GENERAL);
         getInfo.type(type);
         int size;
-        if (type == VK12.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
+        if (type == VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
             getInfo.data().pCombinedImageSampler(imageInfo);
             size = VkCaps.DB_COMBINED_IMAGE_SAMPLER_SIZE;
-        } else if (type == VK12.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT) {
+        } else if (type == VK10.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT) {
             getInfo.data().pInputAttachmentImage(imageInfo);
             size = VkCaps.DB_INPUT_ATTACHMENT_SIZE;
         } else {

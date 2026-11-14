@@ -11,7 +11,9 @@ import org.lwjgl.vulkan.VK12;
 
 import java.util.List;
 
-/** Prepares selected native Vulkan variants: fused -> image-free render-pass specs; separate -> pass formats. */
+/**
+ * Prepares selected native Vulkan variants: fused -> image-free render-pass specs; separate -> pass formats.
+ */
 final class NativeVkWarmup {
     // Native water/cloud depth targets.
     private static final int PRODUCER_DEPTH = VK12.VK_FORMAT_D32_SFLOAT;
@@ -20,6 +22,10 @@ final class NativeVkWarmup {
     }
 
     static void precompileSelected(@Nullable OitInsertMode insert) {
+        VkAsyncBuilds.warm(() -> precompile(insert));
+    }
+
+    private static void precompile(@Nullable OitInsertMode insert) {
         List<RenderPipeline> declarations = NativeOitPipelines.registeredPipelines();
         int depthFormat = VkContext.mainDepthFormat();
         if (!VkNativeOitPass.fused(VkPrograms.get())) {

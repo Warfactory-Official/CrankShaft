@@ -20,7 +20,9 @@ import io.github.douira.glsl_transformer.ast.query.Root;
 import java.util.*;
 
 final class GuestGeometryStage {
-    static final String PREFIX = "_flw_gs_";
+    private static final String PREFIX = "_flw_gs_";
+    // GLSL reserves "__".
+    private static final String UNDERSCORE_PREFIX = "_flw_gsu";
 
     private GuestGeometryStage() {
     }
@@ -126,7 +128,8 @@ final class GuestGeometryStage {
             }
             root.nodeIndex.getStream(FunctionPrototype.class)
                           .forEach(function -> names.add(function.getName().getName()));
-            for (String name : names) rename(root, name, PREFIX + name);
+            for (String name : names)
+                rename(root, name, (name.startsWith("_") ? UNDERSCORE_PREFIX : PREFIX) + name);
             rename(root, "gl_Position", "_flw_geometryPosition");
             rename(root, "gl_in", "_flw_geometryIn");
             rename(root, "gl_PrimitiveIDIn", "_flw_geometryPrimitiveIn");
@@ -140,6 +143,11 @@ final class GuestGeometryStage {
             tree.setVersionStatement(null);
         });
         return new Result(parser.transform(source), stage, maxVertices[0]);
+    }
+
+    static String original(String name) {
+        if (name.startsWith(UNDERSCORE_PREFIX + "_")) return name.substring(UNDERSCORE_PREFIX.length());
+        return name.startsWith(PREFIX) ? name.substring(PREFIX.length()) : name;
     }
 
     private static void rename(Root root, String old, String replacement) {

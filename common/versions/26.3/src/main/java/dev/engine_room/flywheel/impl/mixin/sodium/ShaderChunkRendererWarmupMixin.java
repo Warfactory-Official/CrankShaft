@@ -25,12 +25,12 @@ abstract class ShaderChunkRendererWarmupMixin {
     @Shadow protected abstract RenderPipeline compileProgram(TerrainRenderPass pass, @Nullable OitStage stage);
 
     @Inject(method = "<clinit>", at = @At("TAIL"))
-    private static void flywheel$registerNativeDeclarations(CallbackInfo ci) {
+    private static void flywheel$registerNativeDeclarations(CallbackInfo _) {
         NativeOitWarmup.registerDeclarations(() -> oitPrograms.values().forEach(NativeOitPipelines::register));
     }
 
     @Inject(method = "<init>", at = @At("RETURN"))
-    private void flywheel$warmNativeTerrain(ChunkVertexType vertexType, CallbackInfo ci) {
+    private void flywheel$warmNativeTerrain(ChunkVertexType _, CallbackInfo _) {
         // 26.3: create declarations with the owning renderer's actual vertex format before its first pass.
         compileProgram(DefaultTerrainRenderPasses.TRANSLUCENT, OitStage.DEPTH_BOUNDS);
         NativeOitWarmup.configurationChanged();

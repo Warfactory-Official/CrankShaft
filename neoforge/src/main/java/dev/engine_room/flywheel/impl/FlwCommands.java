@@ -1,12 +1,10 @@
 package dev.engine_room.flywheel.impl;
 
 import com.mojang.brigadier.Command;
+
 import com.mojang.brigadier.arguments.BoolArgumentType;
-import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
-import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
-import com.mojang.brigadier.suggestion.SuggestionProvider;
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.backend.BackendDebugFlags;
@@ -17,12 +15,10 @@ import dev.engine_room.flywheel.backend.compile.LightSmoothness;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDebug;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
-import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.impl.compat.SodiumCompat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
-import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -30,9 +26,6 @@ import net.minecraft.world.entity.Entity;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 
 public final class FlwCommands {
-    private static final SuggestionProvider<CommandSourceStack> STRESS_TYPE_SUGGESTIONS =
-            (context, builder) -> SharedSuggestionProvider.suggestResource(FlwStress.entityTypeIds(), builder);
-
     private FlwCommands() {
     }
 
@@ -138,7 +131,8 @@ public final class FlwCommands {
                                            .executes(context -> {
                                                NeoForgeFlwConfig.INSTANCE.setTerrainMode(TerrainMode.OFF);
                                                reloadRenderers();
-                                               sendMessage(context.getSource(), Component.literal("terrain: off"));
+                                               sendMessage(context.getSource(),
+                                                       FlwCommandText.terrainSet(TerrainMode.OFF));
                                                return Command.SINGLE_SUCCESS;
                                            }))
                              .then(Commands.literal("translucent")
@@ -146,41 +140,38 @@ public final class FlwCommands {
                                                NeoForgeFlwConfig.INSTANCE.setTerrainMode(TerrainMode.TRANSLUCENT_OIT);
                                                reloadRenderers();
                                                sendMessage(context.getSource(),
-                                                       Component.literal("terrain: translucent"));
+                                                       FlwCommandText.terrainSet(TerrainMode.TRANSLUCENT_OIT));
                                                return Command.SINGLE_SUCCESS;
                                            }))
                              .then(Commands.literal("opaque")
                                            .executes(context -> {
                                                if (!SodiumCompat.ACTIVE) {
                                                    context.getSource().sendFailure(
-                                                           Component.literal("terrain opaque requires Sodium "
-                                                                   + "(opaque MDI takeover reads Sodium's live geometry arena). Not applied."));
+                                                           FlwCommandText.terrainRequiresSodium(TerrainMode.OPAQUE));
                                                    return 0;
                                                }
                                                NeoForgeFlwConfig.INSTANCE.setTerrainMode(TerrainMode.OPAQUE);
                                                reloadRenderers();
                                                sendMessage(context.getSource(),
-                                                       Component.literal("terrain: opaque -- flywheel culls + "
-                                                               + "draws opaque terrain, Sodium keeps translucent (no terrain OIT; culling A/B mode)"));
+                                                       FlwCommandText.terrainSet(TerrainMode.OPAQUE));
                                                return Command.SINGLE_SUCCESS;
                                            }))
                              .then(Commands.literal("full")
                                            .executes(context -> {
                                                if (!SodiumCompat.ACTIVE) {
                                                    context.getSource()
-                                                          .sendFailure(Component.literal("terrain full requires Sodium "
-                                                                  + "(opaque MDI takeover reads Sodium's live geometry arena). Not applied."));
+                                                          .sendFailure(FlwCommandText.terrainRequiresSodium(
+                                                                  TerrainMode.FULL));
                                                    return 0;
                                                }
                                                NeoForgeFlwConfig.INSTANCE.setTerrainMode(TerrainMode.FULL);
                                                reloadRenderers();
-                                               sendMessage(context.getSource(), Component.literal("terrain: full"));
+                                               sendMessage(context.getSource(),
+                                                       FlwCommandText.terrainSet(TerrainMode.FULL));
                                                return Command.SINGLE_SUCCESS;
                                            })));
 
         command.then(createOitCommand());
-
-        command.then(createStressCommand());
 
         command.then(createDebugCommand());
 
@@ -190,16 +181,15 @@ public final class FlwCommands {
     private static LiteralArgumentBuilder<CommandSourceStack> createOitCommand() {
         var oit = Commands.literal("oit")
                           .executes(context -> {
-                              sendMessage(context.getSource(), Component.literal(OitConfig.status()));
+                              sendMessage(context.getSource(), OitConfig.statusComponent());
                               return Command.SINGLE_SUCCESS;
                           });
         var modeCmd = Commands.literal("mode");
         for (OitConfig.Path p : OitConfig.Path.values()) {
-            modeCmd.then(Commands.literal(p.name().toLowerCase(java.util.Locale.ROOT))
+            modeCmd.then(Commands.literal(p.getSerializedName())
                                  .executes(context -> {
                                      OitConfig.setPath(p);
-                                     sendMessage(context.getSource(),
-                                             Component.literal(OitConfig.status() + insertModeGlNote(p)));
+                                     sendMessage(context.getSource(), OitConfig.statusComponent());
                                      return Command.SINGLE_SUCCESS;
                                  }));
         }
@@ -210,17 +200,17 @@ public final class FlwCommands {
                                            int n = IntegerArgumentType.getInteger(context, "n");
                                            var mode = OitConfig.setLayersForEffective(n);
                                            if (mode == null) {
-                                               sendFailure(context.getSource(), Component.literal(
-                                                       "No insert OIT mode active (wavelet has no layers)."));
+                                               sendFailure(context.getSource(),
+                                                       Component.translatable("command.flywheel.oit.no_insert"));
                                                return 0;
                                            }
-                                           sendMessage(context.getSource(), Component.literal(OitConfig.status()));
+                                           sendMessage(context.getSource(), OitConfig.statusComponent());
                                            return Command.SINGLE_SUCCESS;
                                        })));
         oit.then(Commands.literal("reset")
                          .executes(context -> {
                              OitConfig.resetLayers();
-                             sendMessage(context.getSource(), Component.literal(OitConfig.status()));
+                             sendMessage(context.getSource(), OitConfig.statusComponent());
                              return Command.SINGLE_SUCCESS;
                          }));
         #if MC < 26.3
@@ -228,70 +218,11 @@ public final class FlwCommands {
                          .then(Commands.argument("value", BoolArgumentType.bool())
                                        .executes(context -> {
                                            OitConfig.setExactFabulous(BoolArgumentType.getBool(context, "value"));
-                                           sendMessage(context.getSource(), Component.literal(OitConfig.status()));
+                                           sendMessage(context.getSource(), OitConfig.statusComponent());
                                            return Command.SINGLE_SUCCESS;
                                        })));
         #endif
         return oit;
-    }
-
-    private static LiteralArgumentBuilder<CommandSourceStack> createStressCommand() {
-        var stress = Commands.literal("stress");
-
-        stress.then(Commands.literal("spawn")
-                            .then(Commands.argument("count", IntegerArgumentType.integer(1, FlwStress.STRESS_MAX))
-                                          .suggests((context, builder) -> SharedSuggestionProvider.suggest(
-                                                  FlwStress.STRESS_COUNTS, builder))
-                                          .executes(context -> {
-                                              int count = IntegerArgumentType.getInteger(context, "count");
-                                              sendMessage(context.getSource(),
-                                                      FlwStress.spawn(count, "minecraft:pig", 2.0D));
-                                              return Command.SINGLE_SUCCESS;
-                                          })
-                                          .then(Commands.argument("type", StringArgumentType.string())
-                                                        .suggests(STRESS_TYPE_SUGGESTIONS)
-                                                        .executes(context -> {
-                                                            int count = IntegerArgumentType.getInteger(context,
-                                                                    "count");
-                                                            String type = StringArgumentType.getString(context, "type");
-                                                            sendMessage(context.getSource(),
-                                                                    FlwStress.spawn(count, type, 2.0D));
-                                                            return Command.SINGLE_SUCCESS;
-                                                        })
-                                                        .then(Commands.argument("spacing",
-                                                                              DoubleArgumentType.doubleArg(0.0D))
-                                                                      .executes(context -> {
-                                                                          int count = IntegerArgumentType.getInteger(
-                                                                                  context, "count");
-                                                                          String type = StringArgumentType.getString(
-                                                                                  context, "type");
-                                                                          double spacing = DoubleArgumentType.getDouble(
-                                                                                  context, "spacing");
-                                                                          sendMessage(context.getSource(),
-                                                                                  FlwStress.spawn(count, type,
-                                                                                          spacing));
-                                                                          return Command.SINGLE_SUCCESS;
-                                                                      })))));
-
-        stress.then(Commands.literal("clear")
-                            .executes(context -> {
-                                sendMessage(context.getSource(), FlwStress.clear());
-                                return Command.SINGLE_SUCCESS;
-                            }));
-
-        stress.then(Commands.literal("chests")
-                            .executes(context -> {
-                                sendMessage(context.getSource(), FlwStress.spawnChests());
-                                return Command.SINGLE_SUCCESS;
-                            }));
-
-        stress.then(Commands.literal("fabulous")
-                            .executes(context -> {
-                                sendMessage(context.getSource(), FlwStress.buildFabulousRig());
-                                return Command.SINGLE_SUCCESS;
-                            }));
-
-        return stress;
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> createDebugCommand() {
@@ -327,36 +258,36 @@ public final class FlwCommands {
 
         debug.then(Commands.literal("frustum")
                            .then(Commands.literal("capture")
-                                         .executes(context -> {
+                                         .executes(_ -> {
                                              FrameUniforms.captureFrustum();
                                              return Command.SINGLE_SUCCESS;
                                          }))
                            .then(Commands.literal("unpause")
-                                         .executes(context -> {
+                                         .executes(_ -> {
                                              FrameUniforms.unpauseFrustum();
                                              return Command.SINGLE_SUCCESS;
                                          })));
 
         debug.then(Commands.literal("lightSections")
                            .then(Commands.literal("on")
-                                         .executes(context -> {
+                                         .executes(_ -> {
                                              BackendDebugFlags.LIGHT_STORAGE_VIEW = true;
                                              return Command.SINGLE_SUCCESS;
                                          }))
                            .then(Commands.literal("off")
-                                         .executes(context -> {
+                                         .executes(_ -> {
                                              BackendDebugFlags.LIGHT_STORAGE_VIEW = false;
                                              return Command.SINGLE_SUCCESS;
                                          })));
 
         debug.then(Commands.literal("oit")
                            .then(Commands.literal("on")
-                                         .executes(context -> {
+                                         .executes(_ -> {
                                              BackendDebugFlags.SKIP_OIT = false;
                                              return Command.SINGLE_SUCCESS;
                                          }))
                            .then(Commands.literal("off")
-                                         .executes(context -> {
+                                         .executes(_ -> {
                                              BackendDebugFlags.SKIP_OIT = true;
                                              return Command.SINGLE_SUCCESS;
                                          })));
@@ -366,43 +297,40 @@ public final class FlwCommands {
                            .then(Commands.literal("on")
                                          .executes(context -> {
                                              ImplDebugFlags.FABULOUS_LAYER_VIEW = true;
-                                             sendMessage(context.getSource(), Component.literal(
-                                                     "Raw item/particle layer overlay: ON (alpha-blit over the frame, bypassing the OIT replay)"));
+                                             sendMessage(context.getSource(), Component.translatable(
+                                                     "command.flywheel.debug.fabulous_layers.on"));
                                              return Command.SINGLE_SUCCESS;
                                          }))
                            .then(Commands.literal("off")
                                          .executes(context -> {
                                              ImplDebugFlags.FABULOUS_LAYER_VIEW = false;
                                              sendMessage(context.getSource(),
-                                                     Component.literal("Raw item/particle layer overlay: OFF"));
+                                                     Component.translatable(
+                                                             "command.flywheel.debug.fabulous_layers.off"));
                                              return Command.SINGLE_SUCCESS;
                                          })));
         #endif
 
         debug.then(Commands.literal("sodiumCull")
                            .then(Commands.literal("on")
-                                         .executes(context -> {
+                                         .executes(_ -> {
                                              TerrainDebug.SODIUM_CULL = true;
-                                             sendMessage(context.getSource(), Component.literal(
-                                                     "Sodium render-list cull cancel: ON (single-cull MDI; needs /flywheel terrain full + INDIRECT)"));
                                              return Command.SINGLE_SUCCESS;
                                          }))
                            .then(Commands.literal("off")
-                                         .executes(context -> {
+                                         .executes(_ -> {
                                              TerrainDebug.SODIUM_CULL = false;
-                                             sendMessage(context.getSource(), Component.literal(
-                                                     "Sodium render-list cull cancel: OFF (double-cull baseline)"));
                                              return Command.SINGLE_SUCCESS;
                                          })));
 
         debug.then(Commands.literal("pauseUpdates")
                            .then(Commands.literal("on")
-                                         .executes(context -> {
+                                         .executes(_ -> {
                                              ImplDebugFlags.PAUSE_UPDATES = true;
                                              return Command.SINGLE_SUCCESS;
                                          }))
                            .then(Commands.literal("off")
-                                         .executes(context -> {
+                                         .executes(_ -> {
                                              ImplDebugFlags.PAUSE_UPDATES = false;
                                              return Command.SINGLE_SUCCESS;
                                          })));
@@ -411,39 +339,41 @@ public final class FlwCommands {
                            .then(Commands.literal("on")
                                          .executes(context -> {
                                              TerrainDebug.HIZ_ENABLED = true;
-                                             sendMessage(context.getSource(), Component.literal(
-                                                     "Terrain HiZ occlusion cull: ON" + glOnlyNote()));
+                                             FlwCommandText.glOnlyFeedback(
+                                                     message -> sendMessage(context.getSource(), message));
                                              return Command.SINGLE_SUCCESS;
                                          }))
                            .then(Commands.literal("off")
                                          .executes(context -> {
                                              TerrainDebug.HIZ_ENABLED = false;
-                                             sendMessage(context.getSource(), Component.literal(
-                                                     "Terrain HiZ occlusion cull: OFF (same image, no occlusion savings)" + glOnlyNote()));
+                                             FlwCommandText.glOnlyFeedback(
+                                                     message -> sendMessage(context.getSource(), message));
                                              return Command.SINGLE_SUCCESS;
                                          })));
 
         debug.then(Commands.literal("gpuTimer")
                            .then(Commands.literal("on")
                                          .executes(context -> {
-                                             sendMessage(context.getSource(), gpuTimerState(GpuTimer.setEnabled(true)));
+                                             FlwCommandText.gpuTimerState(GpuTimer.setEnabled(true),
+                                                     message -> sendMessage(context.getSource(), message));
                                              return Command.SINGLE_SUCCESS;
                                          }))
                            .then(Commands.literal("off")
                                          .executes(context -> {
-                                             sendMessage(context.getSource(),
-                                                     gpuTimerState(GpuTimer.setEnabled(false)));
+                                             FlwCommandText.gpuTimerState(GpuTimer.setEnabled(false),
+                                                     message -> sendMessage(context.getSource(), message));
                                              return Command.SINGLE_SUCCESS;
                                          }))
                            .then(Commands.literal("once")
                                          .executes(context -> {
-                                             sendMessage(context.getSource(), gpuTimerState(GpuTimer.captureOnce()));
+                                             FlwCommandText.gpuTimerState(GpuTimer.captureOnce(),
+                                                     message -> sendMessage(context.getSource(), message));
                                              return Command.SINGLE_SUCCESS;
                                          }))
                            .then(Commands.literal("summary")
                                          .executes(context -> {
                                              context.getSource()
-                                                    .sendSystemMessage(Component.literal(GpuTimer.commandReport()));
+                                                    .sendSystemMessage(GpuTimer.commandReport());
                                              return Command.SINGLE_SUCCESS;
                                          })));
 
@@ -457,15 +387,6 @@ public final class FlwCommands {
         return debug;
     }
 
-    private static Component gpuTimerState(GpuTimer.State state) {
-        return Component.literal(switch (state) {
-            case ENABLED -> "GPU timer: ON";
-            case DISABLED -> "GPU timer: OFF";
-            case ARMED -> "GPU timer: armed for one completed frame";
-            case UNAVAILABLE -> "GPU timer unavailable on the active backend";
-        });
-    }
-
     private static void reloadRenderers() {
         Minecraft mc = Minecraft.getInstance();
         mc.levelExtractor.allChanged();
@@ -474,16 +395,6 @@ public final class FlwCommands {
         }
     }
 
-    private static String glOnlyNote() {
-        return VkContext.isVulkanHost() ? " (no effect on the active Vulkan backend; GL-only)" : "";
-    }
-
-    private static String insertModeGlNote(OitConfig.Path p) {
-        boolean insert = p == OitConfig.Path.KBUFFER || p == OitConfig.Path.MLAB || p == OitConfig.Path.ABUFFER;
-        return insert && !VkContext.isVulkanHost()
-                ? "\nNOTE: on GL, insert OIT runs on the gpu-driven backend (gl_indirect / gl_mesh_shader); the instancing backend uses the wavelet chain."
-                : "";
-    }
 
     private static void sendMessage(CommandSourceStack source, Component message) {
         source.sendSuccess(() -> message, true);

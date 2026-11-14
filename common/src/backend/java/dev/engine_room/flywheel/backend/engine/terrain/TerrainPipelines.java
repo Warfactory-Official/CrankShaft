@@ -15,13 +15,16 @@ import com.mojang.renderpearl.api.vertex.VertexFormat;
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
+import dev.engine_room.flywheel.backend.compile.TerrainOverlayPipelines;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
+import dev.engine_room.flywheel.backend.glsl.SourceComponent;
 import dev.engine_room.flywheel.compat.backend.PipelineShaderSource;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -59,8 +62,9 @@ public final class TerrainPipelines {
     };
 
     private static final RenderPipeline[][] pipelines = new RenderPipeline[2][2];
-    // Iris's shadow pass: own programs (ProgramId.Shadow*) and no back-face culling, so its own pipeline identity.
-    private static final RenderPipeline[] shadowPipelines = new RenderPipeline[2];
+    // Iris's shadow pass: own programs (ProgramId.Shadow*) and no back-face culling, so its own pipeline identity;
+    // [reversed][cutout].
+    private static final RenderPipeline[][] shadowPipelines = new RenderPipeline[2][2];
     // Guest translucent producers: depth range, coefficients, evaluate, or single-pass deferred capture.
     private static final RenderPipeline[] oitPipelines = new RenderPipeline[4];
     // Dropped when Iris swaps the chunk vertex type: both the binding layout and the assembled source change.
@@ -100,11 +104,13 @@ public final class TerrainPipelines {
         if (builtFor != format) {
             getOrBuild(false);
         }
+        boolean reversed = GuestTerrainGate.shadowReversed();
+        RenderPipeline[] row = shadowPipelines[reversed ? 1 : 0];
         int c = cutout ? 1 : 0;
-        RenderPipeline pipeline = shadowPipelines[c];
+        RenderPipeline pipeline = row[c];
         if (pipeline == null) {
-            pipeline = buildShadow(cutout);
-            shadowPipelines[c] = pipeline;
+            pipeline = buildShadow(cutout, reversed);
+            row[c] = pipeline;
         }
         RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
         return pipeline;
@@ -117,7 +123,9 @@ public final class TerrainPipelines {
             for (RenderPipeline[] row : pipelines) {
                 Arrays.fill(row, null);
             }
-            Arrays.fill(shadowPipelines, null);
+            for (RenderPipeline[] row : shadowPipelines) {
+                Arrays.fill(row, null);
+            }
             Arrays.fill(oitPipelines, null);
         }
         boolean linear = TerrainAtlasFilter.linear();
@@ -149,9 +157,11 @@ public final class TerrainPipelines {
                 }
             }
         }
-        for (int cutout = 0; cutout < shadowPipelines.length; cutout++) {
-            if (shadowPipelines[cutout] == pipeline) {
-                return new Kind(cutout == 1, true);
+        for (RenderPipeline[] row : shadowPipelines) {
+            for (int cutout = 0; cutout < row.length; cutout++) {
+                if (row[cutout] == pipeline) {
+                    return new Kind(cutout == 1, true);
+                }
             }
         }
         return null;
@@ -177,18 +187,20 @@ public final class TerrainPipelines {
                              .build();
     }
 
-    private static RenderPipeline buildShadow(boolean cutout) {
+    private static RenderPipeline buildShadow(boolean cutout, boolean reversed) {
         return RenderPipeline.builder(SNIPPET)
                              .withLocation(ResourceUtil.rl("pipeline/terrain/shadow_" + (cutout ? "cutout" : "solid")
-                                     + (TerrainVertexFormat.extended() ? "_ext" : "")))
+                                     + (reversed ? "_reversed" : "") + (TerrainVertexFormat.extended() ? "_ext" : "")))
                              .withVertexShader(VERTEX)
                              .withFragmentShader(cutout ? CUTOUT_FRAGMENT : SOLID_FRAGMENT)
                              .withVertexBinding(0, TerrainVertexFormat.current())
                              .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-                             // Iris emits forward-Z shadow positions. Its depth-state inversion only recognizes
-                             // its own pipeline identities, so this guest must select the forward comparison.
-                             .withDepthStencilState(
-                                     new DepthStencilState(CompareOp.LESS_THAN_OR_EQUAL, true, 0.0f, 0.0f))
+                             // Iris emits forward-Z shadow positions unless the pack takes reversed depth natively.
+                             // Its depth-state inversion only recognizes its own pipeline identities, so this guest
+                             // must select the pass's comparison.
+                             .withDepthStencilState(new DepthStencilState(reversed
+                                     ? CompareOp.GREATER_THAN_OR_EQUAL : CompareOp.LESS_THAN_OR_EQUAL, true, 0.0f,
+                                     0.0f))
                              #if MC >= 26.3
                              .withColorTargetState(new ColorTargetState(Optional.empty(),
                                      GpuFormat.RGBA8_UNORM, ColorTargetState.WRITE_ALL))
@@ -251,12 +263,38 @@ public final class TerrainPipelines {
                 List.of(FlwPrograms.SOURCES.get(VERTEX_SOURCE)));
     }
 
+    public static String assembleOverlayVertex(Consumer<Compilation> extra) {
+        return ShaderAssembly.assembleFlattened(extra.andThen(TerrainVertexFormat::appendDefines)
+                                                     .andThen(ctx -> ctx.define("main", "_flw_terrainVertexBase")),
+                List.of(FlwPrograms.SOURCES.get(VERTEX_SOURCE), FlwPrograms.SOURCES.get(
+                        TerrainOverlayPipelines.VERTEX_WRAPPER)));
+    }
+
     public static String assembleFragment(boolean cutout, boolean linear) {
         return assembleFragment(cutout, linear, ShaderAssembly.NO_EXTRA);
     }
 
     public static String assembleFragment(boolean cutout, boolean linear, Consumer<Compilation> extra) {
+        return assembleFragment(cutout, linear, extra, List.of());
+    }
+
+    public static String assembleOverlay(boolean cutout, boolean linear, List<Identifier> overlays) {
+        return assembleOverlay(cutout, linear, overlays, ShaderAssembly.NO_EXTRA);
+    }
+
+    public static String assembleOverlay(boolean cutout, boolean linear, List<Identifier> overlays,
+                                         Consumer<Compilation> extra) {
+        return assembleFragment(cutout, linear, extra.andThen(ctx -> ctx.define("main", "_flw_terrainBase")),
+                TerrainOverlayPipelines.tail(overlays));
+    }
+
+    private static String assembleFragment(boolean cutout, boolean linear, Consumer<Compilation> extra,
+                                           List<SourceComponent> tail) {
         Identifier source = cutout ? CUTOUT_FRAGMENT_SOURCE : SOLID_FRAGMENT_SOURCE;
+        var components = new ArrayList<SourceComponent>();
+        components.add(FlwPrograms.SOURCES.get(TEXEL_FILTER));
+        components.add(FlwPrograms.SOURCES.get(source));
+        components.addAll(tail);
         // globals.glsl declares the Globals UBO (UseRgss) that texel_filter reads -- the import lands ahead of the
         // roots. The FLW_PIXEL_FILTER_LINEAR define (when set) gates flw_sampleAtlas to the smooth branch.
         return ShaderAssembly.assembleFlattened(ctx -> {
@@ -265,7 +303,7 @@ public final class TerrainPipelines {
                 ctx.define(TerrainAtlasFilter.LINEAR_DEFINE);
             }
             extra.accept(ctx);
-        }, List.of(FlwPrograms.SOURCES.get(TEXEL_FILTER), FlwPrograms.SOURCES.get(source)));
+        }, components);
     }
 
     /**

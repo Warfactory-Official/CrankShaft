@@ -26,7 +26,7 @@ abstract class BlockModelSetMixin {
     private Map<BlockState, BlockModel> blockModelByStateCache;
 
     @Inject(method = "<init>", at = @At("TAIL"))
-    private void flywheel$concurrentCache(CallbackInfo ci) {
+    private void flywheel$concurrentCache(CallbackInfo _) {
         blockModelByStateCache = new ConcurrentHashMap<>(blockModelByStateCache);
     }
 }

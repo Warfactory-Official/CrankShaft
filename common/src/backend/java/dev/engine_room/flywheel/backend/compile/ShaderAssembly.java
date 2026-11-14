@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 public final class ShaderAssembly {
-    public static final Consumer<Compilation> NO_EXTRA = ctx -> {
+    public static final Consumer<Compilation> NO_EXTRA = _ -> {
     };
 
     private ShaderAssembly() {

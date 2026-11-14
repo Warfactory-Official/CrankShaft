@@ -14,7 +14,7 @@ public class EffectStorage extends Storage<Effect> {
     }
 
     @Override
-    public boolean willAccept(Effect obj) {
+    public boolean willAccept(Effect _) {
         return true;
     }
 

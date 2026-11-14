@@ -26,12 +26,12 @@ public final class BoatVisual extends EntityModelVisual<AbstractBoat, BoatRender
     }
 
     @Override
-    protected Identifier texture(BoatRenderState state) {
+    protected Identifier texture(BoatRenderState _) {
         return texture;
     }
 
     @Override
-    protected boolean isHidden(BoatRenderState state) {
+    protected boolean isHidden(BoatRenderState _) {
         return false;
     }
 

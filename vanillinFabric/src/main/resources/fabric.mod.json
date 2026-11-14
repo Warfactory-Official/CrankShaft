@@ -1,7 +1,9 @@
 {
   "schemaVersion": 1,
   "id": "vanillate",
-  "provides": ["vanillin"],
+  "provides": [
+    "vanillin"
+  ],
   "version": "${version}",
   "name": "Vanillate",
   "description": "Vanilla content visuals (chests, minecarts, ...) rendered through the CrankShaft instanced engine.",

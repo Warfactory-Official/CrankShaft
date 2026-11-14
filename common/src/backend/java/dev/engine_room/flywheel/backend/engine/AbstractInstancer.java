@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.instance.Instancer;
 import dev.engine_room.flywheel.backend.engine.embed.Environment;
+import org.jspecify.annotations.Nullable;
 
 public abstract class AbstractInstancer<I extends Instance> implements Instancer<I> {
     public final InstanceType<I> type;
@@ -11,8 +12,8 @@ public abstract class AbstractInstancer<I extends Instance> implements Instancer
     public final Recreate<I> recreate;
 
     protected AbstractInstancer(InstancerKey<I> key, Recreate<I> recreate) {
-        this.type = key.type();
-        this.environment = key.environment();
+        type = key.type();
+        environment = key.environment();
         this.recreate = recreate;
         // Port: deleted handles write into the fixed-size slab trash slot, so an oversized
         // layout would be a silent native-heap overflow -- reject it up front.
@@ -32,6 +33,18 @@ public abstract class AbstractInstancer<I extends Instance> implements Instancer
     public abstract void delete();
 
     public abstract void clear();
+
+    @Override
+    public final void stealInstance(@Nullable I instance) {
+        moveInstance(instance);
+        if (instance != null) recreate.drawManager().trackFaces(instance, recreate.key());
+    }
+
+    protected abstract void moveInstance(@Nullable I instance);
+
+    protected final void trackFaces(I instance) {
+        recreate.drawManager().trackFaces(instance, recreate.key());
+    }
 
     @Override
     public String toString() {

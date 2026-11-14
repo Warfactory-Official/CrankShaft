@@ -33,9 +33,60 @@ in float cylindricalVertexDistance;
 flat in uvec2 _flw_ids;
 #endif
 
-out vec4 fragColor;
+layout(location = 0) out vec4 fragColor;
+#ifdef _FLW_FAR_RAW_OIT
+#ifdef _FLW_OIT_MLAB
+layout(pixel_interlock_unordered) in;
+#define _FLW_MLAB_LAYOUT_DECLARED
+#endif
+in vec3 _flw_farPosition;
+void _flw_rawBegin();
+void _flw_rawEmit(vec4 color, float linearDepth, float reverseDeviceDepth);
+float _flw_rawDeviceDepth(float depth);
+float _flw_rawLinearDepth(float depth);
+bool _flw_farRawKeep(vec3 position, float depth);
+#endif
+#ifdef _FLW_FAR_IRIS_CAPTURE
+uniform uint _flw_farIrisFirstPrimitive;
+uniform uint _flw_farIrisPrimitiveCount;
+uniform uint _flw_farIrisMeshPrimitiveCount;
+void _flw_farCaptureIris(vec4 albedo, vec3 normal, vec4 tangent, vec2 light, float diffuse, float unlit,
+                         uvec4 material, vec3 world);
+#endif
+#ifdef _FLW_FAR_LAYER_CAPTURE
+#include "flywheel:internal/far/layer_capture.glsl"
+#endif
+#if defined(_FLW_FAR_BAKE) || defined(_FLW_FAR_SURFACE)
+in vec3 _flw_farPosition;
+flat in uvec2 _flw_farMaterialKey;
+layout(location = 1) out vec4 _flw_farNormal;
+layout(location = 3) out uvec4 _flw_farMaterial;
+
+vec4 _flw_farTangent(vec3 normal) {
+    vec3 dx = dFdx(_flw_farPosition);
+    vec3 dy = dFdy(_flw_farPosition);
+    vec2 uvDx = dFdx(texCoord0);
+    vec2 uvDy = dFdy(texCoord0);
+    float determinant = uvDx.x * uvDy.y - uvDx.y * uvDy.x;
+    // Untextured meshes have a constant UV: orient their tangent basis from the geometric normal.
+    if (determinant == 0.0) {
+        vec3 axis = abs(normal.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        return vec4(normalize(cross(axis, normal)), 1.0);
+    }
+    vec3 tangent = (dx * uvDy.y - dy * uvDx.y) / determinant;
+    vec3 bitangent = (dy * uvDx.x - dx * uvDy.x) / determinant;
+    tangent = normalize(tangent - normal * dot(normal, tangent));
+    return vec4(tangent, dot(cross(normal, tangent), bitangent) < 0.0 ? -1.0 : 1.0);
+}
+#endif
+#ifdef _FLW_FAR_SURFACE
+layout(location = 2) out vec4 _flw_farLight;
+#endif
 
 void main() {
+    #if defined(_FLW_FAR_BAKE) || defined(_FLW_FAR_SURFACE)
+    vec4 tangent = _flw_farTangent(normalize(flw_vertexNormal));
+    #endif
     flw_vertexColor = vertexColor;
     // Plain sample: the texel-snap/RGSS filter is TERRAIN-ONLY (dark sweep on entity samplers).
 
@@ -67,6 +118,34 @@ void main() {
     #endif
 
     float diffuseFactor = _flw_diffuseFactor();
+    #if defined(_FLW_FAR_BAKE) || defined(_FLW_FAR_SURFACE)
+    if (flw_material.useOverlay) {
+        vec4 overlay = texelFetch(Sampler1, overlayCoord, 0);
+        flw_fragColor.rgb = mix(overlay.rgb, flw_fragColor.rgb, overlay.a);
+    }
+    vec3 normal = normalize(flw_vertexNormal);
+    _flw_farNormal = vec4(normal * 0.5 + 0.5, diffuseFactor);
+    uint tangentFlags = (_flw_farMaterialKey.y << 1u | uint(tangent.w < 0.0)) << 24u;
+    _flw_farMaterial = uvec4(floatBitsToUint(texCoord0), _flw_farMaterialKey.x,
+            (packSnorm4x8(vec4(tangent.xyz, 0.0)) & 0xFFFFFFu) | tangentFlags);
+    #ifdef _FLW_FAR_LAYER_CAPTURE
+    _flw_farCaptureLayer(flw_fragColor, normal, tangent, flw_fragLight, diffuseFactor,
+            flw_material.useLight ? 0.0 : 1.0, _flw_farMaterial);
+    #elif defined(_FLW_FAR_IRIS_CAPTURE)
+    uint primitive = uint(gl_PrimitiveID) % _flw_farIrisMeshPrimitiveCount;
+    if (primitive < _flw_farIrisFirstPrimitive
+            || primitive - _flw_farIrisFirstPrimitive >= _flw_farIrisPrimitiveCount) discard;
+    _flw_farCaptureIris(flw_fragColor, normal, tangent, flw_fragLight, diffuseFactor,
+            flw_material.useLight ? 0.0 : 1.0, _flw_farMaterial, _flw_farPosition);
+    #elif defined(_FLW_FAR_BAKE)
+    // Alpha keeps the unlit fraction separately from coverage, supplied by the bake's depth.
+    fragColor = vec4(flw_fragColor.rgb, flw_material.useLight ? 0.0 : 1.0);
+    #else
+    fragColor = vec4(flw_fragColor.rgb, 1.0);
+    _flw_farLight = vec4(flw_fragLight, flw_material.useLight ? 0.0 : 1.0, 1.0);
+    #endif
+    return;
+    #endif
     flw_fragColor.rgb *= diffuseFactor;
 
     if (flw_material.useOverlay) {
@@ -109,5 +188,13 @@ void main() {
     #else
     // Per-material fog spliced from material.fog().source() (LINEAR/NONE/LINEAR_FADE).
     fragColor = flw_fogFilter(flw_fragColor, sphericalVertexDistance, cylindricalVertexDistance);
+    #endif
+    #ifdef _FLW_FAR_RAW_OIT
+    if (!_flw_farRawKeep(_flw_farPosition, gl_FragCoord.z)) discard;
+    vec4 shadedColor = fragColor;
+    _flw_rawBegin();
+    _flw_rawLock();
+    _flw_rawEmit(shadedColor, _flw_rawLinearDepth(gl_FragCoord.z), _flw_rawDeviceDepth(gl_FragCoord.z));
+    _flw_rawUnlock();
     #endif
 }

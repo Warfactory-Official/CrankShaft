@@ -16,7 +16,7 @@ public interface ItemStackVisualizer {
      * Called on the host's extraction/update threads before creating or keeping a visual. False leaves the
      * host's other render paths eligible.
      */
-    default boolean supports(ItemStack stack, ItemDisplayContext displayContext, @Nullable ItemOwner owner) {
+    default boolean supports(ItemStack _, ItemDisplayContext _, @Nullable ItemOwner _) {
         return true;
     }
 

@@ -1,14 +1,12 @@
 package dev.engine_room.flywheel.impl;
 
 import com.mojang.brigadier.Command;
+
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.BoolArgumentType;
-import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
-import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
-import com.mojang.brigadier.suggestion.SuggestionProvider;
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.backend.BackendDebugFlags;
@@ -19,13 +17,11 @@ import dev.engine_room.flywheel.backend.compile.LightSmoothness;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDebug;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
-import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.impl.compat.SodiumCompat;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.client.Minecraft;
 import net.minecraft.commands.CommandBuildContext;
-import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.commands.arguments.coordinates.WorldCoordinates;
 import net.minecraft.core.BlockPos;
@@ -34,14 +30,11 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
 
 public final class FlwCommands {
-    private static final SuggestionProvider<FabricClientCommandSource> STRESS_TYPE_SUGGESTIONS =
-            (context, builder) -> SharedSuggestionProvider.suggestResource(FlwStress.entityTypeIds(), builder);
-
     private FlwCommands() {
     }
 
     public static void registerClientCommands(CommandDispatcher<FabricClientCommandSource> dispatcher,
-                                              CommandBuildContext buildContext) {
+                                              CommandBuildContext _) {
         LiteralArgumentBuilder<FabricClientCommandSource> command = ClientCommands.literal("flywheel");
 
         command.then(ClientCommands.literal("backend")
@@ -151,7 +144,8 @@ public final class FlwCommands {
                                                            FabricFlwConfig.INSTANCE.setTerrainMode(TerrainMode.OFF);
                                                            reloadRenderers();
                                                            context.getSource()
-                                                                  .sendFeedback(Component.literal("terrain: off"));
+                                                                  .sendFeedback(
+                                                                          FlwCommandText.terrainSet(TerrainMode.OFF));
                                                            return Command.SINGLE_SUCCESS;
                                                        }))
                                    .then(ClientCommands.literal("translucent")
@@ -160,42 +154,41 @@ public final class FlwCommands {
                                                                    TerrainMode.TRANSLUCENT_OIT);
                                                            reloadRenderers();
                                                            context.getSource().sendFeedback(
-                                                                   Component.literal("terrain: translucent"));
+                                                                   FlwCommandText.terrainSet(
+                                                                           TerrainMode.TRANSLUCENT_OIT));
                                                            return Command.SINGLE_SUCCESS;
                                                        }))
                                    .then(ClientCommands.literal("opaque")
                                                        .executes(context -> {
                                                            if (!SodiumCompat.ACTIVE) {
-                                                               context.getSource().sendError(Component.literal(
-                                                                       "terrain opaque requires Sodium "
-                                                                               + "(opaque MDI takeover reads Sodium's live geometry arena). Not applied."));
+                                                               context.getSource().sendError(
+                                                                       FlwCommandText.terrainRequiresSodium(
+                                                                               TerrainMode.OPAQUE));
                                                                return 0;
                                                            }
                                                            FabricFlwConfig.INSTANCE.setTerrainMode(TerrainMode.OPAQUE);
                                                            reloadRenderers();
-                                                           context.getSource().sendFeedback(Component.literal(
-                                                                   "terrain: opaque -- flywheel culls + "
-                                                                           + "draws opaque terrain, Sodium keeps translucent (no terrain OIT; culling A/B mode)"));
+                                                           context.getSource().sendFeedback(
+                                                                   FlwCommandText.terrainSet(TerrainMode.OPAQUE));
                                                            return Command.SINGLE_SUCCESS;
                                                        }))
                                    .then(ClientCommands.literal("full")
                                                        .executes(context -> {
                                                            if (!SodiumCompat.ACTIVE) {
                                                                context.getSource().sendError(
-                                                                       Component.literal("terrain full requires Sodium "
-                                                                               + "(opaque MDI takeover reads Sodium's live geometry arena). Not applied."));
+                                                                       FlwCommandText.terrainRequiresSodium(
+                                                                               TerrainMode.FULL));
                                                                return 0;
                                                            }
                                                            FabricFlwConfig.INSTANCE.setTerrainMode(TerrainMode.FULL);
                                                            reloadRenderers();
                                                            context.getSource()
-                                                                  .sendFeedback(Component.literal("terrain: full"));
+                                                                  .sendFeedback(
+                                                                          FlwCommandText.terrainSet(TerrainMode.FULL));
                                                            return Command.SINGLE_SUCCESS;
                                                        })));
 
         command.then(createOitCommand());
-
-        command.then(createStressCommand());
 
         command.then(createDebugCommand());
 
@@ -205,16 +198,15 @@ public final class FlwCommands {
     private static LiteralArgumentBuilder<FabricClientCommandSource> createOitCommand() {
         var oit = ClientCommands.literal("oit")
                                 .executes(context -> {
-                                    context.getSource().sendFeedback(Component.literal(OitConfig.status()));
+                                    context.getSource().sendFeedback(OitConfig.statusComponent());
                                     return Command.SINGLE_SUCCESS;
                                 });
         var modeCmd = ClientCommands.literal("mode");
         for (OitConfig.Path p : OitConfig.Path.values()) {
-            modeCmd.then(ClientCommands.literal(p.name().toLowerCase(java.util.Locale.ROOT))
+            modeCmd.then(ClientCommands.literal(p.getSerializedName())
                                        .executes(context -> {
                                            OitConfig.setPath(p);
-                                           context.getSource().sendFeedback(
-                                                   Component.literal(OitConfig.status() + insertModeGlNote(p)));
+                                           context.getSource().sendFeedback(OitConfig.statusComponent());
                                            return Command.SINGLE_SUCCESS;
                                        }));
         }
@@ -225,18 +217,18 @@ public final class FlwCommands {
                                                        int n = IntegerArgumentType.getInteger(context, "n");
                                                        var mode = OitConfig.setLayersForEffective(n);
                                                        if (mode == null) {
-                                                           context.getSource().sendError(Component.literal(
-                                                                   "No insert OIT mode active (wavelet has no layers)."));
+                                                           context.getSource().sendError(Component.translatable(
+                                                                   "command.flywheel.oit.no_insert"));
                                                            return 0;
                                                        }
                                                        context.getSource()
-                                                              .sendFeedback(Component.literal(OitConfig.status()));
+                                                              .sendFeedback(OitConfig.statusComponent());
                                                        return Command.SINGLE_SUCCESS;
                                                    })));
         oit.then(ClientCommands.literal("reset")
                                .executes(context -> {
                                    OitConfig.resetLayers();
-                                   context.getSource().sendFeedback(Component.literal(OitConfig.status()));
+                                   context.getSource().sendFeedback(OitConfig.statusComponent());
                                    return Command.SINGLE_SUCCESS;
                                }));
         #if MC < 26.3
@@ -246,79 +238,11 @@ public final class FlwCommands {
                                                        OitConfig.setExactFabulous(
                                                                BoolArgumentType.getBool(context, "value"));
                                                        context.getSource()
-                                                              .sendFeedback(Component.literal(OitConfig.status()));
+                                                              .sendFeedback(OitConfig.statusComponent());
                                                        return Command.SINGLE_SUCCESS;
                                                    })));
         #endif
         return oit;
-    }
-
-    private static LiteralArgumentBuilder<FabricClientCommandSource> createStressCommand() {
-        var stress = ClientCommands.literal("stress");
-
-        stress.then(ClientCommands.literal("spawn")
-                                  .then(ClientCommands.argument("count",
-                                                              IntegerArgumentType.integer(1, FlwStress.STRESS_MAX))
-                                                      .suggests((context, builder) -> SharedSuggestionProvider.suggest(
-                                                              FlwStress.STRESS_COUNTS, builder))
-                                                      .executes(context -> {
-                                                          int count = IntegerArgumentType.getInteger(context, "count");
-                                                          context.getSource().sendFeedback(
-                                                                  FlwStress.spawn(count, "minecraft:pig", 2.0D));
-                                                          return Command.SINGLE_SUCCESS;
-                                                      })
-                                                      .then(ClientCommands.argument("type", StringArgumentType.string())
-                                                                          .suggests(STRESS_TYPE_SUGGESTIONS)
-                                                                          .executes(context -> {
-                                                                              int count = IntegerArgumentType.getInteger(
-                                                                                      context, "count");
-                                                                              String type = StringArgumentType.getString(
-                                                                                      context, "type");
-                                                                              context.getSource().sendFeedback(
-                                                                                      FlwStress.spawn(count, type,
-                                                                                              2.0D));
-                                                                              return Command.SINGLE_SUCCESS;
-                                                                          })
-                                                                          .then(ClientCommands.argument("spacing",
-                                                                                                      DoubleArgumentType.doubleArg(0.0D))
-                                                                                              .executes(context -> {
-                                                                                                  int count = IntegerArgumentType.getInteger(
-                                                                                                          context,
-                                                                                                          "count");
-                                                                                                  String type = StringArgumentType.getString(
-                                                                                                          context,
-                                                                                                          "type");
-                                                                                                  double spacing = DoubleArgumentType.getDouble(
-                                                                                                          context,
-                                                                                                          "spacing");
-                                                                                                  context.getSource()
-                                                                                                         .sendFeedback(
-                                                                                                                 FlwStress.spawn(
-                                                                                                                         count,
-                                                                                                                         type,
-                                                                                                                         spacing));
-                                                                                                  return Command.SINGLE_SUCCESS;
-                                                                                              })))));
-
-        stress.then(ClientCommands.literal("clear")
-                                  .executes(context -> {
-                                      context.getSource().sendFeedback(FlwStress.clear());
-                                      return Command.SINGLE_SUCCESS;
-                                  }));
-
-        stress.then(ClientCommands.literal("chests")
-                                  .executes(context -> {
-                                      context.getSource().sendFeedback(FlwStress.spawnChests());
-                                      return Command.SINGLE_SUCCESS;
-                                  }));
-
-        stress.then(ClientCommands.literal("fabulous")
-                                  .executes(context -> {
-                                      context.getSource().sendFeedback(FlwStress.buildFabulousRig());
-                                      return Command.SINGLE_SUCCESS;
-                                  }));
-
-        return stress;
     }
 
     private static LiteralArgumentBuilder<FabricClientCommandSource> createDebugCommand() {
@@ -358,36 +282,36 @@ public final class FlwCommands {
 
         debug.then(ClientCommands.literal("frustum")
                                  .then(ClientCommands.literal("capture")
-                                                     .executes(context -> {
+                                                     .executes(_ -> {
                                                          FrameUniforms.captureFrustum();
                                                          return Command.SINGLE_SUCCESS;
                                                      }))
                                  .then(ClientCommands.literal("unpause")
-                                                     .executes(context -> {
+                                                     .executes(_ -> {
                                                          FrameUniforms.unpauseFrustum();
                                                          return Command.SINGLE_SUCCESS;
                                                      })));
 
         debug.then(ClientCommands.literal("lightSections")
                                  .then(ClientCommands.literal("on")
-                                                     .executes(context -> {
+                                                     .executes(_ -> {
                                                          BackendDebugFlags.LIGHT_STORAGE_VIEW = true;
                                                          return Command.SINGLE_SUCCESS;
                                                      }))
                                  .then(ClientCommands.literal("off")
-                                                     .executes(context -> {
+                                                     .executes(_ -> {
                                                          BackendDebugFlags.LIGHT_STORAGE_VIEW = false;
                                                          return Command.SINGLE_SUCCESS;
                                                      })));
 
         debug.then(ClientCommands.literal("oit")
                                  .then(ClientCommands.literal("on")
-                                                     .executes(context -> {
+                                                     .executes(_ -> {
                                                          BackendDebugFlags.SKIP_OIT = false;
                                                          return Command.SINGLE_SUCCESS;
                                                      }))
                                  .then(ClientCommands.literal("off")
-                                                     .executes(context -> {
+                                                     .executes(_ -> {
                                                          BackendDebugFlags.SKIP_OIT = true;
                                                          return Command.SINGLE_SUCCESS;
                                                      })));
@@ -397,15 +321,15 @@ public final class FlwCommands {
                                  .then(ClientCommands.literal("on")
                                                      .executes(context -> {
                                                          ImplDebugFlags.FABULOUS_LAYER_VIEW = true;
-                                                         context.getSource().sendFeedback(Component.literal(
-                                                                 "Raw item/particle layer overlay: ON (alpha-blit over the frame, bypassing the OIT replay)"));
+                                                         context.getSource().sendFeedback(Component.translatable(
+                                                                 "command.flywheel.debug.fabulous_layers.on"));
                                                          return Command.SINGLE_SUCCESS;
                                                      }))
                                  .then(ClientCommands.literal("off")
                                                      .executes(context -> {
                                                          ImplDebugFlags.FABULOUS_LAYER_VIEW = false;
-                                                         context.getSource().sendFeedback(Component.literal(
-                                                                 "Raw item/particle layer overlay: OFF"));
+                                                         context.getSource().sendFeedback(Component.translatable(
+                                                                 "command.flywheel.debug.fabulous_layers.off"));
                                                          return Command.SINGLE_SUCCESS;
                                                      })));
         #endif
@@ -414,26 +338,26 @@ public final class FlwCommands {
                                  .then(ClientCommands.literal("on")
                                                      .executes(context -> {
                                                          TerrainDebug.SODIUM_CULL = true;
-                                                         context.getSource().sendFeedback(Component.literal(
-                                                                 "Sodium render-list cull cancel: ON (single-cull MDI; needs /flywheel terrain full + INDIRECT)"));
+                                                         context.getSource().sendFeedback(Component.translatable(
+                                                                 "command.flywheel.debug.sodium_cull.on"));
                                                          return Command.SINGLE_SUCCESS;
                                                      }))
                                  .then(ClientCommands.literal("off")
                                                      .executes(context -> {
                                                          TerrainDebug.SODIUM_CULL = false;
-                                                         context.getSource().sendFeedback(Component.literal(
-                                                                 "Sodium render-list cull cancel: OFF (double-cull baseline)"));
+                                                         context.getSource().sendFeedback(Component.translatable(
+                                                                 "command.flywheel.debug.sodium_cull.off"));
                                                          return Command.SINGLE_SUCCESS;
                                                      })));
 
         debug.then(ClientCommands.literal("pauseUpdates")
                                  .then(ClientCommands.literal("on")
-                                                     .executes(context -> {
+                                                     .executes(_ -> {
                                                          ImplDebugFlags.PAUSE_UPDATES = true;
                                                          return Command.SINGLE_SUCCESS;
                                                      }))
                                  .then(ClientCommands.literal("off")
-                                                     .executes(context -> {
+                                                     .executes(_ -> {
                                                          ImplDebugFlags.PAUSE_UPDATES = false;
                                                          return Command.SINGLE_SUCCESS;
                                                      })));
@@ -442,41 +366,41 @@ public final class FlwCommands {
                                  .then(ClientCommands.literal("on")
                                                      .executes(context -> {
                                                          TerrainDebug.HIZ_ENABLED = true;
-                                                         context.getSource().sendFeedback(Component.literal(
-                                                                 "Terrain HiZ occlusion cull: ON" + glOnlyNote()));
+                                                         FlwCommandText.glOnlyFeedback(
+                                                                 context.getSource()::sendFeedback);
                                                          return Command.SINGLE_SUCCESS;
                                                      }))
                                  .then(ClientCommands.literal("off")
                                                      .executes(context -> {
                                                          TerrainDebug.HIZ_ENABLED = false;
-                                                         context.getSource().sendFeedback(Component.literal(
-                                                                 "Terrain HiZ occlusion cull: OFF (same image, no occlusion savings)" + glOnlyNote()));
+                                                         FlwCommandText.glOnlyFeedback(
+                                                                 context.getSource()::sendFeedback);
                                                          return Command.SINGLE_SUCCESS;
                                                      })));
 
         debug.then(ClientCommands.literal("gpuTimer")
                                  .then(ClientCommands.literal("on")
                                                      .executes(context -> {
-                                                         context.getSource()
-                                                                .sendFeedback(gpuTimerState(GpuTimer.setEnabled(true)));
+                                                         FlwCommandText.gpuTimerState(GpuTimer.setEnabled(true),
+                                                                 context.getSource()::sendFeedback);
                                                          return Command.SINGLE_SUCCESS;
                                                      }))
                                  .then(ClientCommands.literal("off")
                                                      .executes(context -> {
-                                                         context.getSource().sendFeedback(
-                                                                 gpuTimerState(GpuTimer.setEnabled(false)));
+                                                         FlwCommandText.gpuTimerState(GpuTimer.setEnabled(false),
+                                                                 context.getSource()::sendFeedback);
                                                          return Command.SINGLE_SUCCESS;
                                                      }))
                                  .then(ClientCommands.literal("once")
                                                      .executes(context -> {
-                                                         context.getSource()
-                                                                .sendFeedback(gpuTimerState(GpuTimer.captureOnce()));
+                                                         FlwCommandText.gpuTimerState(GpuTimer.captureOnce(),
+                                                                 context.getSource()::sendFeedback);
                                                          return Command.SINGLE_SUCCESS;
                                                      }))
                                  .then(ClientCommands.literal("summary")
                                                      .executes(context -> {
                                                          context.getSource().sendFeedback(
-                                                                 Component.literal(GpuTimer.commandReport()));
+                                                                 GpuTimer.commandReport());
                                                          return Command.SINGLE_SUCCESS;
                                                      })));
 
@@ -490,25 +414,6 @@ public final class FlwCommands {
         return debug;
     }
 
-    private static Component gpuTimerState(GpuTimer.State state) {
-        return Component.literal(switch (state) {
-            case ENABLED -> "GPU timer: ON";
-            case DISABLED -> "GPU timer: OFF";
-            case ARMED -> "GPU timer: armed for one completed frame";
-            case UNAVAILABLE -> "GPU timer unavailable on the active backend";
-        });
-    }
-
-    private static String glOnlyNote() {
-        return VkContext.isVulkanHost() ? " (no effect on the active Vulkan backend; GL-only)" : "";
-    }
-
-    private static String insertModeGlNote(OitConfig.Path p) {
-        boolean insert = p == OitConfig.Path.KBUFFER || p == OitConfig.Path.MLAB || p == OitConfig.Path.ABUFFER;
-        return insert && !VkContext.isVulkanHost()
-                ? "\nNOTE: on GL, insert OIT runs on the gpu-driven backend (gl_indirect / gl_mesh_shader); the instancing backend uses the wavelet chain."
-                : "";
-    }
 
     private static void reloadRenderers() {
         Minecraft mc = Minecraft.getInstance();

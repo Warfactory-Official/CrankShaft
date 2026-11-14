@@ -31,6 +31,7 @@ public final class NativeShaderPreprocessor {
     // Resolve the loader call site on the Java caller before entering any native include callback.
     private static final Function<String, ShaderSource.CachedIncludeSource> INCLUDE_LOADER =
             NativeShaderPreprocessor::loadInclude;
+    private static final Identifier OIT_COMMON = Identifier.fromNamespaceAndPath("minecraft", "oit_common.glsl");
 
     private NativeShaderPreprocessor() {
     }
@@ -63,11 +64,11 @@ public final class NativeShaderPreprocessor {
         long options = Shaderc.shaderc_compile_options_initialize();
         long result = 0;
         ShadercIncludeResolve resolver =
-                ShadercIncludeResolve.create((context, requested, includeType, requester, depth) -> {
-            String name = MemoryUtil.memUTF8(requested);
-            return includes.computeIfAbsent(name, INCLUDE_LOADER).includeResultPtr();
-        });
-        ShadercIncludeResultRelease release = ShadercIncludeResultRelease.create((context, include) -> {
+                ShadercIncludeResolve.create((_, requested, _, _, _) -> {
+                    String name = MemoryUtil.memUTF8(requested);
+                    return includes.computeIfAbsent(name, INCLUDE_LOADER).includeResultPtr();
+                });
+        ShadercIncludeResultRelease release = ShadercIncludeResultRelease.create((_, _) -> {
         });
         // Generated guest shaders exceed the thread stack's fixed capacity; keep only short names there.
         var sourceBytes = MemoryUtil.memUTF8(source, false);
@@ -112,9 +113,12 @@ public final class NativeShaderPreprocessor {
         try {
             Identifier id = Identifier.parse(name);
             try (var stream = Minecraft.getInstance().getResourceManager()
-                    .getResource(id.withPrefix("shaders/include/")).orElseThrow().open()) {
-                return ShaderSource.CachedIncludeSource.create(id,
-                        new String(stream.readAllBytes(), StandardCharsets.UTF_8));
+                                       .getResource(id.withPrefix("shaders/include/")).orElseThrow().open()) {
+                var source = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+                // Keep vanilla's scalar clamp unambiguous in direct GL compilation.
+                if (id.equals(OIT_COMMON)) source = source.replace("clamp(-log(max(transmittance, 0.0001)), 0, 4.0)",
+                        "clamp(-log(max(transmittance, 0.0001)), 0.0, 4.0)");
+                return ShaderSource.CachedIncludeSource.create(id, source);
             }
         } catch (IOException | RuntimeException failure) {
             return ShaderSource.CachedIncludeSource.createError(new StringBuilder("Could not read include ")

@@ -28,24 +28,28 @@ in float flw_chunkVisibility; // per-section chunk-load fade (was the chunksecti
 uniform sampler2D Sampler0; // atlas (also needed by DEPTH_RANGE for the cutout test)
 
 void main() {
+    #ifdef _FLW_TERRAIN_OVERLAY
+    _flw_terrainPrepare();
+    #endif
     float linearDepth = -flw_oitViewZ;
 
     #ifdef _FLW_DEPTH_RANGE_LITE
 
     float alpha = flw_sampleAtlas(Sampler0, texCoord0).a * flw_vertexAlpha;
-    if (alpha < 0.1) {
-        discard;
-    }
 
     #else
 
     vec4 color = flw_sampleAtlas(Sampler0, texCoord0) * vertexColor;
     color = mix(FogColor * vec4(1.0, 1.0, 1.0, color.a), color, flw_chunkVisibility);
     float alpha = color.a;
-    if (alpha < 0.1) {
-        discard;
-    }
 
+    #endif
+
+    #ifdef _FLW_TERRAIN_OVERLAY
+    alpha = _flw_terrainAlpha(alpha);
+    if (alpha <= 0.0)discard;
+    #else
+    if (alpha < 0.1)discard;
     #endif
 
     #ifdef _FLW_DEPTH_RANGE
@@ -55,6 +59,9 @@ void main() {
     #else
 
     color = apply_fog(color, sphericalVertexDistance, cylindricalVertexDistance, FogEnvironmentalStart, FogEnvironmentalEnd, FogRenderDistanceStart, FogRenderDistanceEnd, FogColor);
+    #ifdef _FLW_TERRAIN_OVERLAY
+    color = _flw_terrainShade(color);
+    #endif
 
     _flw_oitEmit(color, linearDepth);
 

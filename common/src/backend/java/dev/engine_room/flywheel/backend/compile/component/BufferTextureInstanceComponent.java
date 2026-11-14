@@ -11,13 +11,30 @@ import java.util.ArrayList;
 public class BufferTextureInstanceComponent extends InstanceAssemblerComponent {
     private static final String[] SWIZZLE_SELECTORS = {"x", "y", "z", "w"};
 
+    private final String sampler;
+    private final String fnName;
+
     public BufferTextureInstanceComponent(InstanceType<?> type) {
+        this(type, BUFFER_NAME, UNPACK_FN_NAME);
+    }
+
+    private BufferTextureInstanceComponent(InstanceType<?> type, String sampler, String fnName) {
         super(type);
+        this.sampler = sampler;
+        this.fnName = fnName;
+    }
+
+    /**
+     * {@code _flw_unpackPrevInstance} over {@link #HISTORY_BUFFER_NAME}.
+     */
+    public static BufferTextureInstanceComponent history(InstanceType<?> type) {
+        return new BufferTextureInstanceComponent(type, HISTORY_BUFFER_NAME, HISTORY_UNPACK_FN_NAME);
     }
 
     @Override
     public String name() {
-        return ResourceUtil.rl("buffer_texture_instance_assembler").toString();
+        String name = ResourceUtil.rl("buffer_texture_instance_assembler").toString();
+        return sampler.equals(BUFFER_NAME) ? name : name + "/" + sampler;
     }
 
     @Override
@@ -30,7 +47,7 @@ public class BufferTextureInstanceComponent extends InstanceAssemblerComponent {
 
         for (int i = 0; i < texels; i++) {
             // Fetch all the texels for the given instance ahead of time to simplify the unpacking generators.
-            fnBody.add(GlslStmt.raw("uvec4 u" + i + " = texelFetch(_flw_instances, base + " + i + ");"));
+            fnBody.add(GlslStmt.raw("uvec4 u" + i + " = texelFetch(" + sampler + ", base + " + i + ");"));
         }
 
         var unpackArgs = new ArrayList<GlslExpr>();
@@ -42,12 +59,12 @@ public class BufferTextureInstanceComponent extends InstanceAssemblerComponent {
 
         builder.uniform()
                .type("usamplerBuffer")
-               .name("_flw_instances");
+               .name(sampler);
         builder.blankLine();
         builder.function()
                .signature(FnSignature.create()
                                      .returnType(STRUCT_NAME)
-                                     .name(UNPACK_FN_NAME)
+                                     .name(fnName)
                                      .arg("int", UNPACK_ARG)
                                      .build())
                .body(fnBody);

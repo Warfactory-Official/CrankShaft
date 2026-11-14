@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(VulkanUtils.class)
 abstract class VulkanUtilsMixin {
     @Inject(method = "crashIfFailure", at = @At("HEAD"))
-    private static void flywheel$dumpDeviceFault(VulkanDevice device, int result, String message, CallbackInfo ci) {
+    private static void flywheel$dumpDeviceFault(VulkanDevice _, int result, String _, CallbackInfo _) {
         if (result == VK12.VK_ERROR_DEVICE_LOST) {
             VkDeviceFault.dump();
         }

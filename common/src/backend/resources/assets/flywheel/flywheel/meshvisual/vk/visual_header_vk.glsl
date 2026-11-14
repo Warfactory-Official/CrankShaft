@@ -46,6 +46,7 @@ layout(std140, binding = 9) uniform _FlwMeshVisualFrame {
     float _flw_mvPartialTick;
     float _flw_mvRenderTicks;
     float _flw_mvRenderSeconds;
+    uint _flw_mvGameMillis;
 };
 
 layout(std140, binding = 16) uniform Projection {

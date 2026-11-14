@@ -1,5 +1,7 @@
 package dev.engine_room.vanillin.config;
 
+import dev.engine_room.flywheel.api.visualization.FarVisualRegistry;
+import net.minecraft.world.level.block.Block;
 import dev.engine_room.flywheel.api.visualization.BlockEntityVisualizer;
 import dev.engine_room.flywheel.api.visualization.EntityVisualizer;
 import dev.engine_room.flywheel.api.visualization.VisualizerRegistry;
@@ -22,7 +24,24 @@ public class Configurator {
 
     public <T extends BlockEntity> void register(BlockEntityType<T> type, BlockEntityVisualizer<? super T> visualizer,
                                                  boolean enabledByDefault) {
-        blockEntities.put(type, new ConfiguredBlockEntity<>(type, visualizer, enabledByDefault));
+        register(type, visualizer, enabledByDefault, null);
+    }
+
+    public <T extends BlockEntity> void register(BlockEntityType<T> type, BlockEntityVisualizer<? super T> visualizer,
+                                                 boolean enabledByDefault,
+                                                 FarVisualRegistry.@Nullable Definition farDefinition) {
+        var configured = new ConfiguredBlockEntity<>(type, visualizer, enabledByDefault);
+        configured.farDefinition = farDefinition;
+        if (farDefinition != null) {
+            var blocks = new ArrayList<Block>();
+            for (var block : BuiltInRegistries.BLOCK) {
+                if (type.isValid(block.defaultBlockState())) {
+                    blocks.add(block);
+                }
+            }
+            configured.farBlocks = blocks.toArray(Block[]::new);
+        }
+        blockEntities.put(type, configured);
     }
 
     public <T extends Entity> void register(EntityType<T> type, EntityVisualizer<? super T> visualizer,
@@ -104,6 +123,9 @@ public class Configurator {
     }
 
     public static class ConfiguredBlockEntity<T extends BlockEntity> extends ConfiguredVisual {
+        private FarVisualRegistry.@Nullable Definition farDefinition;
+        private Block[] farBlocks;
+
         public final BlockEntityType<T> type;
         public final BlockEntityVisualizer<? super T> visualizer;
 
@@ -122,11 +144,17 @@ public class Configurator {
         @Override
         protected void enable() {
             VisualizerRegistry.setVisualizer(type, visualizer);
+            if (farDefinition != null) {
+                FarVisualRegistry.register(farDefinition.id(), farDefinition.provider(), farBlocks);
+            }
         }
 
         @Override
         protected void disable() {
             VisualizerRegistry.setVisualizer(type, null);
+            if (farDefinition != null) {
+                FarVisualRegistry.unregister(farDefinition.id());
+            }
         }
     }
 

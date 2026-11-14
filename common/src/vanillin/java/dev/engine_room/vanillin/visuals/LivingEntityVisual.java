@@ -509,7 +509,7 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
     @Override
     @Nullable
     protected Object captureExtra(LivingEntityRenderState state, EntityModel<LivingEntityRenderState> model,
-                                  Matrix4fc local) {
+                                  Matrix4fc _) {
         // Held items ride the same capture: the apply only needs root x handLocal.
         HandItems hands = null;
         if (heldItemsActive) {
@@ -657,7 +657,7 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
     }
 
     @Override
-    protected void applyExtra(@Nullable Object captured, int variant, float[] t, boolean[] draw, Matrix4f root,
+    protected void applyExtra(@Nullable Object captured, int _, float[] t, boolean[] draw, Matrix4f root,
                               int light, int overlay) {
         LivingExtra snapshot = (LivingExtra) captured;
         if (heldItemsActive) {

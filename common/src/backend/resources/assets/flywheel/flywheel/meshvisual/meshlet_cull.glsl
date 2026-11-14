@@ -1,29 +1,6 @@
 // gl_mesh_shader task-cull helpers. Included ONLY by the task stage (visual_task.task).
-struct FrustumPlanes {
-    vec4 xyX;
-    vec4 xyY;
-    vec4 xyZ;
-    vec4 xyW;
-    vec2 zX;
-    vec2 zY;
-    vec2 zZ;
-    vec2 zW;
-};
-struct _FlwCullData {
-    float znear;
-    float zfar;
-    float P00;
-    float P11;
-    float viewWidth;
-    float viewHeight;
-    int pyramidLevels;
-    uint useMin;
-};
-layout(std140, binding = 8) uniform _FlwFrameUniforms {
-    FrustumPlanes flw_frustumPlanes;
-    _FlwCullData _flw_cullData;
-    mat4 flw_view;
-};
+#include "flywheel:meshvisual/cull_uniforms.glsl"
+#include "flywheel:internal/indirect/scene_occlusion.glsl"
 
 layout(std430, binding = 16) restrict readonly buffer _FlwMeshletBoundsBuffer {
     vec4 _flw_meshletBounds[];
@@ -64,14 +41,17 @@ bool _flw_meshletVisible(vec3 center, float radius) {
     if (!_flw_testSphere(center, radius)) {
         return false;
     }
+    if (!_flw_occlusionActive()) return true;
 
     vec3 c = center;
     float r = radius;
     transformBoundingSphere(flw_view, c, r);
 
     vec4 aabb;
-    if (_flw_projectSphere(c, r, _flw_cullData.znear, _flw_cullData.P00, _flw_cullData.P11, aabb)) {
-        vec2 viewSize = vec2(_flw_cullData.viewWidth, _flw_cullData.viewHeight);
+    vec2 lens = _flw_occlusionLens();
+    if (_flw_projectSphere(c, r, _flw_cullData.znear, lens.x, lens.y, aabb)) {
+        aabb = _flw_occlusionBounds(aabb);
+        vec2 viewSize = _flw_occlusionSize();
         vec4 uv = clamp(vec4(min(aabb.xy, aabb.zw), max(aabb.xy, aabb.zw)), 0.0, 1.0);
         ivec4 rect = ivec4(uv * viewSize.xyxy + vec4(0.5, 0.5, -0.5, -0.5));
         if (any(lessThan(rect.zw, rect.xy))) {
@@ -82,7 +62,7 @@ bool _flw_meshletVisible(vec3 center, float radius) {
         ivec2 extent = rect.zw - rect.xy;
         int level = max(findMSB(max(extent.x, extent.y)), 0);
         level += any(greaterThan((rect.zw >> level) - (rect.xy >> level), ivec2(1))) ? 1 : 0;
-        level = min(level, _flw_cullData.pyramidLevels);
+        level = min(level, _flw_occlusionLevels());
 
         ivec4 bounds = rect >> level;
 
@@ -93,9 +73,9 @@ bool _flw_meshletVisible(vec3 center, float radius) {
 
         // Reversed-Z MIN-reduced pyramid: occluder is the MIN sample; cull only when the nearest point is behind it.
         float depth = min(min(depth00, depth01), min(depth10, depth11));
-        float depthSphere = -_flw_cullData.znear / (c.z + r);
+        float depthSphere = _flw_occlusionSphereDepth(c, r);
 
-        if (depthSphere < depth) {
+        if (depthSphere + _flw_occlusionTolerance(depthSphere) < depth) {
             return false;
         }
     }

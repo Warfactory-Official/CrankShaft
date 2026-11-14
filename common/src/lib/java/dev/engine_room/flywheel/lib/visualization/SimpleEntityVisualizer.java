@@ -22,7 +22,7 @@ public final class SimpleEntityVisualizer<T extends Entity> implements EntityVis
     private final Predicate<T> skipVanillaPrimary;
 
     public SimpleEntityVisualizer(Factory<T> visualFactory, Predicate<T> skipVanillaRender) {
-        this(visualFactory, skipVanillaRender, entity -> false);
+        this(visualFactory, skipVanillaRender, _ -> false);
     }
 
     public SimpleEntityVisualizer(Factory<T> visualFactory, Predicate<T> skipVanillaRender,
@@ -111,7 +111,7 @@ public final class SimpleEntityVisualizer<T extends Entity> implements EntityVis
          * @return {@code this}
          */
         public Builder<T> neverSkipVanillaRender() {
-            this.skipVanillaRender = entity -> false;
+            this.skipVanillaRender = _ -> false;
             return this;
         }
 
@@ -123,7 +123,7 @@ public final class SimpleEntityVisualizer<T extends Entity> implements EntityVis
         public SimpleEntityVisualizer<T> apply() {
             Objects.requireNonNull(visualFactory, "Visual factory cannot be null!");
             if (skipVanillaRender == null) {
-                skipVanillaRender = entity -> true;
+                skipVanillaRender = _ -> true;
             }
 
             SimpleEntityVisualizer<T> visualizer = new SimpleEntityVisualizer<>(visualFactory, skipVanillaRender);

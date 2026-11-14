@@ -24,6 +24,7 @@ public final class FlwPrograms {
 
     public static void reload(ResourceManager manager) {
         RenderPipelineCompiler.reset();
+        TerrainOverlayPipelines.clear();
         BackendRecovery.beginReload();
         ProgramAvailability.beginReload();
         Models.invalidate();
@@ -43,8 +44,10 @@ public final class FlwPrograms {
         } else {
             InstancingPrograms.setInstance(null);
             IndirectPrograms.setInstance(null);
+            FarPrograms.setInstance(null);
             InstancingPrograms.reload();
             IndirectPrograms.reload(sources);
+            FarPrograms.reload(sources);
         }
 
         NoiseTextures.reload(manager);

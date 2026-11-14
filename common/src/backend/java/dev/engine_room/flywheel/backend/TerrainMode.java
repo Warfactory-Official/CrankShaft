@@ -1,12 +1,13 @@
 package dev.engine_room.flywheel.backend;
 
+import net.minecraft.util.StringRepresentable;
 import org.jspecify.annotations.Nullable;
 
 /**
  * How much of vanilla/Sodium's chunk terrain flywheel takes over. The single source of truth behind
  * {@link #ownsOpaque()} and {@link #compositesTranslucent()}.
  */
-public enum TerrainMode {
+public enum TerrainMode implements StringRepresentable {
     /**
      * Engine renders no terrain; vanilla/Sodium draws every layer.
      */
@@ -17,8 +18,7 @@ public enum TerrainMode {
     TRANSLUCENT_OIT("translucent"),
     /**
      * Opaque SOLID+CUTOUT takeover ONLY: flywheel culls + draws opaque terrain, Sodium keeps the translucent
-     * layer natively and no terrain rides OIT. The culling-benchmark mode -- both sides of a FULL-vs-Sodium A/B
-     * draw translucent identically, so the frame-time delta isolates the opaque takeover.
+     * layer natively and no terrain rides OIT.
      */
     OPAQUE("opaque"),
     /**
@@ -26,24 +26,25 @@ public enum TerrainMode {
      */
     FULL("full");
 
-    private final String token;
+    private final String serializedName;
 
-    TerrainMode(String token) {
-        this.token = token;
+    TerrainMode(String serializedName) {
+        this.serializedName = serializedName;
     }
 
     @Nullable
     public static TerrainMode byToken(String token) {
         for (TerrainMode mode : values()) {
-            if (mode.token.equalsIgnoreCase(token)) {
+            if (mode.getSerializedName().equalsIgnoreCase(token)) {
                 return mode;
             }
         }
         return null;
     }
 
-    public String token() {
-        return token;
+    @Override
+    public String getSerializedName() {
+        return serializedName;
     }
 
     // The opaque takeover reads Sodium's live geometry arena; without Sodium it must clamp down (see TerrainModeGate).

@@ -1,0 +1,241 @@
+{
+  "schema": 2,
+  "name": "iterationRP",
+  "testedVersions": [
+    "iterationRP Alpha 0.8.31"
+  ],
+  "matches": [
+    {
+      "path": "gbuffers_water.fsh",
+      "contains": [
+        "/Lib/Programs/Gbuffers/Water_FS.glsl"
+      ]
+    },
+    {
+      "path": "clrwl_gbuffers.fsh",
+      "contains": [
+        "/Lib/Programs/Gbuffers/Entities_FS.glsl"
+      ]
+    },
+    {
+      "path": "Lib/Programs/Gbuffers/Water_FS.glsl",
+      "contains": [
+        "SR_IRIS_EXT_VELOCITY"
+      ]
+    }
+  ],
+  "resources": {
+    "/flywheel/iteration_display.glsl": "iteration_display.glsl"
+  },
+  "files": [],
+  "wrappers": [],
+  "blends": [
+    {
+      "target": "clrwl_gbuffers_translucent",
+      "nativeProgram": "gbuffers_water",
+      "global": false
+    }
+  ],
+  "properties": "blend.clrwl_gbuffers_additive = ONE ONE ONE ONE\nblend.clrwl_gbuffers_unlit_translucent = SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ONE_MINUS_SRC_ALPHA\n",
+  "deferredTranslucent": true,
+  "patches": [
+    "iteration_contract.patch",
+    "iteration_0831_targets.patch",
+    "iteration_light.patch"
+  ],
+  "programs": [
+    {
+      "target": "clrwl_gbuffers_unlit_translucent",
+      "fragment": "iteration_unlit_translucent.fsh"
+    },
+    {
+      "target": "clrwl_gbuffers_additive",
+      "fragment": "iteration_light.fsh"
+    },
+    {
+      "target": "crankshaft_gbuffers_additive",
+      "fragment": "iteration_light.fsh",
+      "vertex": "gbuffers_entities",
+      "nativeDraw": true
+    }
+  ],
+  "emissiveLight": true,
+  "deferred": {
+    "profile": "ITERATION",
+    "sources": {
+      "programs": [
+        "gbuffers_water",
+        "clrwl_gbuffers",
+        "composite",
+        "final",
+        "composite1",
+        "composite2",
+        "composite3",
+        "composite4",
+        "composite5",
+        "composite6",
+        "composite7",
+        "composite8",
+        "composite9",
+        "composite10",
+        "composite11",
+        "composite12",
+        "composite13",
+        "composite14",
+        "composite15",
+        "composite16",
+        "composite17",
+        "composite18",
+        "composite19",
+        "composite20",
+        "composite21",
+        "composite22",
+        "composite23",
+        "composite24",
+        "composite25",
+        "composite26",
+        "composite27",
+        "composite28",
+        "composite29",
+        "composite30",
+        "composite31",
+        "composite32",
+        "composite33",
+        "composite34",
+        "composite35",
+        "composite36",
+        "composite37",
+        "composite38",
+        "composite39",
+        "composite40",
+        "composite41",
+        "composite42",
+        "composite43",
+        "composite44",
+        "composite45",
+        "composite46",
+        "composite47",
+        "composite48",
+        "composite49",
+        "composite50",
+        "composite51",
+        "composite52",
+        "composite53",
+        "composite54",
+        "composite55",
+        "composite56",
+        "composite57",
+        "composite58",
+        "composite59",
+        "composite60",
+        "composite61",
+        "composite62",
+        "composite63",
+        "composite64",
+        "composite65",
+        "composite66",
+        "composite67",
+        "composite68",
+        "composite69",
+        "composite70",
+        "composite71",
+        "composite72",
+        "composite73",
+        "composite74",
+        "composite75",
+        "composite76",
+        "composite77",
+        "composite78",
+        "composite79",
+        "composite80",
+        "composite81",
+        "composite82",
+        "composite83",
+        "composite84",
+        "composite85",
+        "composite86",
+        "composite87",
+        "composite88",
+        "composite89",
+        "composite90",
+        "composite91",
+        "composite92",
+        "composite93",
+        "composite94",
+        "composite95",
+        "composite96",
+        "composite97",
+        "composite98",
+        "composite99"
+      ],
+      "paths": [
+        "shaders.properties"
+      ],
+      "fingerprints": [
+        "5ae585684d547ab8ca9515af51ff70f41324acfd26216fed5317f369427630d1"
+      ]
+    }
+  },
+  "nativeDepth": {
+    "patches": [
+      "iteration_0831_native_depth.patch"
+    ],
+    "depthLines": {
+      "Lib/BasicFunctions/Sunlight_Shadow.glsl": "203316a8e6d10360",
+      "Lib/FidelityFX/FSR2/GbufferScale.glsl": "c884a735ae1b55a2",
+      "Lib/FidelityFX/FSR2/Reconstruct_Dilate_CS.glsl": "7c7b95dabeaa2f11",
+      "Lib/IndividualFunctions/DOF.glsl": "5d36b451055b9f32",
+      "Lib/IndividualFunctions/VolumetricFog.glsl": "0040994bdf4a4ea9",
+      "Lib/PathTracing/Denoiser/SpecularSpatialFilter.glsl": "8e265dfd600d79ff",
+      "Lib/PathTracing/Denoiser/SpecularTemporalFilter.glsl": "c6f546cec4e2d9bd",
+      "Lib/PathTracing/Tracer/TracingUtilities.glsl": "152193f4b60acbbd",
+      "Lib/PathTracing/Voxelizer/Shadow.glsl": "b2955514256e3339",
+      "Lib/Programs/Begin/SSBOUpdate_CS.glsl": "7353438556081468",
+      "Lib/Programs/Composite/DiffuseTracing_FS.glsl": "004acbeecd2823f2",
+      "Lib/Programs/Composite/IRC_CS.glsl": "004acbeecd2823f2",
+      "Lib/Programs/Composite/MotionBlur_FS.glsl": "d22430174e6e0f01",
+      "Lib/Programs/Composite/PixelData_VS.glsl": "027393ce54fcd8d3",
+      "Lib/Programs/Composite/SH_TRACING_CS.glsl": "004acbeecd2823f2",
+      "Lib/Programs/Composite/Soild_FS.glsl": "2a76c8f6bc6c2da6",
+      "Lib/Programs/Composite/SpecularSpatial_0_FS.glsl": "c6f546cec4e2d9bd",
+      "Lib/Programs/Composite/SpecularSpatial_1_FS.glsl": "c6f546cec4e2d9bd",
+      "Lib/Programs/Composite/SpecularSpatial_2_FS.glsl": "c6f546cec4e2d9bd",
+      "Lib/Programs/Composite/SpecularTemporal_FS.glsl": "c6f546cec4e2d9bd",
+      "Lib/Programs/Composite/SpecularTracing_FS.glsl": "c68ba0cfe2950236",
+      "Lib/Programs/Composite/SpecularVolumetric_FS.glsl": "c68ba0cfe2950236",
+      "Lib/Programs/Composite/TAA.glsl": "37e4900a2f19aa7c",
+      "Lib/Programs/Composite/Translucent_FS.glsl": "646f4c4da41a642a",
+      "Lib/Programs/Composite/Volumetric_FS.glsl": "c68ba0cfe2950236",
+      "Lib/Programs/Composite/WaterRefraction_FS.glsl": "c6f546cec4e2d9bd",
+      "Lib/Programs/Final_FS.glsl": "9c0947b72d688da3",
+      "Lib/Programs/Gbuffers/Armor_Glint_VS.glsl": "a9e35b60b1564f62",
+      "Lib/Programs/Gbuffers/Basic_VS.glsl": "a9e35b60b1564f62",
+      "Lib/Programs/Gbuffers/Beaconbeam_VS.glsl": "907ea0ff4e96dd4e",
+      "Lib/Programs/Gbuffers/Composite_Copy_CS.glsl": "e0b68e836bd74b71",
+      "Lib/Programs/Gbuffers/DH_Terrain_VS.glsl": "e293f9201a651cd6",
+      "Lib/Programs/Gbuffers/DH_Water_FS.glsl": "482be1b70d40f70e",
+      "Lib/Programs/Gbuffers/DH_Water_VS.glsl": "e293f9201a651cd6",
+      "Lib/Programs/Gbuffers/Damagedblock_VS.glsl": "a9e35b60b1564f62",
+      "Lib/Programs/Gbuffers/Entities_FS.glsl": "d9905e6557a3d4b4",
+      "Lib/Programs/Gbuffers/Entities_VS.glsl": "0bfd51172cc9c2c6",
+      "Lib/Programs/Gbuffers/Hand_Water_VS.glsl": "dc6764d3c205e66e",
+      "Lib/Programs/Gbuffers/Line_FS_IMAGE.glsl": "0db8c7a3941418ed",
+      "Lib/Programs/Gbuffers/Line_VS.glsl": "b5ec3353d22f86e3",
+      "Lib/Programs/Gbuffers/Skybasic_VS.glsl": "0f8110fd0f1d0e97",
+      "Lib/Programs/Gbuffers/Skytextured_VS.glsl": "0f8110fd0f1d0e97",
+      "Lib/Programs/Gbuffers/Terrain_FS.glsl": "d9905e6557a3d4b4",
+      "Lib/Programs/Gbuffers/Terrain_VS.glsl": "907ea0ff4e96dd4e",
+      "Lib/Programs/Gbuffers/Textured_FS.glsl": "1a5efdfd25f36606",
+      "Lib/Programs/Gbuffers/Textured_VS.glsl": "342d9af33ed69cc1",
+      "Lib/Programs/Gbuffers/VX_Terrain_FS.glsl": "586825054279237f",
+      "Lib/Programs/Gbuffers/VX_Water_FS.glsl": "d2e06863e988cc27",
+      "Lib/Programs/Gbuffers/Water_FS.glsl": "14277231cab3b5d0",
+      "Lib/Programs/Gbuffers/Water_VS.glsl": "907ea0ff4e96dd4e",
+      "Lib/Programs/Gbuffers/Weather_VS.glsl": "907ea0ff4e96dd4e",
+      "Lib/RTWSM/BackwardAnalysis.glsl": "3088332e52d52035",
+      "Lib/Uniform/ShadowTransforms.glsl": "1668a3054ebc3c62",
+      "Lib/UniformDeclare.glsl": "975c0a9b5aebe6d6",
+      "shaders.properties": "fe9ee6d5e59f08a9"
+    }
+  }
+}

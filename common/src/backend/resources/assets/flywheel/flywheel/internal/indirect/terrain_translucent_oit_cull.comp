@@ -13,7 +13,7 @@ layout(std140, binding = 8) uniform TerrainHiZUniforms {
 };
 layout(std140, binding = 9) uniform TranslucentCullCount { uint candidateCount; uint _pad0; uint _pad1; uint _pad2; };
 
-// Candidate: 10 uints -- origin xyz, section s, baseVertex, indexCount, geoAddr lo/hi, fade, pad.
+// Candidate: origin xyz, section s, baseVertex, indexCount, geometry address, fade, pad; optional receiver address.
 layout(std430, binding = 0) restrict readonly buffer CandidateBuf { uint candidate[]; };
 layout(std430, binding = 4) restrict writeonly buffer CommandBuf { uint command[]; };
 layout(std430, binding = 5) restrict buffer CountBuf { uint drawCount; };
@@ -21,7 +21,11 @@ layout(std430, binding = 6) restrict writeonly buffer DrawDataBuf { uint drawDat
 
 layout(binding = 10) uniform sampler2D hizPyramid;
 
+#ifdef _FLW_TERRAIN_RECEIVER_DATA
+const uint CANDIDATE_STRIDE = 12u;
+#else
 const uint CANDIDATE_STRIDE = 10u;
+#endif
 const uint COMMAND_STRIDE = 5u;
 const uint DRAW_DATA_STRIDE = 8u;
 
@@ -65,4 +69,11 @@ void main() {
     drawData[db + 3u] = candidate[base + 8u];
     drawData[db + 4u] = candidate[base + 6u];
     drawData[db + 5u] = candidate[base + 7u];
+    #ifdef _FLW_TERRAIN_RECEIVER_DATA
+    drawData[db + 6u] = candidate[base + 10u];
+    drawData[db + 7u] = candidate[base + 11u];
+    #else
+    drawData[db + 6u] = 0u;
+    drawData[db + 7u] = 0u;
+    #endif
 }

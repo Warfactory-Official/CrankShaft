@@ -20,14 +20,24 @@ layout(std430, binding = 13) restrict readonly buffer CompactGeom {
     uint compactGeom[];
 };
 layout(std430, binding = 12) restrict readonly buffer GeometryPointers {
-    restrict Vertex *geometryPtrs[];
+    restrict Vertex * geometryPtrs[];
 };
+
+#ifdef _FLW_TERRAIN_OVERLAY
+layout(std430, binding = 14) restrict readonly buffer TerrainReceiverPointers {
+    restrict uint * terrainReceivers[];
+};
+#endif
 
 layout(std430, binding = 10) restrict writeonly buffer CachedVerts {
     CachedVert cachedVerts[];
 };
 layout(std430, binding = 11) restrict writeonly buffer QuadFade {
+#ifdef _FLW_TERRAIN_RECEIVER_DATA
+    uvec2 quadData[];
+#else
     float quadFade[];
+#endif
 };
 layout(std430, binding = 15) restrict buffer DrawIndirect {
     uint drawVertexCount;
@@ -97,7 +107,14 @@ void main() {
                 }
 
                 uint outQuad = atomicAdd(drawVertexCount, 6u) / 6u;
+                #ifdef _FLW_TERRAIN_RECEIVER_DATA
+                uint receiver = 0u;
+                restrict uint *receivers = terrainReceivers[slot];
+                if (uint64_t(receivers) != uint64_t(0) && quadVertexBase < receivers[0])receiver = receivers[quadVertexBase + 1u];
+                quadData[outQuad] = uvec2(floatBitsToUint(fade), receiver);
+                #else
                 quadFade[outQuad] = fade;
+                #endif
                 for (uint k = 0u; k < 4u; k++) {
                     cachedVerts[outQuad * 4u + k] = CachedVert(pos[k].x, pos[k].y, pos[k].z, uvw[k],
                             packHalf2x16(col[k].rg), packHalf2x16(col[k].ba));

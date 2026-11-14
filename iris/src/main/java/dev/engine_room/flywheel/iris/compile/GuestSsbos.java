@@ -15,8 +15,9 @@ public final class GuestSsbos {
     // Terrain draws additionally hold the region input (10) and section fade (11) buffers, so a pack's buffers
     // have to clear those too.
     public static final int TERRAIN_BINDING_OFFSET = 12;
-    // Above IndirectBuffers/LightBuffers/MatrixBuffer (0..7).
-    static final int BINDING_OFFSET = 8;
+    // Above IndirectBuffers/LightBuffers/MatrixBuffer (0..7), GlBindlessTable (8), GuestTextureInfo (9) and the
+    // instance/pose/moved history (10..12).
+    public static final int BINDING_OFFSET = 13;
 
     private GuestSsbos() {
     }
@@ -32,7 +33,10 @@ public final class GuestSsbos {
         bindAt(pipeline, BINDING_OFFSET);
     }
 
-    private static void bindAt(IrisRenderingPipeline pipeline, int offset) {
+    /**
+     * Binds the same Iris-owned storage above a native host's geometry range. Render thread, per host draw boundary.
+     */
+    public static void bindAt(IrisRenderingPipeline pipeline, int offset) {
         ShaderStorageBufferHolder holder = ((IrisRenderingPipelineAccessor) pipeline).flywheel$shaderStorageBuffers();
         if (holder == null) {
             return;

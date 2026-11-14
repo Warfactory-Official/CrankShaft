@@ -23,6 +23,12 @@ import java.io.StringReader;
 import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+import io.github.douira.glsl_transformer.ast.node.declaration.InterfaceBlockDeclaration;
+import io.github.douira.glsl_transformer.ast.node.expression.ReferenceExpression;
+import io.github.douira.glsl_transformer.ast.node.type.qualifier.StorageQualifier;
+import io.github.douira.glsl_transformer.ast.print.ASTPrinter;
 
 /**
  * {@code colorwheel.properties}.
@@ -42,6 +48,17 @@ public final class ContractProperties {
     private ContractProperties() {
     }
 
+    public static ContractProperties forward(ForwardOit forward) {
+        var result = new ContractProperties();
+        result.gbuffersOit.enabled = true;
+        result.gbuffersOit.ranks = new int[]{3};
+        result.gbuffersOit.accumulate.put(forward.target(), new Accumulate(0, InternalTextureFormat.RGBA32F));
+        result.gbuffersOit.accumulate.put(14, new Accumulate(0, InternalTextureFormat.RGBA32F));
+        result.gbuffersOit.forward = forward;
+        result.blend.put(ContractProgram.GBUFFERS_TRANSLUCENT, forward.blend());
+        return result;
+    }
+
     /**
      * {@code authored}: an adapter's declared targets, {@code frontmost} ones taken whatever their blend or format;
      * needs {@code certifiedAlpha}. Undeclared, every target must be a source-over signal.
@@ -51,20 +68,42 @@ public final class ContractProperties {
         if (!source.isValid() || source.getGeometrySource().isPresent() || source.getTessControlSource().isPresent()
                 || source.getTessEvalSource().isPresent() || source.getDirectives().hasUnknownDrawBuffers())
             return null;
-        String stages = COMMENT.matcher(source.getVertexSource().orElseThrow() + '\n'
-                + source.getFragmentSource().orElseThrow()).replaceAll(" ");
+        int[] buffers = source.getDirectives().getDrawBuffers();
+        InternalTextureFormat[] formats = new InternalTextureFormat[buffers.length];
+        BlendMode[] blends = new BlendMode[buffers.length];
+        BlendModeOverride override = source.getDirectives().getBlendModeOverride().orElse(null);
+        BlendMode global = override == null ? new BlendMode(GL11C.GL_SRC_ALPHA, GL11C.GL_ONE_MINUS_SRC_ALPHA,
+                GL11C.GL_ONE,
+                GL11C.GL_ONE_MINUS_SRC_ALPHA) : ((BlendModeOverrideAccessor) override).flywheel$blendMode();
+        for (int slot = 0; slot < buffers.length; slot++) {
+            formats[slot] = source.getParent().getPackDirectives().getRenderTargetDirectives()
+                                  .getRenderTargetSettings().get(buffers[slot]).getInternalFormat();
+            blends[slot] = global;
+            for (var buffer : source.getDirectives().getBufferBlendOverrides())
+                if (buffer.index() == buffers[slot]) blends[slot] = buffer.blendMode();
+        }
+        return nativeForwardOit(source.getName(), source.getVertexSource().orElseThrow(),
+                source.getFragmentSource().orElseThrow(), buffers, formats, blends, certifiedAlpha, authored);
+    }
+
+    /**
+     * Host callbacks use their own target order and blend declaration, while sharing checked attachment semantics.
+     */
+    static @Nullable ContractProperties nativeForwardOit(String name, String vertex, String fragment, int[] buffers,
+                                                         InternalTextureFormat[] formats, BlendMode[] blends,
+                                                         boolean certifiedAlpha, Oit authored) {
+        String stages = COMMENT.matcher(vertex + '\n' + fragment).replaceAll(" ");
         if (SIDE_EFFECT.matcher(stages).find()) {
             FlwBackend.LOGGER.info(
                     "Shared OIT rejected: {} has depth or storage side effects; retaining native translucency",
-                    source.getName());
+                    name);
             return null;
         }
-        int[] buffers = source.getDirectives().getDrawBuffers();
         if (buffers.length == 0 || buffers.length > 8) return null;
         boolean spec = authored.enabled();
         if (spec && !certifiedAlpha) {
             FlwBackend.LOGGER.info("Shared OIT rejected: {} adapter OIT spec without a checked source",
-                    source.getName());
+                    name);
             return null;
         }
         int accumulated = 0;
@@ -72,29 +111,24 @@ public final class ContractProperties {
             Accumulate declared = spec ? authored.declared(buffer) : null;
             if (spec && declared == null) {
                 FlwBackend.LOGGER.info("Shared OIT rejected: {} colortex{} missing from the adapter's OIT spec",
-                        source.getName(), buffer);
+                        name, buffer);
                 return null;
             }
             if (declared == null || declared.coefficient() != Accumulate.FRONTMOST) accumulated++;
         }
-        BlendModeOverride override = source.getDirectives().getBlendModeOverride().orElse(null);
-        BlendMode global = override == null ? new BlendMode(GL11C.GL_SRC_ALPHA, GL11C.GL_ONE_MINUS_SRC_ALPHA,
-                GL11C.GL_ONE,
-                GL11C.GL_ONE_MINUS_SRC_ALPHA) : ((BlendModeOverrideAccessor) override).flywheel$blendMode();
         ContractProperties result = new ContractProperties();
         result.gbuffersOit.ranks = new int[accumulated];
         Arrays.fill(result.gbuffersOit.ranks, accumulated <= 2 ? 3 : accumulated <= 4 ? 2 : 1);
         int coefficient = 0;
         for (int slot = 0; slot < buffers.length; slot++) {
-            InternalTextureFormat format = source.getParent().getPackDirectives().getRenderTargetDirectives()
-                                                 .getRenderTargetSettings().get(buffers[slot]).getInternalFormat();
+            InternalTextureFormat format = formats[slot];
             Accumulate declared = spec ? authored.declared(buffers[slot]) : null;
             if (declared != null && declared.coefficient() == Accumulate.FRONTMOST) {
                 result.gbuffersOit.accumulate.put(buffers[slot], new Accumulate(Accumulate.FRONTMOST, format));
                 continue;
             }
             if (format.getShaderDataType() != ShaderDataType.FLOAT || format.name().endsWith("_SNORM")) {
-                FlwBackend.LOGGER.info("Shared OIT rejected: {} colortex{} has unsupported format {}", source.getName(),
+                FlwBackend.LOGGER.info("Shared OIT rejected: {} colortex{} has unsupported format {}", name,
                         buffers[slot], format);
                 return null;
             }
@@ -102,13 +136,10 @@ public final class ContractProperties {
             if (!normalized && !certifiedAlpha) {
                 FlwBackend.LOGGER.info(
                         "Shared OIT rejected: {} colortex{} needs a checked floating-point opacity contract",
-                        source.getName(), buffers[slot]);
+                        name, buffers[slot]);
                 return null;
             }
-            BlendMode mode = global;
-            for (BufferBlendInformation buffer : source.getDirectives().getBufferBlendOverrides()) {
-                if (buffer.index() == buffers[slot]) mode = buffer.blendMode();
-            }
+            BlendMode mode = blends[slot];
             // Only a declared source-over signal is composable without knowing the pack's deferred material ABI.
             // Compat with Iris: RGB targets discard alpha, so their alpha blend factors do not affect storage.
             if (mode == null || mode.dstRgb() != GL11C.GL_ONE_MINUS_SRC_ALPHA
@@ -116,19 +147,51 @@ public final class ContractProperties {
                     || format.getPixelFormat() != PixelFormat.RGB && !sourceOverAlpha(mode)) {
                 FlwBackend.LOGGER.info(
                         "Shared OIT rejected: {} colortex{} is not source-over; retaining native translucency",
-                        source.getName(), buffers[slot]);
+                        name, buffers[slot]);
                 return null;
             }
             result.gbuffersOit.accumulate.put(buffers[slot], new Accumulate(coefficient++,
                     InternalTextureFormat.RGBA32F, mode.srcRgb() == GL11C.GL_ONE, normalized));
         }
         result.gbuffersOit.enabled = true;
-        result.blend.put(ContractProgram.GBUFFERS_TRANSLUCENT,
-                override == null ? new BlendModeOverride(global) : override);
-        result.bufferBlend.put(ContractProgram.GBUFFERS_TRANSLUCENT, source.getDirectives().getBufferBlendOverrides());
-        FlwBackend.LOGGER.info("Shared forward OIT accepted: {} targets {} ranks {}", source.getName(),
+        result.blend.put(ContractProgram.GBUFFERS_TRANSLUCENT, blends.length == 0 || blends[0] == null
+                ? BlendModeOverride.OFF : new BlendModeOverride(blends[0]));
+        var overrides = new ArrayList<BufferBlendInformation>();
+        for (int slot = 0; slot < buffers.length; slot++)
+            overrides.add(new BufferBlendInformation(buffers[slot], blends[slot]));
+        result.bufferBlend.put(ContractProgram.GBUFFERS_TRANSLUCENT, overrides);
+        FlwBackend.LOGGER.info("Shared forward OIT accepted: {} targets {} ranks {}", name,
                 Arrays.toString(buffers), Arrays.toString(result.gbuffersOit.ranks));
         return result;
+    }
+
+    /**
+     * Only reachable callback code can repeat side effects; unused library helpers do not execute.
+     */
+    static String hostEffects(String source, String entry) {
+        if (source.isBlank()) return source;
+        var parser = GuestShaders.versionedTransformer();
+        var tree = parser.parseSeparateTranslationUnit(source.stripLeading().startsWith("#version")
+                ? source : GuestShaders.versionPreamble() + source);
+        var root = tree.getRoot();
+        var reachable = FarVoxyNormals.reachable(root, entry);
+        StringBuilder result = new StringBuilder();
+        reachable.forEach(function -> result.append(ASTPrinter.printSimple(function)).append('\n'));
+        var references = root.nodeIndex.getStream(ReferenceExpression.class)
+                                       .filter(reference -> reachable.stream().anyMatch(reference::hasAncestor))
+                                       .map(reference -> reference.getIdentifier().getName())
+                                       .collect(Collectors.toSet());
+        for (var block : root.nodeIndex.getStream(InterfaceBlockDeclaration.class).toList()) {
+            boolean storage = block.getTypeQualifier().getParts().stream().anyMatch(part ->
+                    part instanceof StorageQualifier qualifier && qualifier.storageType == StorageQualifier.StorageType.BUFFER);
+            if (!storage) continue;
+            boolean used = block.getVariableName() != null ? references.contains(block.getVariableName().getName())
+                    : block.getStructBody().getMembers().stream().flatMap(member -> member.getDeclarators().stream())
+                           .anyMatch(member -> references.contains(member.getName().getName()));
+            if (used) result.append(" buffer ");
+        }
+        tree.detachAndDelete();
+        return result.toString();
     }
 
     private static boolean sourceOverAlpha(BlendMode mode) {
@@ -244,6 +307,11 @@ public final class ContractProperties {
         private boolean enabled;
         private boolean declared;
         private int[] ranks = new int[0];
+        private @Nullable ForwardOit forward;
+
+        public @Nullable ForwardOit forward() {
+            return forward;
+        }
 
         public boolean enabled() {
             return enabled;

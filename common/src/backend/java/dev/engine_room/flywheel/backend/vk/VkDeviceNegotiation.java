@@ -36,6 +36,7 @@ public final class VkDeviceNegotiation {
     private static boolean vendorBinarySupported;
     private static boolean crashDiagSupported;
     private static int robustUniformDescriptorSize;
+    private static int robustUniformTexelDescriptorSize;
     private static int robustStorageDescriptorSize;
 
     private VkDeviceNegotiation() {
@@ -92,6 +93,7 @@ public final class VkDeviceNegotiation {
                                                                            .pNext(features11.address());
             VK11.vkGetPhysicalDeviceFeatures2(physicalDevice.vkPhysicalDevice(), features2);
             VkPhysicalDeviceFeatures features10 = features2.features();
+            VkCaps.SHADER_FLOAT64_SUPPORTED = features10.shaderFloat64();
             VkCaps.DRAW_INDIRECT_FIRST_INSTANCE_SUPPORTED = features10.drawIndirectFirstInstance();
             VkCaps.DRAW_INDIRECT_COUNT_SUPPORTED = features12.drawIndirectCount();
             VkCaps.BUFFER_DEVICE_ADDRESS_SUPPORTED = features12.bufferDeviceAddress();
@@ -175,11 +177,13 @@ public final class VkDeviceNegotiation {
             VkCaps.DESCRIPTOR_BUFFER_SUPPORTED = descriptorBuffer;
             VkCaps.DB_OFFSET_ALIGNMENT = db.descriptorBufferOffsetAlignment();
             VkCaps.DB_UNIFORM_BUFFER_SIZE = (int) db.uniformBufferDescriptorSize();
+            VkCaps.DB_UNIFORM_TEXEL_BUFFER_SIZE = (int) db.uniformTexelBufferDescriptorSize();
             VkCaps.DB_STORAGE_BUFFER_SIZE = (int) db.storageBufferDescriptorSize();
             VkCaps.DB_COMBINED_IMAGE_SAMPLER_SIZE = (int) db.combinedImageSamplerDescriptorSize();
             VkCaps.DB_STORAGE_IMAGE_SIZE = (int) db.storageImageDescriptorSize();
             VkCaps.DB_INPUT_ATTACHMENT_SIZE = (int) db.inputAttachmentDescriptorSize();
             robustUniformDescriptorSize = (int) db.robustUniformBufferDescriptorSize();
+            robustUniformTexelDescriptorSize = (int) db.robustUniformTexelBufferDescriptorSize();
             robustStorageDescriptorSize = (int) db.robustStorageBufferDescriptorSize();
             VkCaps.DB_MAX_RESOURCE_RANGE = VkCaps.unsignedSize(db.maxResourceDescriptorBufferRange());
             VkCaps.DB_MAX_SAMPLER_RANGE = VkCaps.unsignedSize(db.maxSamplerDescriptorBufferRange());
@@ -206,6 +210,8 @@ public final class VkDeviceNegotiation {
 
         request(vulkanFeatures, VkCaps.DRAW_INDIRECT_FIRST_INSTANCE_SUPPORTED, VK10_FEATURES_STRUCT,
                 "drawIndirectFirstInstance", VkPhysicalDeviceFeatures.DRAWINDIRECTFIRSTINSTANCE);
+        request(vulkanFeatures, VkCaps.SHADER_FLOAT64_SUPPORTED, VK10_FEATURES_STRUCT,
+                "shaderFloat64", VkPhysicalDeviceFeatures.SHADERFLOAT64);
         request(vulkanFeatures, VkCaps.FRAGMENT_STORES_AND_ATOMICS_SUPPORTED, VK10_FEATURES_STRUCT,
                 "fragmentStoresAndAtomics", VkPhysicalDeviceFeatures.FRAGMENTSTORESANDATOMICS);
         request(vulkanFeatures, VkCaps.INDEPENDENT_BLEND_SUPPORTED, VK10_FEATURES_STRUCT,
@@ -328,6 +334,7 @@ public final class VkDeviceNegotiation {
 
     private static void publish(VkDeviceCreateInfo createInfo, boolean success) {
         VkPhysicalDeviceFeatures features10 = createInfo.pEnabledFeatures();
+        VkCaps.SHADER_FLOAT64_NEGOTIATED = success && VkCaps.SHADER_FLOAT64_SUPPORTED && features10.shaderFloat64();
         VkCaps.DRAW_INDIRECT_FIRST_INSTANCE_NEGOTIATED = success && VkCaps.DRAW_INDIRECT_FIRST_INSTANCE_SUPPORTED
                 && features10.drawIndirectFirstInstance();
         VkCaps.FRAGMENT_STORES_AND_ATOMICS_NEGOTIATED = success && VkCaps.FRAGMENT_STORES_AND_ATOMICS_SUPPORTED
@@ -364,6 +371,7 @@ public final class VkDeviceNegotiation {
                 VkPhysicalDeviceDescriptorBufferFeaturesEXT.DESCRIPTORBUFFER);
         if (VkCaps.DESCRIPTOR_BUFFER_NEGOTIATED && features10.robustBufferAccess()) {
             VkCaps.DB_UNIFORM_BUFFER_SIZE = robustUniformDescriptorSize;
+            VkCaps.DB_UNIFORM_TEXEL_BUFFER_SIZE = robustUniformTexelDescriptorSize;
             VkCaps.DB_STORAGE_BUFFER_SIZE = robustStorageDescriptorSize;
         }
         VkCaps.DYNAMIC_RENDERING_LOCAL_READ_NEGOTIATED = success && VkCaps.DYNAMIC_RENDERING_LOCAL_READ_SUPPORTED

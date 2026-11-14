@@ -24,15 +24,23 @@ public final class VkCompilationTasks {
     private VkCompilationTasks() {
     }
 
+    /**
+     * Off the render thread: queues {@code resource} for the render thread, joined loading's or
+     * {@link VkAsyncBuilds}'s.
+     */
     public static boolean deferCleanup(Destroyable resource) {
+        if (RenderSystem.isOnRenderThread()) return false;
         Queue<Destroyable> pending = cleanup;
-        if (pending == null || RenderSystem.isOnRenderThread()) return false;
-        pending.add(resource);
+        if (pending != null) pending.add(resource);
+        else VkAsyncBuilds.deferCleanup(resource);
         return true;
     }
 
     public static void run(List<Runnable> jobs) {
-        RenderSystem.assertOnRenderThread();
+        VkAsyncBuilds.warm(() -> runJobs(jobs));
+    }
+
+    private static void runJobs(List<Runnable> jobs) {
         VkPipelineCaches.initialize();
         if (VkPrograms.bindlessTexturesEnabled()) VkBindlessTable.setLayoutHandle();
         int threads = Math.min(jobs.size(), Runtime.getRuntime().availableProcessors());
@@ -61,11 +69,11 @@ public final class VkCompilationTasks {
             boolean frames = true;
             for (Future<?> future : futures) {
                 try {
-                    for (;;) {
+                    for (; ; ) {
                         try {
                             future.get(50, TimeUnit.MILLISECONDS);
                             break;
-                        } catch (TimeoutException e) {
+                        } catch (TimeoutException _) {
                             if (!frames) continue;
                             try {
                                 ShaderWarmupSplash.progress(joined, futures.size(), () -> {

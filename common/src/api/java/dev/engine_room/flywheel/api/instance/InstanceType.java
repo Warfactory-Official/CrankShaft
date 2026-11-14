@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.api.instance;
 
 import dev.engine_room.flywheel.api.layout.Layout;
 import net.minecraft.resources.Identifier;
+import org.jspecify.annotations.Nullable;
 
 import java.util.function.LongConsumer;
 
@@ -53,4 +54,20 @@ public interface InstanceType<I extends Instance> {
      * @apiNote {@code flywheel/} is implicitly prepended to the {@link Identifier}'s path.
      */
     Identifier cullShader();
+
+    /**
+     * Unknown or non-affine vertex motion retains the source triangles.
+     */
+    default @Nullable InstanceTransform transform() {
+        return null;
+    }
+
+    /**
+     * Whether the vertex shader reads a time input ({@code flw_gameMillis}, {@code flw_partialTick},
+     * {@code flw_renderTicks}, {@code flw_renderSeconds} or {@code flw_systemSeconds}): shaderpack motion vectors then
+     * evaluate every instance of this type again at the previous frame's time inputs, written since or not.
+     */
+    default boolean timeAnimated() {
+        return false;
+    }
 }

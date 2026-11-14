@@ -15,10 +15,10 @@ public interface Backend {
 
     /**
      * The priority of this backend.
-     * <p>The backend with the highest priority upon first launch will be chosen as the default backend.
+     * <p>The automatically selectable backend with the highest priority upon first launch is the default backend.
      *
-     * <p>If the selected backend becomes unavailable for whatever reason, the next supported backend
-     * with a LOWER priority than the selected one will be chosen.
+     * <p>If the selected backend becomes unavailable, fallback first tries lower-priority automatic backends,
+     * then retries the remaining supported automatic backends before settling on the off backend.
      *
      * @return The priority of this backend.
      */
@@ -28,6 +28,14 @@ public interface Backend {
      * Check if this backend is supported.
      */
     boolean isSupported();
+
+    /**
+     * Whether default and fallback selection may choose this backend. Explicit config or command selection
+     * still uses {@link #isSupported()}; manual backends remain available in the backend selector.
+     */
+    default boolean automaticSelection() {
+        return true;
+    }
 
     /**
      * Whether this backend is GPU-driven: its draw is compute-culled and GPU-built (terrain takeover,

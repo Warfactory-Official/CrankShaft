@@ -6,7 +6,6 @@ import dev.engine_room.flywheel.api.visualization.ItemStackVisualizer;
 import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.impl.extension.BlockEntityTypeExtension;
 import dev.engine_room.flywheel.impl.extension.EntityTypeExtension;
-import dev.engine_room.flywheel.impl.extension.ItemExtension;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.Item;
@@ -45,10 +44,10 @@ public final class VisualizerRegistryImpl {
 
     @Nullable
     public static ItemStackVisualizer getVisualizer(Item item) {
-        return ((ItemExtension) item).flywheel$getVisualizer();
+        return item.flywheel$getVisualizer();
     }
 
     public static void setVisualizer(Item item, @Nullable ItemStackVisualizer visualizer) {
-        ((ItemExtension) item).flywheel$setVisualizer(visualizer);
+        item.flywheel$setVisualizer(visualizer);
     }
 }

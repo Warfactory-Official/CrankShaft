@@ -29,7 +29,7 @@ public interface RunnableWithContext<C> extends Consumer<C> {
         void run();
 
         @Override
-        default void run(C ignored) {
+        default void run(C _) {
             run();
         }
     }

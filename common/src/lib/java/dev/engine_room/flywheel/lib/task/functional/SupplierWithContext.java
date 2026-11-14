@@ -32,7 +32,7 @@ public interface SupplierWithContext<C, R> extends Function<C, R> {
         R get();
 
         @Override
-        default R get(C ignored) {
+        default R get(C _) {
             return get();
         }
     }

@@ -34,8 +34,8 @@ abstract class CloudRendererMixin {
     @Inject(method = "render",
             at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;getDynamicUniforms()Lnet/minecraft/client/renderer/DynamicUniforms;"),
             cancellable = true)
-    private void flywheel$captureClouds(int color, CloudStatus cloudStatus, float bottomY, int range,
-                                        Vec3 cameraPosition, long gameTime, float partialTicks, CallbackInfo ci) {
+    private void flywheel$captureClouds(int _, CloudStatus cloudStatus, float _, int _,
+                                        Vec3 _, long _, float _, CallbackInfo ci) {
         if (FabulousReroute.captureClouds(ubo.currentBuffer(), utb.currentBuffer(), quadCount,
                 cloudStatus == CloudStatus.FANCY)) {
             ci.cancel();

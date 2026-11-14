@@ -1,0 +1,34 @@
+{
+  "schema": 2,
+  "name": "AstraLex",
+  "testedVersions": [
+    "AstraLex V93.0"
+  ],
+  "matches": [
+    {
+      "path": "program/gbuffers_beaconbeam.glsl",
+      "contains": [
+        "BEACON_BEAM_EMISSIVE_OVERWORLD",
+        "BEACON_BEAM_LAYER"
+      ]
+    }
+  ],
+  "files": [],
+  "wrappers": [],
+  "blends": [],
+  "properties": "blend.clrwl_gbuffers_additive=ONE ONE ZERO ONE\n",
+  "programs": [
+    {
+      "target": "clrwl_gbuffers_additive",
+      "fragment": "bsl_light.fsh",
+      "vertex": "gbuffers_beaconbeam"
+    },
+    {
+      "target": "crankshaft_gbuffers_additive",
+      "fragment": "bsl_light.fsh",
+      "vertex": "gbuffers_beaconbeam",
+      "nativeDraw": true
+    }
+  ],
+  "emissiveLight": true
+}

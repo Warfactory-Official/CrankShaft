@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.backend.engine.embed;
 
 import dev.engine_room.flywheel.backend.engine.CpuArena;
+import dev.engine_room.flywheel.lib.util.ExtraMemoryOps;
 
 import it.unimi.dsi.fastutil.objects.ReferenceLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.objects.ReferenceSet;
@@ -36,6 +37,16 @@ public class EnvironmentStorage {
         });
         for (EmbeddedEnvironment environment : environments) {
             environment.flush(arena.indexToPointer(environment.matrixIndex));
+        }
+    }
+
+    /**
+     * After {@link #flush}: each environment's previous-frame pose at its matrix index, in {@link #arena}'s layout.
+     */
+    public void writePreviousPoses(long ptr) {
+        for (EmbeddedEnvironment environment : environments) {
+            ExtraMemoryOps.putMatrix4f(ptr + (long) environment.matrixIndex * MATRIX_SIZE_BYTES,
+                    environment.posePrevious());
         }
     }
 

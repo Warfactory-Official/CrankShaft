@@ -109,7 +109,7 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
                 ItemMeshKey key = ItemMeshKey.of(quad.materialInfo().itemRenderType(), foil);
                 #endif
                 if (key == null) return null;
-                emitters.computeIfAbsent(key, $ -> new ItemMeshEmitter())
+                emitters.computeIfAbsent(key, _ -> new ItemMeshEmitter())
                         .accept(pose, quad, tint);
             }
         }
@@ -169,7 +169,7 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
         EnumMap<ChunkSectionLayer, MeshEmitter> emitters = new EnumMap<>(ChunkSectionLayer.class);
         BlockQuadOutput output = (x, y, z, quad, instance) ->
                 emitters.computeIfAbsent(forceOpaque ? ChunkSectionLayer.SOLID : quad.materialInfo().layer(),
-                        $ -> new MeshEmitter()).accept(x, y, z, quad, instance);
+                        _ -> new MeshEmitter()).accept(x, y, z, quad, instance);
         ModelBlockRenderer renderer = new ModelBlockRenderer(minecraft.options.ambientOcclusion().get(), false,
                 minecraft.getBlockColors());
         BlockModelLighter.enableCaching();
@@ -203,7 +203,7 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
                 return;
             }
             emitters.computeIfAbsent(quad.materialInfo()
-                                         .layer(), $ -> new MeshEmitter())
+                                         .layer(), _ -> new MeshEmitter())
                     .accept(x, y, z, quad, instance);
         };
 
@@ -243,7 +243,7 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
 
         EnumMap<ChunkSectionLayer, MeshEmitter> emitters = new EnumMap<>(ChunkSectionLayer.class);
         BlockQuadOutput output = (x, y, z, quad, instance) ->
-                emitters.computeIfAbsent(quad.materialInfo().layer(), $ -> new MeshEmitter(pose, normalMatrix))
+                emitters.computeIfAbsent(quad.materialInfo().layer(), _ -> new MeshEmitter(pose, normalMatrix))
                         .accept(x, y, z, quad, instance);
 
         ModelBlockRenderer renderer = new ModelBlockRenderer(false, false, blockColors);

@@ -11,6 +11,13 @@ bool _flw_isUnlit() {
     return !flw_material.useLight;
 }
 
+vec4 _flw_clrwlVertexPos() { return flw_vertexPos; }
+vec4 _flw_clrwlVertexColor() { return flw_vertexColor; }
+vec2 _flw_clrwlVertexTexCoord() { return flw_vertexTexCoord; }
+ivec2 _flw_clrwlVertexOverlay() { return flw_vertexOverlay; }
+vec2 _flw_clrwlVertexLight() { return flw_vertexLight; }
+vec3 _flw_clrwlVertexNormal() { return flw_vertexNormal; }
+
 bool _flw_borrowedBlock() {
     #ifdef _FLW_GUEST_BORROWED_BLOCK
     return true;
@@ -44,7 +51,7 @@ float _flw_emissionCoverage() {
 }
 
 void clrwl_computeFragment(vec4 sampleColor, out vec4 fragColor, out vec2 fragLight, out float ao,
-                           out vec4 fragOverlay) {
+        out vec4 fragOverlay) {
     _flw_unpackMaterialProperties(_flw_packedMaterial.y, flw_material);
 
     flw_sampleColor = sampleColor;
@@ -88,8 +95,8 @@ void clrwl_computeFragment(vec4 sampleColor, out vec4 fragColor, out vec2 fragLi
         ao = clamp(_flw_appliedAo * _flw_appliedCardinal, 0.0, 1.0);
         #else
         vec3 ratio = vec3(unlit.r == 0.0 ? 0.0 : flw_fragColor.r / unlit.r,
-                          unlit.g == 0.0 ? 0.0 : flw_fragColor.g / unlit.g,
-                          unlit.b == 0.0 ? 0.0 : flw_fragColor.b / unlit.b);
+                unlit.g == 0.0 ? 0.0 : flw_fragColor.g / unlit.g,
+                unlit.b == 0.0 ? 0.0 : flw_fragColor.b / unlit.b);
         ao = all(equal(unlit, vec3(0.0))) ? 1.0 : clamp(max(max(ratio.r, ratio.g), ratio.b), 0.0, 1.0);
         #endif
     }

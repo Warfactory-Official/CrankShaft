@@ -1,9 +1,11 @@
 package dev.engine_room.flywheel.impl.compat;
 
 import dev.engine_room.flywheel.api.lod.LodSurface;
+import dev.engine_room.flywheel.impl.far.FarVisuals;
 import dev.engine_room.flywheel.lib.util.ShadersModHelper;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.util.Mth;
 import net.minecraft.world.level.levelgen.Heightmap;
 
 import java.util.List;
@@ -24,7 +26,9 @@ public final class LodCompat {
     }
 
     #if MC >= 26.3
-    /** Declares the active native LoD shaders in the loading batch, on the render thread after device creation. */
+    /**
+     * Declares the active native LoD shaders in the loading batch, on the render thread after device creation.
+     */
     public static void warmGpuResources() {
         if (DistantHorizonsCompat.ACTIVE && !ShadersModHelper.isShaderPackInUse()) {
             LodDepthPass.warm();
@@ -32,17 +36,28 @@ public final class LodCompat {
     }
     #endif
 
-    /** Releases device-lived LoD resources on the render thread, before the graphics device closes. */
+    /**
+     * Releases device-lived LoD resources on the render thread, before the graphics device closes.
+     */
     public static void destroyGpuResources() {
         if (depthInitialized) {
             LodDepthPass.close();
             depthInitialized = false;
         }
+        FarVisuals.destroyGpuResources();
         DistantHorizonsCompat.destroyGpuResources();
     }
 
     public static int distance() {
         return Math.max(DistantHorizonsCompat.distance(), VoxyCompat.distance());
+    }
+
+    /**
+     * Horizontal distance from the camera, in blocks, covering every vanilla and Sodium section: LoD terrain occludes
+     * only past it. Render thread.
+     */
+    public static float vanillaRadius() {
+        return (Minecraft.getInstance().options.getEffectiveRenderDistance() + 2 * Mth.SQRT_OF_TWO) * 16;
     }
 
     public static void onChange(IntConsumer listener) {

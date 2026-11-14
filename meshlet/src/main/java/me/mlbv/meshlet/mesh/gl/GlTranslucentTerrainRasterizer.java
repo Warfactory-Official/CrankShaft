@@ -18,6 +18,7 @@ import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainOverlayDraw;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainTranslucentMeshDrawStrategy;
 import dev.engine_room.flywheel.backend.gl.GlStateTracker;
 import dev.engine_room.flywheel.backend.gl.buffer.GlBufferType;
@@ -73,8 +74,11 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
     private final ByteBuffer sceneUboScratch = MemoryUtil.memAlloc((int) TERRAIN_SCENE_UBO_BYTES);
 
     private final GlGeometryPtrBuffer geometryPtrs = new GlGeometryPtrBuffer();
+    private final GlGeometryPtrBuffer receiverPtrs = new GlGeometryPtrBuffer();
     private final GlResidentAddressCache residentAddresses = new GlResidentAddressCache();
     private boolean gatheredThisFrame = false;
+    private boolean gatheredReceiverData;
+    private boolean cacheReceiverData;
 
     private int cachedVertsBuffer = 0;
     private int quadFadeBuffer = 0;
@@ -111,13 +115,14 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         GlStateManager._enableCull();
         GlStateManager._colorMask(ColorTargetState.WRITE_ALL);
 
-        GlStateManager._enableBlend(0);
+        // 26.3: GL_BLEND per draw buffer (glEnablei); 26.2 toggles it globally.
+        for (int i = 0; i < (mode == OitMode.GENERATE_COEFFICIENTS ? 4 : 1); i++) {
+            GlStateManager._enableBlend(i);
+        }
         GlStateManager._blendFuncSeparate(GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE);
         int eq = (mode == OitMode.DEPTH_RANGE) ? GL14C.GL_MAX : GL14C.GL_FUNC_ADD;
         GlStateManager._blendEquationSeparate(eq, eq);
 
-        // _enableBlend(0) already enables the GLOBAL GL_BLEND over all draw buffers; the per-index
-        // _enableBlend(1/2/3) only flips BLEND[i] cache bits over that same global flag -- dropped.
         if (mode == OitMode.GENERATE_COEFFICIENTS) {
             GL20C.glDrawBuffers(DRAW_BUFFERS_FOUR);
         } else {
@@ -131,7 +136,7 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         if (regionCount <= 0) {
             return;
         }
-        if (!pipelines.ensureTranslucentCompiled(TerrainAtlasFilter.linear())) {
+        if (!pipelines.ensureTranslucentInfrastructure(TerrainAtlasFilter.linear())) {
             return;
         }
 
@@ -151,9 +156,9 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
     }
 
     @Override
-    public void draw(TerrainDrawDispatcher d, RenderPass pass, OitMode mode, OitFramebuffer framebuffer,
+    public void draw(TerrainDrawDispatcher d, RenderPass _, OitMode mode, OitFramebuffer framebuffer,
                      boolean fading, GpuTextureView lightmapView, GpuTextureView blueNoiseView,
-                     GpuSampler clampLinear, GpuSampler oitSampler, GpuSampler noiseSampler) {
+                     GpuSampler _, GpuSampler _, GpuSampler _) {
         if (fading) {
             return;
         }
@@ -202,6 +207,7 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         gatherIfNeeded(d, regionCount);
 
         GlStateTracker.useProgram(pipelines.translucentProgram(mode));
+        TerrainOverlayDraw.bindGl(pipelines.translucentProgram(mode));
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, BINDING_CACHED_VERTS, cachedVertsBuffer);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, BINDING_QUAD_FADE, quadFadeBuffer);
         GlBufferType.DRAW_INDIRECT_BUFFER.bind(drawIndirectBuffer);
@@ -215,17 +221,27 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
     // uploads), then every producer pass replays the cache; raw GL compute inside the open producer pass is legal.
     // Requires the caller to have bound HiZ UBO 8 + lightmap T2; scene UBO 7 + compact 7/13 feed ONLY this gather.
     private void gatherIfNeeded(TerrainDrawDispatcher d, int regionCount) {
-        if (gatheredThisFrame) {
+        var receiverData = !TerrainOverlayDraw.isEmpty();
+        if (gatheredThisFrame && gatheredReceiverData == receiverData) {
             return;
+        }
+        if (gatheredThisFrame) {
+            // A registration removed between producers changes the payload shape; finish the preceding cache reads.
+            GL42C.glMemoryBarrier(GL43C.GL_SHADER_STORAGE_BARRIER_BIT);
         }
         GlMeshUtil.uploadGeometryPointers(d.translucentRegionBatch.geometryBuffers, regionCount, geometryPtrs,
                 residentAddresses);
         geometryPtrs.bindBase(BINDING_GEOMETRY_POINTERS);
+        if (receiverData) {
+            GlMeshUtil.uploadReceiverPointers(d.translucentRegionBatch.geometryBuffers, regionCount, receiverPtrs,
+                    residentAddresses);
+            receiverPtrs.bindBase(14);
+        }
         uploadAndBindSceneUbo(d, regionCount);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, BINDING_COMPACT_SECTIONS, compactSectionsBuffer);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, BINDING_COMPACT_GEOM, compactGeomBuffer);
 
-        ensureCacheCapacity(d, regionCount);
+        ensureCacheCapacity(d, regionCount, receiverData);
 
         indirectScratch.clear();
         indirectScratch.putInt(0, 0).putInt(4, 1).putInt(8, 0).putInt(12, 0);
@@ -243,6 +259,7 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         GlStateTracker.useProgram(0);
         GL42C.glMemoryBarrier(GL43C.GL_SHADER_STORAGE_BARRIER_BIT | GL42C.GL_COMMAND_BARRIER_BIT);
         gatheredThisFrame = true;
+        gatheredReceiverData = receiverData;
     }
 
     private int ensurePullVao() {
@@ -252,16 +269,17 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         return pullVao;
     }
 
-    private void ensureCacheCapacity(TerrainDrawDispatcher d, int regionCount) {
+    private void ensureCacheCapacity(TerrainDrawDispatcher d, int regionCount, boolean receiverData) {
         long quads = 0;
         for (int i = 0; i < regionCount; i++) {
             quads += d.registry.translucentIndexCountSum(d.translucentRegionBatch.regionIds[i]) / 6;
         }
         quads = Math.max(quads, 1);
-        if (cachedVertsBuffer != 0 && quads <= cachedQuadCapacity) {
+        if (cachedVertsBuffer != 0 && quads <= cachedQuadCapacity && cacheReceiverData == receiverData) {
             return;
         }
-        long newCap = Math.max(quads, cachedQuadCapacity * 2);
+        var grow = cachedVertsBuffer == 0 || quads > cachedQuadCapacity;
+        var newCap = grow ? Math.max(quads, cachedQuadCapacity * 2) : cachedQuadCapacity;
         if (cachedVertsBuffer == 0) {
             cachedVertsBuffer = GL15C.glGenBuffers();
             quadFadeBuffer = GL15C.glGenBuffers();
@@ -271,17 +289,21 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
             GL15C.glBindBuffer(GL43C.GL_SHADER_STORAGE_BUFFER, drawIndirectBuffer);
             GL15C.glBufferData(GL43C.GL_SHADER_STORAGE_BUFFER, 16L, GL15C.GL_DYNAMIC_COPY);
         }
-        GL15C.glBindBuffer(GL43C.GL_SHADER_STORAGE_BUFFER, cachedVertsBuffer);
-        GL15C.glBufferData(GL43C.GL_SHADER_STORAGE_BUFFER, newCap * 4L * CACHED_VERT_BYTES, GL15C.GL_DYNAMIC_COPY);
+        if (grow) {
+            GL15C.glBindBuffer(GL43C.GL_SHADER_STORAGE_BUFFER, cachedVertsBuffer);
+            GL15C.glBufferData(GL43C.GL_SHADER_STORAGE_BUFFER, newCap * 4L * CACHED_VERT_BYTES, GL15C.GL_DYNAMIC_COPY);
+        }
         GL15C.glBindBuffer(GL43C.GL_SHADER_STORAGE_BUFFER, quadFadeBuffer);
-        GL15C.glBufferData(GL43C.GL_SHADER_STORAGE_BUFFER, newCap * Float.BYTES, GL15C.GL_DYNAMIC_COPY);
+        GL15C.glBufferData(GL43C.GL_SHADER_STORAGE_BUFFER, newCap * (receiverData ? 2 : 1) * Integer.BYTES,
+                GL15C.GL_DYNAMIC_COPY);
         GL15C.glBindBuffer(GL43C.GL_SHADER_STORAGE_BUFFER, 0);
         cachedQuadCapacity = newCap;
+        cacheReceiverData = receiverData;
     }
 
     @Override
-    public void drawInsert(TerrainDrawDispatcher d, RenderPass pass, OitInsertMode mode, boolean fading,
-                           GpuTextureView lightmapView, GpuSampler clampLinear) {
+    public void drawInsert(TerrainDrawDispatcher d, RenderPass _, OitInsertMode mode, boolean fading,
+                           GpuTextureView lightmapView, GpuSampler _) {
         if (fading) {
             return;
         }
@@ -290,7 +312,7 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
             return;
         }
         boolean linear = TerrainAtlasFilter.linear();
-        if (!pipelines.ensureTranslucentCompiled(linear)) {
+        if (!pipelines.ensureTranslucentInfrastructure(linear)) {
             return;
         }
         if (!pipelines.ensureTranslucentMlabCompiled(mode, linear)) {
@@ -318,6 +340,7 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         gatherIfNeeded(d, regionCount);
 
         GlStateTracker.useProgram(pipelines.translucentMlabProgram(mode));
+        TerrainOverlayDraw.bindGl(pipelines.translucentMlabProgram(mode));
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, BINDING_CACHED_VERTS, cachedVertsBuffer);
         GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, BINDING_QUAD_FADE, quadFadeBuffer);
         GlBufferType.DRAW_INDIRECT_BUFFER.bind(drawIndirectBuffer);
@@ -325,11 +348,13 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
         GL40C.glDrawArraysIndirect(GL11C.GL_TRIANGLES, 0L);
         GlStateTracker.useProgram(0);
 
+        TerrainOverlayDraw.unbindGl();
         GL33C.glBindSampler(UNIT_ATLAS, 0);
         GL33C.glBindSampler(UNIT_LIGHTMAP, 0);
     }
 
     private void unbindSamplers() {
+        TerrainOverlayDraw.unbindGl();
         GL33C.glBindSampler(UNIT_ATLAS, 0);
         GL33C.glBindSampler(UNIT_LIGHTMAP, 0);
         GL33C.glBindSampler(UNIT_DEPTH_RANGE, 0);
@@ -420,6 +445,7 @@ public final class GlTranslucentTerrainRasterizer implements TerrainTranslucentM
             compactGeomBuffer = 0;
         }
         geometryPtrs.destroy();
+        receiverPtrs.destroy();
         if (cachedVertsBuffer != 0) {
             GL15C.glDeleteBuffers(cachedVertsBuffer);
             cachedVertsBuffer = 0;

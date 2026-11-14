@@ -10,7 +10,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(value = SystemReport.class, priority = 1056)
 abstract class SystemReportMixin {
     @Inject(method = "<init>", at = @At("RETURN"), require = 1)
-    private void flywheel$onInit(CallbackInfo ci) {
+    private void flywheel$onInit(CallbackInfo _) {
         SystemReport self = (SystemReport) (Object) this;
         self.setDetail("Flywheel Backend", BackendManagerImpl::getBackendString);
     }

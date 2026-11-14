@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.backend.engine.indirect;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.vk.buffer.VkBuffer;
 import org.jspecify.annotations.Nullable;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 
 abstract class VkPackedInsertOitChain extends VkInsertOitChain {
@@ -14,10 +15,10 @@ abstract class VkPackedInsertOitChain extends VkInsertOitChain {
     }
 
     @Override
-    void ensurePayload(long pixels, int layers, int maxNodes) {
-        long dataBytes = pixels * layers * 8L; // K samples/pixel
+    void ensurePayload(long pixels, int layers, int _) {
+        long dataBytes = pixels * (layers + (mode == OitInsertMode.MLAB ? 1L : 0L)) * 8L;
         if (samples == null) {
-            samples = new VkBuffer(VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, dataBytes, true);
+            samples = new VkBuffer(VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, dataBytes, true);
         } else {
             samples.ensureCapacity(dataBytes);
         }

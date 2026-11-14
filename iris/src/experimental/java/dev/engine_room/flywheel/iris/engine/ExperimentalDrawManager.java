@@ -27,12 +27,16 @@ import dev.engine_room.flywheel.backend.engine.embed.EmbeddedEnvironment;
 import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
 import dev.engine_room.flywheel.backend.engine.embed.TaggedEnvironment;
 import dev.engine_room.flywheel.backend.engine.instancing.InstancedDraw;
+import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.impl.BackendManagerImpl;
+import dev.engine_room.flywheel.iris.compile.ExperimentalBindless;
+import dev.engine_room.flywheel.iris.compile.ExperimentalFlatten;
 import dev.engine_room.flywheel.iris.compile.ExperimentalOit;
 import dev.engine_room.flywheel.iris.compile.ExperimentalPipelines;
 import dev.engine_room.flywheel.iris.compile.OitPass;
 import dev.engine_room.flywheel.iris.compile.PackRole;
 import dev.engine_room.flywheel.iris.experimental.IndirectCommands;
+import dev.engine_room.flywheel.iris.experimental.TextureTableCommands;
 import dev.engine_room.flywheel.iris.mixin.IrisRenderingPipelineAccessor;
 import dev.engine_room.flywheel.iris.mixin.ProgramFallbackResolverAccessor;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
@@ -64,12 +68,25 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
     private final RenderPassUniforms uniforms = new RenderPassUniforms();
     private final ExperimentalCulling culling = new ExperimentalCulling();
     private final ExperimentalInstanceArena arena = new ExperimentalInstanceArena();
+    private final ExperimentalBindless.Tables textures = new ExperimentalBindless.Tables();
     private final List<InstancedDraw> draws = new ArrayList<>();
     private final Matrix4f mainView = new Matrix4f();
     private final Map<Material, Material> crumblingMaterials = new HashMap<>();
+    private final Map<String, List<GpuBufferSlice>> drawBuffers = new HashMap<>();
+    private final Matrix4f viewProjection = new Matrix4f();
+    private final Matrix4f culledViewProjection = new Matrix4f();
     private final boolean indirect;
+    private boolean culled;
+    private boolean culledShadow;
     private IrisRenderingPipeline owner;
+    private static final int DEPTH_FILL = 3;
+    private static final int PARTICLE_FLATTEN = 4;
+    private static final int PARTICLE_HANDOFF = 5;
     private boolean deferredEmissive;
+    private boolean deferredTranslucent;
+    private boolean emissiveLight;
+    private boolean fillOit;
+    private boolean flatten;
     private boolean nativeGlint;
     private GpuBuffer lightSections;
     private GpuBuffer lightLut;
@@ -92,7 +109,10 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
         var pipeline = (IrisRenderingPipeline) Iris.getPipelineManager().getPipelineNullable();
         if (owner == pipeline) return;
         owner = pipeline;
-        deferredEmissive = ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack().flywheel$deferredEmissive();
+        var pack = ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack();
+        deferredEmissive = pack.flywheel$deferredEmissive();
+        deferredTranslucent = pack.flywheel$deferredTranslucent();
+        emissiveLight = pack.flywheel$emissiveLight();
         var programs = ((ProgramFallbackResolverAccessor) ((IrisRenderingPipelineAccessor) pipeline).flywheel$resolver()).flywheel$programs();
         nativeGlint = programs.flywheel$nativeGlint();
     }
@@ -114,6 +134,8 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
                     GuestDrawTags.of(key.environment(), model, entry.material(), entry.mesh()));
             draws.add(draw);
             instancer.addDrawCall(draw);
+            instancer.ordered |= GuestDrawManager.keepsSubmissionOrder(entry.material(),
+                    draw.tags() == null ? 0 : draw.tags().drawTag());
         }
         dirty = true;
     }
@@ -141,8 +163,10 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
             return false;
         });
         dirty |= draws.removeIf(InstancedDraw::deleted);
+        boolean changedDraws = dirty;
         if (dirty) {
             draws.sort(Comparator.comparingInt(InstancedDraw::bias).thenComparingInt(InstancedDraw::indexOfMeshInModel)
+                                 .thenComparing(InstancedDraw::material, MaterialRenderState.PIPELINE_COMPARATOR)
                                  .thenComparing(InstancedDraw::material, MaterialRenderState.COMPARATOR));
             dirty = false;
             hasOrderIndependent = draws.stream().anyMatch(draw -> GuestDrawManager.orderIndependent(draw.material(),
@@ -150,7 +174,12 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
         }
         if (extras.blockIdsChanged()) meshes.invalidateExtras();
         meshes.flush();
+        culled = false;
         if (indirect) {
+            if (hasDraws()) {
+                culling.prepare(instancers.values(), draws, changedDraws);
+                if (ExperimentalBindless.available()) textures.refresh(Minecraft.getInstance().getTextureManager());
+            }
             long bytes = environments.arena.byteCapacity();
             if (matrices == null || matrices.size() < bytes) {
                 if (matrices != null) Iris.getRenderBackend().retire(matrices::close);
@@ -191,14 +220,23 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
         }
     }
 
+    private boolean hasDraws() {
+        return !draws.isEmpty() && meshes.vertexBuffer() != null;
+    }
+
     private boolean prepareDraw(Matrix4fc view, boolean shadow) {
-        if (draws.isEmpty() || meshes.vertexBuffer() == null) return false;
+        if (!hasDraws()) return false;
         Matrix4fc projection = shadow ? ShadowRenderer.PROJECTION
                 : CapturedRenderingState.INSTANCE.getGbufferProjection();
         if (indirect) {
-            Matrix4f viewProjection = new Matrix4f(projection).mul(view);
-            // Compat with Iris: native compute dispatch publishes its storage and indirect writes.
-            culling.cull(instancers.values(), draws, viewProjection);
+            viewProjection.set(projection).mul(view);
+            if (!culled || culledShadow != shadow || !culledViewProjection.equals(viewProjection)) {
+                // Compat with Iris: native compute dispatch publishes its storage and indirect writes.
+                culling.cull(viewProjection);
+                culledViewProjection.set(viewProjection);
+                culledShadow = shadow;
+                culled = true;
+            }
         }
         return true;
     }
@@ -212,18 +250,30 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
                                       ExperimentalTerrainDispatcher terrain) {
         boolean visuals = prepareDraw(view, shadow);
         if (!visuals && terrain == null) return false;
-        if (!hasOrderIndependent && terrain == null) {
-            if (visuals) record(view, shadow, true, entities, blockEntities, null, 0);
-            return false;
-        }
         var parent = (IrisRenderingPipeline) Iris.getPipelineManager()
                                                  .getPipelineNullable();
+        flatten = !shadow && ExperimentalFlatten.active(parent);
+        if (!hasOrderIndependent && terrain == null) {
+            if (visuals) {
+                record(view, shadow, true, entities, blockEntities, null, 0);
+                particleHandoff(parent, view, entities, blockEntities);
+                depthFill(view, shadow, entities, blockEntities, false);
+            }
+            return false;
+        }
         var oit = ExperimentalOit.get(parent, shadow);
         if (oit == null) {
-            if (visuals) record(view, shadow, true, entities, blockEntities, null, 0);
+            if (visuals) {
+                record(view, shadow, true, entities, blockEntities, null, 0);
+                particleHandoff(parent, view, entities, blockEntities);
+                depthFill(view, shadow, entities, blockEntities, false);
+            }
             return terrain != null && terrain.drawCaptured();
         }
-        if (visuals) record(view, shadow, true, entities, blockEntities, null, 1);
+        if (visuals) {
+            record(view, shadow, true, entities, blockEntities, null, 1);
+            particleHandoff(parent, view, entities, blockEntities);
+        }
         oit.prepare();
         for (var pass : OitPass.values()) {
             if (pass == OitPass.COEFFICIENTS && !oit.hasCoefficients()) continue;
@@ -231,7 +281,36 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
             if (terrain != null) terrain.drawWavelet(pass);
         }
         oit.composite();
+        if (visuals) depthFill(view, shadow, entities, blockEntities, true);
         return terrain != null;
+    }
+
+    private void particleHandoff(IrisRenderingPipeline parent, Matrix4fc view, boolean entities,
+                                 boolean blockEntities) {
+        if (!flatten || !entities) return;
+        boolean particles = false;
+        for (var draw : draws) particles |= accept(draw, false, true, true, blockEntities, PARTICLE_FLATTEN);
+        if (!particles) return;
+        ExperimentalFlatten.prepare(parent);
+        record(view, false, true, entities, blockEntities, null, PARTICLE_FLATTEN);
+        record(view, false, true, entities, blockEntities, null, PARTICLE_HANDOFF);
+    }
+
+    // GuestInstancedDrawManager.submitDepthFill: pack composites resolve sky, clouds and fog from depth.
+    private void depthFill(Matrix4fc view, boolean shadow, boolean entities, boolean blockEntities, boolean oit) {
+        if (shadow) return;
+        fillOit = oit;
+        record(view, false, true, entities, blockEntities, null, DEPTH_FILL);
+    }
+
+    private boolean depthFilled(InstancedDraw draw) {
+        Material material = draw.material();
+        int tag = draw.tags() == null ? 0 : draw.tags().drawTag();
+        if (material.writeMask().depth() || GuestDrawManager.depthless(material, tag)
+                || GuestDrawManager.translucentParticle(tag)) return false;
+        if (emissive(material)) return !deferredEmissive && !emissiveLight;
+        return !deferredTranslucent && material.transparency() != Transparency.GLINT
+                && !(fillOit && GuestDrawManager.orderIndependent(material, tag));
     }
 
     private void record(Matrix4fc view, boolean shadow, boolean translucent, boolean entities, boolean blockEntities,
@@ -240,7 +319,7 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
         // Prepare programs, resources and targets before opening the pass.
         for (var draw : draws) {
             if (accept(draw, shadow, translucent, entities, blockEntities, selection))
-                program(draw, shadow, phase, oitPass);
+                program(draw, shadow, phase, oitPass, selection);
         }
         Map<String, List<GpuBufferSlice>> buffers = commonBuffers(view);
         buffers.put("InstanceBuffer", List.of(arena.buffer().slice()));
@@ -248,6 +327,7 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
             buffers.put("TargetBuffer", List.of(culling.visible().slice()));
             buffers.put("DrawBuffer", List.of(culling.commands().slice()));
             buffers.put("MatrixBuffer", List.of(matrices.slice()));
+            textures.buffers(buffers);
         }
         IrisRenderPass pass = null;
         ExperimentalPipelines.Program active = null;
@@ -258,13 +338,14 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
                     index++;
                     continue;
                 }
-                var program = program(draw, shadow, phase, oitPass);
+                var program = program(draw, shadow, phase, oitPass, selection);
                 int end = index + 1;
                 if (indirect)
                     while (end < draws.size() && accept(draws.get(end), shadow, translucent, entities, blockEntities,
                             selection)
-                            && program(draws.get(end), shadow, phase, oitPass) == program
-                            && MaterialRenderState.COMPARATOR.compare(draw.material(), draws.get(end).material()) == 0)
+                            && program(draws.get(end), shadow, phase, oitPass, selection) == program
+                            && (program.bindless() || MaterialRenderState.COMPARATOR.compare(draw.material(),
+                            draws.get(end).material()) == 0))
                         end++;
                 if (program != active) {
                     if (pass != null) pass.close();
@@ -287,6 +368,8 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
                 var texture = Minecraft.getInstance().getTextureManager().getTexture(draw.material().texture())
                                        .getTextureView();
                 program.bind(pass, buffers, texels, texture, MaterialSamplers.get(draw.material()));
+                if (program.bindless() && VkContext.isVulkanHost())
+                    ((TextureTableCommands) pass).flywheel$bindTextureTable(ExperimentalBindless.SET);
                 if (indirect) ((IndirectCommands) pass).flywheel$drawIndexedIndirect(culling.commands().slice(
                                 (long) index * ExperimentalCulling.COMMAND_BYTES,
                                 (long) (end - index) * ExperimentalCulling.COMMAND_BYTES),
@@ -301,7 +384,7 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
     }
 
     private Map<String, List<GpuBufferSlice>> commonBuffers(Matrix4fc view) {
-        Map<String, List<GpuBufferSlice>> buffers = new HashMap<>();
+        var buffers = drawBuffers;
         buffers.put("iris_DynamicTransforms",
                 List.of(RenderSystem.getDynamicUniforms().writeTransform(new Matrix4f(view))));
         buffers.put("iris_Projection", List.of(RenderSystem.getProjectionMatrixBuffer()));
@@ -316,13 +399,19 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
         return buffers;
     }
 
-    private ExperimentalPipelines.Program program(InstancedDraw draw, boolean shadow, Phase phase, OitPass oitPass) {
+    private ExperimentalPipelines.Program program(InstancedDraw draw, boolean shadow, Phase phase, OitPass oitPass,
+                                                  int selection) {
         int tag = draw.tags() == null ? 0 : draw.tags().drawTag();
         PackRole role = shadow ? PackRole.SHADOW : emissive(draw.material()) ? PackRole.ADDITIVE
                 : translucent(draw) ? PackRole.TRANSLUCENT : PackRole.SOLID;
+        boolean embedded = draw.instancer().environment instanceof EmbeddedEnvironment;
+        if (selection == DEPTH_FILL) return ExperimentalPipelines.depthFill(role.forKind(TaggedEnvironment.kind(tag)),
+                draw.material(), draw.groupKey.instanceType(), embedded, indirect);
+        if (selection == PARTICLE_FLATTEN || selection == PARTICLE_HANDOFF) return ExperimentalPipelines.get(
+                selection == PARTICLE_FLATTEN ? PackRole.PARTICLES_FLATTEN : PackRole.PARTICLES_HANDOFF,
+                draw.material(), draw.groupKey.instanceType(), embedded, indirect, phase, null);
         return ExperimentalPipelines.get(role.forKind(TaggedEnvironment.kind(tag)), draw.material(),
-                draw.groupKey.instanceType(),
-                draw.instancer().environment instanceof EmbeddedEnvironment, indirect, phase, oitPass);
+                draw.groupKey.instanceType(), embedded, indirect, phase, oitPass);
     }
 
     private boolean accept(InstancedDraw draw, boolean shadow, boolean translucent, boolean entities,
@@ -331,7 +420,13 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
         int kind = TaggedEnvironment.kind(draw.tags() == null ? 0 : draw.tags().drawTag());
         if (shadow && ((!entities && TaggedEnvironment.isEntity(draw.tags() == null ? 0 : draw.tags().drawTag()))
                 || !blockEntities && kind == TaggedEnvironment.KIND_BLOCK_ENTITY || emissive(draw.material())
+                || GuestDrawManager.depthless(draw.material(), draw.tags() == null ? 0 : draw.tags().drawTag())
+                || GuestDrawManager.translucentParticle(draw.tags() == null ? 0 : draw.tags().drawTag())
                 || draw.material().transparency() == Transparency.GLINT)) return false;
+        if (selection == DEPTH_FILL) return translucent(draw) && depthFilled(draw);
+        boolean particle = kind == TaggedEnvironment.KIND_ENTITY_PARTICLES_TRANSLUCENT;
+        if (selection == PARTICLE_FLATTEN || selection == PARTICLE_HANDOFF) return particle;
+        if (flatten && particle && translucent) return false;
         boolean orderIndependent = GuestDrawManager.orderIndependent(draw.material(),
                 draw.tags() == null ? 0 : draw.tags().drawTag());
         if (selection == 1 && orderIndependent || selection == 2 && !orderIndependent) return false;
@@ -345,12 +440,13 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
         return OitTransparency.orderIndependent(draw.material())
                 || transparency == Transparency.TRANSLUCENT || transparency == Transparency.TRANSLUCENT_ALPHA_REPLACE
                 || transparency == Transparency.GLINT && nativeGlint || kind == TaggedEnvironment.KIND_ENTITY_TRANSLUCENT
-                || kind == TaggedEnvironment.KIND_ENTITY_BLENDED;
+                || kind == TaggedEnvironment.KIND_ENTITY_BLENDED
+                || kind == TaggedEnvironment.KIND_ENTITY_PARTICLES_TRANSLUCENT;
     }
 
     @Override
-    public boolean renderOit(LightStorage light, EnvironmentStorage environments, ChunkSectionsToRender chunks,
-                             BerTranslucentCapture ber, SodiumTerrainOitReplay terrain) {
+    public boolean renderOit(LightStorage _, EnvironmentStorage _, ChunkSectionsToRender _,
+                             BerTranslucentCapture _, SodiumTerrainOitReplay terrain) {
         return renderTranslucent(mainView, false, true, true,
                 terrain instanceof ExperimentalTerrainDispatcher captured ? captured : null);
     }
@@ -426,6 +522,7 @@ public final class ExperimentalDrawManager extends DrawManager<ExperimentalInsta
         draws.clear();
         culling.close();
         arena.close();
+        textures.close();
         uniforms.delete();
         meshes.delete();
         if (lightSections != null) Iris.getRenderBackend().retire(lightSections::close);

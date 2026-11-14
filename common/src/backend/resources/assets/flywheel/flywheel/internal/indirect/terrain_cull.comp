@@ -19,7 +19,11 @@ layout(std430, binding = 2) restrict writeonly buffer RegionVisBuf { uint region
 layout(std430, binding = 3) restrict buffer SectionVisBuf { uint sectionVis[]; };
 layout(std430, binding = 4) restrict writeonly buffer CommandBuf { uint commandWords[]; };
 layout(std430, binding = 5) restrict buffer DrawCountBuf { uint drawCountMain; uint drawCountTemporal; };
+#ifdef _FLW_TERRAIN_RECEIVER_DATA
+layout(std430, binding = 6) restrict readonly buffer RegionGeoBuf { uvec4 regionGeo[]; };
+#else
 layout(std430, binding = 6) restrict readonly buffer RegionGeoBuf { uvec2 regionGeo[]; };
+#endif
 layout(std430, binding = 7) restrict writeonly buffer DrawDataBuf { uvec4 drawData[]; };
 layout(std430, binding = 11) restrict readonly buffer GeometryMaskBuf { uint geometryMask[]; };
 // cullOnly != 0: the mesh tier emits its own commands from sectionVis.
@@ -48,34 +52,34 @@ uint selectPass(uint group) {
 layout(std430, binding = 6) restrict readonly buffer ShadowSectionMaskBuf { uint shadowSectionMask[]; };
 // Scene UBO (7): per pass 7 terrain device pointers + region count (Nvidium scheme).
 layout(std140, binding = 7) uniform TerrainSceneUbo {
-    restrict readonly uvec4 *solidRegionInput;  // [slot]: packed origin, regionId, first slot of its same-arena run
-    restrict readonly uvec4 *solidSectionData;  // 3 uvec4 / section, region-id-keyed
-    restrict writeonly uint *solidRegionVis;    // [slot]
-    restrict uint *solidSectionVis;             // [regionId<<8 | s] (read-modify-write)
-    restrict writeonly uint *solidCommandWords; // per arena run: [first slot * MAX_COMMANDS_PER_REGION_MAIN * 5, ...)
-    restrict uint *solidRegionCommandCount;     // [run first slot * 2] = the run's command count
-    restrict readonly uint *solidGeometryMask;  // 8 uint / region; index = regionId*GEOMETRY_MASK_WORDS + (s>>5)
+    restrict readonly uvec4 * solidRegionInput;  // [slot]: packed origin, regionId, first slot of its same-arena run
+    restrict readonly uvec4 * solidSectionData;  // 3 uvec4 / section, region-id-keyed
+    restrict writeonly uint * solidRegionVis;    // [slot]
+    restrict uint * solidSectionVis;             // [regionId<<8 | s] (read-modify-write)
+    restrict writeonly uint * solidCommandWords; // per arena run: [first slot * MAX_COMMANDS_PER_REGION_MAIN * 5, ...)
+    restrict uint * solidRegionCommandCount;     // [run first slot * 2] = the run's command count
+    restrict readonly uint * solidGeometryMask;  // 8 uint / region; index = regionId*GEOMETRY_MASK_WORDS + (s>>5)
     uint solidRegionCount;
     uint phase;                                 // & 32: cull only; the mesh tier emits its own commands
-    restrict readonly uvec4 *cutoutRegionInput;
-    restrict readonly uvec4 *cutoutSectionData;
-    restrict writeonly uint *cutoutRegionVis;
-    restrict uint *cutoutSectionVis;
-    restrict writeonly uint *cutoutCommandWords;
-    restrict uint *cutoutRegionCommandCount;
-    restrict readonly uint *cutoutGeometryMask;
+    restrict readonly uvec4 * cutoutRegionInput;
+    restrict readonly uvec4 * cutoutSectionData;
+    restrict writeonly uint * cutoutRegionVis;
+    restrict uint * cutoutSectionVis;
+    restrict writeonly uint * cutoutCommandWords;
+    restrict uint * cutoutRegionCommandCount;
+    restrict readonly uint * cutoutGeometryMask;
     uint cutoutRegionCount;
 };
 
 // This workgroup's pass.
 uint regionCount;
-restrict uvec4 *regionInput;
-restrict uvec4 *sectionData0;
-restrict uint *regionVis;
-restrict uint *sectionVis;
-restrict uint *commandWords;
-restrict uint *regionCommandCount;
-restrict uint *geometryMask;
+restrict uvec4 * regionInput;
+restrict uvec4 * sectionData0;
+restrict uint * regionVis;
+restrict uint * sectionVis;
+restrict uint * commandWords;
+restrict uint * regionCommandCount;
+restrict uint * geometryMask;
 
 uint selectPass(uint group) {
     bool cutout = group >= solidRegionCount;
@@ -129,7 +133,7 @@ SectionFields decodeSection(uint regionId, uint s) {
 
 uint facingByte(SectionFields f, uint i) {
     return i < 4u ? (f.facingLo >> (i * 8u)) & 0xFFu
-                  : (f.facingHi >> ((i - 4u) * 8u)) & 0xFFu;
+    : (f.facingHi >> ((i - 4u) * 8u)) & 0xFFu;
 }
 
 // Returns the section's visibility word after this phase.
@@ -157,7 +161,11 @@ void emitGlobal(uint g, uint firstIndex, uint baseVertex, uint indexCount, uvec4
     commandWords[baseWord + 3u] = baseVertex;
     commandWords[baseWord + 4u] = g;            // baseInstance = the drawData index
     drawData[g * 2u + 0u] = uvec4(_flw_unpackRegionOrigin(in4), regionId << 8u);
+    #ifdef _FLW_TERRAIN_RECEIVER_DATA
+    drawData[g * 2u + 1u] = regionGeo[slot];
+    #else
     drawData[g * 2u + 1u] = uvec4(regionGeo[slot], 0u, 0u);
+    #endif
 }
 #else
 // in4.w = first slot of this slot's same-arena run; baseInstance = slot (terrain_solid.vert reads regionInput by it).
@@ -176,12 +184,12 @@ void emitCommand(uint slot, uint runSlot, uint firstIndex, uint baseVertex, uint
 #endif
 
 void emitCommands(uvec4 in4, uint regionId, uint slot, uint s, bool newlyVisible) {
-#ifdef _FLW_VK
-    uvec2 geo = regionGeo[slot];
+    #ifdef _FLW_VK
+    uvec2 geo = regionGeo[slot].xy;
     if ((geo.x | geo.y) == 0u) {
         return;
     }
-#endif
+    #endif
     SectionFields f = decodeSection(regionId, s);
 
     // Backface cull of facing-runs (bits = ModelQuadFacing ordinal; UNASSIGNED kept).
@@ -202,9 +210,9 @@ void emitCommands(uvec4 in4, uint regionId, uint slot, uint s, bool newlyVisible
         if (rel.y > -19) camMask |= 1u << 4u;
         if (rel.z > -19) camMask |= 1u << 5u;
     } else {
-        if (camRel.x <   0.0) camMask |= 1u << 0u;
-        if (camRel.y <   0.0) camMask |= 1u << 1u;
-        if (camRel.z <   0.0) camMask |= 1u << 2u;
+        if (camRel.x < 0.0) camMask |= 1u << 0u;
+        if (camRel.y < 0.0) camMask |= 1u << 1u;
+        if (camRel.z < 0.0) camMask |= 1u << 2u;
         if (camRel.x > -16.0) camMask |= 1u << 3u;
         if (camRel.y > -16.0) camMask |= 1u << 4u;
         if (camRel.z > -16.0) camMask |= 1u << 5u;
@@ -237,7 +245,7 @@ void emitCommands(uvec4 in4, uint regionId, uint slot, uint s, bool newlyVisible
         if (maskBit == 0u) {
             if (lastMaskBit == 1u) {
                 uint indexCount = (groupVertexCount >> 2u) * 6u;
-#ifdef _FLW_VK
+                #ifdef _FLW_VK
                 uint cap = regionCount * MAX_COMMANDS_PER_REGION_MAIN;
                 if (newlyVisible) {
                     uint wi = atomicAdd(drawCountTemporal, 1u);
@@ -250,9 +258,9 @@ void emitCommands(uvec4 in4, uint regionId, uint slot, uint s, bool newlyVisible
                         emitGlobal(wi, firstIndex, runBaseVertex, indexCount, in4, regionId, slot);
                     }
                 }
-#else
+                #else
                 emitCommand(slot, in4.w, firstIndex, runBaseVertex, indexCount);
-#endif
+                #endif
                 runBaseVertex += groupVertexCount;
                 groupVertexCount = 0u;
             }
@@ -265,22 +273,22 @@ void emitCommands(uvec4 in4, uint regionId, uint slot, uint s, bool newlyVisible
 }
 
 void main() {
-#ifdef _FLW_VK
+    #ifdef _FLW_VK
     uint slot = gl_WorkGroupID.x;
-#else
+    #else
     uint slot = selectPass(gl_WorkGroupID.x);
-#endif
+    #endif
     uint s = gl_LocalInvocationID.x;
     uvec4 in4 = regionInput[slot];
     uint regionId = in4.z;
     bool live = regionId != 0xFFFFFFFFu;
     if (s == 0u) {
-#ifdef _FLW_VK
+        #ifdef _FLW_VK
         bool visible = live && _flw_terrainRegionVisible(in4);
-#else
+        #else
         // Pack displacement and side effects are not bounded by the untransformed region AABB.
         bool visible = live && ((phase & 12u) != 0u || _flw_terrainRegionVisible(in4));
-#endif
+        #endif
         _FLW_REGION_VIS(slot) = visible ? 1u : 0u;
         regionVisible = visible;
     }
@@ -299,11 +307,11 @@ void main() {
     }
 
     uint geometryWord = geometryMask[regionId * GEOMETRY_MASK_WORDS + (s >> 5u)];
-#ifndef _FLW_VK
+    #ifndef _FLW_VK
     if ((phase & 12u) != 0u) {
         geometryWord &= shadowSectionMask[_FLW_GLOBAL_GROUP * GEOMETRY_MASK_WORDS + (s >> 5u)];
     }
-#endif
+    #endif
     bool present = (geometryWord & (1u << (s & 31u))) != 0u;
     if (present) {
         uint base = regionId * (REGION_SIZE * 3u) + s * 3u;
@@ -316,10 +324,10 @@ void main() {
         return;
     }
 
-#ifdef _FLW_VK
+    #ifdef _FLW_VK
     uint sv = store(visIndex, _flw_terrainSectionVisible(in4, s));
     bool cull = cullOnly != 0u;
-#else
+    #else
     uint sv;
     if ((phase & 12u) == 0u) {
         sv = store(visIndex, _flw_terrainSectionVisible(in4, s));
@@ -331,7 +339,7 @@ void main() {
         sv = store(visIndex, true);
     }
     bool cull = (phase & 32u) != 0u;
-#endif
+    #endif
     bool newlyVisible = (phase & 3u) == 2u;
     if (!cull && (sv & (newlyVisible ? 2u : 1u)) != 0u) {
         emitCommands(in4, regionId, slot, s, newlyVisible);

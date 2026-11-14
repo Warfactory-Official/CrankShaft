@@ -95,7 +95,7 @@ public final class SimpleBlockEntityVisualizer<T extends BlockEntity> implements
          * @return {@code this}
          */
         public Builder<T> neverSkipVanillaRender() {
-            this.skipVanillaRender = blockEntity -> false;
+            this.skipVanillaRender = _ -> false;
             return this;
         }
 
@@ -107,7 +107,7 @@ public final class SimpleBlockEntityVisualizer<T extends BlockEntity> implements
         public SimpleBlockEntityVisualizer<T> apply() {
             Objects.requireNonNull(visualFactory, "Visual factory cannot be null!");
             if (skipVanillaRender == null) {
-                skipVanillaRender = blockEntity -> true;
+                skipVanillaRender = _ -> true;
             }
 
             SimpleBlockEntityVisualizer<T> visualizer = new SimpleBlockEntityVisualizer<>(visualFactory,

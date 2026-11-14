@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(OptionInstance.class)
 abstract class ImprovedTransparencyOptionMixin {
     @Inject(method = "set", at = @At("RETURN"))
-    private void flywheel$warmNativeTransparency(Object value, CallbackInfo ci) {
+    private void flywheel$warmNativeTransparency(Object _, CallbackInfo _) {
         if (NativeOitWarmup.ready() && (Object) this == Minecraft.getInstance().options.improvedTransparency()) {
             NativeOitWarmup.configurationChanged();
         }

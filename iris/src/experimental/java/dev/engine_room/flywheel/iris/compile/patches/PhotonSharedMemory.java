@@ -12,7 +12,7 @@ import io.github.douira.glsl_transformer.ast.transform.ASTInjectionPoint;
 import io.github.douira.glsl_transformer.ast.transform.JobParameters;
 import io.github.douira.glsl_transformer.ast.transform.SingleASTTransformer;
 import io.github.douira.glsl_transformer.util.LRUCache;
-import net.irisshaders.iris.pipeline.transform.vulkan.VulkanGlsl;
+import net.irisshaders.iris.pipeline.transform.Glsl;
 
 import java.util.List;
 import java.util.Map;
@@ -40,11 +40,11 @@ public final class PhotonSharedMemory {
         var tree = parser.parseSeparateTranslationUnit(source);
         var root = tree.getRoot();
         var declarations = root.nodeIndex.getStream(TypeAndInitDeclaration.class).filter(declaration ->
-                VulkanGlsl.hasStorage(declaration.getType().getTypeQualifier(), StorageType.SHARED)
+                Glsl.hasStorage(declaration.getType().getTypeQualifier(), StorageType.SHARED)
                         && ASTPrinter.printSimple(declaration.getType().getTypeSpecifier()).equals("vec3")
                         && declaration.getMembers().size() == 1
                         && declaration.getMembers().getFirst().getName().getName().equals("shared_memory")
-                        && VulkanGlsl.dimensions(root, declaration.getMembers().getFirst().getArraySpecifier(),
+                        && Glsl.dimensions(root, declaration.getMembers().getFirst().getArraySpecifier(),
                         declaration.getType().getTypeSpecifier().getArraySpecifier()).equals(List.of(256, 9))).toList();
         if (declarations.size() != 1) return source;
         if (root.identifierIndex.has("_flwPhotonSkySh") || root.identifierIndex.has("_flwPhotonReadSh")

@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.impl.compat;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
@@ -15,6 +16,7 @@ import com.seibel.distanthorizons.api.interfaces.config.IDhApiConfig;
 import com.seibel.distanthorizons.api.interfaces.config.client.IDhApiGraphicsConfig;
 import com.seibel.distanthorizons.api.interfaces.data.IDhApiTerrainDataCache;
 import com.seibel.distanthorizons.api.interfaces.data.IDhApiTerrainDataRepo;
+import com.seibel.distanthorizons.api.interfaces.render.IDhApiBlazeTextureWrapper;
 import com.seibel.distanthorizons.api.interfaces.render.IDhApiRenderProxy;
 import com.seibel.distanthorizons.api.interfaces.world.IDhApiLevelWrapper;
 import com.seibel.distanthorizons.api.interfaces.world.IDhApiWorldProxy;
@@ -26,10 +28,18 @@ import com.seibel.distanthorizons.api.methods.events.sharedParameterObjects.DhAp
 import com.seibel.distanthorizons.api.objects.DhApiResult;
 import com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint;
 import com.seibel.distanthorizons.common.render.blaze.postProcessing.BlazeVanillaFadeRenderer;
+import com.seibel.distanthorizons.core.config.eventHandlers.RenderBlockCacheCsvHandler;
 import dev.engine_room.flywheel.api.lod.LodSurface;
 #if MC >= 26.3
 import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 #endif
+import dev.engine_room.flywheel.impl.far.FarHost;
+import dev.engine_room.flywheel.backend.engine.far.FarDepth;
+import dev.engine_room.flywheel.impl.far.FarVisuals;
+import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
+import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
+import dev.engine_room.flywheel.impl.BackendManagerImpl;
+import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
 import dev.engine_room.flywheel.lib.util.ShadersModHelper;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -46,6 +56,11 @@ import java.util.function.Predicate;
 
 public final class DistantHorizonsCompat {
     public static final boolean ACTIVE = CompatMod.DISTANT_HORIZONS.isLoaded;
+    private static Runnable opaque = () -> {
+    };
+    #if MC >= 26.3
+    private static boolean solidTerrainPhase;
+    #endif
 
     private DistantHorizonsCompat() {
     }
@@ -55,6 +70,7 @@ public final class DistantHorizonsCompat {
             #if MC >= 26.3
             ShaderWarmup.registerNativeResources(LodCompat::warmGpuResources);
             #endif
+            DhStaticVisuals.registerNative(new DhStaticDrawProvider());
             Internals.bind();
         }
     }
@@ -63,8 +79,67 @@ public final class DistantHorizonsCompat {
         return ACTIVE ? Internals.distance() : 0;
     }
 
+    /**
+     * DH's terrain material category for a retained block surface, including registered DH material overrides.
+     */
+    public static int material(BlockState state) {
+        return ACTIVE ? Internals.material(state) : 0;
+    }
+
+    /**
+     * DH's cached render-ignore set excludes containers while the exact static host is available.
+     */
+    public static boolean ignoreStaticContainers() {
+        return ACTIVE && BackendManagerImpl.isBackendOn() && FarVisuals.available();
+    }
+
+    /**
+     * On render-thread backend ON/OFF transitions, rebuilds native terrain with the current container exclusions.
+     */
+    public static void refreshStaticContainers() {
+        if (ACTIVE && FarVisuals.available()) Internals.refreshStaticContainers();
+    }
+
+    /**
+     * Registers the shaderpack draw that follows the retained renderer's opaque-depth cull, on the render thread.
+     */
+    public static void registerOpaque(Runnable draw) {
+        opaque = draw;
+    }
+
+    #if MC >= 26.3
+    /**
+     * Marks vanilla's solid execution on the render thread; DH's 26.3 render belongs to prepareTranslucents.
+     */
+    public static void solidTerrainPhase(boolean active) {
+        solidTerrainPhase = active;
+    }
+
+    /**
+     * Whether DH's obsolete opaque-layer invocation must be skipped, before its render-thread tasks run.
+     */
+    public static boolean solidTerrainPhase() {
+        return solidTerrainPhase;
+    }
+    #endif
+
+    /**
+     * DH's opaque terrain is complete; retained surfaces, generic objects and water have not drawn.
+     */
+    public static void afterOpaque(DhApiRenderParam param) {
+        if (!GuestTerrainGate.renderingShadow()) Internals.afterOpaque(param);
+    }
+
+    /**
+     * DH's current opaque colour/depth attachments and view, borrowed by direct static geometry.
+     */
+    public static FarHost farHost(DhApiRenderParam param) {
+        return Internals.farHost(param);
+    }
+
     static void destroyGpuResources() {
         if (ACTIVE) {
+            DhStaticVisuals.destroyGpuResources();
             Internals.destroyGpuResources();
         }
     }
@@ -89,6 +164,10 @@ public final class DistantHorizonsCompat {
 
         private static @Nullable DhApiRenderParam applied;
         private static @Nullable GlTextureView glDepth;
+
+        static void refreshStaticContainers() {
+            RenderBlockCacheCsvHandler.INSTANCE.onConfigTimeout();
+        }
 
         static void destroyGpuResources() {
             if (glDepth != null) {
@@ -119,7 +198,7 @@ public final class DistantHorizonsCompat {
             });
             DhApi.events.bind(DhApiAfterRenderEvent.class, new DhApiAfterRenderEvent() {
                 @Override
-                public void afterRender(DhApiEventParam<Void> event) {
+                public void afterRender(DhApiEventParam<Void> _) {
                     DhApiRenderParam param = applied;
                     applied = null;
                     if (param != null && !ShadersModHelper.isShaderPackInUse()) {
@@ -138,6 +217,11 @@ public final class DistantHorizonsCompat {
             return graphics.renderingEnabled().getValue()
                     && graphics.renderingMode().getValue() == EDhApiRendererMode.DEFAULT
                     ? graphics.chunkRenderDistance().getValue() * 16 : 0;
+        }
+
+        static int material(BlockState state) {
+            var level = levelWrapper(DhApi.Delayed.worldProxy, Minecraft.getInstance().level);
+            return DhApi.Delayed.wrapperFactory.getBlockStateWrapper(new Object[]{state}, level).getMaterialId();
         }
 
         static CompletableFuture<LodSurface> surface(ClientLevel level, Predicate<BlockState> opaque, int minX,
@@ -181,7 +265,8 @@ public final class DistantHorizonsCompat {
             return tops;
         }
 
-        private static void section(IDhApiTerrainDataRepo repo, IDhApiLevelWrapper wrapper, IDhApiTerrainDataCache cache,
+        private static void section(IDhApiTerrainDataRepo repo, IDhApiLevelWrapper wrapper,
+                                    IDhApiTerrainDataCache cache,
                                     Predicate<BlockState> opaque, int[] tops, int minX, int minZ, int size, int sx,
                                     int sz) {
             int x0 = Math.max(minX, sx * SECTION), x1 = Math.min(minX + size, (sx + 1) * SECTION);
@@ -212,6 +297,62 @@ public final class DistantHorizonsCompat {
                     proxy.getDepthDirection().farDepth, proxy.getDepthRange() == EDhApiDepthRange.ZERO_TO_POS_ONE);
         }
 
+        private static void afterOpaque(DhApiRenderParam param) {
+            var manager = VisualizationManagerImpl.get(Minecraft.getInstance().level);
+            var far = manager == null ? null : manager.farVisuals();
+            if (far == null) return;
+            IDhApiRenderProxy proxy = DhApi.Delayed.renderProxy;
+            RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+            int terrainDepth = proxy.getRenderingEngine() == EDhApiRenderingEngine.BLAZE_3D
+                    ? glId(proxy.getDhDepthTextureBlazeWrapper()) : payload(proxy.getDhDepthTextureGlId());
+            Matrix4f terrainProjection = DistantHorizonsFade.joml(param.dhProjectionMatrix)
+                                                            .mul(DistantHorizonsFade.joml(param.dhModelViewMatrix))
+                                                            .mul(DistantHorizonsFade.joml(param.mcModelViewMatrix)
+                                                                                    .invert());
+            far.afterOpaque(new FarDepth(terrainDepth, 0,
+                    main.width, main.height, terrainProjection, DistantHorizonsFade.joml(param.mcProjectionMatrix),
+                    proxy.getDepthRange() == EDhApiDepthRange.ZERO_TO_POS_ONE,
+                    proxy.getDepthDirection().farDepth < 0.5f,
+                    RenderSystem.getDevice().getDeviceInfo().isZZeroToOne(), true,
+                    (float) FrameUniforms.renderExtent(main.width) / main.width,
+                    (float) FrameUniforms.renderExtent(main.height) / main.height));
+            if (ShadersModHelper.isShaderPackInUse()) {
+                opaque.run();
+            } else {
+                drawFarVisuals(param);
+            }
+        }
+
+        private static void drawFarVisuals(DhApiRenderParam param) {
+            VisualizationManagerImpl manager = VisualizationManagerImpl.get(Minecraft.getInstance().level);
+            FarVisuals far = manager == null ? null : manager.farVisuals();
+            if (far == null || far.size() == 0) {
+                return;
+            }
+            far.draw(farHost(param));
+        }
+
+        private static FarHost farHost(DhApiRenderParam param) {
+            IDhApiRenderProxy proxy = DhApi.Delayed.renderProxy;
+            RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+            int colour;
+            int depth;
+            if (proxy.getRenderingEngine() == EDhApiRenderingEngine.BLAZE_3D) {
+                colour = glId(proxy.getDhColorTextureBlazeWrapper());
+                depth = glId(proxy.getDhDepthTextureBlazeWrapper());
+            } else {
+                colour = payload(proxy.getDhColorTextureGlId());
+                depth = payload(proxy.getDhDepthTextureGlId());
+            }
+            Matrix4f viewToHostClip = DistantHorizonsFade.joml(param.dhProjectionMatrix)
+                                                         .mul(DistantHorizonsFade.joml(param.dhModelViewMatrix))
+                                                         .mul(DistantHorizonsFade.joml(param.mcModelViewMatrix)
+                                                                                 .invert());
+            return new FarHost(colour, depth, main.width, main.height, viewToHostClip,
+                    proxy.getDepthRange() == EDhApiDepthRange.ZERO_TO_POS_ONE,
+                    proxy.getDepthDirection().farDepth < 0.5f, -1);
+        }
+
         private static GpuTextureView depthView(IDhApiRenderProxy proxy) {
             if (proxy.getRenderingEngine() == EDhApiRenderingEngine.BLAZE_3D) {
                 return (GpuTextureView) ((Object[]) payload(proxy.getDhDepthTextureBlazeWrapper())
@@ -238,6 +379,11 @@ public final class DistantHorizonsCompat {
             };
             return new GlTextureView(texture, 0, 1, unused) {
             };
+        }
+
+        private static int glId(DhApiResult<IDhApiBlazeTextureWrapper> wrapper) {
+            return ((GlTexture) ((GpuTextureView) ((Object[]) payload(wrapper).getWrappedMcObject())[1]).texture())
+                    .glId();
         }
 
         private static <T> T payload(DhApiResult<T> result) {

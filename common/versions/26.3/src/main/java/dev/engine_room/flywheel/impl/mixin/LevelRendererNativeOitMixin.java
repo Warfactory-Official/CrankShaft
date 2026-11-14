@@ -82,7 +82,7 @@ abstract class LevelRendererNativeOitMixin implements NativeOitReplay {
     @Unique private VkNativeOitPass.BackendFactory flywheel$vulkanBackendFactory;
 
     @Inject(method = "<init>", at = @At("RETURN"))
-    private void flywheel$initializeNativeOitCallbacks(CallbackInfo ci) {
+    private void flywheel$initializeNativeOitCallbacks(CallbackInfo _) {
         // Mixin infers field initializer ranges from line numbers; cache callbacks explicitly after construction.
         flywheel$drawStage = this::flywheel$replayScopedStage;
         flywheel$drawVulkanCategory = this::flywheel$replayVulkanCategory;
@@ -118,12 +118,12 @@ abstract class LevelRendererNativeOitMixin implements NativeOitReplay {
     }
 
     @Inject(method = "executeOit", at = @At("RETURN"))
-    private void flywheel$captureNativeTerrainDepth(CallbackInfo ci) {
+    private void flywheel$captureNativeTerrainDepth(CallbackInfo _) {
         LodCompat.captureTerrainDepth(2);
     }
 
     @Override
-    public void prepareWavelet(OitFrame frame) {
+    public void prepareWavelet(OitFrame _) {
         flywheel$prepareNativeParameters();
         flywheel$prepareTerrainCull(false);
     }

@@ -27,7 +27,7 @@ public interface ConsumerWithContext<T, C> extends BiConsumer<T, C> {
         void accept(T t);
 
         @Override
-        default void accept(T t, C ignored) {
+        default void accept(T t, C _) {
             accept(t);
         }
     }

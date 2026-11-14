@@ -5,7 +5,6 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
 import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
-import dev.engine_room.flywheel.impl.visualization.PrimarySkipState;
 import dev.engine_room.flywheel.lib.visualization.VisualizationHelper;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
@@ -37,7 +36,7 @@ abstract class EntityRenderDispatcherMixin {
 
     @ModifyReturnValue(method = "extractEntity", at = @At("RETURN"))
     private EntityRenderState flywheel$markSkipPrimary(EntityRenderState state, Entity entity) {
-        ((PrimarySkipState) state).flywheel$setSkipPrimary(VisualizationManager.supportsVisualization(entity.level())
+        state.flywheel$setSkipPrimary(VisualizationManager.supportsVisualization(entity.level())
                 && VisualizationHelper.skipVanillaPrimary(entity));
         return state;
     }

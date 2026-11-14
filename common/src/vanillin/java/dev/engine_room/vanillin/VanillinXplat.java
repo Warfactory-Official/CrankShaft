@@ -1,6 +1,7 @@
 package dev.engine_room.vanillin;
 
 import dev.engine_room.flywheel.api.internal.DependencyInjection;
+import dev.engine_room.vanillin.config.VanillinConfig;
 
 public interface VanillinXplat {
     VanillinXplat INSTANCE = DependencyInjection.load(VanillinXplat.class,
@@ -9,4 +10,6 @@ public interface VanillinXplat {
     boolean isDevelopmentEnvironment();
 
     boolean isModLoaded(String modId);
+
+    VanillinConfig getConfig();
 }

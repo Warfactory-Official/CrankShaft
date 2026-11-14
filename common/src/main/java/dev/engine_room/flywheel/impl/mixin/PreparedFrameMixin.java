@@ -37,7 +37,7 @@ abstract class PreparedFrameMixin {
 
     #if MC < 26.3
     @Inject(method = "executeSolid", at = @At("HEAD"), require = 1)
-    private void flywheel$captureOpaqueTerrain(CallbackInfo ci) {
+    private void flywheel$captureOpaqueTerrain(CallbackInfo _) {
         if (LevelFrame.owns(submitNodeStorage)) {
             LodCompat.captureTerrainDepth(0);
         }
@@ -45,7 +45,7 @@ abstract class PreparedFrameMixin {
     #endif
 
     @Inject(method = "executeTranslucent", at = @At("HEAD"), require = 1)
-    private void flywheel$beginOitFrame(CallbackInfo ci) {
+    private void flywheel$beginOitFrame(CallbackInfo _) {
         BerTranslucentCapture capture = flywheel$capture();
         if (capture != null && LevelFrame.owns(submitNodeStorage)) {
             capture.beginFrame();
@@ -57,7 +57,7 @@ abstract class PreparedFrameMixin {
 
     #if MC < 26.3
     @Inject(method = "executeTranslucentAfterTerrain", at = @At("RETURN"), require = 1)
-    private void flywheel$runDeferredOit(CallbackInfo ci) {
+    private void flywheel$runDeferredOit(CallbackInfo _) {
         if (!LevelFrame.owns(submitNodeStorage)) {
             return;
         }
@@ -70,7 +70,7 @@ abstract class PreparedFrameMixin {
     #endif
 
     @Inject(method = "executeTranslucent", at = @At("RETURN"), require = 1)
-    private void flywheel$endOitFrame(CallbackInfo ci) {
+    private void flywheel$endOitFrame(CallbackInfo _) {
         BerTranslucentCapture capture = flywheel$capture();
         if (capture != null) {
             capture.endFrame();
@@ -84,7 +84,7 @@ abstract class PreparedFrameMixin {
             target = "Lnet/minecraft/client/renderer/SubmitNodeCollection;translucentModels:Lnet/minecraft/client/renderer/feature/phase/TranslucentFeatureRenderPhase;",
             #endif
             opcode = Opcodes.GETFIELD), require = 1)
-    private void flywheel$enterModelPhase(CallbackInfo ci) {
+    private void flywheel$enterModelPhase(CallbackInfo _) {
         BerTranslucentCapture capture = flywheel$capture();
         if (capture != null) {
             capture.enterCapturePhase();
@@ -98,7 +98,7 @@ abstract class PreparedFrameMixin {
             target = "Lnet/minecraft/client/renderer/SubmitNodeCollection;seeThroughNameTags:Lnet/minecraft/client/renderer/feature/phase/TranslucentFeatureRenderPhase;",
             #endif
             opcode = Opcodes.GETFIELD), require = 1)
-    private void flywheel$exitModelPhase(CallbackInfo ci) {
+    private void flywheel$exitModelPhase(CallbackInfo _) {
         BerTranslucentCapture capture = flywheel$capture();
         if (capture != null) {
             capture.exitCapturePhase();
@@ -108,7 +108,7 @@ abstract class PreparedFrameMixin {
     @Inject(method = "executeTranslucent", at = @At(value = "FIELD",
             target = "Lnet/minecraft/client/renderer/SubmitNodeCollection;translucentCustomGeometry:Lnet/minecraft/client/renderer/feature/phase/SimpleFeatureRenderPhase;",
             opcode = Opcodes.GETFIELD), require = 1)
-    private void flywheel$enterCustomGeometryPhase(CallbackInfo ci) {
+    private void flywheel$enterCustomGeometryPhase(CallbackInfo _) {
         BerTranslucentCapture capture = flywheel$capture();
         if (capture != null) {
             capture.enterCapturePhase();
@@ -118,7 +118,7 @@ abstract class PreparedFrameMixin {
     @Inject(method = "executeTranslucent", at = @At(value = "FIELD",
             target = "Lnet/minecraft/client/renderer/SubmitNodeCollection;shadows:Lnet/minecraft/client/renderer/feature/phase/SimpleFeatureRenderPhase;",
             opcode = Opcodes.GETFIELD), require = 1)
-    private void flywheel$exitCustomGeometryPhaseLoop(CallbackInfo ci) {
+    private void flywheel$exitCustomGeometryPhaseLoop(CallbackInfo _) {
         BerTranslucentCapture capture = flywheel$capture();
         if (capture != null) {
             capture.exitCapturePhase();
@@ -128,7 +128,7 @@ abstract class PreparedFrameMixin {
     @Inject(method = "executeTranslucent", at = @At(value = "FIELD",
             target = "Lnet/minecraft/client/renderer/SubmitNodeCollection;shapeOutlines:Lnet/minecraft/client/renderer/feature/phase/SimpleFeatureRenderPhase;",
             opcode = Opcodes.GETFIELD), require = 1)
-    private void flywheel$exitCustomGeometryPhaseTail(CallbackInfo ci) {
+    private void flywheel$exitCustomGeometryPhaseTail(CallbackInfo _) {
         BerTranslucentCapture capture = flywheel$capture();
         if (capture != null) {
             capture.exitCapturePhase();
@@ -142,7 +142,7 @@ abstract class PreparedFrameMixin {
             target = "Lnet/minecraft/client/renderer/SubmitNodeCollection;translucentBlocksAndItems:Lnet/minecraft/client/renderer/feature/phase/TranslucentFeatureRenderPhase;",
             #endif
             opcode = Opcodes.GETFIELD), require = 1)
-    private void flywheel$enterBlockEntityPhase(CallbackInfo ci) {
+    private void flywheel$enterBlockEntityPhase(CallbackInfo _) {
         BerTranslucentCapture capture = flywheel$capture();
         if (capture != null) {
             capture.enterCapturePhase();
@@ -152,7 +152,7 @@ abstract class PreparedFrameMixin {
     @Inject(method = "executeTranslucent", at = @At(value = "FIELD",
             target = "Lnet/minecraft/client/renderer/SubmitNodeCollection;breakingOverlay:Lnet/minecraft/client/renderer/feature/phase/SimpleFeatureRenderPhase;",
             opcode = Opcodes.GETFIELD), require = 1)
-    private void flywheel$exitBlockEntityPhase(CallbackInfo ci) {
+    private void flywheel$exitBlockEntityPhase(CallbackInfo _) {
         BerTranslucentCapture capture = flywheel$capture();
         if (capture != null) {
             capture.exitCapturePhase();

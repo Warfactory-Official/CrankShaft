@@ -2,11 +2,15 @@ package dev.engine_room.vanillin.visuals;
 
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.material.Material;
+import dev.engine_room.flywheel.api.visual.FarVisual;
+import dev.engine_room.flywheel.api.visual.FarVisualState;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
+import dev.engine_room.flywheel.lib.model.part.ModelTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTrees;
 import dev.engine_room.flywheel.lib.visual.AbstractBlockEntityVisual;
+import dev.engine_room.flywheel.lib.visual.FarVisualStates;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.geom.ModelLayers;
@@ -20,17 +24,19 @@ import org.joml.Matrix4fc;
 
 import java.util.function.Consumer;
 
-public class BellVisual extends AbstractBlockEntityVisual<BellBlockEntity> implements SimpleDynamicVisual {
+public class BellVisual extends AbstractBlockEntityVisual<BellBlockEntity> implements SimpleDynamicVisual, FarVisual {
     private static final Material MATERIAL = SimpleMaterial.builder()
                                                            .mipmap(false)
                                                            .build();
 
+    private final ModelTree model;
     private final InstanceTree instances;
     private final InstanceTree bellBody;
 
     private final Matrix4fc initialPose;
 
     private boolean wasShaking = false;
+    private int packedLight;
 
     public BellVisual(VisualizationContext ctx, BellBlockEntity blockEntity, float partialTick) {
         super(ctx, blockEntity, partialTick);
@@ -39,7 +45,8 @@ public class BellVisual extends AbstractBlockEntityVisual<BellBlockEntity> imple
                                              .getAtlasManager()
                                              .get(BellRenderer.BELL_TEXTURE);
 
-        instances = InstanceTree.create(instancerProvider(), ModelTrees.of(ModelLayers.BELL, sprite, MATERIAL));
+        model = ModelTrees.of(ModelLayers.BELL, sprite, MATERIAL);
+        instances = InstanceTree.create(instancerProvider(), model);
         bellBody = instances.childOrThrow("bell_body");
 
         BlockPos visualPos = getVisualPosition();
@@ -83,8 +90,8 @@ public class BellVisual extends AbstractBlockEntityVisual<BellBlockEntity> imple
     }
 
     @Override
-    public void updateLight(float partialTick) {
-        int packedLight = computePackedLight();
+    public void updateLight(float _) {
+        packedLight = computePackedLight();
         instances.traverse(instance -> {
             instance.light(packedLight)
                     .setChanged();
@@ -94,6 +101,12 @@ public class BellVisual extends AbstractBlockEntityVisual<BellBlockEntity> imple
     @Override
     public void collectCrumblingInstances(Consumer<Instance> consumer) {
         instances.traverse(consumer);
+    }
+
+    @Override
+    public FarVisualState retainedState() {
+        return FarVisualStates.modelTree(visualizationContext, model, initialPose,
+                FarVisualState.Appearance.lit(packedLight));
     }
 
     @Override

@@ -1,26 +1,28 @@
 package dev.engine_room.flywheel.iris.compile;
 
-import dev.engine_room.flywheel.iris.mixin.CustomUniformsAccessor;
 import com.google.common.collect.ImmutableSet;
+import dev.engine_room.flywheel.iris.mixin.CustomUniformsAccessor;
+import dev.engine_room.flywheel.iris.mixin.IrisRenderingPipelineAccessor;
 #if MC < 26.3
 import com.mojang.blaze3d.opengl.GlRenderPass.TextureViewAndSampler;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 #endif
 import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
 import com.mojang.renderpearl.api.pipeline.UniformType;
-import com.mojang.renderpearl.api.textures.GpuTextureView;
 #if MC >= 26.3
 import com.mojang.renderpearl.backend.opengl.GlProgram;
-import com.mojang.renderpearl.util.TextureViewAndSampler;
 #else
 import com.mojang.blaze3d.opengl.GlProgram;
 #endif
 import com.mojang.renderpearl.backend.opengl.GlStateManager;
-import com.mojang.renderpearl.backend.opengl.GlTexture;
 import com.mojang.renderpearl.backend.opengl.Uniform;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.glsl.GlslVersion;
+import dev.engine_room.flywheel.impl.compat.LodCompat;
+import dev.engine_room.flywheel.iris.compile.patches.GuestLodOcclusion;
+import dev.engine_room.flywheel.iris.engine.LateLightCapture;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.blending.AlphaTest;
 import net.irisshaders.iris.gl.blending.BlendModeOverride;
@@ -32,6 +34,10 @@ import net.irisshaders.iris.gl.program.ProgramUniforms;
 import net.irisshaders.iris.gl.sampler.SamplerHolder;
 import net.irisshaders.iris.gl.sampler.SamplerLimits;
 import net.irisshaders.iris.gl.state.FogMode;
+#if MC < 26.3
+import net.irisshaders.iris.gl.texture.TextureType;
+#endif
+import net.irisshaders.iris.gl.texture.InternalTextureFormat;
 import net.irisshaders.iris.helpers.MatrixUtils;
 import net.irisshaders.iris.mixin.GlStateManagerAccessor;
 #if MC >= 26.3
@@ -45,10 +51,12 @@ import net.irisshaders.iris.uniforms.CommonUniforms;
 import net.irisshaders.iris.uniforms.VanillaUniforms;
 import net.irisshaders.iris.uniforms.builtin.BuiltinReplacementUniforms;
 import org.joml.Matrix3f;
+import net.minecraft.core.Vec3i;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.*;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,7 +69,6 @@ import java.util.function.Supplier;
 public final class GuestProgram extends GlProgram implements IrisProgram #if MC >= 26.3 , GlProgramBindings #endif {
     // Iris binds its external samplers (albedo/overlay/lightmap) to these units by name.
     private static final String[] FIXED_SAMPLERS = {"Sampler0", "Sampler1", "Sampler2"};
-    private static final int[] GRAYSCALE_SWIZZLE = {GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_ONE, GL11C.GL_RED};
     private static final Map<String, String> IRIS_BLOCKS = Map.of(
             "DynamicTransforms", "iris_DynamicTransforms",
             "Projection", "iris_Projection",
@@ -69,13 +76,15 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
             "Fog", "iris_Fog");
 
     private static final Matrix4f MODEL_VIEW = new Matrix4f();
+    private static final Matrix4f PREVIOUS_MODEL_VIEW = new Matrix4f();
+    private static boolean compositeSamplers;
 
     private final IrisRenderingPipeline parent;
     private final boolean shadow;
+    private final boolean nativeDepth;
     #if MC >= 26.3
     private final Map<String, Uniform> namedUniforms = new HashMap<>();
     private final List<BindGroupLayout.UniformDescription> uniformDescriptions;
-    private final int albedoUniformIndex;
     #endif
     private final ProgramUniforms uniforms;
     private final ProgramSamplers samplers;
@@ -89,12 +98,27 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
     private final int modelViewInverse;
     private final int normalMatrix;
     private final int projectionInverse;
+    private final int previousModelView;
+    private final int lodRadius;
+    private final int lightPhase;
+    private final int staticCamera;
+    private final int staticCameraFraction;
+    private final int farLayerProjection;
+    private final int farLayerInverseProjection;
+    private final int farLayerViewToWorld;
+    private final int farLayerWorldToView;
+    private final int farLayerOrigin;
+    private final int farHitSize;
+    private final int farLayerRadius;
     private final Matrix4f scratch = new Matrix4f();
     private final Matrix3f scratch3 = new Matrix3f();
     private final float[] floats16 = new float[16];
     private final float[] floats9 = new float[9];
     private boolean rawSamplersAssigned;
-    private boolean grayscaleAlbedo;
+    #if MC < 26.3
+    private boolean staticSamplersAssigned;
+    #endif
+    private long customUniformsEpoch = -1;
     private boolean terrain;
     private int meshQuads;
     private int meshTaskQuads;
@@ -112,27 +136,36 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
                  IrisRenderingPipeline parent, boolean shadow, Target target,
                  @Nullable BlendModeOverride blendModeOverride, List<BufferBlendOverride> bufferBlendOverrides,
                  AlphaTest alphaTest, List<RawTexture> rawTextures) {
+        this(programId, label, layouts, albedoFromCrumbling, parent, shadow, target, blendModeOverride,
+                bufferBlendOverrides, alphaTest, rawTextures, List.of());
+    }
+
+    GuestProgram(int programId, String label, List<BindGroupLayout> layouts, boolean albedoFromCrumbling,
+                 IrisRenderingPipeline parent, boolean shadow, Target target,
+                 @Nullable BlendModeOverride blendModeOverride, List<BufferBlendOverride> bufferBlendOverrides,
+                 AlphaTest alphaTest, List<RawTexture> rawTextures, List<RawImage> rawImages) {
+        this(programId, label, layouts, albedoFromCrumbling, parent, shadow, target, blendModeOverride,
+                bufferBlendOverrides, alphaTest, rawTextures, rawImages, false);
+    }
+
+    GuestProgram(int programId, String label, List<BindGroupLayout> layouts, boolean albedoFromCrumbling,
+                 IrisRenderingPipeline parent, boolean shadow, Target target,
+                 @Nullable BlendModeOverride blendModeOverride, List<BufferBlendOverride> bufferBlendOverrides,
+                 AlphaTest alphaTest, List<RawTexture> rawTextures, List<RawImage> rawImages, boolean composite) {
         super(programId, label);
         this.parent = parent;
         this.shadow = shadow;
+        nativeDepth = ((IrisRenderingPipelineAccessor) parent).flywheel$pack().flywheel$nativeDepth();
         this.target = target;
         this.rawTextures = rawTextures;
         this.blendModeOverride = blendModeOverride;
         this.bufferBlendOverrides = bufferBlendOverrides;
-        this.alphaReference = alphaTest.reference();
+        alphaReference = alphaTest.reference();
 
         #if MC >= 26.3
         uniformDescriptions = List.copyOf(BindGroupLayout.flattenUniforms(layouts));
-        int albedoIndex = -1;
-        for (int index = 0; index < uniformDescriptions.size(); index++) {
-            if (uniformDescriptions.get(index).name().equals("Sampler0")) {
-                albedoIndex = index;
-                break;
-            }
-        }
-        albedoUniformIndex = albedoIndex;
         #endif
-        rawTextureBaseUnit = bindLayouts(layouts, albedoFromCrumbling);
+        rawTextureBaseUnit = composite ? 0 : bindLayouts(layouts, albedoFromCrumbling);
         int reservedUnits = rawTextureBaseUnit + rawTextures.size();
 
         ImmutableSet.Builder<Integer> reserved = ImmutableSet.builder();
@@ -148,16 +181,26 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
                     + SamplerLimits.get().getMaxTextureUnits());
         }
         ProgramSamplers.Builder samplerBuilder = ProgramSamplers.builder(programId, reserved.build());
-        SamplerHolder samplerHolder = portable ? new GuestSamplers(samplerBuilder, remainingUnits, label) : samplerBuilder;
+        SamplerHolder samplerHolder = portable ? new GuestSamplers(samplerBuilder, remainingUnits,
+                label) : samplerBuilder;
         ProgramImages.Builder imageBuilder = ProgramImages.builder(programId);
         CommonUniforms.addDynamicUniforms(uniformBuilder, FogMode.PER_VERTEX);
-        parent.getCustomUniforms()
-              .assignTo(uniformBuilder);
+        parent.getCustomUniforms().flywheel$registerGuestUniforms(uniformBuilder);
         BuiltinReplacementUniforms.addBuiltinReplacementUniforms(uniformBuilder);
         VanillaUniforms.addVanillaUniforms(uniformBuilder);
         Supplier<ImmutableSet<Integer>> flipped = shadow ? parent::getFlippedBeforeShadow
                 : () -> parent.isBeforeTranslucent ? parent.getFlippedAfterPrepare() : parent.getFlippedAfterTranslucent();
-        parent.addGbufferOrShadowSamplers(samplerHolder, imageBuilder, flipped, shadow, true, true, true);
+        compositeSamplers = composite;
+        try {
+            parent.addGbufferOrShadowSamplers(samplerHolder, imageBuilder, flipped, shadow, true, true, true);
+        } finally {
+            compositeSamplers = false;
+        }
+        #if MC < 26.3
+        samplerHolder.addDynamicSampler(TextureType.TEXTURE_2D, GuestLodOcclusion::terrainDepth, null,
+                GuestLodOcclusion.TERRAIN_DEPTH);
+        #endif
+        for (var image : rawImages) imageBuilder.addTextureImage(image.texture(), image.format(), image.name());
         parent.getCustomUniforms()
               .mapholderToPass(uniformBuilder, this);
 
@@ -168,18 +211,71 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
         modelViewInverse = GlStateManager._glGetUniformLocation(programId, "iris_ModelViewMatInverse");
         normalMatrix = GlStateManager._glGetUniformLocation(programId, "iris_NormalMat");
         projectionInverse = GlStateManager._glGetUniformLocation(programId, "iris_ProjMatInverse");
+        previousModelView = GlStateManager._glGetUniformLocation(programId, "_flw_prevModelView");
+        lodRadius = GlStateManager._glGetUniformLocation(programId, GuestLodOcclusion.RADIUS);
+        lightPhase = GlStateManager._glGetUniformLocation(programId, "flw_lightPhase");
+        staticCamera = GlStateManager._glGetUniformLocation(programId, "_flw_staticCamera");
+        staticCameraFraction = GlStateManager._glGetUniformLocation(programId, "_flw_staticCameraFraction");
+        farLayerProjection = GlStateManager._glGetUniformLocation(programId, "_flw_farLayerProjection");
+        farLayerInverseProjection = GlStateManager._glGetUniformLocation(programId, "_flw_farLayerInverseProjection");
+        farLayerViewToWorld = GlStateManager._glGetUniformLocation(programId, "_flw_farLayerViewToWorld");
+        farLayerWorldToView = GlStateManager._glGetUniformLocation(programId, "_flw_farLayerWorldToView");
+        farLayerOrigin = GlStateManager._glGetUniformLocation(programId, "_flw_farLayerOrigin");
+        farHitSize = GlStateManager._glGetUniformLocation(programId, "_flw_farHitSize");
+        farLayerRadius = GlStateManager._glGetUniformLocation(programId, "_flw_farLayerRadius");
     }
 
-    /** Before guest draw; supply DynamicTransforms model view for Iris inverse/normal uniforms. */
+    /**
+     * After the pipeline bind; {@code origin}: camera minus render origin.
+     */
+    void setupFarLayer(Matrix4fc projection, Matrix4fc inverseProjection, Matrix4fc viewToWorld,
+                       Matrix4fc worldToView, float originX, float originY, float originZ, int width, int height,
+                       float radius) {
+        int program = getProgramId();
+        GL41C.glProgramUniformMatrix4fv(program, farLayerProjection, false, projection.get(floats16));
+        GL41C.glProgramUniformMatrix4fv(program, farLayerInverseProjection, false, inverseProjection.get(floats16));
+        GL41C.glProgramUniformMatrix4fv(program, farLayerViewToWorld, false, viewToWorld.get(floats16));
+        GL41C.glProgramUniformMatrix4fv(program, farLayerWorldToView, false, worldToView.get(floats16));
+        GL41C.glProgramUniform3f(program, farLayerOrigin, originX, originY, originZ);
+        GL41C.glProgramUniform2f(program, farHitSize, width, height);
+        GL41C.glProgramUniform1f(program, farLayerRadius, radius);
+    }
+
+    /**
+     * Before guest draw; supply DynamicTransforms model view for Iris inverse/normal uniforms.
+     */
     public static void setModelView(Matrix4fc modelView) {
         MODEL_VIEW.set(modelView);
     }
 
-    static void grayscaleAlbedo(GpuTextureView albedo) {
-        int texture = ((GlTexture) albedo.texture()).glId();
-        IrisRenderSystem.addUnswizzle(texture);
-        IrisRenderSystem.texParameteriv(texture, GL11C.GL_TEXTURE_2D, ARBTextureSwizzle.GL_TEXTURE_SWIZZLE_RGBA,
-                GRAYSCALE_SWIZZLE);
+    public static boolean compositeSamplers() {
+        return compositeSamplers;
+    }
+
+    void setupStaticShadow(Matrix4fc modelView, Vec3i origin) {
+        setModelView(modelView);
+        #if MC >= 26.3
+        iris$setupState(uniformDescriptions);
+        #else
+        iris$setupState(new HashMap<>(), null);
+        if (!staticSamplersAssigned) {
+            for (int unit = 0; unit < FIXED_SAMPLERS.length; unit++) {
+                GlStateManager._glUniform1i(
+                        GlStateManager._glGetUniformLocation(getProgramId(), FIXED_SAMPLERS[unit]), unit);
+            }
+            staticSamplersAssigned = true;
+        }
+        #endif
+        GL20C.glUniform3i(staticCamera, origin.getX(), origin.getY(), origin.getZ());
+        GL20C.glUniform3f(staticCameraFraction, 0, 0, 0);
+    }
+
+    /**
+     * Once per frame, before guest draws: the previous frame's main view at this frame's render origin (motion
+     * vectors).
+     */
+    public static void setPreviousModelView(Matrix4fc modelView) {
+        PREVIOUS_MODEL_VIEW.set(modelView);
     }
 
     /**
@@ -188,12 +284,12 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
      * unit count.
      */
     #if MC >= 26.3
-    private int bindLayouts(List<BindGroupLayout> layouts, boolean albedoFromCrumbling) {
+    private int bindLayouts(List<BindGroupLayout> _, boolean albedoFromCrumbling) {
         int programId = getProgramId();
         GlStateManager._glUseProgram(programId);
         List<String> samplerNames = uniformDescriptions.stream()
-                .filter(description -> description.type() == UniformType.COMBINED_IMAGE_SAMPLER)
-                .map(BindGroupLayout.UniformDescription::name).toList();
+                                                       .filter(description -> description.type() == UniformType.COMBINED_IMAGE_SAMPLER)
+                                                       .map(BindGroupLayout.UniformDescription::name).toList();
         int nextUnit = 0;
         for (String fixed : FIXED_SAMPLERS) {
             int unit = nextUnit++;
@@ -302,10 +398,10 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
 
     @Override
     #if MC >= 26.3
-    public void iris$setupState(List<BindGroupLayout.UniformDescription> descriptions) {
+    public void iris$setupState(List<BindGroupLayout.UniformDescription> _) {
     #else
-    public void iris$setupState(HashMap<String, TextureViewAndSampler> passSamplers,
-                                @Nullable GpuTextureView albedoTex) {
+    public void iris$setupState(HashMap<String, TextureViewAndSampler> _,
+                                @Nullable GpuTextureView _) {
     #endif
         DepthColorStorage.unlockDepthColor();
         CapturedRenderingState.INSTANCE.setCurrentAlphaTest(alphaReference);
@@ -319,7 +415,7 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
             setModelView(shadow ? ShadowRenderer.MODELVIEW : CapturedRenderingState.INSTANCE.getGbufferModelView());
         }
 
-        MODEL_VIEW.invert(scratch);
+        if (modelViewInverse > -1 || normalMatrix > -1) MODEL_VIEW.invert(scratch);
         if (modelViewInverse > -1) {
             IrisRenderSystem.uniformMatrix4fv(modelViewInverse, false, scratch.get(floats16));
         }
@@ -327,8 +423,17 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
             IrisRenderSystem.uniformMatrix3fv(normalMatrix, false, scratch.transpose3x3(scratch3)
                                                                           .get(floats9));
         }
+        if (previousModelView > -1) {
+            IrisRenderSystem.uniformMatrix4fv(previousModelView, false, PREVIOUS_MODEL_VIEW.get(floats16));
+        }
+        if (lodRadius > -1) {
+            GL20C.glUniform1f(lodRadius, LodCompat.vanillaRadius());
+        }
+        if (lightPhase > -1) GL20C.glUniform1i(lightPhase, LateLightCapture.phase());
         if (projectionInverse > -1) {
-            Matrix4fc projection = shadow ? MatrixUtils.toMinusOneToOne(ShadowRenderer.PROJECTION)
+            Matrix4fc projection = shadow
+                    ? nativeDepth ? ShadowRenderer.PROJECTION : MatrixUtils.toMinusOneToOne(ShadowRenderer.PROJECTION)
+                    : nativeDepth ? NativeDepth.levelProjection()
                     : CapturedRenderingState.INSTANCE.getGbufferProjection();
             IrisRenderSystem.uniformMatrix4fv(projectionInverse, false, projection.invert(scratch)
                                                                                   .get(floats16));
@@ -337,8 +442,13 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
         samplers.update();
         bindRawTextures();
         uniforms.update();
-        parent.getCustomUniforms()
-              .push(this);
+        var customUniforms = parent.getCustomUniforms();
+        customUniforms.flywheel$evaluateNewlyRetained();
+        var epoch = customUniforms.flywheel$uniformEpoch();
+        if (customUniformsEpoch != epoch) {
+            customUniforms.push(this);
+            customUniformsEpoch = epoch;
+        }
         images.update();
 
         BlendModeOverride.restore();
@@ -348,23 +458,7 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
         bufferBlendOverrides.forEach(BufferBlendOverride::apply);
 
         target.bind(parent.isBeforeTranslucent);
-        #if MC < 26.3
-        if (grayscaleAlbedo) grayscaleAlbedo(albedoTex);
-        #endif
     }
-
-    void useGrayscaleAlbedo() {
-        grayscaleAlbedo = true;
-    }
-
-    #if MC >= 26.3
-    /** After native texture binding, before a draw; font atlases expose coverage in their red channel. */
-    public void setupAlbedo(List<?> boundUniforms) {
-        if (grayscaleAlbedo) {
-            grayscaleAlbedo(((TextureViewAndSampler) boundUniforms.get(albedoUniformIndex)).view());
-        }
-    }
-    #endif
 
     private void bindRawTextures() {
         if (rawTextures.isEmpty()) {
@@ -413,22 +507,30 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
         return meshQuads;
     }
 
-    /** Source quads per task group; no task stage => mesh group. */
+    /**
+     * Source quads per task group; no task stage => mesh group.
+     */
     public int meshTaskQuads() {
         return meshTaskQuads;
     }
 
-    /** Carried-depth rejection; requires immediate terrain-phase recovery. */
+    /**
+     * Carried-depth rejection; requires immediate terrain-phase recovery.
+     */
     public boolean meshTaskRecovery() {
         return meshTaskRecovery;
     }
 
-    /** Empty-draw removal changes {@code gl_DrawID}. */
+    /**
+     * Empty-draw removal changes {@code gl_DrawID}.
+     */
     public boolean meshCompactSafe() {
         return meshCompactSafe;
     }
 
-    /** Before terrain draw, render thread; retain runs through draw: (first, capacity, count-word offset, pad). */
+    /**
+     * Before terrain draw, render thread; retain runs through draw: (first, capacity, count-word offset, pad).
+     */
     public void meshCommands(int commands, int counts, int[] runs, int runCount) {
         meshCommandBuffer = commands;
         meshCountBuffer = counts;
@@ -436,7 +538,9 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
         meshRunCount = runCount;
     }
 
-    /** GL draw seam after RenderPass/Iris setup. */
+    /**
+     * GL draw seam after RenderPass/Iris setup.
+     */
     public void drawMeshCommands() {
         GlStateManager._glBindBuffer(GL40C.GL_DRAW_INDIRECT_BUFFER, meshCommandBuffer);
         GL15C.glBindBuffer(GL46C.GL_PARAMETER_BUFFER, meshCountBuffer);
@@ -456,7 +560,6 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
 
     @Override
     public void iris$clearState() {
-        if (grayscaleAlbedo) IrisRenderSystem.onProgramUse();
         ProgramUniforms.clearActiveUniforms();
         ProgramSamplers.clearActiveSamplers();
         BlendModeOverride.restore();
@@ -477,7 +580,12 @@ public final class GuestProgram extends GlProgram implements IrisProgram #if MC 
         void bind(boolean beforeTranslucent);
     }
 
-    /** {@code texelFetch}-only; no sampler state. */
+    /**
+     * {@code texelFetch}-only; no sampler state.
+     */
     record RawTexture(String name, int glTarget, IntSupplier texture) {
+    }
+
+    record RawImage(String name, InternalTextureFormat format, IntSupplier texture) {
     }
 }

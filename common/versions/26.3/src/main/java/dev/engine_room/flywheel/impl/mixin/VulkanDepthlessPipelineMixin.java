@@ -23,7 +23,7 @@ abstract class VulkanDepthlessPipelineMixin {
     @Shadow @Final private LongList shaderModules;
 
     @Inject(method = "destroy", at = @At("HEAD"))
-    private void flywheel$destroyDepthlessOwner(CallbackInfo ci) {
+    private void flywheel$destroyDepthlessOwner(CallbackInfo _) {
         // Native compilation always creates a depth variant. Engine depthless owners deliberately do not.
         if (withDepthPipeline != 0 || withoutDepthPipeline == 0) return;
         VK12.vkDestroyPipeline(device.vkDevice(), withoutDepthPipeline, null);

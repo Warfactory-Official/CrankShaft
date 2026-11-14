@@ -43,12 +43,12 @@ public class MixinSodiumWorldRenderer {
     @Inject(method = "drawChunkLayer", at = @At("HEAD"), cancellable = true, require = 1)
     private void flywheel$routeTerrainToEngine(
                                                #if MC >= 26.3
-                                               RenderPass renderPass,
+                                               RenderPass _,
                                                #endif
                                                ChunkSectionLayerGroup group, ChunkRenderMatrices matrices,
                                                double x, double y, double z, GpuSampler terrainSampler,
                                                #if MC >= 26.3
-                                               @Nullable OitStage stage,
+                                               @Nullable OitStage _,
                                                #endif
                                                CallbackInfo ci) {
         if (!SodiumCompat.ACTIVE) {
@@ -118,9 +118,9 @@ public class MixinSodiumWorldRenderer {
 
     #if MC < 26.3
     @Inject(method = "drawChunkLayer", at = @At("RETURN"), require = 1)
-    private void flywheel$captureTranslucentTerrain(ChunkSectionLayerGroup group, ChunkRenderMatrices matrices,
-                                                   double x, double y, double z, GpuSampler terrainSampler,
-                                                   CallbackInfo ci) {
+    private void flywheel$captureTranslucentTerrain(ChunkSectionLayerGroup group, ChunkRenderMatrices _,
+                                                   double _, double _, double _, GpuSampler _,
+                                                   CallbackInfo _) {
         if (group == ChunkSectionLayerGroup.TRANSLUCENT && SodiumCompat.ACTIVE) {
             LodCompat.captureTerrainDepth(2);
         }

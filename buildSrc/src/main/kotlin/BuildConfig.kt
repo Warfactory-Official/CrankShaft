@@ -25,7 +25,6 @@ val Project.lambDynLightsVersion: String get() = stringProp("lambdynamiclights_v
 val Project.etfVersion: String get() = stringProp("entity_texture_features_version")
 val Project.emfVersion: String get() = stringProp("entity_model_features_version")
 val Project.polytoneCompileVersion: String get() = stringProp("polytone_compile_version")
-val Project.vitrailVersion: String get() = stringProp("vitrail_version")
 val Project.modVersion: String get() = stringProp("mod_version")
 val Project.tenonVersion: String get() = stringProp("tenon_version")
 

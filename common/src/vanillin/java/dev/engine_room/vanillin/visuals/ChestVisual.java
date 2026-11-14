@@ -1,54 +1,29 @@
 package dev.engine_room.vanillin.visuals;
 
 import dev.engine_room.flywheel.api.instance.Instance;
-import dev.engine_room.flywheel.api.material.Material;
+import dev.engine_room.flywheel.api.visual.FarVisual;
+import dev.engine_room.flywheel.api.visual.FarVisualState;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
-import dev.engine_room.flywheel.lib.material.CutoutShaders;
-import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
-import dev.engine_room.flywheel.lib.model.part.ModelTrees;
+import dev.engine_room.flywheel.lib.model.part.ModelTree;
 import dev.engine_room.flywheel.lib.util.LevelRenderer;
 import dev.engine_room.flywheel.lib.visual.AbstractBlockEntityVisual;
+import dev.engine_room.flywheel.lib.visual.FarVisualStates;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import it.unimi.dsi.fastutil.floats.Float2FloatFunction;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.model.geom.ModelLayerLocation;
-import net.minecraft.client.model.geom.ModelLayers;
-import net.minecraft.client.renderer.Sheets;
-import net.minecraft.client.renderer.blockentity.state.ChestRenderState;
-import net.minecraft.client.renderer.texture.TextureAtlasSprite;
-import net.minecraft.client.resources.model.sprite.SpriteId;
-import net.minecraft.core.BlockPos;
 import net.minecraft.util.LightCoordsUtil;
-import net.minecraft.util.Mth;
-import net.minecraft.util.SpecialDates;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.entity.*;
-import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.phys.AABB;
-import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
 
-import java.util.EnumMap;
-import java.util.Map;
+import java.util.List;
 import java.util.function.Consumer;
 
-public class ChestVisual<T extends BlockEntity & LidBlockEntity> extends AbstractBlockEntityVisual<T> implements SimpleDynamicVisual {
-    private static final Material MATERIAL = SimpleMaterial.builder()
-                                                           .cutout(CutoutShaders.ONE_TENTH)
-                                                           .texture(Sheets.CHEST_SHEET)
-                                                           .mipmap(false)
-                                                           .build();
-
-    private static final Map<ChestType, ModelLayerLocation> LAYER_LOCATIONS = new EnumMap<>(ChestType.class);
-
-    static {
-        LAYER_LOCATIONS.put(ChestType.SINGLE, ModelLayers.CHEST);
-        LAYER_LOCATIONS.put(ChestType.LEFT, ModelLayers.DOUBLE_CHEST_LEFT);
-        LAYER_LOCATIONS.put(ChestType.RIGHT, ModelLayers.DOUBLE_CHEST_RIGHT);
-    }
-
+public class ChestVisual<T extends BlockEntity & LidBlockEntity> extends AbstractBlockEntityVisual<T> implements SimpleDynamicVisual, FarVisual {
+    @Nullable
+    private final ModelTree model;
     @Nullable
     private final InstanceTree instances;
     @Nullable
@@ -64,32 +39,27 @@ public class ChestVisual<T extends BlockEntity & LidBlockEntity> extends Abstrac
     private final Float2FloatFunction lidProgress;
 
     private float lastProgress = Float.NaN;
+    private int packedLight;
 
     public ChestVisual(VisualizationContext ctx, T blockEntity, float partialTick) {
         super(ctx, blockEntity, partialTick);
 
         Block block = blockState.getBlock();
         if (block instanceof AbstractChestBlock<?> chestBlock) {
-            ChestType chestType = blockState.hasProperty(ChestBlock.TYPE) ? blockState.getValue(
-                    ChestBlock.TYPE) : ChestType.SINGLE;
-
-            SpriteId spriteId = Sheets.chooseSprite(chestMaterialType(block, blockEntity), chestType);
-            TextureAtlasSprite texture = Minecraft.getInstance()
-                                                  .getAtlasManager()
-                                                  .get(spriteId);
-
-            instances = InstanceTree.create(instancerProvider(),
-                    ModelTrees.of(LAYER_LOCATIONS.get(chestType), texture, MATERIAL));
+            model = ContainerVisualModels.chestModel(blockState, blockEntity instanceof EnderChestBlockEntity,
+                    blockEntity instanceof TrappedChestBlockEntity);
+            instances = InstanceTree.create(instancerProvider(), model);
             lid = instances.childOrThrow("lid");
             lock = instances.childOrThrow("lock");
 
-            initialPose = createInitialPose();
+            initialPose = ContainerVisualModels.chestPose(blockState, getVisualPosition());
             neighborCombineResult = chestBlock.combine(blockState, level, pos, true);
             lidProgress = neighborCombineResult.apply(ChestBlock.opennessCombiner(blockEntity));
 
             lastProgress = lidProgress.get(partialTick);
             applyLidTransform(lastProgress);
         } else {
+            model = null;
             instances = null;
             lid = null;
             lock = null;
@@ -99,31 +69,6 @@ public class ChestVisual<T extends BlockEntity & LidBlockEntity> extends Abstrac
         }
     }
 
-    private static ChestRenderState.ChestMaterialType chestMaterialType(Block block, BlockEntity blockEntity) {
-        if (block instanceof CopperChestBlock copperChestBlock) {
-            return switch (copperChestBlock.getState()) {
-                case UNAFFECTED -> ChestRenderState.ChestMaterialType.COPPER_UNAFFECTED;
-                case EXPOSED -> ChestRenderState.ChestMaterialType.COPPER_EXPOSED;
-                case WEATHERED -> ChestRenderState.ChestMaterialType.COPPER_WEATHERED;
-                case OXIDIZED -> ChestRenderState.ChestMaterialType.COPPER_OXIDIZED;
-            };
-        } else if (blockEntity instanceof EnderChestBlockEntity) {
-            return ChestRenderState.ChestMaterialType.ENDER_CHEST;
-        } else if (SpecialDates.isExtendedChristmas()) {
-            return ChestRenderState.ChestMaterialType.CHRISTMAS;
-        } else {
-            return blockEntity instanceof TrappedChestBlockEntity ? ChestRenderState.ChestMaterialType.TRAPPED : ChestRenderState.ChestMaterialType.REGULAR;
-        }
-    }
-
-    private Matrix4f createInitialPose() {
-        BlockPos visualPos = getVisualPosition();
-        float horizontalAngle = blockState.getValue(ChestBlock.FACING).toYRot();
-        return new Matrix4f().translate(visualPos.getX(), visualPos.getY(), visualPos.getZ())
-                             .translate(0.5F, 0.5F, 0.5F)
-                             .rotateY(-horizontalAngle * Mth.DEG_TO_RAD)
-                             .translate(-0.5F, -0.5F, -0.5F);
-    }
 
     @Override
     protected AABB getRenderBoundingBox() {
@@ -159,9 +104,9 @@ public class ChestVisual<T extends BlockEntity & LidBlockEntity> extends Abstrac
     }
 
     @Override
-    public void updateLight(float partialTick) {
+    public void updateLight(float _) {
         if (instances != null) {
-            int packedLight = neighborCombineResult.apply(brightnessCombiner);
+            packedLight = neighborCombineResult.apply(brightnessCombiner);
             instances.traverse(instance -> {
                 instance.light(packedLight)
                         .setChanged();
@@ -174,6 +119,15 @@ public class ChestVisual<T extends BlockEntity & LidBlockEntity> extends Abstrac
         if (instances != null) {
             instances.traverse(consumer);
         }
+    }
+
+    @Override
+    public FarVisualState retainedState() {
+        if (model == null) {
+            return new FarVisualState(List.of());
+        }
+        return FarVisualStates.modelTree(visualizationContext, model, initialPose,
+                FarVisualState.Appearance.lit(packedLight));
     }
 
     @Override

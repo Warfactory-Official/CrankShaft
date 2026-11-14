@@ -10,13 +10,17 @@
       "path": "program/gbuffers_water.glsl",
       "contains": [
         "BSL Shaders",
-        "/lib/settings.glsl"
+        "/lib/settings.glsl",
+        "DISTANT_HORIZONS"
       ]
     }
   ],
   "files": [],
   "wrappers": [],
   "blends": [],
+  "patches": [
+    "bsl_instances.patch"
+  ],
   "properties": "blend.clrwl_gbuffers_additive=ONE ONE ZERO ONE\n",
   "programs": [
     {

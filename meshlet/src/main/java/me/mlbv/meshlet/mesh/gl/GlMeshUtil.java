@@ -3,10 +3,12 @@
 package me.mlbv.meshlet.mesh.gl;
 
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
+
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import com.mojang.renderpearl.backend.opengl.GlBuffer;
 import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.renderpearl.backend.opengl.GlTexture;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainReceiverBuffers;
 import dev.engine_room.flywheel.backend.gl.GlTextureLevelState;
 import org.lwjgl.opengl.*;
 
@@ -44,6 +46,17 @@ final class GlMeshUtil {
         }
         return NVShaderBufferLoad.glGetBufferParameterui64NV(GL31C.GL_COPY_READ_BUFFER,
                 NVShaderBufferLoad.GL_BUFFER_GPU_ADDRESS_NV);
+    }
+
+    static void uploadReceiverPointers(GpuBuffer[] geometryBuffers, int regionCount, GlGeometryPtrBuffer ptrs,
+                                       GlResidentAddressCache residentAddresses) {
+        var scratch = ptrs.ensureCapacity(regionCount);
+        for (int slot = 0; slot < regionCount; slot++) {
+            scratch.putLong(slot * Long.BYTES, residentAddresses.address(
+                    TerrainReceiverBuffers.find(geometryBuffers[slot])));
+        }
+        residentAddresses.finishFill();
+        ptrs.flush(regionCount);
     }
 
     static void uploadGeometryPointers(GpuBuffer[] geometryBuffers, int regionCount, GlGeometryPtrBuffer ptrs,

@@ -77,6 +77,7 @@ public final class MeshVisualShaders {
                 float _flw_mvPartialTick;
                 float _flw_mvRenderTicks;
                 float _flw_mvRenderSeconds;
+                uint _flw_mvGameMillis;
             };
             // RenderPassShaders.FRAG_LIGHTING_PRELUDE parity; main sets them from the mesh-stage varyings.
             vec4 flw_vertexPos;
@@ -137,7 +138,7 @@ public final class MeshVisualShaders {
         roots.add(FlwPrograms.SOURCES.get(RenderPassShaders.RENDER_ORIGIN));
         roots.add(new InstanceStructComponent(type));
         roots.add(new SsboInstanceComponent(type));
-        roots.add(FlwPrograms.SOURCES.get(type.vertexShader()));
+        roots.add(InstanceStructComponent.typeShader(type, FlwPrograms.SOURCES.get(type.vertexShader())));
         roots.add(FlwPrograms.SOURCES.get(materialVertex));
         roots.add(FlwPrograms.SOURCES.get(MV_MESH_MAIN));
         return assembleRaw(NV_MESH_PREAMBLE.andThen(MeshVisualShaders::materialVertexDefines)
@@ -153,7 +154,7 @@ public final class MeshVisualShaders {
         roots.add(FlwPrograms.SOURCES.get(MV_HEADER));
         roots.add(new InstanceStructComponent(type));
         roots.add(new SsboInstanceComponent(type));
-        roots.add(FlwPrograms.SOURCES.get(type.vertexShader()));
+        roots.add(InstanceStructComponent.typeShader(type, FlwPrograms.SOURCES.get(type.vertexShader())));
         roots.add(FlwPrograms.SOURCES.get(MV_CRUMBLING_MESH_MAIN));
         return assembleRaw(NV_MESH_PREAMBLE.andThen(MeshVisualShaders::materialVertexDefines).andThen(extra), roots);
     }
@@ -171,6 +172,7 @@ public final class MeshVisualShaders {
         ctx.define("flw_partialTick", "_flw_mvPartialTick");
         ctx.define("flw_renderTicks", "_flw_mvRenderTicks");
         ctx.define("flw_renderSeconds", "_flw_mvRenderSeconds");
+        ctx.define("flw_gameMillis", "_flw_mvGameMillis");
     }
 
     // Optional NV task stage: per-meshlet frustum cull ahead of the mesh stage (large/unwelded models).
@@ -183,7 +185,7 @@ public final class MeshVisualShaders {
         roots.add(FlwPrograms.SOURCES.get(MV_HEADER));
         roots.add(new InstanceStructComponent(type));
         roots.add(new SsboInstanceComponent(type));
-        roots.add(FlwPrograms.SOURCES.get(type.cullShader()));
+        roots.add(InstanceStructComponent.typeShader(type, FlwPrograms.SOURCES.get(type.cullShader())));
         roots.add(FlwPrograms.SOURCES.get(MV_MESHLET_CULL));
         roots.add(FlwPrograms.SOURCES.get(MV_TASK_MAIN));
         return assembleRaw(NV_MESH_PREAMBLE.andThen(MeshVisualShaders::instanceTimeDefine)
@@ -209,7 +211,7 @@ public final class MeshVisualShaders {
         roots.add(FlwPrograms.SOURCES.get(RenderPassShaders.RENDER_ORIGIN));
         roots.add(new InstanceStructComponent(type));
         roots.add(new SsboInstanceComponent(type));
-        roots.add(FlwPrograms.SOURCES.get(type.vertexShader()));
+        roots.add(InstanceStructComponent.typeShader(type, FlwPrograms.SOURCES.get(type.vertexShader())));
         roots.add(FlwPrograms.SOURCES.get(materialVertex));
         roots.add(FlwPrograms.SOURCES.get(MV_VK_MESH_MAIN));
         return assembleRaw(ctx -> {
@@ -229,7 +231,7 @@ public final class MeshVisualShaders {
         roots.add(FlwPrograms.SOURCES.get(MV_VK_HEADER));
         roots.add(new InstanceStructComponent(type));
         roots.add(new SsboInstanceComponent(type));
-        roots.add(FlwPrograms.SOURCES.get(type.vertexShader()));
+        roots.add(InstanceStructComponent.typeShader(type, FlwPrograms.SOURCES.get(type.vertexShader())));
         roots.add(FlwPrograms.SOURCES.get(MV_VK_CRUMBLING_MESH_MAIN));
         return assembleRaw(((Consumer<Compilation>) MeshVisualShaders::vkMeshPreamble)
                 .andThen(MeshVisualShaders::materialVertexDefines).andThen(extra), roots);
@@ -246,7 +248,7 @@ public final class MeshVisualShaders {
         roots.add(FlwPrograms.SOURCES.get(MV_VK_PAYLOAD));
         roots.add(new InstanceStructComponent(type));
         roots.add(new SsboInstanceComponent(type));
-        roots.add(FlwPrograms.SOURCES.get(type.cullShader()));
+        roots.add(InstanceStructComponent.typeShader(type, FlwPrograms.SOURCES.get(type.cullShader())));
         roots.add(FlwPrograms.SOURCES.get(MV_VK_MESHLET_CULL));
         roots.add(FlwPrograms.SOURCES.get(MV_VK_TASK_MAIN));
         return assembleRaw(((Consumer<Compilation>) MeshVisualShaders::vkMeshPreamble)
@@ -374,7 +376,7 @@ public final class MeshVisualShaders {
                 FlwPrograms.SOURCES.get(BUFFER_BINDINGS),
                 FlwPrograms.SOURCES.get(DRAW_COMMAND),
                 FlwPrograms.SOURCES.get(MV_COMMAND_BUILDER));
-        return assembleRaw(ctx -> {
+        return assembleRaw(_ -> {
         }, roots);
     }
 }

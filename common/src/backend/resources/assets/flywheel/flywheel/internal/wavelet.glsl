@@ -1,17 +1,23 @@
 #define TRANSPARENCY_WAVELET_RANK 3
 #define TRANSPARENCY_WAVELET_COEFFICIENT_COUNT 16
 
+// Perf: selects, not dynamic vec4[4] indexing (faster resolve, same values).
+// equivalent to coefficients[index >> 2][index & 3] = addend
 void add_to_index(inout vec4[4] coefficients, int index, float addend) {
-    coefficients[index >> 2][index & 3] = addend;
+    vec4 value = vec4(addend);
+    coefficients[0] = mix(coefficients[0], value, equal(ivec4(index), ivec4(0, 1, 2, 3)));
+    coefficients[1] = mix(coefficients[1], value, equal(ivec4(index), ivec4(4, 5, 6, 7)));
+    coefficients[2] = mix(coefficients[2], value, equal(ivec4(index), ivec4(8, 9, 10, 11)));
+    coefficients[3] = mix(coefficients[3], value, equal(ivec4(index), ivec4(12, 13, 14, 15)));
 }
 
 void add_absorbance(inout vec4[4] coefficients, float signal, float depth) {
-    depth *= float(TRANSPARENCY_WAVELET_COEFFICIENT_COUNT-1) / TRANSPARENCY_WAVELET_COEFFICIENT_COUNT;
+    depth *= float(TRANSPARENCY_WAVELET_COEFFICIENT_COUNT- 1) / TRANSPARENCY_WAVELET_COEFFICIENT_COUNT;
 
     int index = clamp(int(floor(depth * TRANSPARENCY_WAVELET_COEFFICIENT_COUNT)), 0, TRANSPARENCY_WAVELET_COEFFICIENT_COUNT - 1);
     index += TRANSPARENCY_WAVELET_COEFFICIENT_COUNT - 1;
 
-    for (int i = 0; i < (TRANSPARENCY_WAVELET_RANK+1); ++i) {
+    for (int i = 0; i < (TRANSPARENCY_WAVELET_RANK+ 1); ++i) {
         int power = TRANSPARENCY_WAVELET_RANK - i;
         int new_index = (index - 1) >> 1;
         float k = float((new_index + 1) & ((1 << power) - 1));
@@ -33,8 +39,11 @@ void add_transmittance(inout vec4[4] coefficients, float transmittance, float de
     add_absorbance(coefficients, absorbance, depth);
 }
 
+// equivalent to coefficients[index >> 2][index & 3];
 float get_coefficients(in vec4 coefficients[4], int index) {
-    return coefficients[index >> 2][index & 3];
+    vec4 v = index < 8 ? (index < 4 ? coefficients[0] : coefficients[1]) : (index < 12 ? coefficients[2] : coefficients[3]);
+    int lane = index & 3;
+    return lane < 2 ? (lane == 0 ? v.x : v.y) : (lane == 2 ? v.z : v.w);
 }
 
 float total_absorbance(in vec4 coefficients[4]) {
@@ -49,7 +58,7 @@ float total_absorbance(in vec4 coefficients[4]) {
 
     float b = scale_coefficient;
 
-    for (int i = 0; i < (TRANSPARENCY_WAVELET_RANK+1); ++i) {
+    for (int i = 0; i < (TRANSPARENCY_WAVELET_RANK+ 1); ++i) {
         int power = TRANSPARENCY_WAVELET_RANK - i;
 
         int new_index_b = (index_b - 1) >> 1;
@@ -68,7 +77,7 @@ float absorbance(in vec4 coefficients[4], float depth) {
         return 0;
     }
 
-    depth *= float(TRANSPARENCY_WAVELET_COEFFICIENT_COUNT-1) / TRANSPARENCY_WAVELET_COEFFICIENT_COUNT;
+    depth *= float(TRANSPARENCY_WAVELET_COEFFICIENT_COUNT- 1) / TRANSPARENCY_WAVELET_COEFFICIENT_COUNT;
 
     float coefficient_depth = depth * TRANSPARENCY_WAVELET_COEFFICIENT_COUNT;
     int index_b = clamp(int(floor(coefficient_depth)), 0, TRANSPARENCY_WAVELET_COEFFICIENT_COUNT - 1);
@@ -81,7 +90,7 @@ float absorbance(in vec4 coefficients[4], float depth) {
     float b = scale_coefficient;
     float a = sample_a ? scale_coefficient : 0;
 
-    for (int i = 0; i < (TRANSPARENCY_WAVELET_RANK+1); ++i) {
+    for (int i = 0; i < (TRANSPARENCY_WAVELET_RANK+ 1); ++i) {
         int power = TRANSPARENCY_WAVELET_RANK - i;
 
         int new_index_b = (index_b - 1) >> 1;
@@ -110,7 +119,7 @@ float signal_corrected_absorbance(in vec4 coefficients[4], float depth, float si
         return 0;
     }
 
-    depth *= float(TRANSPARENCY_WAVELET_COEFFICIENT_COUNT-1) / TRANSPARENCY_WAVELET_COEFFICIENT_COUNT;
+    depth *= float(TRANSPARENCY_WAVELET_COEFFICIENT_COUNT- 1) / TRANSPARENCY_WAVELET_COEFFICIENT_COUNT;
 
     float scale_coefficient_addend = fma(signal, -depth, signal);
     scale_coefficient -= scale_coefficient_addend;
@@ -126,7 +135,7 @@ float signal_corrected_absorbance(in vec4 coefficients[4], float depth, float si
     float b = scale_coefficient;
     float a = sample_a ? scale_coefficient : 0;
 
-    for (int i = 0; i < (TRANSPARENCY_WAVELET_RANK+1); ++i) {
+    for (int i = 0; i < (TRANSPARENCY_WAVELET_RANK+ 1); ++i) {
         int power = TRANSPARENCY_WAVELET_RANK - i;
 
         int new_index_b = (index_b - 1) >> 1;
@@ -155,7 +164,7 @@ float signal_corrected_absorbance(in vec4 coefficients[4], float depth, float si
     return mix(a, b, t);
 }
 
-#define ABSORBANCE_TO_TRANSMITTANCE(a) clamp(exp(-(a)), 0., 1.)
+#define ABSORBANCE_TO_TRANSMITTANCE(a) clamp(exp(- (a)), 0., 1.)
 
 float total_transmittance(in vec4 coefficients[4]) {
     return ABSORBANCE_TO_TRANSMITTANCE(total_absorbance(coefficients));

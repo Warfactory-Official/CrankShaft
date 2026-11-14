@@ -15,9 +15,9 @@
   "files": [],
   "wrappers": [],
   "blends": [],
-  "properties": "blend.clrwl_gbuffers_translucent = ONE ZERO ONE ZERO\n",
+  "properties": "blend.clrwl_gbuffers_translucent = ONE ZERO ONE ZERO\nblend.clrwl_gbuffers_additive = ONE ONE ONE ONE\n",
   "deferred": {
-    "profile": "SEUS",
+    "profile": "SEUS_GFME",
     "sources": {
       "programs": [
         "gbuffers_water",
@@ -64,7 +64,87 @@
     }
   },
   "deferredTranslucent": true,
-  "deferredEmissive": true,
-  "patches": [],
-  "programs": []
+  "patches": [
+    "seus_gfme_light.patch"
+  ],
+  "programs": [
+    {
+      "target": "clrwl_gbuffers_additive",
+      "fragment": "seus_gfme_light.fsh",
+      "vertex": "gbuffers_beaconbeam"
+    },
+    {
+      "target": "crankshaft_gbuffers_additive",
+      "fragment": "seus_gfme_light.fsh",
+      "vertex": "gbuffers_beaconbeam",
+      "nativeDraw": true
+    }
+  ],
+  "emissiveLight": true,
+  "nativeDepth": {
+    "patches": [
+      "seus_gfme_native_depth.patch"
+    ],
+    "depthLines": {
+      "composite.fsh": "0cf51b7693326134",
+      "composite.vsh": "7d4276264cada031",
+      "composite1.fsh": "49923403ad5fccd6",
+      "composite1.vsh": "7d4276264cada031",
+      "composite4.fsh": "e60ddee4cacd8e1c",
+      "composite4.vsh": "7d4276264cada031",
+      "deferred.fsh": "aa98c345f43d6973",
+      "deferred.vsh": "7d4276264cada031",
+      "deferred11.fsh": "648b9306b733979b",
+      "deferred12.fsh": "ce927480c3581585",
+      "deferred12.vsh": "7d4276264cada031",
+      "deferred2.fsh": "199b57785cf64169",
+      "deferred2.vsh": "843d9c123cef56b9",
+      "lib/Common.inc": "0fc30413785e3711",
+      "lib/GBufferData.inc": "1b55c4602b6802e2",
+      "lib/Materials.inc": "dd6cdb5ba353e231",
+      "lib/Uniforms.inc": "9f7f49388af8600b",
+      "program/composite12.vsh.glsl": "7d4276264cada031",
+      "program/composite13.vsh.glsl": "7d4276264cada031",
+      "program/composite6.fsh.glsl": "cf626645d6eae5cc",
+      "program/composite7.fsh.glsl": "a4591c58d884a5b5",
+      "program/deferred99.fsh.glsl": "572b5647e27f7003",
+      "program/dh_terrain.vert": "1512d729901922ce",
+      "program/dh_water.frag": "7dc9c3a9beef6d06",
+      "program/dh_water.vert": "1512d729901922ce",
+      "program/final.fsh.glsl": "0ff14dc5c66570d2",
+      "program/gbuffers_armor_glint.vsh.glsl": "7d4276264cada031",
+      "program/gbuffers_basic.vsh.glsl": "7d4276264cada031",
+      "program/gbuffers_damagedblock.vsh.glsl": "7d4276264cada031",
+      "program/gbuffers_entities.vsh.glsl": "a0495c5e3727f5ed",
+      "program/gbuffers_entities_glowing.vsh.glsl": "a0495c5e3727f5ed",
+      "program/gbuffers_entities_translucent.vsh.glsl": "a0495c5e3727f5ed",
+      "program/gbuffers_hand.vsh.glsl": "a0495c5e3727f5ed",
+      "program/gbuffers_hand_water.vsh.glsl": "a0495c5e3727f5ed",
+      "program/gbuffers_skybasic.vsh.glsl": "7d4276264cada031",
+      "program/gbuffers_skytextured.vsh.glsl": "7d4276264cada031",
+      "program/gbuffers_spidereyes.vsh.glsl": "a0495c5e3727f5ed",
+      "program/gbuffers_terrain.fsh.glsl": "3da49dbb4e6dc100",
+      "program/gbuffers_terrain.vsh.glsl": "13841035906bc6b2",
+      "program/gbuffers_textured.vsh.glsl": "a0495c5e3727f5ed",
+      "program/gbuffers_water.vsh.glsl": "5b70015eb51e52a4",
+      "program/gbuffers_weather.vsh.glsl": "a0495c5e3727f5ed",
+      "program/noSkyVariant/deferred.fsh.glsl": "b49278b9be2cd866",
+      "program/noSkyVariant/deferred12.fsh.glsl": "95c0aa018b8224e7",
+      "program/noSkyVariant/deferred12.vsh.glsl": "7d4276264cada031",
+      "program/noSkyVariant/deferred2.fsh.glsl": "449c856459da3edb",
+      "program/noSkyVariant/deferred2.vsh.glsl": "843d9c123cef56b9",
+      "program/shadow.vsh.glsl": "b1c440428ed4ee95",
+      "program/template/BasicVertexOut.glsl": "7d4276264cada031",
+      "program/template/DenoiserVertexOut.glsl": "7d4276264cada031",
+      "program/template/HRRVertexOut.glsl": "7d4276264cada031",
+      "program/template/MVIVertexOut.glsl": "7d4276264cada031",
+      "program/voxy_terrain.frag": "7172923f2c5aec9b",
+      "program/voxy_water.frag": "490b49d7946e33e8",
+      "shaders.properties": "dfeb481d52d7fdd4",
+      "world-1/composite.fsh": "0d9a924a7fe57baf",
+      "world-1/composite1.fsh": "49923403ad5fccd6",
+      "world1/composite.fsh": "0d9a924a7fe57baf",
+      "world1/composite1.fsh": "49923403ad5fccd6"
+    }
+  }
 }

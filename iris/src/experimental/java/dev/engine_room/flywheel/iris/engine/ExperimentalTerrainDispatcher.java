@@ -19,6 +19,8 @@ import dev.engine_room.flywheel.backend.engine.SodiumTerrainOitReplay;
 import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
 import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDispatcher;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainOverlayDraw;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainReceiverBuffers;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainRegionInput;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainSectionRegistry;
 import dev.engine_room.flywheel.impl.mixin.sodium.ChunkRenderListAccessor;
@@ -37,6 +39,7 @@ import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.backend.ComputePipeline;
 import net.irisshaders.iris.backend.WorldPassCommands;
+import net.irisshaders.iris.pipeline.GraphicsBackend;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.pipeline.transform.PatchShaderType;
 import net.irisshaders.iris.pipeline.transform.TransformPatcher;
@@ -68,7 +71,7 @@ public final class ExperimentalTerrainDispatcher implements TerrainDispatcher, S
     private final TerrainSectionRegistry registry = new TerrainSectionRegistry(resident);
     private final SharedQuadIndexBuffer indices = new SharedQuadIndexBuffer(SharedQuadIndexBuffer.IndexFormat.INTEGER);
     private final List<RenderRegion> regions = new ArrayList<>();
-    private final ComputePipeline cull;
+    private final ComputePipeline[] cull;
     private final boolean capturesTerrain;
     private boolean translucentCommandsReady;
     private boolean captured;
@@ -85,6 +88,7 @@ public final class ExperimentalTerrainDispatcher implements TerrainDispatcher, S
     private ByteBuffer clocks = ByteBuffer.allocateDirect(256).order(ByteOrder.nativeOrder());
 
     public ExperimentalTerrainDispatcher() {
+        var pipelines = new ArrayList<ComputePipeline>();
         try {
             String source = ShaderAssembly.assemble(_ -> {
             }, List.of(
@@ -106,11 +110,16 @@ public final class ExperimentalTerrainDispatcher implements TerrainDispatcher, S
                     "_FlwTerrainCounts"));
             resources.setUniformBuffers(() -> cullBuffers);
             resources.finish();
-            cull = Iris.getRenderBackend().createComputePipeline("flywheel_terrain_cull",
-                    TransformPatcher.patchProgram("flywheel_terrain_cull", sources, resources, uniforms, null),
-                    resources, uniforms);
+            var patched = TransformPatcher.patchProgram("flywheel_terrain_cull", sources, resources, uniforms, null);
+            // Iris caches Vulkan storage bindings once per submission. Each pass/view must retain its own set.
+            int pipelineCount = GraphicsBackend.isVulkan() ? 6 : 1;
+            for (int index = 0; index < pipelineCount; index++)
+                pipelines.add(Iris.getRenderBackend().createComputePipeline("flywheel_terrain_cull", patched,
+                        resources, uniforms));
+            cull = pipelines.toArray(ComputePipeline[]::new);
         } catch (RuntimeException failure) {
             // The terrain owner catches initialization failures and keeps Sodium drawing.
+            for (var pipeline : pipelines) Iris.getRenderBackend().retire(pipeline::close);
             registry.delete();
             indices.delete();
             throw failure;
@@ -130,13 +139,13 @@ public final class ExperimentalTerrainDispatcher implements TerrainDispatcher, S
     }
 
     @Override
-    public boolean drawOpaqueSolid(ChunkRenderMatrices matrices, RenderSectionManager manager,
-                                   Collection<RenderRegion> selfEnum) {
+    public boolean drawOpaqueSolid(ChunkRenderMatrices _, RenderSectionManager manager,
+                                   Collection<RenderRegion> _) {
         return draw(manager, false);
     }
 
     @Override
-    public boolean drawShadowTerrain(ChunkRenderMatrices matrices, RenderSectionManager manager) {
+    public boolean drawShadowTerrain(ChunkRenderMatrices _, RenderSectionManager manager) {
         return draw(manager, true);
     }
 
@@ -229,7 +238,8 @@ public final class ExperimentalTerrainDispatcher implements TerrainDispatcher, S
                 "_FlwTerrainVisibility", List.of(visibility.slice()), "_FlwTerrainCommands", List.of(commands.slice()),
                 "_FlwTerrainCounts", List.of(counts.slice()),
                 "_FlwTerrainCull", List.of(params));
-        Iris.getRenderBackend().commands().dispatch(cull, new Vector3i(count, 1, 1), null);
+        int cullIndex = cull.length == 1 ? 0 : terrainPass + (shadow ? 3 : 0);
+        Iris.getRenderBackend().commands().dispatch(cull[cullIndex], new Vector3i(count, 1, 1), null);
     }
 
     private void record(ExperimentalPipelines.Program program) {
@@ -240,17 +250,29 @@ public final class ExperimentalTerrainDispatcher implements TerrainDispatcher, S
             buffers.put("iris_Globals", List.of(RenderSystem.getGlobalSettingsUniform().slice()));
             buffers.put("_flw_RegionInputBuf", List.of(regionBuffer.slice()));
             buffers.put("_flw_RegionTimeBuf", List.of(times.slice()));
-            var texels = Map.of("u_SectionTimeInfo", ((WorldPassCommands) pass).getTexelBufferView(
-                    GuestTerrainGate.sectionTimeInfo().slice(), GpuFormat.R32_SINT));
+            long timeInfo = ((WorldPassCommands) pass).getTexelBufferView(GuestTerrainGate.sectionTimeInfo().slice(),
+                    GpuFormat.R32_SINT);
+            boolean overlays = !TerrainOverlayDraw.isEmpty();
+            if (overlays) {
+                buffers.put("TerrainOverlayFrame", List.of(TerrainOverlayDraw.frameUniforms()));
+                for (int index = 0; index < TerrainOverlayDraw.overlays().size(); index++)
+                    buffers.put("TerrainOverlayData" + index, List.of(TerrainOverlayDraw.overlays().get(index)
+                                                                                        .uniforms()));
+            }
             var texture = Minecraft.getInstance().getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS)
                                    .getTextureView();
-            program.bind(pass, buffers, texels, texture,
-                    RenderSystem.getSamplerCache().getRepeat(FilterMode.NEAREST, true));
+            var sampler = RenderSystem.getSamplerCache().getRepeat(FilterMode.NEAREST, true);
+            if (!overlays) program.bind(pass, buffers, Map.of("u_SectionTimeInfo", timeInfo), texture, sampler);
             pass.setIndexBuffer(indices.getBufferObject(), IndexType.INT);
             for (int first = 0; first < count; ) {
                 GpuBuffer geometry = regions.get(first).getResources().getGeometryBuffer();
                 int end = first + 1;
                 while (end < count && regions.get(end).getResources().getGeometryBuffer() == geometry) end++;
+                if (overlays) {
+                    program.bind(pass, buffers, Map.of("u_SectionTimeInfo", timeInfo, "TerrainReceiverIds",
+                            ((WorldPassCommands) pass).getTexelBufferView(TerrainReceiverBuffers.get(geometry),
+                                    GpuFormat.R32_UINT)), texture, sampler);
+                }
                 pass.setVertexBuffer(0, geometry.slice());
                 ((IndirectCommands) pass).flywheel$drawIndexedIndirectCount(
                         commands.slice(first * COMMAND_BYTES, (end - first) * COMMAND_BYTES),
@@ -262,12 +284,14 @@ public final class ExperimentalTerrainDispatcher implements TerrainDispatcher, S
     }
 
     @Override
-    public void prepareResidentTranslucent(ChunkRenderMatrices matrices, RenderSectionManager manager) {
+    public void prepareResidentTranslucent(ChunkRenderMatrices _, RenderSectionManager manager) {
         capture(manager);
     }
 
     @Override
-    public void captureTranslucentArena(ChunkRenderMatrices matrices, RenderSectionManager manager) {
+    public void captureTranslucentArena(ChunkRenderMatrices _, RenderSectionManager manager) {
+        // Experimental guests use resident metadata even with instanced visuals; keep mesh rebuilds observable.
+        publishRegistry();
         capture(manager);
     }
 
@@ -300,28 +324,28 @@ public final class ExperimentalTerrainDispatcher implements TerrainDispatcher, S
     }
 
     @Override
-    public void prepareCull(GpuTextureView depth, int width, int height,
-                            boolean insert) {
+    public void prepareCull(GpuTextureView _, int _, int _,
+                            boolean _) {
         if (!regions.isEmpty()) prepareCommands(2, false);
         translucentCommandsReady = true;
     }
 
     @Override
-    public void replay(RenderPass pass,
-                       OitMode mode,
-                       OitFramebuffer framebuffer,
-                       GpuTextureView lightmap,
-                       GpuTextureView noise,
-                       GpuSampler linear,
-                       GpuSampler oit,
-                       GpuSampler noiseSampler) {
+    public void replay(RenderPass _,
+                       OitMode _,
+                       OitFramebuffer _,
+                       GpuTextureView _,
+                       GpuTextureView _,
+                       GpuSampler _,
+                       GpuSampler _,
+                       GpuSampler _) {
         throw new UnsupportedOperationException("Experimental Iris terrain requires an Iris-owned producer pass");
     }
 
     @Override
-    public void replayGuest(RenderPipeline producer, int pass,
-                            GpuTextureView lightmap,
-                            GpuSampler sampler) {
+    public void replayGuest(RenderPipeline _, int pass,
+                            GpuTextureView _,
+                            GpuSampler _) {
         if (pass == 3) drawCaptured();
         else drawWavelet(OitPass.values()[pass]);
     }
@@ -347,7 +371,7 @@ public final class ExperimentalTerrainDispatcher implements TerrainDispatcher, S
         GuestTerrainGate.packActive = false;
         registry.delete();
         indices.delete();
-        Iris.getRenderBackend().retire(cull::close);
+        for (var pipeline : cull) Iris.getRenderBackend().retire(pipeline::close);
         for (var buffer : new GpuBuffer[]{regionBuffer, visibility, times, commands, counts}) {
             if (buffer != null) Iris.getRenderBackend().retire(buffer::close);
         }

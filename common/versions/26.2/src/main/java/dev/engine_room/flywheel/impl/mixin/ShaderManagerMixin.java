@@ -45,8 +45,8 @@ abstract class ShaderManagerMixin {
     // The local, not the listResources value: it holds the map after every mod's expression edit.
     @Inject(method = "prepare(Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)Lnet/minecraft/client/renderer/ShaderManager$Configs;",
             at = @At("RETURN"))
-    private void flywheel$listShaders(ResourceManager manager, ProfilerFiller profiler,
-                                      CallbackInfoReturnable<ShaderManager.Configs> cir,
+    private void flywheel$listShaders(ResourceManager _, ProfilerFiller _,
+                                      CallbackInfoReturnable<ShaderManager.Configs> _,
                                       @Local Map<Identifier, Resource> files) {
         MojImportPreprocessor.listed(files);
     }

@@ -21,6 +21,8 @@ public record TaggedEnvironment(int drawTag) implements Environment {
     public static final int KIND_ENTITY_TRANSLUCENT = 7;
     // An entity's ids, blended after the pack's deferred passes through its entities program.
     public static final int KIND_ENTITY_BLENDED = 8;
+    // An entity's ids, drawn as vanilla's translucent particles through the pack's particles_translucent program.
+    public static final int KIND_ENTITY_PARTICLES_TRANSLUCENT = 9;
 
     public static int tag(int kind, int id) {
         return kind << 24 | ((id + 1) & 0xFFFFFF);
@@ -37,7 +39,7 @@ public record TaggedEnvironment(int drawTag) implements Environment {
     public static boolean isEntity(int drawTag) {
         int kind = kind(drawTag);
         return kind == KIND_ENTITY || kind == KIND_ENTITY_EYES || kind == KIND_ENTITY_TRANSLUCENT
-                || kind == KIND_ENTITY_BLENDED;
+                || kind == KIND_ENTITY_BLENDED || kind == KIND_ENTITY_PARTICLES_TRANSLUCENT;
     }
 
     @Override
@@ -46,7 +48,7 @@ public record TaggedEnvironment(int drawTag) implements Environment {
     }
 
     @Override
-    public void setupDraw(GlProgram drawProgram) {
+    public void setupDraw(GlProgram _) {
     }
 
     @Override

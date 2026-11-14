@@ -18,7 +18,10 @@
     },
     {
       "path": "lib/common.glsl",
-      "contains": []
+      "contains": [],
+      "excludes": [
+        "VX_VOL_SIZE"
+      ]
     }
   ],
   "files": [
@@ -35,7 +38,8 @@
   "blends": [],
   "patches": [
     "complementary_translucent_ao.patch",
-    "complementary_translucent_coverage.patch"
+    "complementary_translucent_coverage.patch",
+    "complementary_instances.patch"
   ],
   "properties": "blend.clrwl_gbuffers_additive=ONE ONE ZERO ONE\n",
   "programs": [

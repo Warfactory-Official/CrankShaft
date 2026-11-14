@@ -9,6 +9,9 @@ displayName = "CrankShaft"
 description = "Dual-backend (raw OpenGL + raw Vulkan) instanced rendering engine."
 displayTest = "IGNORE_ALL_VERSION"
 
+[modproperties.crankshaft]
+"sodium:config_api_user" = "dev.engine_room.flywheel.impl.config.SodiumConfig"
+
 [[mixins]]
 config = "flywheel.impl.mixins.json"
 

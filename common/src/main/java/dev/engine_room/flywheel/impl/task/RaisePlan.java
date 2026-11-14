@@ -9,7 +9,7 @@ public record RaisePlan<C>(Flag flag) implements SimplyComposedPlan<C> {
     }
 
     @Override
-    public void execute(TaskExecutor taskExecutor, C context, Runnable onCompletion) {
+    public void execute(TaskExecutor _, C _, Runnable onCompletion) {
         flag.raise();
         onCompletion.run();
     }

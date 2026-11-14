@@ -58,6 +58,10 @@ public abstract class AbstractBlockEntityVisual<T extends BlockEntity> extends A
     }
 
     @Override
+    public void updateLight(float partialTick) {
+    }
+
+    @Override
     public void setSectionCollector(SectionCollector sectionCollector) {
         this.lightSections = sectionCollector;
 

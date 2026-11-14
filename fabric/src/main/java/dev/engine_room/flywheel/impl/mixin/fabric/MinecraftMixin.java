@@ -15,14 +15,14 @@ abstract class MinecraftMixin {
     public ClientLevel level;
 
     @Inject(method = "setLevel(Lnet/minecraft/client/multiplayer/ClientLevel;)V", at = @At("HEAD"), require = 1)
-    private void flywheel$onSetLevel(CallbackInfo ci) {
+    private void flywheel$onSetLevel(CallbackInfo _) {
         if (level != null) {
             VisualizationEventHandler.onLevelUnload(level);
         }
     }
 
     @Inject(method = "disconnect(Lnet/minecraft/client/gui/screens/Screen;ZZ)V", at = @At("HEAD"), require = 1)
-    private void flywheel$onDisconnect(CallbackInfo ci) {
+    private void flywheel$onDisconnect(CallbackInfo _) {
         if (level != null) {
             VisualizationEventHandler.onLevelUnload(level);
         }

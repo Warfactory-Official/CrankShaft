@@ -6,6 +6,7 @@
 package me.mlbv.meshlet.mesh.vk;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.textures.FilterMode;
@@ -17,8 +18,10 @@ import com.mojang.renderpearl.backend.vulkan.VulkanGpuSampler;
 import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
+import dev.engine_room.flywheel.backend.compile.TerrainOverlayPipelines;
 import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
 import dev.engine_room.flywheel.backend.engine.indirect.VkMlabBuffers;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainOverlayDraw;
 #if MC >= 26.3
 import dev.engine_room.flywheel.backend.engine.indirect.VkNativeOitPass;
 #endif
@@ -39,6 +42,7 @@ import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.EXTMeshShader;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
@@ -52,10 +56,10 @@ import java.nio.ByteBuffer;
 public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucentMeshDrawStrategy {
     private static final int REGION_INPUT_STRIDE = TerrainRegionInput.STRIDE;
     private static final int COMMAND_STRIDE = 32;
-    private static final int STORAGE = VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    private static final int INDIRECT = VK12.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-    private static final int UNIFORM = VK12.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-    private static final int TRANSFER_DST = VK12.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    private static final int STORAGE = VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    private static final int INDIRECT = VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    private static final int UNIFORM = VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    private static final int TRANSFER_DST = VK10.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     private static final int CACHED_VERT_BYTES = 24;
     private static final int DRAW_COMMAND_BYTES = 16;
     // Per-frame SLOT-keyed live-section mask (8 uints/slot) filled by the manager from Sodium's CURRENT translucent
@@ -68,6 +72,7 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
     private final VkBuffer[] command = new VkBuffer[2];
     private final VkBuffer[] compactSections = new VkBuffer[2];
     private final VkBuffer[] geoAddrTable = new VkBuffer[2];
+    private final VkBuffer[] receiverAddrTable = new VkBuffer[2];
     private final VkBuffer[] liveMask = new VkBuffer[2];
     private final VkBuffer[] modelViewUbo = new VkBuffer[2];
     private final VkBuffer[] cache = new VkBuffer[2];
@@ -75,9 +80,11 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
     private final VkBuffer[] drawCommand = new VkBuffer[2];
 
     private final Long2LongOpenHashMap geoAddrCache = new Long2LongOpenHashMap();
+    private final boolean[] cacheReceiverData = new boolean[2];
     private int phase;
     private int count;
     private int cacheMaxQuads;
+    private boolean receiverData;
 
     public VkTranslucentTerrainRasterizer(VkMeshPipelines pipelines) {
         this.pipelines = pipelines;
@@ -85,7 +92,7 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
     }
 
     @Override
-    public void prepareCull(VkTerrainDrawManager manager, GpuTexture oitDepth, int width, int height) {
+    public void prepareCull(VkTerrainDrawManager manager, GpuTexture _, int _, int _) {
         phase ^= 1;
         VisibleRegionBatch batch = manager.translucentRegionBatch();
         count = batch.count;
@@ -107,21 +114,27 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
         if (cacheMaxQuads == 0) {
             return;
         }
+        receiverData = !TerrainOverlayDraw.isEmpty();
         ensureCacheBuffers(phase, cacheMaxQuads);
 
         VkCommandBuffer cmd = VkContext.beginCommands();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/mesh/translucent_gather");
         buildGeoAddrTable(batch, phase, count);
+        if (receiverData) {
+            if (receiverAddrTable[phase] == null) receiverAddrTable[phase] = new VkBuffer(STORAGE, count * 8L);
+            else receiverAddrTable[phase].ensureCapacity(count * 8L);
+            VkMeshUtil.writeReceiverAddrTable(receiverAddrTable[phase].mappedAddress(), batch, count);
+        }
 
         int groupCount = (cacheMaxQuads + 15) / 16;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             ByteBuffer init = stack.malloc(DRAW_COMMAND_BYTES);
             init.putInt(0, groupCount).putInt(4, 1).putInt(8, 1).putInt(12, 0);
-            VK12.vkCmdUpdateBuffer(cmd, drawCommand[phase].vkBuffer(), 0L, init);
+            VK10.vkCmdUpdateBuffer(cmd, drawCommand[phase].vkBuffer(), 0L, init);
         }
 
         VkComputePipeline emit = pipelines.translucentEmitPipeline();
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, emit.handle());
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, emit.handle());
         long pyramidSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache()
                                                               .getClampToEdge(FilterMode.NEAREST)).vkSampler();
         writer.storage(0, regionInput[phase]);
@@ -132,8 +145,8 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
         writer.storage(14, liveMask[phase]);
         writer.uniform(5, manager.hizUboVk(), 0L, manager.hizUboBytes());
         writer.sampler(10, manager.terrainPyramidView(), pyramidSampler);
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, emit.layout());
-        VK12.vkCmdDispatch(cmd, count, 1, 1);
+        writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, emit.layout());
+        VK10.vkCmdDispatch(cmd, count, 1, 1);
 
         VkMeshUtil.gatherInputBarrier(cmd);
 
@@ -141,7 +154,7 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
         long lightmapSampler = ((VulkanGpuSampler) RenderSystem.getSamplerCache()
                                                                .getClampToEdge(FilterMode.LINEAR)).vkSampler();
         VkComputePipeline gather = pipelines.translucentGatherPipeline();
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, gather.handle());
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, gather.handle());
         writer.storage(0, regionInput[phase]);
         writer.storage(1, manager.registry.translucentSectionDataVkBuffer(), 0L,
                 manager.registry.translucentSectionDataByteCapacity());
@@ -154,8 +167,9 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
         writer.storage(16, cache[phase]);
         writer.storage(17, quadFade[phase]);
         writer.storage(18, drawCommand[phase]);
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, gather.layout());
-        VK12.vkCmdDispatch(cmd, count, 1, 1);
+        if (receiverData) writer.storage(TerrainOverlayPipelines.RECEIVER_BINDING, receiverAddrTable[phase]);
+        writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, gather.layout());
+        VK10.vkCmdDispatch(cmd, count, 1, 1);
 
         VkMeshUtil.emitBarrier(cmd);
         VkContext.popLabel(cmd);
@@ -163,16 +177,16 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
     }
 
     @Override
-    public void draw(VkTerrainDrawManager manager, OitMode mode, VkCommandBuffer cmd, OitFramebuffer framebuffer,
-                     boolean fading, GpuTextureView lightmapView, GpuTextureView blueNoiseView, GpuSampler clampLinear,
+    public void draw(VkTerrainDrawManager _, OitMode mode, VkCommandBuffer cmd, OitFramebuffer framebuffer,
+                     boolean fading, GpuTextureView _, GpuTextureView blueNoiseView, GpuSampler _,
                      GpuSampler oitSampler, GpuSampler noiseSampler, boolean localRead) {
         if (fading || count == 0 || cacheMaxQuads == 0) {
             return; // single stream: all translucent rides the settled (fading=false) call
         }
         Minecraft mc = Minecraft.getInstance();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/mesh/translucent_oit/" + mode.name);
-        VkMeshPipeline pipeline = pipelines.translucentDrawPipeline(mode, localRead);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS,
+        VkMeshPipeline pipeline = pipelines.translucentDrawPipeline(mode, localRead, receiverData);
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS,
                 #if MC >= 26.3 VkNativeOitPass.enginePipeline(pipeline) #else pipeline.handle() #endif);
 
         long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS)
@@ -212,22 +226,23 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
                 }
             }
         }
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+        bindOverlay();
+        writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
 
         EXTMeshShader.vkCmdDrawMeshTasksIndirectEXT(cmd, drawCommand[phase].vkBuffer(), 0L, 1, DRAW_COMMAND_BYTES);
         VkContext.popLabel(cmd);
     }
 
     @Override
-    public void drawMlab(VkTerrainDrawManager manager, OitInsertMode oitMode, VkCommandBuffer cmd, boolean fading,
-                         VkMlabBuffers mlab, GpuTextureView lightmapView, GpuSampler clampLinear) {
+    public void drawMlab(VkTerrainDrawManager _, OitInsertMode oitMode, VkCommandBuffer cmd, boolean fading,
+                         VkMlabBuffers mlab, GpuTextureView _, GpuSampler _) {
         if (fading || count == 0 || cacheMaxQuads == 0) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/mesh/translucent_mlab/" + oitMode);
-        VkMeshPipeline pipeline = pipelines.translucentMlabPipeline(oitMode);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS,
+        VkMeshPipeline pipeline = pipelines.translucentMlabPipeline(oitMode, receiverData);
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS,
                 #if MC >= 26.3 VkNativeOitPass.enginePipeline(pipeline) #else pipeline.handle() #endif);
 
         long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS)
@@ -246,7 +261,8 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
         writer.uniform(20, ((VulkanGpuBuffer) globals).vkBuffer(), 0L, globals.size());
         writer.uniform(21, modelViewUbo[phase].vkBuffer(), 0L, modelViewUbo[phase].sizeBytes());
         mlab.bind(writer);
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+        bindOverlay();
+        writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
 
         EXTMeshShader.vkCmdDrawMeshTasksIndirectEXT(cmd, drawCommand[phase].vkBuffer(), 0L, 1, DRAW_COMMAND_BYTES);
         VkContext.popLabel(cmd);
@@ -259,6 +275,15 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
             TerrainRegionInput.write(dst, batch.originChunkX[i], batch.originChunkY[i],
                     batch.originChunkZ[i], batch.regionIds[i], 0);
         }
+    }
+
+    private void bindOverlay() {
+        if (TerrainOverlayDraw.isEmpty()) return;
+        var lightmap = Minecraft.getInstance().gameRenderer.lightmap();
+        writer.sampler(12, VkContext.imageView(lightmap), VkContext.sampler(RenderSystem.getSamplerCache()
+                                                                                        .getClampToEdge(
+                                                                                                FilterMode.LINEAR)));
+        TerrainOverlayDraw.bind(writer);
     }
 
     private void buildGeoAddrTable(VisibleRegionBatch batch, int p, int n) {
@@ -285,19 +310,27 @@ public final class VkTranslucentTerrainRasterizer implements VkTerrainTranslucen
 
     private void ensureCacheBuffers(int p, int maxQuads) {
         long cacheBytes = (long) maxQuads * 4L * CACHED_VERT_BYTES;
-        long fadeBytes = (long) maxQuads * Integer.BYTES;
+        long fadeBytes = (long) maxQuads * (receiverData ? 2 : 1) * Integer.BYTES;
         if (cache[p] == null) {
             cache[p] = new VkBuffer(STORAGE, cacheBytes, true);
             quadFade[p] = new VkBuffer(STORAGE, fadeBytes, true);
             drawCommand[p] = new VkBuffer(STORAGE | INDIRECT | TRANSFER_DST, DRAW_COMMAND_BYTES, true);
         } else {
             cache[p].ensureCapacity(cacheBytes);
-            quadFade[p].ensureCapacity(fadeBytes);
+            if (cacheReceiverData[p] != receiverData) {
+                var previous = quadFade[p];
+                quadFade[p] = new VkBuffer(STORAGE, fadeBytes, true);
+                previous.delete();
+            } else {
+                quadFade[p].ensureCapacity(fadeBytes);
+            }
         }
+        cacheReceiverData[p] = receiverData;
     }
 
     public void destroy() {
         for (int p = 0; p < 2; p++) {
+            if (receiverAddrTable[p] != null) receiverAddrTable[p].delete();
             if (regionInput[p] != null) {
                 regionInput[p].delete();
             }

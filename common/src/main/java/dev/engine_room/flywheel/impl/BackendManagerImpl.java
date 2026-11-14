@@ -7,12 +7,15 @@ import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
 import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
+import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 #if MC >= 26.3
 import dev.engine_room.flywheel.backend.compile.NativeOitWarmup;
 #endif
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
+import dev.engine_room.flywheel.impl.compat.DistantHorizonsCompat;
 import dev.engine_room.flywheel.lib.backend.SimpleBackend;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.resources.Identifier;
@@ -24,7 +27,7 @@ import java.util.List;
 
 public final class BackendManagerImpl {
     public static final Backend OFF_BACKEND = SimpleBackend.builder()
-                                                           .engineFactory(level -> {
+                                                           .engineFactory(_ -> {
                                                                throw new UnsupportedOperationException(
                                                                        "Cannot create engine when backend is off.");
                                                            })
@@ -32,7 +35,6 @@ public final class BackendManagerImpl {
                                                            .register(ResourceUtil.rl("off"));
 
     private static Backend backend = OFF_BACKEND;
-    private static boolean suspended;
 
     private BackendManagerImpl() {
     }
@@ -42,16 +44,7 @@ public final class BackendManagerImpl {
     }
 
     public static boolean isBackendOn() {
-        return backend != OFF_BACKEND && !suspended;
-    }
-
-    public static boolean isSuspended() {
-        return suspended;
-    }
-
-    /** Port: ownership suspension; backend selection retained. */
-    public static void setSuspended(boolean suspended) {
-        BackendManagerImpl.suspended = suspended;
+        return backend != OFF_BACKEND;
     }
 
     public static boolean isGpuDriven(Backend candidate) {
@@ -64,17 +57,15 @@ public final class BackendManagerImpl {
 
     public static Backend defaultBackend() {
         List<Backend> sorted = backendsByPriority();
-        if (sorted.isEmpty()) {
-            // This probably shouldn't happen, but fail gracefully.
-            FlwImpl.LOGGER.warn("No backends registered, defaulting to 'flywheel:off'");
-            return OFF_BACKEND;
+        for (Backend candidate : sorted) {
+            if (candidate.automaticSelection()) return candidate;
         }
-        return sorted.get(0);
+        FlwImpl.LOGGER.warn("No automatic backends registered, defaulting to 'flywheel:off'");
+        return OFF_BACKEND;
     }
 
     public static String getBackendString() {
-        return suspended ? getBackendString(backend) + " (suspended: another mod renders the world)"
-                : getBackendString(backend);
+        return getBackendString(backend);
     }
 
     public static String getBackendString(Backend b) {
@@ -83,6 +74,7 @@ public final class BackendManagerImpl {
     }
 
     public static void init() {
+        ShaderWarmup.registerRecovery(BackendManagerImpl::warmWithRecovery);
         FlwBackend.init(FlwConfig.INSTANCE.backendConfig());
         forceLoadModuleBackend("me.mlbv.meshlet.mesh.gl.MeshShaderBackends");
         forceLoadModuleBackend("me.mlbv.meshlet.mesh.vk.VkMeshShaderBackends");
@@ -103,6 +95,33 @@ public final class BackendManagerImpl {
         }
         chooseBackend();
         VisualizationManagerImpl.resetAll();
+    }
+
+    public static void warmWithRecovery(Runnable warm) {
+        for (; ; ) {
+            try {
+                warm.run();
+                return;
+            } catch (ProgramAvailability.Failure failure) {
+                if (Boolean.getBoolean("crankshaft.shader.strict")) throw failure;
+                #if MC >= 26.3
+                NativeOitWarmup.invalidate();
+                #endif
+                if (!ProgramAvailability.allows(failure.feature())) {
+                    recover(failure);
+                } else {
+                    ProgramAvailability.reject(failure.feature(), failure);
+                    ShaderWarmup.retry(failure.feature());
+                    reselect();
+                }
+            } catch (BackendUnavailableException failure) {
+                if (Boolean.getBoolean("crankshaft.shader.strict")) throw failure;
+                #if MC >= 26.3
+                NativeOitWarmup.invalidate();
+                #endif
+                recover(failure);
+            }
+        }
     }
 
     public static void recover(BackendUnavailableException failure) {
@@ -131,10 +150,12 @@ public final class BackendManagerImpl {
     }
 
     private static void chooseBackend() {
+        boolean wasOff = backend == OFF_BACKEND;
         Backend preferred = FlwConfig.INSTANCE.backend();
 
         if (!BackendRecovery.isRejected(preferred) && preferred.isSupported()) {
             backend = preferred;
+            if (wasOff != (backend == OFF_BACKEND)) DistantHorizonsCompat.refreshStaticContainers();
             return;
         }
         List<Backend> sorted = backendsByPriority();
@@ -143,14 +164,16 @@ public final class BackendManagerImpl {
         backend = OFF_BACKEND;
         for (int i = startIndex; i < sorted.size(); i++) {
             Backend candidate = sorted.get(i);
-            if (!BackendRecovery.isRejected(candidate) && candidate.isSupported()) {
+            if (candidate.automaticSelection() && !BackendRecovery.isRejected(
+                    candidate) && candidate.isSupported()) {
                 backend = candidate;
                 break;
             }
         }
         if (backend == OFF_BACKEND && (VkContext.isVulkanHost() || InstancingPrograms.allLoaded())) {
             for (Backend candidate : sorted) {
-                if (!BackendRecovery.isRejected(candidate) && candidate.isSupported()) {
+                if (candidate.automaticSelection() && !BackendRecovery.isRejected(
+                        candidate) && candidate.isSupported()) {
                     backend = candidate;
                     break;
                 }
@@ -158,6 +181,7 @@ public final class BackendManagerImpl {
         }
         FlwImpl.LOGGER.warn("Flywheel backend fell back from '{}' to '{}'",
                 getBackendString(preferred), getBackendString(backend));
+        if (wasOff != (backend == OFF_BACKEND)) DistantHorizonsCompat.refreshStaticContainers();
     }
 
     // Don't store this statically because backends can theoretically change their priorities at runtime.

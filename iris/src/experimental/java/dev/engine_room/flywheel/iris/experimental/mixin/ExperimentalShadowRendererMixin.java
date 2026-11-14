@@ -9,10 +9,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ShadowRenderer.class)
 abstract class ExperimentalShadowRendererMixin {
-    @Inject(method = "renderShadows", at = @At(value = "INVOKE",
-            target = "Lnet/irisshaders/iris/shadows/ShadowRenderer;copyPreTranslucentDepth(Lnet/irisshaders/iris/mixin/LevelRendererAccessor;)V",
-            shift = At.Shift.AFTER))
-    private void flywheel$translucentGuestShadows(CallbackInfo ci) {
+    // The opaque depth snapshot must exclude translucent guest casters.
+    @Inject(method = "copyPreTranslucentDepth", at = @At("RETURN"))
+    private void flywheel$translucentGuestShadows(CallbackInfo _) {
         ExperimentalEngine.afterPreTranslucentDepth();
     }
 }

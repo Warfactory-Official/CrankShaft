@@ -1,0 +1,29 @@
+diff --git a/program/gbuffers_terrain.glsl b/program/gbuffers_terrain.glsl
+--- a/program/gbuffers_terrain.glsl
++++ b/program/gbuffers_terrain.glsl
+@@ -317,2 +317,3 @@
+-    #ifdef DH_BLENDING
++    // The blend hands vanilla terrain over to its LoD; instances have none.
++    #if defined DH_BLENDING && !defined GBUFFERS_COLORWHEEL
+         float fog = max(length(playerPos.xz), abs(playerPos.y)) / far;
+diff --git a/program/gbuffers_water.glsl b/program/gbuffers_water.glsl
+--- a/program/gbuffers_water.glsl
++++ b/program/gbuffers_water.glsl
+@@ -253,5 +253,12 @@
+         fresnelM = (fresnelM * 0.85 + 0.15) * reflectMult;
+ 
++        #if defined GBUFFERS_COLORWHEEL_TRANSLUCENT && WORLD_SPACE_REFLECTIONS <= 0
++        // The reflection only enters through the fresnelM mix below.
++        vec4 reflection = fresnelM > 0.0 ? GetReflection(normalM, viewPos.xyz, nViewPos, playerPos, lViewPos, -1.0,
++                                        depthtex1, dither, skyLightFactor, fresnel,
++                                        smoothnessG, geoNormal, color.rgb, shadowMult, highlightMult) : vec4(0.0);
++        #else
+         vec4 reflection = GetReflection(normalM, viewPos.xyz, nViewPos, playerPos, lViewPos, -1.0,
+                                         depthtex1, dither, skyLightFactor, fresnel,
+                                         smoothnessG, geoNormal, color.rgb, shadowMult, highlightMult);
++        #endif
+@@ -281,2 +287,3 @@
+-    #ifdef DH_BLENDING
++    // The blend hands vanilla water over to its LoD; instances have none.
++    #if defined DH_BLENDING && !defined GBUFFERS_COLORWHEEL_TRANSLUCENT
+         float fog = max(length(playerPos.xz), abs(playerPos.y)) / far;

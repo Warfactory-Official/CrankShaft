@@ -14,7 +14,7 @@ abstract class EndermanRendererMixin {
     @Redirect(method = "getRenderOffset(Lnet/minecraft/client/renderer/entity/state/EndermanRenderState;)Lnet/minecraft/world/phys/Vec3;",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/util/RandomSource;nextGaussian()D"),
             require = 2)
-    private double flywheel$threadSafeRenderRandom(RandomSource original) {
+    private double flywheel$threadSafeRenderRandom(RandomSource _) {
         return ThreadLocalRandom.current().nextGaussian();
     }
 }

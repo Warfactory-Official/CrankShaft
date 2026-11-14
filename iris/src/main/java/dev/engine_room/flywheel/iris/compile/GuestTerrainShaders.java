@@ -1,20 +1,27 @@
 package dev.engine_room.flywheel.iris.compile;
 
 import com.google.common.primitives.Ints;
+import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
+import dev.engine_room.flywheel.backend.compile.TerrainOverlayPipelines;
+import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import io.github.douira.glsl_transformer.ast.node.TranslationUnit;
+import io.github.douira.glsl_transformer.ast.node.declaration.DeclarationMember;
 import io.github.douira.glsl_transformer.ast.node.declaration.InterfaceBlockDeclaration;
 import io.github.douira.glsl_transformer.ast.node.declaration.TypeAndInitDeclaration;
+import io.github.douira.glsl_transformer.ast.node.expression.ReferenceExpression;
+import io.github.douira.glsl_transformer.ast.node.expression.unary.FunctionCallExpression;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.DeclarationExternalDeclaration;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.ExternalDeclaration;
 import io.github.douira.glsl_transformer.ast.node.type.qualifier.StorageQualifier;
 import io.github.douira.glsl_transformer.ast.node.type.qualifier.TypeQualifier;
 import io.github.douira.glsl_transformer.ast.print.ASTPrinter;
 import io.github.douira.glsl_transformer.ast.query.Root;
+import io.github.douira.glsl_transformer.ast.transform.ASTInjectionPoint;
 import io.github.douira.glsl_transformer.ast.transform.JobParameters;
 import io.github.douira.glsl_transformer.ast.transform.SingleASTTransformer;
 import net.irisshaders.iris.gl.blending.AlphaTest;
@@ -22,6 +29,7 @@ import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.pipeline.transform.PatchShaderType;
 import net.irisshaders.iris.pipeline.transform.TransformPatcher;
 import net.irisshaders.iris.shaderpack.programs.ProgramSource;
+import net.minecraft.resources.Identifier;
 #if MC >= 26.3
 import net.irisshaders.iris.shaderpack.texture.TextureStage;
 #endif
@@ -30,6 +38,7 @@ import org.jspecify.annotations.Nullable;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
  * Pack {@code gbuffers_terrain} -> Iris {@code patchSodium} -> the engine's MDI draw.
@@ -41,8 +50,8 @@ import java.util.regex.Pattern;
  * the prologue fills from the engine's region buffer.
  */
 final class GuestTerrainShaders {
+    // The synthetic native UBO keeps its members private; the patched pack owns its global identifiers.
     #if MC >= 26.3
-    // 26.3: a synthetic native UBO keeps its members private; the patched pack already owns its global identifiers.
     static final String GLOBALS_BLOCK = """
             layout(std140) uniform iris_Globals {
                 ivec3 CameraBlockPos;
@@ -64,7 +73,7 @@ final class GuestTerrainShaders {
                 float GameTime;
                 int MenuBlurRadius;
                 int UseRgss;
-            };
+            } _flw_terrainGlobals;
             """;
     #endif
     // Sodium's clock and section timestamps share a per-region epoch, including across one MDI call.
@@ -97,13 +106,40 @@ final class GuestTerrainShaders {
             REGION_TIME, REGION_TIME + " = _flw_regionTime[gl_BaseInstanceARB];");
 
     private static final SingleASTTransformer<JobParameters> TRANSFORMER = GuestShaders.versionedTransformer();
+    private static final SingleASTTransformer<JobParameters> ALBEDO_TRANSFORMER = GuestShaders.versionedTransformer();
+    private static final SingleASTTransformer<JobParameters> GEOMETRY_TRANSFORMER = GuestShaders.versionedTransformer();
+    private static final Set<String> SAMPLES = Set.of("texture", "textureLod", "textureGrad", "textureOffset",
+            "textureLodOffset", "textureGradOffset", "textureProj", "textureProjLod", "textureProjGrad",
+            "textureProjOffset", "textureProjLodOffset", "textureProjGradOffset", "texelFetch", "texelFetchOffset");
+    // Iris rewrites clip z before each emit; xyw identify the input vertex an emitted one passes through.
+    private static final String GEOMETRY_FORWARD = """
+            void _flw_terrainEmitVertex() {
+                int nearest = 0;
+                float best = distance(gl_Position.xyw, gl_in[0].gl_Position.xyw);
+                for (int vertex = 1; vertex < gl_in.length(); vertex++) {
+                    float candidate = distance(gl_Position.xyw, gl_in[vertex].gl_Position.xyw);
+                    if (candidate < best) {
+                        best = candidate;
+                        nearest = vertex;
+                    }
+                }
+                _flw_terrainPosition = _flw_terrainVertexPosition[nearest];
+                _flw_terrainReceiver = _flw_terrainVertexReceiver[nearest];
+                EmitVertex();
+            }
+            """;
 
     static {
         TRANSFORMER.setTransformation(GuestTerrainShaders::demoteRegionUniforms);
+        ALBEDO_TRANSFORMER.setTransformation(GuestTerrainShaders::wrapAlbedo);
+        GEOMETRY_TRANSFORMER.setTransformation(GuestTerrainShaders::forwardOverlay);
     }
 
-    // Render thread only: the transformation reports through here.
+    // Render thread only: the transformations report through here.
     private static @Nullable List<String> lastDemoted;
+    private static String albedoEntry = "main";
+    private static int lastWrapped;
+    private static boolean lastStreams;
 
     private GuestTerrainShaders() {
     }
@@ -114,19 +150,22 @@ final class GuestTerrainShaders {
      * patch leaves the stage self-sufficient, exactly as it does for the opaque terrain program.
      */
     static Stages buildOit(IrisRenderingPipeline pipeline, ProgramSource source, AlphaTest alpha,
-                           int[] sourceTargets, GuestShaders.OitSpec spec) {
+                           int[] sourceTargets, GuestShaders.OitSpec spec, List<Identifier> overlays) {
         Map<PatchShaderType, String> patched = patch(pipeline, source, alpha, false);
         String vertex = TRANSFORMER.transform(shift(patched.get(PatchShaderType.VERTEX)));
         List<String> demoted = Objects.requireNonNull(lastDemoted);
         lastDemoted = null;
 
         GuestShaders.OitFragment fragment = GuestShaders.demoteForOit(shift(patched.get(PatchShaderType.FRAGMENT)));
+        String geometry = shift(patched.get(PatchShaderType.GEOMETRY));
         String library = "in float _flw_oitViewZ;\n" + FlwPrograms.SOURCES.get(GuestOitCodegen.LIBRARY)
                                                                           .source() + '\n'
                 + GuestOitCodegen.producer(spec, remapOutputs(source.getName(), sourceTargets,
                 spec.drawBuffers(), fragment.outputs()));
-        return new Stages(vertexWithPrologue(vertex, demoted, true), shift(patched.get(PatchShaderType.GEOMETRY)),
-                GuestShaders.withLibrary(fragment.source(), library, null));
+        Fusion fusion = fuse(source, geometry, fragment.source(), "_flw_irisMain", overlays, true, library);
+        return new Stages(vertexWithPrologue(vertex, demoted, true, fusion != null, geometry != null),
+                fusion == null ? geometry : fusion.geometry(),
+                fusion == null ? GuestShaders.withLibrary(fragment.source(), library, null) : fusion.fragment());
     }
 
     static Map<Integer, String> remapOutputs(String program, int[] sourceTargets, int[] sharedTargets,
@@ -168,7 +207,11 @@ final class GuestTerrainShaders {
                 shadow);
     }
 
-    static Stages build(IrisRenderingPipeline pipeline, ProgramSource source, AlphaTest alpha, boolean shadow) {
+    /**
+     * {@code translucent}: overlays compose with coverage (the water program's deferred capture).
+     */
+    static Stages build(IrisRenderingPipeline pipeline, ProgramSource source, AlphaTest alpha, boolean shadow,
+                        List<Identifier> overlays, boolean translucent) {
         Map<PatchShaderType, String> patched = patch(pipeline, source, alpha, shadow);
 
         // A pack's own storage buffers would otherwise sit on the engine's bindings (0..7) and terrain's own
@@ -176,21 +219,105 @@ final class GuestTerrainShaders {
         String vertex = TRANSFORMER.transform(shift(patched.get(PatchShaderType.VERTEX)));
         List<String> demoted = Objects.requireNonNull(lastDemoted);
         lastDemoted = null;
-        return new Stages(vertexWithPrologue(vertex, demoted, false), shift(patched.get(PatchShaderType.GEOMETRY)),
-                shift(patched.get(PatchShaderType.FRAGMENT)));
+        String geometry = shift(patched.get(PatchShaderType.GEOMETRY));
+        String fragment = shift(patched.get(PatchShaderType.FRAGMENT));
+        Fusion fusion = fuse(source, geometry, fragment, "main", overlays, translucent, "");
+        return new Stages(vertexWithPrologue(vertex, demoted, false, fusion != null, geometry != null),
+                fusion == null ? geometry : fusion.geometry(), fusion == null ? fragment : fusion.fragment());
+    }
+
+    /**
+     * Overlays shade the pack's albedo samples, so the pack's own lighting, G-buffer encoding and layer capture
+     * consume them. {@code library} follows the fused fragment; {@code null} = program left unfused.
+     */
+    static @Nullable Fusion fuse(ProgramSource source, @Nullable String geometry, String fragment, String entry,
+                                 List<Identifier> overlays, boolean translucent, String library) {
+        if (overlays.isEmpty()) return null;
+        if (geometry != null) {
+            geometry = GEOMETRY_TRANSFORMER.transform(geometry);
+            if (lastStreams) {
+                skipOverlays(source, "geometry stage emits to vertex streams");
+                return null;
+            }
+        }
+        albedoEntry = entry;
+        String wrapped = ALBEDO_TRANSFORMER.transform(fragment);
+        if (lastWrapped == 0) {
+            skipOverlays(source, "no albedo sample");
+            return null;
+        }
+        Compilation ctx = new Compilation();
+        ShaderAssembly.appendComponents(ctx, TerrainOverlayPipelines.prelude(overlays, "0.0"));
+        ctx.appendComponent(new ShaderAssembly.RawSource("terrain overlay albedo", """
+                vec4 _flw_terrainAlbedo(vec4 color) {
+                    return %s(color);
+                }
+                void %s() {
+                    _flw_terrainPrepare();
+                    _flw_terrainBase();
+                }
+                """.formatted(translucent ? "_flw_terrainShade" : "_flw_terrainShadeOpaque", entry)));
+        return new Fusion(geometry, GuestShaders.withLibrary(wrapped, ctx.assembledSource() + library,
+                "vec4 _flw_terrainAlbedo(vec4 color);\n"));
+    }
+
+    private static void wrapAlbedo(TranslationUnit tree, Root root) {
+        Set<String> samplers = new HashSet<>();
+        for (ExternalDeclaration external : tree.getChildren()) {
+            if (!(external instanceof DeclarationExternalDeclaration declaration)
+                    || !(declaration.getDeclaration() instanceof TypeAndInitDeclaration typed)
+                    || !hasStorage(typed.getType().getTypeQualifier(), StorageQualifier.StorageType.UNIFORM)
+                    || !ASTPrinter.printSimple(typed.getType().getTypeSpecifier()).strip().equals("sampler2D")) {
+                continue;
+            }
+            for (DeclarationMember member : typed.getMembers()) {
+                if (GuestShaders.ALBEDO.contains(member.getName().getName())) samplers.add(member.getName().getName());
+            }
+        }
+        List<FunctionCallExpression> calls = root.nodeIndex.getStream(FunctionCallExpression.class)
+                                                           .filter(call -> call.getFunctionName() != null && SAMPLES.contains(
+                                                                   call.getFunctionName().getName())
+                                                                   && !call.getParameters().isEmpty()
+                                                                   && call.getParameters()
+                                                                          .getFirst() instanceof ReferenceExpression reference
+                                                                   && samplers.contains(
+                                                                   reference.getIdentifier().getName()))
+                                                           .toList();
+        for (FunctionCallExpression call : calls) {
+            var wrapper = (FunctionCallExpression) ALBEDO_TRANSFORMER.parseExpression(root,
+                    "_flw_terrainAlbedo(_flw_terrainSample)");
+            call.replaceBy(wrapper);
+            wrapper.getParameters().getFirst().replaceByAndDelete(call);
+        }
+        lastWrapped = calls.size();
+        if (!calls.isEmpty()) root.rename(albedoEntry, "_flw_terrainBase");
+    }
+
+    private static void forwardOverlay(TranslationUnit tree, Root root) {
+        lastStreams = root.identifierIndex.has("EmitStreamVertex");
+        root.rename("EmitVertex", "_flw_terrainEmitVertex");
+        tree.parseAndInjectNodes(GEOMETRY_TRANSFORMER, ASTInjectionPoint.BEFORE_DECLARATIONS, Stream.of(
+                "in vec3 _flw_terrainVertexPosition[];", "flat in uint _flw_terrainVertexReceiver[];",
+                "out vec3 _flw_terrainPosition;", "flat out uint _flw_terrainReceiver;"));
+        tree.parseAndInjectNode(GEOMETRY_TRANSFORMER, ASTInjectionPoint.BEFORE_FUNCTIONS, GEOMETRY_FORWARD);
+    }
+
+    static void skipOverlays(ProgramSource source, String reason) {
+        FlwBackend.LOGGER.warn("Terrain overlays skip shaderpack program {}: {}", source.getName(), reason);
     }
 
     private static @Nullable String shift(@Nullable String stage) {
         return GuestShaders.shiftBufferBindings(stage, GuestSsbos.TERRAIN_BINDING_OFFSET);
     }
 
-    private static String vertexWithPrologue(String vertex, List<String> demoted, boolean oit) {
+    private static String vertexWithPrologue(String vertex, List<String> demoted, boolean oit, boolean overlay,
+                                             boolean geometry) {
         Matcher version = VERSION_LINE.matcher(vertex);
         if (!version.find()) {
             throw new IllegalStateException("Patched terrain vertex stage without #version");
         }
-        StringBuilder main = new StringBuilder("""
-                void main() {
+        StringBuilder main = new StringBuilder(overlay ? "void _flw_terrainVertexBase() {\n" : "void main() {\n");
+        main.append("""
                     uvec4 _flw_region = _flw_regionInput[gl_BaseInstanceARB];
                     ivec3 _flw_regionOrigin = _flw_unpackRegionOrigin(_flw_region);
                 """);
@@ -200,6 +327,8 @@ final class GuestTerrainShaders {
                 .append('\n');
         }
         main.append("    _flw_irisMain();\n");
+        // Not inverse clip: pack projection, jitter and Iris's z rewrite vary.
+        if (overlay) main.append("    _flw_terrainBasePosition = getVertexPosition().xyz;\n");
         if (oit) {
             // clip.w == -viewZ for the projection Sodium builds, so the OIT library's linear depth
             // needs no inverse.
@@ -216,8 +345,20 @@ final class GuestTerrainShaders {
             parts.add(new ShaderAssembly.RawSource("terrain region clock", REGION_TIME_BLOCK));
         }
         if (oit) parts.add(new ShaderAssembly.RawSource("terrain view depth", "out float _flw_oitViewZ;\n"));
+        if (overlay) {
+            parts.add(new ShaderAssembly.RawSource("terrain overlay position", "vec3 _flw_terrainBasePosition;\n"));
+        }
         parts.add(new ShaderAssembly.RawSource("terrain entry", main.toString()));
-        return ShaderAssembly.assemble(ctx -> ctx.requireExtension("GL_ARB_shader_draw_parameters"), parts);
+        if (overlay) parts.addAll(TerrainOverlayPipelines.vertexTail());
+        return ShaderAssembly.assemble(ctx -> {
+            ctx.requireExtension("GL_ARB_shader_draw_parameters");
+            if (!overlay) return;
+            ctx.define("_FLW_TERRAIN_BASE_POSITION");
+            if (geometry) {
+                ctx.define("_flw_terrainPosition", "_flw_terrainVertexPosition");
+                ctx.define("_flw_terrainReceiver", "_flw_terrainVertexReceiver");
+            }
+        }, parts);
     }
 
     #if MC >= 26.3
@@ -279,5 +420,8 @@ final class GuestTerrainShaders {
     }
 
     record Stages(String vertex, @Nullable String geometry, String fragment) {
+    }
+
+    record Fusion(@Nullable String geometry, String fragment) {
     }
 }

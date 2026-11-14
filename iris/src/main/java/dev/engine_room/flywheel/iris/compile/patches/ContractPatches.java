@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.iris.compile.patches;
 
 import com.google.common.collect.ImmutableList;
 import dev.engine_room.flywheel.backend.FlwBackend;
+import dev.engine_room.flywheel.backend.OitConfig;
 import net.irisshaders.iris.shaderpack.include.AbsolutePackPath;
 import org.jspecify.annotations.Nullable;
 
@@ -55,13 +56,21 @@ public final class ContractPatches {
         if (colorwheel == null) colorwheel = "";
         PackPatch recipe = PackPatch.select(root);
         boolean forwardOit = false;
+        boolean forwardRequested = OitConfig.shaderpackMode() == OitConfig.ShaderpackMode.FORWARD;
         boolean deferredEmissive = false;
         boolean deferredTranslucent = false;
         boolean emissiveLight = false;
         DeferredOitProfile deferred = null;
+        DeferredOitProfile forward = null;
+        boolean iterationImageAbi = false;
         String shadersProperties = null;
+        boolean nativeDepth = false;
         if (recipe != null) {
-            String patchedProperties = stageRecipe(root, recipe, present, overrides, added, colorwheel);
+            String patchedProperties = null;
+            if (stageRecipeSources(root, recipe, present, overrides, added)) {
+                nativeDepth = recipe.nativeDepth() != null && stageNativeDepth(root, recipe, present, overrides);
+                patchedProperties = stageRecipeCopies(root, recipe, present, overrides, added, colorwheel);
+            }
             if (patchedProperties != null) {
                 colorwheel = patchedProperties;
                 deferredEmissive = recipe.deferredEmissive();
@@ -72,22 +81,46 @@ public final class ContractPatches {
                     FlwBackend.LOGGER.info("Shaderpack {} HDR-alpha sources changed; using shared/native eligibility",
                             recipe.name());
                 }
-                if (recipe.deferred() != null && DeferredOitProfile.enabled()
-                        && DeferredOitProfile.valueOf(recipe.deferred().profile()).available()
-                        && recipe.deferred().sources().accepts(root, present)) {
-                    deferred = DeferredOitProfile.valueOf(recipe.deferred().profile());
-                    deferred.stage(root, present, overrides, added);
-                    shadersProperties = read(root, AbsolutePackPath.fromAbsolutePath("/shaders.properties"))
-                            + deferred.storageProperties();
+                boolean deferredRequested = forwardRequested || DeferredOitProfile.enabled();
+                if (recipe.deferred() != null) {
+                    String nativeProperties = staged(root, AbsolutePackPath.fromAbsolutePath("/shaders.properties"),
+                            overrides);
+                    boolean legacyImages = recipe.deferred().profile().equals("ITERATION")
+                            && IterationImageAbi.matches(nativeProperties);
+                    if ((deferredRequested || legacyImages) && recipe.deferred().sources().accepts(root, present)) {
+                        shadersProperties = nativeProperties;
+                        iterationImageAbi = legacyImages;
+                        if (deferredRequested) {
+                            deferred = DeferredOitProfile.valueOf(recipe.deferred().profile());
+                            if (forwardRequested) {
+                                forward = deferred;
+                                deferred = null;
+                                shadersProperties = ForwardOitShaders.properties(nativeProperties, forward);
+                            } else {
+                                deferred.stage(root, present, overrides, added);
+                                shadersProperties += deferred.storageProperties();
+                            }
+                        }
+                        if (iterationImageAbi) shadersProperties = IterationImageAbi.properties(shadersProperties);
+                    }
                 }
-                if (recipe.deferred() != null && DeferredOitProfile.enabled()
-                        && DeferredOitProfile.valueOf(recipe.deferred().profile()).available() && deferred == null) {
+                if (recipe.deferred() != null && deferredRequested
+                        && deferred == null && forward == null) {
+                    if (forwardRequested) {
+                        throw new IllegalStateException("Shaderpack " + recipe.name()
+                                + " forward OIT material sources changed");
+                    }
                     FlwBackend.LOGGER.info(
                             "Shaderpack {} deferred material sources changed; preserving native translucency",
                             recipe.name());
                 }
                 FlwBackend.LOGGER.info("Shaderpack context-checked patch applied: {}", recipe.name());
             } else {
+                if (recipe.deferred() != null && forwardRequested) {
+                    throw new IllegalStateException("Shaderpack " + recipe.name()
+                            + " forward OIT source patch rejected");
+                }
+                nativeDepth = false;
                 overrides.clear();
                 added.clear();
                 FlwBackend.LOGGER.warn("Shaderpack patch {} rejected as a whole; trying shared contracts",
@@ -110,49 +143,112 @@ public final class ContractPatches {
             String dir = path.substring(0, path.length() - "gbuffers_water.fsh".length());
             if (present.contains(dir + TRANSLUCENT.virtualProgram + ".fsh")) continue;
             if (!present.contains(dir + "gbuffers_water.vsh")) continue;
-            nativeWrapper(root, dir, "gbuffers_water", TRANSLUCENT.virtualProgram, NATIVE_TRANSLUCENT, overrides,
-                    added);
+            nativeWrapper(root, dir, "gbuffers_water", TRANSLUCENT, NATIVE_TRANSLUCENT, overrides, added);
             if (!present.contains(dir + SHADOW_TRANSLUCENT.virtualProgram + ".fsh")) {
                 String shadow = present.contains(dir + "shadow_water.fsh") ? "shadow_water" : "shadow";
                 if (present.contains(dir + shadow + ".vsh") && present.contains(dir + shadow + ".fsh")) {
-                    nativeWrapper(root, dir, shadow, SHADOW_TRANSLUCENT.virtualProgram, NATIVE_SHADOW_TRANSLUCENT,
-                            overrides, added);
+                    nativeWrapper(root, dir, shadow, SHADOW_TRANSLUCENT, NATIVE_SHADOW_TRANSLUCENT, overrides, added);
                 }
             }
+        }
+        if (forward != null) ForwardOitShaders.stage(root, present, overrides, added, forward, nativeDepth);
+        // Iris reads shaders.properties outside the include graph; a ported copy reaches it through the plan.
+        if (nativeDepth && shadersProperties == null) {
+            shadersProperties = overrides.get(AbsolutePackPath.fromAbsolutePath("/shaders.properties").resolved(root));
         }
         if (!overrides.isEmpty()) OVERRIDES.set(overrides);
         FlwBackend.LOGGER.info("Shaderpack patch planning: {} sources in {} ms", overrides.size(),
                 (System.nanoTime() - startNs) / 1_000_000.0);
         return new Plan(ImmutableList.<AbsolutePackPath>builder().addAll(starts).addAll(added).build(), colorwheel,
-                forwardOit, deferred, deferredEmissive, deferredTranslucent, emissiveLight, shadersProperties);
+                forwardOit, deferred, forward, deferredEmissive, deferredTranslucent, emissiveLight, shadersProperties,
+                iterationImageAbi, nativeDepth);
     }
 
-    private static void nativeWrapper(Path root, String dir, String nativeProgram, String virtualProgram, String marker,
+    /**
+     * Commits the recipe's native depth port only when every diff applies and {@link NativeDepthAudit} finds no
+     * unported depth line; otherwise the pack keeps Iris's forward depth contract.
+     */
+    private static boolean stageNativeDepth(Path root, PackPatch recipe, Set<String> present,
+                                            Map<Path, String> overrides) {
+        if (!Boolean.parseBoolean(System.getProperty("crankshaft.iris.nativeDepth", "true"))) {
+            FlwBackend.LOGGER.info("Shaderpack {} keeps Iris's forward depth: native depth disabled", recipe.name());
+            return false;
+        }
+        Map<Path, String> staged = new HashMap<>(overrides);
+        for (String diff : recipe.nativeDepth().patches()) {
+            if (!applyDiff(root, UnifiedPatch.parse(PackPatch.resource(diff)), staged)) {
+                FlwBackend.LOGGER.info("Shaderpack {} native depth port {} does not apply; keeping forward depth",
+                        recipe.name(), diff);
+                return false;
+            }
+        }
+        String unported = NativeDepthAudit.unported(root, present, staged, recipe.nativeDepth().depthLines());
+        if (unported != null) {
+            FlwBackend.LOGGER.info("Shaderpack {} keeps forward depth: unported depth use at {}", recipe.name(),
+                    unported);
+            return false;
+        }
+        overrides.putAll(staged);
+        FlwBackend.LOGGER.info("Shaderpack {} uses Minecraft's reversed depth natively", recipe.name());
+        return true;
+    }
+
+    /**
+     * {@code path}'s planned source: its staged override, else the pack's file.
+     */
+    static @Nullable String staged(Path root, AbsolutePackPath path, Map<Path, String> overrides) {
+        String source = overrides.get(path.resolved(root));
+        return source != null ? source : read(root, path);
+    }
+
+    /**
+     * {@code target}'s define lets a recipe diff tell these guest draws from the native program's own.
+     */
+    private static void nativeWrapper(Path root, String dir, String nativeProgram, Target target, String marker,
                                       Map<Path, String> overrides, List<AbsolutePackPath> added) {
         for (String stage : List.of(".vsh", ".fsh", ".gsh", ".tcs", ".tes")) {
-            String source = read(root, AbsolutePackPath.fromAbsolutePath(dir + nativeProgram + stage));
+            String source = staged(root, AbsolutePackPath.fromAbsolutePath(dir + nativeProgram + stage), overrides);
             if (source == null) continue;
-            AbsolutePackPath virtual = AbsolutePackPath.fromAbsolutePath(dir + virtualProgram + stage);
-            overrides.put(virtual.resolved(root), source + "\nvoid " + marker + "() {}\n");
+            AbsolutePackPath virtual = AbsolutePackPath.fromAbsolutePath(dir + target.virtualProgram + stage);
+            overrides.put(virtual.resolved(root), withDefines(source, List.of(target.define)) + "\nvoid " + marker
+                    + "() {}\n");
             added.add(virtual);
         }
     }
 
-    private static @Nullable String stageRecipe(Path root, PackPatch recipe, Set<String> present,
-                                                Map<Path, String> overrides, List<AbsolutePackPath> added,
-                                                String colorwheel) {
+    /**
+     * The recipe's resources and source diffs, staged before the native depth port.
+     */
+    private static boolean stageRecipeSources(Path root, PackPatch recipe, Set<String> present,
+                                              Map<Path, String> overrides, List<AbsolutePackPath> added) {
+        for (var resource : recipe.resources().entrySet()) {
+            var path = AbsolutePackPath.fromAbsolutePath(resource.getKey());
+            overrides.put(path.resolved(root), PackPatch.resource(resource.getValue()));
+            added.add(path);
+        }
         for (PackPatch.FileEdit edit : recipe.files()) {
-            Target target = target(edit.target());
-            List<String> dirs = contractDirs(present, target);
-            if (dirs.isEmpty()) continue;
-            if (!applyDiff(root, edit.changes(), overrides)) return null;
-            for (String dir : dirs) {
-                if (!stageWrappers(root, dir, target, overrides, added,
-                        (contract, nativeWrapper) -> withDefines(nativeWrapper, List.of(target.define)))) return null;
-            }
+            if (contractDirs(present, target(edit.target())).isEmpty()) continue;
+            if (!applyDiff(root, edit.changes(), overrides)) return false;
         }
         for (String diff : recipe.patches()) {
-            if (!applyDiff(root, UnifiedPatch.parse(PackPatch.resource(diff)), overrides)) return null;
+            if (!applyDiff(root, UnifiedPatch.parse(PackPatch.resource(diff)), overrides)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * The recipe's virtual programs and blend properties. They copy staged pack text, so they follow every source
+     * diff, the native depth port included.
+     */
+    private static @Nullable String stageRecipeCopies(Path root, PackPatch recipe, Set<String> present,
+                                                      Map<Path, String> overrides, List<AbsolutePackPath> added,
+                                                      String colorwheel) {
+        for (PackPatch.FileEdit edit : recipe.files()) {
+            Target target = target(edit.target());
+            for (String dir : contractDirs(present, target)) {
+                if (!stageWrappers(root, dir, target, overrides, added,
+                        (_, nativeWrapper) -> withDefines(nativeWrapper, List.of(target.define)))) return null;
+            }
         }
         for (PackPatch.Program program : recipe.programs()) {
             Target target = target(program.target());
@@ -166,8 +262,8 @@ public final class ContractPatches {
                                                                                                                                  .length() - 4))
                                                                                                   .sorted().toList();
             for (String dir : dirs) {
-                String vertex = read(root, AbsolutePackPath.fromAbsolutePath(dir
-                        + (program.vertex() == null ? CONTRACT : program.vertex()) + ".vsh"));
+                String vertex = staged(root, AbsolutePackPath.fromAbsolutePath(dir
+                        + (program.vertex() == null ? CONTRACT : program.vertex()) + ".vsh"), overrides);
                 if (vertex == null) return null;
                 AbsolutePackPath vsh = AbsolutePackPath.fromAbsolutePath(dir + target.virtualProgram + ".vsh");
                 AbsolutePackPath fsh = AbsolutePackPath.fromAbsolutePath(dir + target.virtualProgram + ".fsh");
@@ -196,11 +292,11 @@ public final class ContractPatches {
                         (contract, nativeWrapper) -> adaptWrapper(wrapper, contract, nativeWrapper))) return null;
             }
         }
-        Set<String> staged = new HashSet<>(present);
-        for (AbsolutePackPath path : added) staged.add(path.getPathString());
-        String packProperties = read(root, AbsolutePackPath.fromAbsolutePath("/shaders.properties"));
+        Set<String> planned = new HashSet<>(present);
+        for (AbsolutePackPath path : added) planned.add(path.getPathString());
+        String packProperties = staged(root, AbsolutePackPath.fromAbsolutePath("/shaders.properties"), overrides);
         for (PackPatch.BlendCopy blend : recipe.blends()) {
-            if (staged.stream().noneMatch(path -> path.endsWith("/" + blend.target() + ".fsh"))) return null;
+            if (planned.stream().noneMatch(path -> path.endsWith("/" + blend.target() + ".fsh"))) return null;
             if (packProperties == null) return null;
             String copied = copyBlend(packProperties, blend);
             if (copied == null) return null;
@@ -212,8 +308,7 @@ public final class ContractPatches {
     private static boolean applyDiff(Path root, UnifiedPatch diff, Map<Path, String> overrides) {
         for (UnifiedPatch.FileEdit change : diff.files()) {
             AbsolutePackPath path = AbsolutePackPath.fromAbsolutePath("/" + change.path());
-            String source = overrides.get(path.resolved(root));
-            if (source == null) source = read(root, path);
+            String source = staged(root, path, overrides);
             String patched = source == null ? null : change.apply(source);
             if (patched == null) return false;
             overrides.put(path.resolved(root), patched);
@@ -268,14 +363,14 @@ public final class ContractPatches {
         Map<Path, String> staged = new HashMap<>();
         List<AbsolutePackPath> stagedPaths = new ArrayList<>();
         String nativeProgram = target.nativeProgram;
-        if (target == SHADOW_TRANSLUCENT && (read(root,
-                AbsolutePackPath.fromAbsolutePath(dir + nativeProgram + ".vsh")) == null
-                || read(root, AbsolutePackPath.fromAbsolutePath(dir + nativeProgram + ".fsh")) == null)) {
+        if (target == SHADOW_TRANSLUCENT && (staged(root,
+                AbsolutePackPath.fromAbsolutePath(dir + nativeProgram + ".vsh"), overrides) == null
+                || staged(root, AbsolutePackPath.fromAbsolutePath(dir + nativeProgram + ".fsh"), overrides) == null)) {
             nativeProgram = "shadow";
         }
         for (String stage : List.of(".vsh", ".fsh")) {
-            String contract = read(root, AbsolutePackPath.fromAbsolutePath(dir + base(target) + stage));
-            String source = read(root, AbsolutePackPath.fromAbsolutePath(dir + nativeProgram + stage));
+            String contract = staged(root, AbsolutePackPath.fromAbsolutePath(dir + base(target) + stage), overrides);
+            String source = staged(root, AbsolutePackPath.fromAbsolutePath(dir + nativeProgram + stage), overrides);
             String result = contract == null || source == null ? null : build.apply(contract, source);
             if (result == null) {
                 return false;
@@ -350,7 +445,7 @@ public final class ContractPatches {
         return found;
     }
 
-    private static String withDefines(String wrapper, List<String> names) {
+    static String withDefines(String wrapper, List<String> names) {
         String text = wrapper.replace("\r\n", "\n");
         int version = text.startsWith("#version") ? 0 : text.indexOf("\n#version");
         int lineEnd = version < 0 ? -1 : text.indexOf('\n', version + 1);
@@ -363,10 +458,10 @@ public final class ContractPatches {
         return lineEnd < 0 ? defines + text : text.substring(0, lineEnd + 1) + defines + text.substring(lineEnd + 1);
     }
 
-    private static @Nullable String read(Path root, AbsolutePackPath path) {
+    static @Nullable String read(Path root, AbsolutePackPath path) {
         try {
             return Files.readString(path.resolved(root));
-        } catch (IOException e) {
+        } catch (IOException _) {
             return null;
         }
     }
@@ -386,7 +481,9 @@ public final class ContractPatches {
     }
 
     public record Plan(ImmutableList<AbsolutePackPath> starts, String properties, boolean forwardOit,
-                       @Nullable DeferredOitProfile deferred, boolean deferredEmissive,
-                       boolean deferredTranslucent, boolean emissiveLight, @Nullable String shadersProperties) {
+                       @Nullable DeferredOitProfile deferred, @Nullable DeferredOitProfile forward,
+                       boolean deferredEmissive,
+                       boolean deferredTranslucent, boolean emissiveLight, @Nullable String shadersProperties,
+                       boolean iterationImageAbi, boolean nativeDepth) {
     }
 }

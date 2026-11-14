@@ -1,9 +1,9 @@
 package dev.engine_room.flywheel.backend.vk.shader;
 
-#if MC >= 26.3
 import dev.engine_room.flywheel.backend.compile.NativeShaderPreprocessor;
+
+import dev.engine_room.flywheel.backend.compile.TerrainOverlayPipelines;
 import org.lwjgl.util.shaderc.Shaderc;
-#endif
 
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -39,6 +39,7 @@ public final class VkShaderTransform {
             Map.entry("Sampler0", 10),
             Map.entry("Sampler1", 11),
             Map.entry("Sampler2", 12),
+            Map.entry("TerrainOverlayLightmap", 12),
             Map.entry("_flw_crumblingTex", 13),
             Map.entry("_flw_depthPyramid", 10),
             Map.entry("depth_tex", 10),
@@ -59,7 +60,8 @@ public final class VkShaderTransform {
             Map.entry("_flw_layerColor3", 36),
             Map.entry("_flw_layerDepth3", 37),
             Map.entry("_flw_emission", 38),
-            Map.entry("_flw_mlabNearest", 39));
+            Map.entry("_flw_mlabNearest", 39),
+            Map.entry("_flw_instanceBounds", 43));
     private static final Map<String, Integer> VERTEX_INPUT_LOCATIONS = Map.of(
             "Position", 0, "Color", 1, "UV0", 2, "UV1", 3, "UV2", 4, "Normal", 5,
             "ChunkPosition", 6, "ChunkVisibility", 7);
@@ -79,6 +81,8 @@ public final class VkShaderTransform {
             Map.entry("_flw_crumblingTexCoord", 12),
             Map.entry("flw_chunkVisibility", 13),
             Map.entry("_flw_texIndex", 14),
+            Map.entry("_flw_terrainPosition", 6),
+            Map.entry("_flw_terrainReceiver", 7),
             Map.entry("flw_vertexAlpha", 0),
             Map.entry("vertexPerFaceColorBack", 0),
             Map.entry("vertexPerFaceColorFront", 2),
@@ -93,7 +97,7 @@ public final class VkShaderTransform {
     private static final Pattern UBO_BLOCK = Pattern.compile(
             "(?:layout\\(\\s*std140\\s*(?:,\\s*binding\\s*=\\s*\\w+\\s*)?\\)\\s+)?uniform\\s+(\\w+)\\s*\\{");
     private static final Pattern SAMPLER_DECL = Pattern.compile(
-            "(?:layout\\([^)]*\\)\\s+)?uniform\\s+sampler2D\\s+(\\w+)\\s*;");
+            "(?:layout\\([^)]*\\)\\s+)?uniform\\s+([iu]?sampler\\w+)\\s+(\\w+)\\s*;");
     // shaderc can serialize a component's first declaration after a preceding semicolon.
     private static final Pattern INTERFACE_VAR = Pattern.compile(
             "(?m)(?:^|(?<=;))(\\s*)(flat\\s+)?(in|out)\\s+(\\w+)\\s+(\\w+)\\s*;");
@@ -114,7 +118,14 @@ public final class VkShaderTransform {
                     case COMPUTE -> Shaderc.shaderc_compute_shader;
                 }, Map.of());
         #else
-        String out = glsl;
+        String out = VERSION_LINE.matcher(glsl).replaceFirst("#version 460");
+        out = EXTENSION_LINE.matcher(out).replaceAll("");
+        out = NativeShaderPreprocessor.preprocessKind(out, "flywheel:vulkan/" + stage.name().toLowerCase(),
+                switch (stage) {
+                    case VERTEX -> Shaderc.shaderc_vertex_shader;
+                    case FRAGMENT -> Shaderc.shaderc_fragment_shader;
+                    case COMPUTE -> Shaderc.shaderc_compute_shader;
+                }, Map.of());
         #endif
 
         out = VERSION_LINE.matcher(out).replaceFirst("#version 460");
@@ -128,14 +139,19 @@ public final class VkShaderTransform {
 
         out = SSBO_LAYOUT.matcher(out).replaceAll("layout(set = 0, std430,");
 
-        out = decorateBlocks(out, UBO_BLOCK, name -> {
+        out = decorateBlocks(out, UBO_BLOCK, match -> {
+            var name = match.group(1);
             Integer b = UBO_BINDINGS.get(name);
+            if (b == null) b = TerrainOverlayPipelines.vulkanBinding(name);
             return b == null ? null : "layout(std140, set = 0, binding = " + b + ") uniform " + name + " {";
         });
 
-        out = decorateBlocks(out, SAMPLER_DECL, name -> {
+        out = decorateBlocks(out, SAMPLER_DECL, match -> {
+            var type = match.group(1);
+            var name = match.group(2);
             Integer b = SAMPLER_BINDINGS.get(name);
-            return b == null ? null : "layout(set = 0, binding = " + b + ") uniform sampler2D " + name + ";";
+            if (b == null) b = TerrainOverlayPipelines.vulkanBinding(name);
+            return b == null ? null : "layout(set = 0, binding = " + b + ") uniform " + type + " " + name + ";";
         });
 
         out = IMAGE_LAYOUT.matcher(out).replaceAll("layout(set = 0, binding = $1, r32f");
@@ -178,8 +194,7 @@ public final class VkShaderTransform {
         Matcher m = pattern.matcher(src);
         StringBuilder sb = new StringBuilder();
         while (m.find()) {
-            String name = m.group(1);
-            String replacement = decorator.decorate(name);
+            String replacement = decorator.decorate(m);
             m.appendReplacement(sb,
                     replacement == null ? Matcher.quoteReplacement(m.group()) : Matcher.quoteReplacement(replacement));
         }
@@ -221,6 +236,6 @@ public final class VkShaderTransform {
     }
 
     private interface Decorator {
-        String decorate(String name);
+        String decorate(Matcher declaration);
     }
 }

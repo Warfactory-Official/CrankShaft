@@ -15,9 +15,9 @@ abstract class GlCommandEncoderMeshMixin {
     // trySetup and validation have already run here. A mesh-linked program cannot be primed with an indexed draw,
     // even a zero-count one; replace the actual draw while retaining the encoder's framebuffer/uniform ownership.
     @Inject(method = "drawFromBuffers", at = @At("HEAD"), cancellable = true, require = 1)
-    private void flywheel$drawMesh(GlRenderPass pass, int baseVertex, int firstIndex, int drawCount,
-                                   @Nullable IndexType indexType, GlRenderPipeline pipeline,
-                                   int instanceCount, int firstInstance, CallbackInfo ci) {
+    private void flywheel$drawMesh(GlRenderPass _, int _, int _, int _,
+                                   @Nullable IndexType _, GlRenderPipeline pipeline,
+                                   int _, int _, CallbackInfo ci) {
         if (pipeline.program() instanceof GuestProgram program && program.meshQuads() != 0) {
             program.drawMeshCommands();
             ci.cancel();

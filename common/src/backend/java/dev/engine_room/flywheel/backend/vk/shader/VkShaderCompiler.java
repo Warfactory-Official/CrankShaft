@@ -74,7 +74,7 @@ public final class VkShaderCompiler {
                                                                             .objectHandle(module)
                                                                             .pObjectName(stack.UTF8(name));
             EXTDebugUtils.vkSetDebugUtilsObjectNameEXT(VkContext.vkDevice(), info);
-        } catch (Throwable t) {
+        } catch (Throwable _) {
             namesUnavailable = true;
         }
     }

@@ -12,6 +12,7 @@ public final class InstanceTypeIds {
 
     private static final Object2IntOpenHashMap<InstanceType<?>> IDS = new Object2IntOpenHashMap<>();
     private static final List<InstanceType<?>> TYPES = new ArrayList<>();
+    private static volatile Snapshot snapshot = new Snapshot(List.of());
     private static volatile int generation;
 
     static {
@@ -32,6 +33,7 @@ public final class InstanceTypeIds {
         }
         IDS.put(type, id);
         TYPES.add(type);
+        snapshot = new Snapshot(List.copyOf(TYPES));
         generation = TYPES.size();
         return id;
     }
@@ -47,8 +49,8 @@ public final class InstanceTypeIds {
         return TYPES.size();
     }
 
-    public static synchronized Snapshot snapshot() {
-        return new Snapshot(List.copyOf(TYPES));
+    public static Snapshot snapshot() {
+        return snapshot;
     }
 
     public record Snapshot(List<InstanceType<?>> types) {

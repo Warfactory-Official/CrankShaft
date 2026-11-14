@@ -43,16 +43,18 @@ import net.minecraft.util.Mth;
 import net.minecraft.util.Util;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
 final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitReplay {
-    private static final int STORAGE = VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    private static final int INDIRECT = VK12.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-    private static final int UNIFORM = VK12.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    private static final int STORAGE = VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    private static final int INDIRECT = VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    private static final int UNIFORM = VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 
     private static final long CS_STRIDE = 256;
     private static final long CANDIDATE_STRIDE = 40;
+    private static final long RECEIVER_CANDIDATE_STRIDE = 48;
     private static final long COMMAND_STRIDE = 20;
     private static final long DRAW_DATA_STRIDE = 32;
     private static final int INITIAL_SECTIONS = 8192;
@@ -212,10 +214,12 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
         }
         PhaseSet b = buffers();
         lastModelView.get(0, MemoryUtil.memByteBuffer(b.chunkSectionUbo.mappedAddress(), 64));
-        b.cullInput.ensureCapacity((long) n * CANDIDATE_STRIDE);
+        var receiverData = !TerrainOverlayDraw.isEmpty();
+        var stride = receiverData ? RECEIVER_CANDIDATE_STRIDE : CANDIDATE_STRIDE;
+        b.ensureCullInput(n, receiverData);
         long base = b.cullInput.mappedAddress();
         for (int i = 0; i < n; i++) {
-            long slot = base + (long) i * CANDIDATE_STRIDE;
+            long slot = base + i * stride;
             long geoAddr = m.geoDeviceAddress(((VulkanGpuBuffer) batch.geometryBuffers[i]).vkBuffer());
             MemoryUtil.memPutInt(slot, batch.originChunkX[i]);
             MemoryUtil.memPutInt(slot + 4L, batch.originChunkY[i]);
@@ -226,6 +230,12 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
             MemoryUtil.memPutInt(slot + 24L, (int) geoAddr);
             MemoryUtil.memPutInt(slot + 28L, (int) (geoAddr >>> 32));
             MemoryUtil.memPutFloat(slot + 32L, batch.visibility[i]);
+            if (receiverData) {
+                var receivers = TerrainReceiverBuffers.find(batch.geometryBuffers[i]);
+                var receiverAddress = receivers == null ? 0L : m.geoDeviceAddress(
+                        ((VulkanGpuBuffer) receivers).vkBuffer());
+                MemoryUtil.memPutLong(slot + 40L, receiverAddress);
+            }
         }
         b.drawCommand.ensureCapacity((long) n * COMMAND_STRIDE);
         b.drawData.ensureCapacity((long) n * DRAW_DATA_STRIDE);
@@ -234,7 +244,7 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
     }
 
     @Override
-    public void prepareCull(GpuTextureView depthView, int width, int height, boolean insert) {
+    public void prepareCull(GpuTextureView depthView, int width, int height, boolean _) {
         VkTerrainTranslucentMeshDrawStrategy strategy = VkTerrainDrawManager.translucentMeshDrawStrategy;
         if (strategy != null) {
             m.syncResidentMetadata();
@@ -259,8 +269,8 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
                                                               .getClampToEdge(FilterMode.NEAREST)).vkSampler();
         VkCommandBuffer cmd = VkContext.beginCommands();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/translucent_oit_cull");
-        VkComputePipeline cull = programs.terrain().translucentOitCullPipeline();
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, cull.handle());
+        VkComputePipeline cull = programs.terrain().translucentOitCullPipeline(b.receiverData);
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, cull.handle());
         m.writer.storage(0, b.cullInput)
                 .storage(4, b.drawCommand)
                 .storage(5, b.drawCount)
@@ -268,12 +278,12 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
                 .uniform(8, m.hiz.ubo(m.frameParity))
                 .uniform(9, b.cullCountUbo)
                 .sampler(10, m.hiz.pyramid.sampledView(), pyramidSampler);
-        m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, cull.layout());
-        VK12.vkCmdDispatch(cmd, Mth.positiveCeilDiv(n, 64), 1, 1);
-        VkCmd.memoryBarrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK12.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK12.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-                VK12.VK_ACCESS_SHADER_WRITE_BIT,
-                VK12.VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK12.VK_ACCESS_SHADER_READ_BIT);
+        m.writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, cull.layout());
+        VK10.vkCmdDispatch(cmd, Mth.positiveCeilDiv(n, 64), 1, 1);
+        VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK10.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK10.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+                VK10.VK_ACCESS_SHADER_WRITE_BIT,
+                VK10.VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK10.VK_ACCESS_SHADER_READ_BIT);
         VkContext.popLabel(cmd);
         VkContext.submitCommands(cmd);
     }
@@ -331,9 +341,9 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
         PhaseSet b = buffers();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/translucent_mlab/" + oitMode);
         VkGraphicsPipeline pipeline = programs.terrain().translucentMlabPipeline(oitMode);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS,
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS,
                 #if MC >= 26.3 VkNativeOitPass.enginePipeline(pipeline) #else pipeline.handle() #endif);
-        VK12.vkCmdBindIndexBuffer(cmd, ((VulkanGpuBuffer) sharedIndexGpu).vkBuffer(), 0L, VK12.VK_INDEX_TYPE_UINT32);
+        VK10.vkCmdBindIndexBuffer(cmd, ((VulkanGpuBuffer) sharedIndexGpu).vkBuffer(), 0L, VK10.VK_INDEX_TYPE_UINT32);
 
         m.writer.storage(1, b.drawData.vkBuffer(), 0L, (long) batch.count * DRAW_DATA_STRIDE)
                 .sampler(10, atlasView, atlasSampler)
@@ -344,7 +354,8 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
                 .uniform(20, globals)
                 .uniform(21, b.chunkSectionUbo.vkBuffer(), 0L, CS_STRIDE);
         mlab.bind(m.writer);
-        m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+        TerrainOverlayDraw.bind(m.writer);
+        m.writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
 
         VK12.vkCmdDrawIndexedIndirectCount(cmd,
                 b.drawCommand.vkBuffer(), 0L,
@@ -408,9 +419,9 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
         PhaseSet b = buffers();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/translucent_oit/" + mode.name);
         VkGraphicsPipeline pipeline = programs.terrain().translucentProducerPipeline(mode, folded);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS,
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS,
                 #if MC >= 26.3 VkNativeOitPass.enginePipeline(pipeline) #else pipeline.handle() #endif);
-        VK12.vkCmdBindIndexBuffer(cmd, ((VulkanGpuBuffer) sharedIndexGpu).vkBuffer(), 0L, VK12.VK_INDEX_TYPE_UINT32);
+        VK10.vkCmdBindIndexBuffer(cmd, ((VulkanGpuBuffer) sharedIndexGpu).vkBuffer(), 0L, VK10.VK_INDEX_TYPE_UINT32);
 
         m.writer.storage(1, b.drawData.vkBuffer(), 0L, (long) batch.count * DRAW_DATA_STRIDE)
                 .sampler(10, atlasView, atlasSampler)
@@ -419,6 +430,7 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
                 .uniform(18, fog)
                 .uniform(20, globals)
                 .uniform(21, b.chunkSectionUbo.vkBuffer(), 0L, CS_STRIDE);
+        TerrainOverlayDraw.bind(m.writer);
         if (nonDepthRange) {
             if (folded) {
                 m.writer.inputAttachment(14, depthRangeView);
@@ -436,7 +448,7 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
                 }
             }
         }
-        m.writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+        m.writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
 
         VK12.vkCmdDrawIndexedIndirectCount(cmd,
                 b.drawCommand.vkBuffer(), 0L,
@@ -452,11 +464,12 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
 
     private static final class PhaseSet {
         final VkBuffer chunkSectionUbo;
-        final VkBuffer cullInput;
         final VkBuffer drawCommand;
         final VkBuffer drawData;
         final VkBuffer drawCount;
         final VkBuffer cullCountUbo;
+        VkBuffer cullInput;
+        boolean receiverData;
 
         PhaseSet() {
             VkBuffer[] built = new VkBuffer[6];
@@ -474,6 +487,18 @@ final class VkTerrainTranslucent implements SodiumTerrainOitReplay, VkFoldedOitR
                     }
                 }
                 throw t;
+            }
+        }
+
+        void ensureCullInput(int count, boolean receiverData) {
+            var stride = receiverData ? RECEIVER_CANDIDATE_STRIDE : CANDIDATE_STRIDE;
+            if (this.receiverData != receiverData) {
+                var previous = cullInput;
+                cullInput = new VkBuffer(STORAGE, Math.max(INITIAL_SECTIONS, count) * stride);
+                previous.delete();
+                this.receiverData = receiverData;
+            } else {
+                cullInput.ensureCapacity(count * stride);
             }
         }
 

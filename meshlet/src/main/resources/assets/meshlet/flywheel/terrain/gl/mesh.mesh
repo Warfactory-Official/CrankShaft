@@ -36,6 +36,12 @@ layout(triangles, max_vertices = 64, max_primitives = 32) out;
 
 taskNV in TerrainTask { TERRAIN_TASK_PAYLOAD_FIELDS } payload;
 
+#ifdef _FLW_TERRAIN_OVERLAY
+layout(std430,binding=13) restrict readonly buffer TerrainReceiverPointers {
+    restrict uint *terrainReceivers[];
+};
+#endif
+
 // Interface to terrain/gl/frag.frag. Two consecutive vec2 per-vertex outputs (uv, lightUv) pack/alias ambiguously
 // across the NV mesh->frag boundary (scrambles the interpolated UVs while gl_Position stays intact); Nvidium's
 // terrain interpolants deliberately avoid that. Pack both UVs into one vec4 (xy = atlas, zw = lightmap) and start at
@@ -52,12 +58,20 @@ taskNV in TerrainTask { TERRAIN_TASK_PAYLOAD_FIELDS } payload;
 layout(location = 1) out PerVertex {
     flat uvec2 quadRef;  // x = visible-region slot, y = quadVertexBase (arena vertex index of corner 0)
     vec2 fog;            // x = spherical dist, y = cylindrical dist
+    #ifdef _FLW_TERRAIN_OVERLAY
+    vec3 terrainPosition;
+    flat uint terrainReceiver;
+    #endif
 } v_out[];
 #else
 layout(location = 1) out PerVertex {
     vec4 uvLight;   // xy = atlas uv, zw = lightmap uv (sampled per-fragment)
     vec3 colour;    // vertex tint (AO baked)
     vec2 fog;       // x = spherical dist, y = cylindrical dist
+    #ifdef _FLW_TERRAIN_OVERLAY
+    vec3 terrainPosition;
+    flat uint terrainReceiver;
+    #endif
 } v_out[];
 #endif
 
@@ -127,6 +141,11 @@ void main() {
         uint quadVertexBase = baseVertex + quadInArena * 4u;
         // Arena base pointer resolved + forwarded by the task (flatten of the per-workgroup binding-12 load).
         restrict Vertex *geoBase = payload.geoBase;
+#ifdef _FLW_TERRAIN_OVERLAY
+        uint receiver=0u;
+        restrict uint *receivers=terrainReceivers[slot];
+        if(uint64_t(receivers)!=uint64_t(0) && quadVertexBase<receivers[0])receiver=receivers[quadVertexBase+1u];
+#endif
 
         // The 2 quad corners this lane owns: even (tri0) -> 0,1 ; odd (tri1) -> 2,3. A ternary select (not a local
         // array) keeps k in a register even if the loop were left rolled -- avoiding a local-memory spill.
@@ -139,6 +158,10 @@ void main() {
             vec4 clip = viewProjection * vec4(worldPos, 1.0);
             uint outIdx = outVertexBase + k;
             gl_MeshVerticesNV[outIdx].gl_Position = clip;
+#ifdef _FLW_TERRAIN_OVERLAY
+            v_out[outIdx].terrainPosition=worldPos;
+            v_out[outIdx].terrainReceiver=receiver;
+#endif
 #ifdef MESHLET_BARYCENTRIC
             // Emit NO atlas/light/colour interpolants -- the fragment re-fetches this quad's vertices via the arena
             // ref + gl_BaryCoordNV. The ref is the same for all 4 corners (whole quad), so flat provoking is exact.

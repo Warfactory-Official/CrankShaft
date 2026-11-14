@@ -21,6 +21,7 @@ public final class VkDescriptorWriter {
     private long[] bufHandle = new long[16];
     private long[] bufOffset = new long[16];
     private long[] bufRange = new long[16];
+    private long[] bufView = new long[16];
     private boolean[] bufEmit = new boolean[16];
     private int bufCount;
     private int[] imgBinding = new int[16];
@@ -42,7 +43,7 @@ public final class VkDescriptorWriter {
             lastLayout[1] = null;
             pushToken++;
         }
-        int bp = bindPoint == VK12.VK_PIPELINE_BIND_POINT_COMPUTE ? 1 : 0;
+        int bp = bindPoint == VK10.VK_PIPELINE_BIND_POINT_COMPUTE ? 1 : 0;
         if (lastLayout[bp] != layout) {
             lastLayout[bp] = layout;
             pushToken++;
@@ -51,7 +52,7 @@ public final class VkDescriptorWriter {
     }
 
     public VkDescriptorWriter storage(int binding, long vkBuffer, long offset, long range) {
-        addBuffer(binding, VK12.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, vkBuffer, offset, range);
+        addBuffer(binding, VK10.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, vkBuffer, offset, range);
         return this;
     }
 
@@ -60,7 +61,7 @@ public final class VkDescriptorWriter {
     }
 
     public VkDescriptorWriter uniform(int binding, long vkBuffer, long offset, long range) {
-        addBuffer(binding, VK12.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, vkBuffer, offset, range);
+        addBuffer(binding, VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, vkBuffer, offset, range);
         return this;
     }
 
@@ -76,18 +77,28 @@ public final class VkDescriptorWriter {
         return uniform(binding, buffer.vkBuffer(), 0L, buffer.sizeBytes());
     }
 
+    /**
+     * {@code view}: R32_UINT over exactly {@code slice}, alive until the slice's buffer retires.
+     */
+    public VkDescriptorWriter uintTexel(int binding, GpuBufferSlice slice, long view) {
+        addBuffer(binding, VK10.VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
+                ((VulkanGpuBuffer) slice.buffer()).vkBuffer(), slice.offset(), slice.length());
+        bufView[bufCount - 1] = view;
+        return this;
+    }
+
     public VkDescriptorWriter sampler(int binding, long imageView, long sampler) {
-        addImage(binding, VK12.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageView, sampler);
+        addImage(binding, VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageView, sampler);
         return this;
     }
 
     public VkDescriptorWriter image(int binding, long imageView) {
-        addImage(binding, VK12.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, imageView, 0L);
+        addImage(binding, VK10.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, imageView, 0L);
         return this;
     }
 
     public VkDescriptorWriter inputAttachment(int binding, long imageView) {
-        addImage(binding, VK12.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, imageView, 0L);
+        addImage(binding, VK10.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, imageView, 0L);
         return this;
     }
 
@@ -100,6 +111,7 @@ public final class VkDescriptorWriter {
             bufHandle = Arrays.copyOf(bufHandle, cap);
             bufOffset = Arrays.copyOf(bufOffset, cap);
             bufRange = Arrays.copyOf(bufRange, cap);
+            bufView = Arrays.copyOf(bufView, cap);
             bufEmit = new boolean[cap];
         }
         bufBinding[i] = binding;
@@ -171,17 +183,18 @@ public final class VkDescriptorWriter {
                     if (!bufEmit[b]) {
                         continue;
                     }
+                    var write = writes.get(i++)
+                                      .sType$Default().dstBinding(bufBinding[b]).dstArrayElement(0)
+                                      .descriptorCount(1).descriptorType(bufType[b]);
+                    if (bufType[b] == VK10.VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER) {
+                        write.pTexelBufferView(stack.longs(bufView[b]));
+                        continue;
+                    }
                     VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(1, stack)
                                                                                .buffer(bufHandle[b])
                                                                                .offset(bufOffset[b])
                                                                                .range(bufRange[b]);
-                    writes.get(i++)
-                          .sType$Default()
-                          .dstBinding(bufBinding[b])
-                          .dstArrayElement(0)
-                          .descriptorCount(1)
-                          .descriptorType(bufType[b])
-                          .pBufferInfo(info);
+                    write.pBufferInfo(info);
                 }
                 for (int im = 0; im < imgCount; im++) {
                     if (!imgEmit[im]) {
@@ -190,7 +203,7 @@ public final class VkDescriptorWriter {
                     VkDescriptorImageInfo.Buffer info = VkDescriptorImageInfo.calloc(1, stack)
                                                                              .imageView(imgView[im])
                                                                              .sampler(imgSampler[im])
-                                                                             .imageLayout(VK12.VK_IMAGE_LAYOUT_GENERAL);
+                                                                             .imageLayout(VK10.VK_IMAGE_LAYOUT_GENERAL);
                     writes.get(i++)
                           .sType$Default()
                           .dstBinding(imgBinding[im])

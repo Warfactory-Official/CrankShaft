@@ -1,5 +1,7 @@
 package dev.engine_room.flywheel.lib.model.baked;
 
+import net.minecraft.client.renderer.block.BlockAndTintGetter;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.CardinalLighting;
 import net.minecraft.world.level.ColorResolver;
@@ -11,7 +13,7 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 import org.jspecify.annotations.Nullable;
 
-public final class SinglePosVirtualBlockGetter implements net.minecraft.client.renderer.block.BlockAndTintGetter {
+public final class SinglePosVirtualBlockGetter implements BlockAndTintGetter {
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
     private final BlockState state;
@@ -26,13 +28,13 @@ public final class SinglePosVirtualBlockGetter implements net.minecraft.client.r
     }
 
     @Override
-    public FluidState getFluidState(BlockPos pos) {
+    public FluidState getFluidState(BlockPos _) {
         return Fluids.EMPTY.defaultFluidState();
     }
 
     @Override
     @Nullable
-    public BlockEntity getBlockEntity(BlockPos pos) {
+    public BlockEntity getBlockEntity(BlockPos _) {
         return null;
     }
 
@@ -42,7 +44,7 @@ public final class SinglePosVirtualBlockGetter implements net.minecraft.client.r
     }
 
     @Override
-    public int getBlockTint(BlockPos pos, ColorResolver color) {
+    public int getBlockTint(BlockPos _, ColorResolver _) {
         return -1;
     }
 

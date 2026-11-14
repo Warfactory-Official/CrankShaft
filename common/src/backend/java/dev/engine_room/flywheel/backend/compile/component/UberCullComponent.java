@@ -23,7 +23,7 @@ public final class UberCullComponent implements SourceComponent {
         for (int i = 0; i < types.size(); i++) {
             InstanceType<?> type = types.get(i);
             included.add(new InstanceStructComponent(type, "FlwInstance_" + i));
-            included.add(new NamespacedCull(sources.get(type.cullShader()), i));
+            included.add(new NamespacedCull(InstanceStructComponent.typeShader(type, sources.get(type.cullShader())), i));
             included.add(new SsboInstanceComponent(type, i));
         }
     }

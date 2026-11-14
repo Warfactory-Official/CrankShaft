@@ -2,13 +2,18 @@ package dev.engine_room.vanillin.visuals;
 
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.material.Material;
+import dev.engine_room.flywheel.api.visual.FarVisual;
+import dev.engine_room.flywheel.api.visual.FarVisualState;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.model.part.InstanceTree;
+import dev.engine_room.flywheel.lib.model.part.ModelTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTrees;
 import dev.engine_room.flywheel.lib.visual.AbstractBlockEntityVisual;
+import dev.engine_room.flywheel.lib.visual.FarVisualStates;
 import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.client.model.geom.ModelLayers;
+import net.minecraft.client.model.geom.PartPose;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
@@ -24,7 +29,7 @@ import java.util.EnumMap;
 import java.util.Map;
 import java.util.function.Consumer;
 
-public class CopperGolemStatueVisual extends AbstractBlockEntityVisual<CopperGolemStatueBlockEntity> {
+public class CopperGolemStatueVisual extends AbstractBlockEntityVisual<CopperGolemStatueBlockEntity> implements FarVisual {
     private static final Map<CopperGolemStatueBlock.Pose, ModelLayerLocation> POSE_LAYERS = new EnumMap<>(
             CopperGolemStatueBlock.Pose.class);
     private static final Map<WeatheringCopper.WeatherState, Material> MATERIALS = new EnumMap<>(
@@ -37,7 +42,11 @@ public class CopperGolemStatueVisual extends AbstractBlockEntityVisual<CopperGol
         POSE_LAYERS.put(CopperGolemStatueBlock.Pose.STAR, ModelLayers.COPPER_GOLEM_STAR);
     }
 
+    private final ModelTree model;
     private final InstanceTree instances;
+    private final Matrix4fc initialPose;
+    private final PartPose retainedRootPose;
+    private int packedLight;
 
     public CopperGolemStatueVisual(VisualizationContext ctx, CopperGolemStatueBlockEntity blockEntity,
                                    float partialTick) {
@@ -48,12 +57,16 @@ public class CopperGolemStatueVisual extends AbstractBlockEntityVisual<CopperGol
                 ? block.getWeatheringState()
                 : WeatheringCopper.WeatherState.UNAFFECTED;
 
-        instances = InstanceTree.create(instancerProvider(),
-                ModelTrees.of(POSE_LAYERS.get(pose), materialFor(oxidation)));
+        model = ModelTrees.of(POSE_LAYERS.get(pose), materialFor(oxidation));
+        instances = InstanceTree.create(instancerProvider(), model);
+        initialPose = createInitialPose();
         // CopperGolemStatueModel.setupAnim.
         instances.yPos(0.0F);
         instances.zRot(Mth.PI);
-        instances.updateInstancesStatic(createInitialPose());
+        instances.updateInstancesStatic(initialPose);
+        var rootPose = model.initialPose();
+        retainedRootPose = new PartPose(rootPose.x(), 0, rootPose.z(), rootPose.xRot(), rootPose.yRot(), Mth.PI,
+                rootPose.xScale(), rootPose.yScale(), rootPose.zScale());
     }
 
     private static Material materialFor(WeatheringCopper.WeatherState state) {
@@ -76,8 +89,8 @@ public class CopperGolemStatueVisual extends AbstractBlockEntityVisual<CopperGol
     }
 
     @Override
-    public void updateLight(float partialTick) {
-        int packedLight = computePackedLight();
+    public void updateLight(float _) {
+        packedLight = computePackedLight();
         instances.traverse(instance -> {
             instance.light(packedLight)
                     .setChanged();
@@ -87,6 +100,12 @@ public class CopperGolemStatueVisual extends AbstractBlockEntityVisual<CopperGol
     @Override
     public void collectCrumblingInstances(Consumer<Instance> consumer) {
         instances.traverse(consumer);
+    }
+
+    @Override
+    public FarVisualState retainedState() {
+        return FarVisualStates.modelTree(visualizationContext, model, initialPose, retainedRootPose,
+                FarVisualState.Appearance.lit(packedLight));
     }
 
     @Override

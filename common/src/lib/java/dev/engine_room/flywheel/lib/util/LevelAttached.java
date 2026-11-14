@@ -35,7 +35,7 @@ public final class LevelAttached<T> {
     }
 
     public LevelAttached(Function<LevelAccessor, T> factory) {
-        this(factory, t -> {
+        this(factory, _ -> {
         });
     }
 

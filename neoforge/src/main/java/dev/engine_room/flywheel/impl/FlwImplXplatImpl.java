@@ -71,7 +71,7 @@ public class FlwImplXplatImpl implements FlwImplXplat {
                             long withoutDepth, long layout, long descriptorSetLayout,
                             LongList modules,
                             List<BindGroupLayout.UniformDescription> uniforms) {
-                        return new VulkanRenderPipeline(device, stencil, depth,
+                        return new VulkanRenderPipeline(device, 0L, stencil, depth,
                                 withoutDepth, layout, descriptorSetLayout, modules, uniforms);
                     }
 
@@ -121,7 +121,7 @@ public class FlwImplXplatImpl implements FlwImplXplat {
     }
 
     @Override
-    public void dispatchNativeOitComplete(LevelRenderer renderer) {
+    public void dispatchNativeOitComplete(LevelRenderer _) {
     }
 
     @Override

@@ -1,0 +1,1117 @@
+diff --git a/Lib/BasicFunctions/HeldLight.glsl b/Lib/BasicFunctions/HeldLight.glsl
+--- a/Lib/BasicFunctions/HeldLight.glsl
++++ b/Lib/BasicFunctions/HeldLight.glsl
+@@ -48,1 +48,1 @@
+-	float minDist = LinearDepth_From_ScreenDepth(0.7);
++	float minDist = LinearDepth_From_ScreenDepth(0.3);
+@@ -68,1 +68,1 @@
+-		if (sampleDepth < 0.7) break;
++		if (sampleDepth > 0.3) break;
+diff --git a/Lib/BasicFunctions/Sunlight_Shadow.glsl b/Lib/BasicFunctions/Sunlight_Shadow.glsl
+--- a/Lib/BasicFunctions/Sunlight_Shadow.glsl
++++ b/Lib/BasicFunctions/Sunlight_Shadow.glsl
+@@ -53,1 +53,1 @@
+-			vec3 shadowScreenPosRaw = shadowScreenPos * 0.5 + 0.5;
++			vec3 shadowScreenPosRaw = shadowScreenPos * vec3(0.5, 0.5, -0.5) + 0.5;
+@@ -76,1 +76,1 @@
+-				scatteringDepth += max(sampleCoord.z - sampleDepth, 1e-5);
++				scatteringDepth += max(sampleDepth - sampleCoord.z, 1e-5);
+@@ -110,1 +110,1 @@
+-			shadowScreenPos = shadowScreenPos * 0.5 + 0.5;
++			shadowScreenPos = shadowScreenPos * vec3(0.5, 0.5, -0.5) + 0.5;
+@@ -145,1 +145,1 @@
+-					depthDiff *= zScale;
++					depthDiff *= -zScale;
+@@ -168,1 +168,1 @@
+-			shadowScreenPos.z -= (1.0 + noise.y * 1.0) * (1.0 - 0.9 * maskPlant) * max(3e-5, 1e-6 / warpPixelSizeMinMax.x);
++			shadowScreenPos.z += (1.0 + noise.y * 1.0) * (1.0 - 0.9 * maskPlant) * max(3e-5, 1e-6 / warpPixelSizeMinMax.x);
+@@ -191,1 +191,1 @@
+-				vec3 sampleCoord = vec3(shadowScreenPos.xy + offset, shadowScreenPos.z - dot(offset, zOffestBase.xy) * zOffestBase.z);
++				vec3 sampleCoord = vec3(shadowScreenPos.xy + offset, shadowScreenPos.z + dot(offset, zOffestBase.xy) * zOffestBase.z);
+@@ -246,1 +246,1 @@
+-			depth = depth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH + 1.0);
++			depth = depth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH - 2.0);
+@@ -332,3 +332,3 @@
+ 			bool isLod = false;
+-			if (sampleDepth == 1.0){
++			if (sampleDepth == 0.0){
+ 				isLod = true;
+@@ -342,5 +342,5 @@
+ 				#if defined HAND_SCREEN_SHADOW || defined DECREASE_HAND_GHOSTING
+ 					if (mask.hand > 0.5) 
+-						sampleDepth = sampleDepth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH + 1.0);
++						sampleDepth = sampleDepth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH - 2.0);
+ 				#endif
+ 				sampleDist = LinearDepth_From_ScreenDepth(sampleDepth);
+@@ -351,3 +351,3 @@
+ 				if (mask.hand > 0.5) 
+-					sampleDepth = sampleDepth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH + 1.0);
++					sampleDepth = sampleDepth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH - 2.0);
+ 			#endif
+@@ -372,1 +372,1 @@
+-					if (any(greaterThanEqual(sh, vec4(1.0)))){
++					if (any(lessThanEqual(sh, vec4(0.0)))){
+@@ -391,2 +391,2 @@
+-						if (sampleDepth < 0.7 && mask.hand > 0.5) 
+-							sampleDepth = sampleDepth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH + 1.0);
++						if (sampleDepth > 0.3 && mask.hand > 0.5) 
++							sampleDepth = sampleDepth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH - 2.0);
+@@ -404,2 +404,2 @@
+-					if (sampleDepth < 0.7 && mask.hand > 0.5) 
+-						sampleDepth = sampleDepth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH + 1.0);
++					if (sampleDepth > 0.3 && mask.hand > 0.5) 
++						sampleDepth = sampleDepth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH - 2.0);
+@@ -428,1 +428,1 @@
+-	if (VNdotL < 0.0 && depth > 0.7){ //0.052631
++	if (VNdotL < 0.0 && depth < 0.3){ //0.052631
+@@ -502,1 +502,1 @@
+-				if (sampleDepth == 1.0){
++				if (sampleDepth == 0.0){
+@@ -512,3 +512,3 @@
+ 						if (mask.hand > 0.5) 
+-							sampleDepth = sampleDepth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH + 1.0);
++							sampleDepth = sampleDepth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH - 2.0);
+ 					#endif
+@@ -519,5 +519,5 @@
+ 				#if defined HAND_SCREEN_SHADOW || defined DECREASE_HAND_GHOSTING
+ 					if (mask.hand > 0.5) 
+-						sampleDepth = sampleDepth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH + 1.0);
++						sampleDepth = sampleDepth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH - 2.0);
+ 				#endif
+ 
+diff --git a/Lib/FidelityFX/FSR2/DepthClip_CS.glsl b/Lib/FidelityFX/FSR2/DepthClip_CS.glsl
+--- a/Lib/FidelityFX/FSR2/DepthClip_CS.glsl
++++ b/Lib/FidelityFX/FSR2/DepthClip_CS.glsl
+@@ -127,1 +127,1 @@
+-	float fMaxDistInMeters = LinearDepth_From_ScreenDepth(1.0);
++	float fMaxDistInMeters = LinearDepth_From_ScreenDepth(0.0);
+@@ -140,1 +140,1 @@
+-			float fDepth = LinearDepth_From_ScreenDepth(1.0 - texelFetch(FBTEX_SPECULAR_TEMPORAL, iSamplePos, 0).z) * fOnScreenFactor;
++			float fDepth = LinearDepth_From_ScreenDepth(texelFetch(FBTEX_SPECULAR_TEMPORAL, iSamplePos, 0).z) * fOnScreenFactor;
+diff --git a/Lib/FidelityFX/FSR2/Reconstruct_Dilate_CS.glsl b/Lib/FidelityFX/FSR2/Reconstruct_Dilate_CS.glsl
+--- a/Lib/FidelityFX/FSR2/Reconstruct_Dilate_CS.glsl
++++ b/Lib/FidelityFX/FSR2/Reconstruct_Dilate_CS.glsl
+@@ -65,1 +65,1 @@
+-		if (sampleDepth < nearestDepth) {
++		if (sampleDepth > nearestDepth) {
+@@ -136,1 +136,1 @@
+-	imageStore(FBIMG_SPECULAR_TEMPORAL, renderTexel, vec4(dilatedVelocity, 1.0 - dilatedDepth, 0.0));
++	imageStore(FBIMG_SPECULAR_TEMPORAL, renderTexel, vec4(dilatedVelocity, dilatedDepth, 0.0));
+diff --git a/Lib/IndividualFunctions/DOF.glsl b/Lib/IndividualFunctions/DOF.glsl
+--- a/Lib/IndividualFunctions/DOF.glsl
++++ b/Lib/IndividualFunctions/DOF.glsl
+@@ -14,3 +14,3 @@
+ 	#ifdef LOD_RENDERING
+-		if (depth == 1.0){
++		if (depth == 0.0){
+ 			#if defined DISTANT_HORIZONS && (defined SUPER_RESOLUTION || defined CUSTOM_RENDER_RESOLUTION)
+@@ -100,1 +100,1 @@
+-		if (depth < 0.7) return vec4(currData.rgb, 0.0);
++		if (depth > 0.3) return vec4(currData.rgb, 0.0);
+@@ -103,3 +103,3 @@
+ 	#ifdef LOD_RENDERING
+-		if (depth == 1.0){
++		if (depth == 0.0){
+ 			depth = texelFetch(LOD_DEPTH_TEX_0, texelCoord, 0).x;
+@@ -184,1 +184,1 @@
+-			if (sampleDepth < 0.7) continue;
++			if (sampleDepth > 0.3) continue;
+@@ -187,1 +187,1 @@
+-				if (sampleDepth == 1.0){
++				if (sampleDepth == 0.0){
+diff --git a/Lib/IndividualFunctions/VolumetricFog.glsl b/Lib/IndividualFunctions/VolumetricFog.glsl
+--- a/Lib/IndividualFunctions/VolumetricFog.glsl
++++ b/Lib/IndividualFunctions/VolumetricFog.glsl
+@@ -176,3 +176,3 @@
+ 
+-		if (saturate(shadowPos.xy) == shadowPos.xy && shadowPos.z < 1.0){
++		if (saturate(shadowPos.xy) == shadowPos.xy && shadowPos.z > 0.0){
+ 			float solidDepth = textureLod(shadowtex1, shadowPos.xy, 0.0).x;
+@@ -180,1 +180,1 @@
+-			if (shadowPos.z > solidDepth){
++			if (shadowPos.z < solidDepth){
+@@ -186,1 +186,1 @@
+-				float transparentShadow = step(transparentDepth, shadowPos.z);
++				float transparentShadow = step(shadowPos.z, transparentDepth);
+@@ -305,1 +305,1 @@
+-				caustics *= step(shadowPos.z, solidDepth);
++				caustics *= step(solidDepth, shadowPos.z);
+@@ -400,1 +400,1 @@
+-				if (shadowPos.z < -1e-9) continue;
++				if (1.0 - shadowPos.z < -1e-9) continue;
+@@ -402,1 +402,1 @@
+-				if (saturate(shadowPos.xy) == shadowPos.xy && shadowPos.z < 1.0){
++				if (saturate(shadowPos.xy) == shadowPos.xy && shadowPos.z > 0.0){
+@@ -404,1 +404,1 @@
+-					shadowLength += step(solidDepth, shadowPos.z);
++					shadowLength += step(shadowPos.z, solidDepth);
+diff --git a/Lib/PathTracing/Denoiser/DiffuseSpatialFilter.glsl b/Lib/PathTracing/Denoiser/DiffuseSpatialFilter.glsl
+--- a/Lib/PathTracing/Denoiser/DiffuseSpatialFilter.glsl
++++ b/Lib/PathTracing/Denoiser/DiffuseSpatialFilter.glsl
+@@ -19,3 +19,3 @@
+-		if (depth < 0.0){
+-			viewPos = ViewPos_From_ScreenPos_Raw_LOD(texCoord, -depth);
+-			depth = 1.0;
++		if (depth > 1.0){
++			viewPos = ViewPos_From_ScreenPos_Raw_LOD(texCoord, 2.0 - depth);
++			depth = 0.0;
+@@ -63,1 +63,1 @@
+-		varianceWeight *= step(0.7, depth);
++		varianceWeight *= step(depth, 0.3);
+@@ -120,1 +120,1 @@
+-				if (sampleDepth == 1.0){
++				if (sampleDepth == 0.0){
+@@ -134,1 +134,1 @@
+-			float sampleWeight = step(abs(sampleDepth), 0.999999);
++			float sampleWeight = step(1e-6, abs(sampleDepth));
+diff --git a/Lib/PathTracing/Denoiser/DiffuseTemporalFilter.glsl b/Lib/PathTracing/Denoiser/DiffuseTemporalFilter.glsl
+--- a/Lib/PathTracing/Denoiser/DiffuseTemporalFilter.glsl
++++ b/Lib/PathTracing/Denoiser/DiffuseTemporalFilter.glsl
+@@ -45,1 +45,1 @@
+-	float maxAccumFrames = depth < 0.7 ? 24.0 : PT_DIFFUSE_TEMPORAL_MAX_ACCUM;
++	float maxAccumFrames = depth > 0.3 ? 24.0 : PT_DIFFUSE_TEMPORAL_MAX_ACCUM;
+@@ -56,1 +56,1 @@
+-		vec3 prevWorldPos = prevScreenPos * 2.0 - 1.0;
++		vec3 prevWorldPos = vec3(prevScreenPos.xy * 2.0 - 1.0, prevScreenPos.z);
+@@ -61,2 +61,2 @@
+-			if (depth < 0.0){
+-				prevWorldPos = vec3(texCoord, -depth) * 2.0 - 1.0;
++			if (depth > 1.0){
++				prevWorldPos = vec3(texCoord * 2.0 - 1.0, 2.0 - depth);
+@@ -73,1 +73,1 @@
+-				prevScreenPos = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * prevScreenPos + gbufferPreviousProjection1) / -prevScreenPos.z * 0.5 + 0.5;
++				prevScreenPos = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * prevScreenPos + gbufferPreviousProjection1) / -prevScreenPos.z * vec3(0.5, 0.5, 1.0) + vec3(0.5, 0.5, 0.0);
+@@ -74,3 +74,3 @@
+ 
+-				depth = 1.0;
++				depth = 0.0;
+ 			}else
+@@ -84,1 +84,1 @@
+-			if (depth < 0.7){
++			if (depth > 0.3){
+@@ -96,1 +96,1 @@
+-		vec3 prevWorldPos = vec3(texCoord, depth) * 2.0 - 1.0;
++		vec3 prevWorldPos = vec3(texCoord * 2.0 - 1.0, depth);
+@@ -102,2 +102,2 @@
+-			if (depth < 0.0){
+-				prevWorldPos.z = -depth * 2.0 - 1.0;
++			if (depth > 1.0){
++				prevWorldPos.z = 2.0 - depth;
+@@ -104,3 +104,3 @@
+ 				prevWorldPos = (vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * prevWorldPos.xy, 0.0) + lodProjectionInverse1) / (lodProjectionInverse0.x * prevWorldPos.z + lodProjectionInverse0.y);
+-				depth = 1.0;
++				depth = 0.0;
+ 			}else{
+@@ -114,3 +114,3 @@
+ 
+-		if (depth < 0.7){
++		if (depth > 0.3){
+ 			prevWorldPos += (gbufferPreviousModelView[3].xyz - gbufferModelView[3].xyz) * MC_HAND_DEPTH;
+@@ -122,2 +122,2 @@
+-		if (depth >= 0.7) prevScreenPos = mat3(gbufferPreviousModelView) * prevScreenPos + gbufferPreviousModelView[3].xyz;
+-		prevScreenPos = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * prevScreenPos + gbufferPreviousProjection1) / -prevScreenPos.z * 0.5 + 0.5;
++		if (depth <= 0.3) prevScreenPos = mat3(gbufferPreviousModelView) * prevScreenPos + gbufferPreviousModelView[3].xyz;
++		prevScreenPos = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * prevScreenPos + gbufferPreviousProjection1) / -prevScreenPos.z * vec3(0.5, 0.5, 1.0) + vec3(0.5, 0.5, 0.0);
+@@ -167,1 +167,1 @@
+-			float sampleWeight = float(sampleData.a > 0 && abs(sampleDepth) < 1.0);
++			float sampleWeight = float(sampleData.a > 0 && abs(sampleDepth - 1.0) < 1.0);
+@@ -170,1 +170,1 @@
+-			vec3 sampleViewPos = vec3((sampleTexelcoord + 0.5) * UNIFORM_PIXEL_SIZE, sampleDepth) * 2.0 - 1.0;
++			vec3 sampleViewPos = vec3((sampleTexelcoord + 0.5) * UNIFORM_PIXEL_SIZE * 2.0 - 1.0, sampleDepth);
+@@ -173,2 +173,2 @@
+-				if (sampleDepth < 0.0){
+-					sampleViewPos.z = lodPreviousProjection0.y / (-sampleDepth * 2.0 - 1.0 + lodPreviousProjection0.x);
++				if (sampleDepth > 1.0){
++					sampleViewPos.z = lodPreviousProjection0.y / (2.0 - sampleDepth + lodPreviousProjection0.x);
+@@ -176,1 +176,1 @@
+-					sampleDepth = 1.0;
++					sampleDepth = 0.0;
+@@ -187,1 +187,1 @@
+-			if (sampleDepth >= 0.7) sampleWorldPos = (sampleViewPos - gbufferPreviousModelView[3].xyz) * mat3(gbufferPreviousModelView);
++			if (sampleDepth <= 0.3) sampleWorldPos = (sampleViewPos - gbufferPreviousModelView[3].xyz) * mat3(gbufferPreviousModelView);
+@@ -207,1 +207,1 @@
+-		if (depth >= 0.7) maxTapWeight *= 1.0 - saturate(exp2(log2(prevScreenPos.z - depth) * 0.7 + 4.0)) * 0.85;
++		if (depth <= 0.3) maxTapWeight *= 1.0 - saturate(exp2(log2(depth - prevScreenPos.z) * 0.7 + 4.0)) * 0.85;
+diff --git a/Lib/PathTracing/Denoiser/SpecularTemporalFilter.glsl b/Lib/PathTracing/Denoiser/SpecularTemporalFilter.glsl
+--- a/Lib/PathTracing/Denoiser/SpecularTemporalFilter.glsl
++++ b/Lib/PathTracing/Denoiser/SpecularTemporalFilter.glsl
+@@ -9,1 +9,1 @@
+-	vec3 prevWorldPos = vec3(texCoord, depth) * 2.0 - 1.0;
++	vec3 prevWorldPos = vec3(texCoord * 2.0 - 1.0, depth);
+@@ -16,1 +16,1 @@
+-	if (depth < 0.7){
++	if (depth > 0.3){
+@@ -25,1 +25,1 @@
+-	if (depth >= 0.7) prevScreenPos = mat3(gbufferPreviousModelView) * prevScreenPos + gbufferPreviousModelView[3].xyz;
++	if (depth <= 0.3) prevScreenPos = mat3(gbufferPreviousModelView) * prevScreenPos + gbufferPreviousModelView[3].xyz;
+@@ -58,1 +58,1 @@
+-			sampleWeight *= float(sampleDepth < 1.0);
++			sampleWeight *= float(sampleDepth > 0.0);
+@@ -61,1 +61,1 @@
+-			vec3 sampleViewPos = vec3((sampleTexelcoord + 0.5) * UNIFORM_PIXEL_SIZE, sampleDepth) * 2.0 - 1.0;
++			vec3 sampleViewPos = vec3((sampleTexelcoord + 0.5) * UNIFORM_PIXEL_SIZE * 2.0 - 1.0, sampleDepth);
+@@ -67,1 +67,1 @@
+-			if (sampleDepth >= 0.7) sampleWorldPos = (sampleViewPos - gbufferPreviousModelView[3].xyz) * mat3(gbufferPreviousModelView);
++			if (sampleDepth <= 0.3) sampleWorldPos = (sampleViewPos - gbufferPreviousModelView[3].xyz) * mat3(gbufferPreviousModelView);
+diff --git a/Lib/PathTracing/Tracer/SpecularTracer.glsl b/Lib/PathTracing/Tracer/SpecularTracer.glsl
+--- a/Lib/PathTracing/Tracer/SpecularTracer.glsl
++++ b/Lib/PathTracing/Tracer/SpecularTracer.glsl
+@@ -411,1 +411,1 @@
+-                const float nearThreshold = 0.0;
++                const float nearThreshold = 1.0;
+@@ -413,1 +413,1 @@
+-			    float nearThreshold = mask.hand * 0.7;
++			    float nearThreshold = 1.0 - mask.hand * 0.7;
+@@ -422,1 +422,1 @@
+-			vec3 t1 = -screenRayPos * rScreenRayDir;
++			vec3 t1 = (vec3(0.0, 0.0, 1.0) - screenRayPos) * rScreenRayDir;
+@@ -424,1 +424,1 @@
+-				float farDepth = ScreenDepth_From_LODScreenDepth(1.0);
++				float farDepth = ScreenDepth_From_LODScreenDepth(0.0);
+@@ -427,1 +427,1 @@
+-				vec3 t2 = (vec3(1.0, 1.0, 1.000001) - screenRayPos) * rScreenRayDir;
++				vec3 t2 = (vec3(1.0, 1.0, -0.000001) - screenRayPos) * rScreenRayDir;
+@@ -445,1 +445,1 @@
+-				if (saturate(screenRayPos.xy) != screenRayPos.xy || screenRayPos.z <= nearThreshold) break;
++				if (saturate(screenRayPos.xy) != screenRayPos.xy || screenRayPos.z >= nearThreshold) break;
+@@ -452,3 +452,3 @@
+ 				#ifdef LOD_RENDERING
+-					if (sampleDepth == 1.0){
++					if (sampleDepth == 0.0){
+ 						#if defined DISTANT_HORIZONS && (defined SUPER_RESOLUTION || defined CUSTOM_RENDER_RESOLUTION)
+@@ -463,1 +463,1 @@
+-				if (sampleDepth < screenRayPos.z + 1e-7){
++				if (sampleDepth > screenRayPos.z - 1e-7){
+@@ -466,1 +466,1 @@
+-						screenRayPos += refineDir * fsign(sampleDepth - screenRayPos.z);
++						screenRayPos += refineDir * fsign(screenRayPos.z - sampleDepth);
+@@ -471,1 +471,1 @@
+-							if (sampleDepth == 1.0){
++							if (sampleDepth == 0.0){
+@@ -484,1 +484,1 @@
+-					float distDiff = sampleDepth - screenRayPos.z;
++					float distDiff = screenRayPos.z - sampleDepth;
+@@ -491,1 +491,1 @@
+-							ssrHit = ssrHit || all(greaterThanEqual(vec2(sampleDepth, screenRayPos.z), vec2(farDepth)));
++							ssrHit = ssrHit || all(lessThanEqual(vec2(sampleDepth, screenRayPos.z), vec2(farDepth)));
+@@ -493,1 +493,1 @@
+-							ssrHit = ssrHit || all(greaterThanEqual(vec2(sampleDepth, screenRayPos.z), vec2(1.0)));
++							ssrHit = ssrHit || all(lessThanEqual(vec2(sampleDepth, screenRayPos.z), vec2(0.0)));
+@@ -498,1 +498,1 @@
+-									ssrHit = sampleDepth < farDepth;
++									ssrHit = sampleDepth > farDepth;
+@@ -500,1 +500,1 @@
+-									ssrHit = sampleDepth < 1.0;
++									ssrHit = sampleDepth > 0.0;
+@@ -534,9 +534,9 @@
+ 					#endif
+ 
+ 					#ifdef LOD_RENDERING
+-						exitTracing = screenRayPos.z > 0.999999 * farDepth;
++						exitTracing = 1.0 - screenRayPos.z > 0.999999 * (1.0 - farDepth);
+ 					#else
+-						exitTracing = screenRayPos.z > 0.999999;
++						exitTracing = screenRayPos.z < 1e-6;
+ 					#endif
+ 					
+ 					#ifdef DIMENSION_OVERWORLD
+@@ -608,7 +608,7 @@
+ 					
+ 					#ifdef LOD_RENDERING
+-						exitTracing = screenRayPos.z > 0.999999 * farDepth;
++						exitTracing = 1.0 - screenRayPos.z > 0.999999 * (1.0 - farDepth);
+ 					#else
+-						exitTracing = screenRayPos.z > 0.999999;
++						exitTracing = screenRayPos.z < 1e-6;
+ 					#endif
+ 
+@@ -662,7 +662,7 @@
+ 					
+ 					#ifdef LOD_RENDERING
+-						exitTracing = screenRayPos.z > 0.999999 * farDepth;
++						exitTracing = 1.0 - screenRayPos.z > 0.999999 * (1.0 - farDepth);
+ 					#else
+-						exitTracing = screenRayPos.z > 0.999999;
++						exitTracing = screenRayPos.z < 1e-6;
+ 					#endif
+ 					
+diff --git a/Lib/PathTracing/Tracer/TracingUtilities.glsl b/Lib/PathTracing/Tracer/TracingUtilities.glsl
+--- a/Lib/PathTracing/Tracer/TracingUtilities.glsl
++++ b/Lib/PathTracing/Tracer/TracingUtilities.glsl
+@@ -115,5 +115,5 @@
+ 	shadowScreenPos += shadowGeoNormal * 0.00025;
+ 
+-	shadowScreenPos = shadowScreenPos * 0.5 + 0.5;
++	shadowScreenPos = shadowScreenPos * vec3(0.5, 0.5, -0.5) + 0.5;
+ 
+ 	vec2 warp = vec2(
+@@ -128,5 +128,5 @@
+ 		//ShiftShadowScreenPos(shadowScreenPos.xy);
+-		shadowScreenPos.z -= 4e-5;
++		shadowScreenPos.z += 4e-5;
+ 
+-		float soildShadow = step(shadowScreenPos.z, textureLod(shadowtex1, shadowScreenPos.xy, 0.0).x);
++		float soildShadow = step(textureLod(shadowtex1, shadowScreenPos.xy, 0.0).x, shadowScreenPos.z);
+ 
+@@ -134,1 +134,1 @@
+-			float translucentShadow = step(shadowScreenPos.z, textureLod(shadowtex0, shadowScreenPos.xy, 0.0).x);
++			float translucentShadow = step(textureLod(shadowtex0, shadowScreenPos.xy, 0.0).x, shadowScreenPos.z);
+@@ -173,5 +173,4 @@
+ 	#endif
+-	shadowGeoNormal.z *= -1.0;
+ 
+-	shadowScreenPos = shadowScreenPos * 0.5 + 0.5;
++	shadowScreenPos = shadowScreenPos * vec3(0.5, 0.5, -0.5) + 0.5;
+ 
+@@ -189,5 +188,5 @@
+ 
+ 		//ShiftShadowScreenPos(shadowScreenPos.xy);
+-		shadowScreenPos.z -= 4e-5;
++		shadowScreenPos.z += 4e-5;
+ 
+ 		float soildShadow = SampleShadowBilinear(shadowtex1, shadowScreenPos);
+diff --git a/Lib/PathTracing/Voxelizer/Shadow.glsl b/Lib/PathTracing/Voxelizer/Shadow.glsl
+--- a/Lib/PathTracing/Voxelizer/Shadow.glsl
++++ b/Lib/PathTracing/Voxelizer/Shadow.glsl
+@@ -117,1 +117,1 @@
+-		gl_Position.xyz *= vec3(shadowProjection[0][0], shadowProjection[0][0], -shadowProjection[0][0] * 0.5);
++		gl_Position.xyz = gl_Position.xyz * vec3(shadowProjection[0][0], shadowProjection[0][0], shadowProjection[0][0] * 0.25) + vec3(0.0, 0.0, 0.5);
+@@ -256,1 +256,1 @@
+-			gl_Position.z += bias;
++			gl_Position.z -= bias * 0.5;
+diff --git a/Lib/Programs/Composite/DiffuseSpatial_0_FS.glsl b/Lib/Programs/Composite/DiffuseSpatial_0_FS.glsl
+--- a/Lib/Programs/Composite/DiffuseSpatial_0_FS.glsl
++++ b/Lib/Programs/Composite/DiffuseSpatial_0_FS.glsl
+@@ -31,1 +31,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+@@ -34,1 +34,1 @@
+-    if (abs(depth) == 1.0) discard;
++    if (abs(depth - 1.0) == 1.0) discard;
+diff --git a/Lib/Programs/Composite/DiffuseSpatial_1_FS.glsl b/Lib/Programs/Composite/DiffuseSpatial_1_FS.glsl
+--- a/Lib/Programs/Composite/DiffuseSpatial_1_FS.glsl
++++ b/Lib/Programs/Composite/DiffuseSpatial_1_FS.glsl
+@@ -31,1 +31,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+@@ -34,1 +34,1 @@
+-    if (abs(depth) == 1.0) discard;
++    if (abs(depth - 1.0) == 1.0) discard;
+diff --git a/Lib/Programs/Composite/DiffuseSpatial_2_FS.glsl b/Lib/Programs/Composite/DiffuseSpatial_2_FS.glsl
+--- a/Lib/Programs/Composite/DiffuseSpatial_2_FS.glsl
++++ b/Lib/Programs/Composite/DiffuseSpatial_2_FS.glsl
+@@ -31,1 +31,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+@@ -34,1 +34,1 @@
+-    if (abs(depth) == 1.0) discard;
++    if (abs(depth - 1.0) == 1.0) discard;
+diff --git a/Lib/Programs/Composite/DiffuseSpatial_3_FS.glsl b/Lib/Programs/Composite/DiffuseSpatial_3_FS.glsl
+--- a/Lib/Programs/Composite/DiffuseSpatial_3_FS.glsl
++++ b/Lib/Programs/Composite/DiffuseSpatial_3_FS.glsl
+@@ -31,1 +31,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+@@ -34,1 +34,1 @@
+-    if (abs(depth) == 1.0) discard;
++    if (abs(depth - 1.0) == 1.0) discard;
+diff --git a/Lib/Programs/Composite/DiffuseSpatial_4_FS.glsl b/Lib/Programs/Composite/DiffuseSpatial_4_FS.glsl
+--- a/Lib/Programs/Composite/DiffuseSpatial_4_FS.glsl
++++ b/Lib/Programs/Composite/DiffuseSpatial_4_FS.glsl
+@@ -31,1 +31,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+@@ -34,1 +34,1 @@
+-    if (abs(depth) == 1.0) discard;
++    if (abs(depth - 1.0) == 1.0) discard;
+diff --git a/Lib/Programs/Composite/DiffuseSpatial_5_FS.glsl b/Lib/Programs/Composite/DiffuseSpatial_5_FS.glsl
+--- a/Lib/Programs/Composite/DiffuseSpatial_5_FS.glsl
++++ b/Lib/Programs/Composite/DiffuseSpatial_5_FS.glsl
+@@ -31,1 +31,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+@@ -34,1 +34,1 @@
+-    if (abs(depth) == 1.0) discard;
++    if (abs(depth - 1.0) == 1.0) discard;
+diff --git a/Lib/Programs/Composite/DiffuseSpatial_6_FS.glsl b/Lib/Programs/Composite/DiffuseSpatial_6_FS.glsl
+--- a/Lib/Programs/Composite/DiffuseSpatial_6_FS.glsl
++++ b/Lib/Programs/Composite/DiffuseSpatial_6_FS.glsl
+@@ -31,1 +31,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+@@ -34,1 +34,1 @@
+-    if (abs(depth) == 1.0) discard;
++    if (abs(depth - 1.0) == 1.0) discard;
+diff --git a/Lib/Programs/Composite/DiffuseSpatial_7_FS.glsl b/Lib/Programs/Composite/DiffuseSpatial_7_FS.glsl
+--- a/Lib/Programs/Composite/DiffuseSpatial_7_FS.glsl
++++ b/Lib/Programs/Composite/DiffuseSpatial_7_FS.glsl
+@@ -31,1 +31,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+@@ -34,1 +34,1 @@
+-    if (abs(depth) == 1.0) discard;
++    if (abs(depth - 1.0) == 1.0) discard;
+diff --git a/Lib/Programs/Composite/DiffuseTemporal_FS.glsl b/Lib/Programs/Composite/DiffuseTemporal_FS.glsl
+--- a/Lib/Programs/Composite/DiffuseTemporal_FS.glsl
++++ b/Lib/Programs/Composite/DiffuseTemporal_FS.glsl
+@@ -51,1 +51,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+@@ -54,1 +54,1 @@
+-    if (abs(depth) == 1.0) discard;
++    if (abs(depth - 1.0) == 1.0) discard;
+diff --git a/Lib/Programs/Composite/DiffuseTracing_FS.glsl b/Lib/Programs/Composite/DiffuseTracing_FS.glsl
+--- a/Lib/Programs/Composite/DiffuseTracing_FS.glsl
++++ b/Lib/Programs/Composite/DiffuseTracing_FS.glsl
+@@ -94,3 +94,3 @@
+-		if (depth < 0.0){
+-			viewPosRaw = ViewPos_From_ScreenPos_LOD(texCoord, -depth);
+-			depth = 1.1;
++		if (depth > 1.0){
++			viewPosRaw = ViewPos_From_ScreenPos_LOD(texCoord, 2.0 - depth);
++			depth = -0.1;
+@@ -149,1 +149,1 @@
+-		if (depth > 0.7){
++		if (depth < 0.3){
+@@ -175,1 +175,1 @@
+-					if (sampleDepth == 1.0){
++					if (sampleDepth == 0.0){
+@@ -239,1 +239,1 @@
+-						prevDist = LinearDepth_From_ScreenDepth(1.0 - prevData.w);
++						prevDist = LinearDepth_From_ScreenDepth(prevData.w);
+@@ -241,1 +241,1 @@
+-						prevDist = LinearDepth_From_ScreenDepth_LOD(prevData.w + 1.0);
++						prevDist = LinearDepth_From_ScreenDepth_LOD(-prevData.w);
+@@ -244,1 +244,1 @@
+-					float prevDist = LinearDepth_From_ScreenDepth(1.0 - prevData.w);
++					float prevDist = LinearDepth_From_ScreenDepth(prevData.w);
+@@ -269,1 +269,1 @@
+-		if (clamp(hitVoxelPos, vec3(0.0), vec3(voxelResolution)) != hitVoxelPos || depth > 1.0){		
++		if (clamp(hitVoxelPos, vec3(0.0), vec3(voxelResolution)) != hitVoxelPos || depth < 0.0){		
+@@ -483,1 +483,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+@@ -486,1 +486,1 @@
+-	if (abs(depth) == 1.0) discard;
++	if (abs(depth - 1.0) == 1.0) discard;
+diff --git a/Lib/Programs/Composite/DiffuseVariance_FS.glsl b/Lib/Programs/Composite/DiffuseVariance_FS.glsl
+--- a/Lib/Programs/Composite/DiffuseVariance_FS.glsl
++++ b/Lib/Programs/Composite/DiffuseVariance_FS.glsl
+@@ -28,1 +28,1 @@
+-		if (depth == 1.0) depth = texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++		if (depth == 0.0) depth = texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+@@ -31,1 +31,1 @@
+-	if (depth < 1.0) {
++	if (depth > 0.0) {
+diff --git a/Lib/Programs/Composite/Image_Clear_Screen_CS.glsl b/Lib/Programs/Composite/Image_Clear_Screen_CS.glsl
+--- a/Lib/Programs/Composite/Image_Clear_Screen_CS.glsl
++++ b/Lib/Programs/Composite/Image_Clear_Screen_CS.glsl
+@@ -25,1 +25,1 @@
+-	imageStore(img_depthtexS, drawTexel, uvec4(floatBitsToUint(1.0), 0u, 0u, 0u));
++	imageStore(img_depthtexS, drawTexel, uvec4(floatBitsToUint(0.0), 0u, 0u, 0u));
+diff --git a/Lib/Programs/Composite/MotionBlur_FS.glsl b/Lib/Programs/Composite/MotionBlur_FS.glsl
+--- a/Lib/Programs/Composite/MotionBlur_FS.glsl
++++ b/Lib/Programs/Composite/MotionBlur_FS.glsl
+@@ -22,5 +22,5 @@
+ #if defined VS_VELOCITY && defined SR_IRIS_EXT_VELOCITY
+ 	vec2 ScreenVelocity(vec2 coord, float depth){
+-		vec3 projection = vec3(coord, depth) * 2.0 - 1.0;
++		vec3 projection = vec3(coord * 2.0 - 1.0, depth);
+ 		projection = (vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * projection.xy, 0.0) + gbufferProjectionInverse1) / (gbufferProjectionInverse0.z * projection.z + gbufferProjectionInverse0.w);
+ 		projection = mat3(gbufferModelViewInverse) * projection + gbufferModelViewInverse[3].xyz;
+@@ -31,8 +31,8 @@
+ #else
+ 	vec2 ScreenVelocity(vec2 coord, float depth){
+-		vec3 projection = vec3(coord, depth) * 2.0 - 1.0;
++		vec3 projection = vec3(coord * 2.0 - 1.0, depth);
+ 		projection = (vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * projection.xy, 0.0) + gbufferProjectionInverse1) / (gbufferProjectionInverse0.z * projection.z + gbufferProjectionInverse0.w);
+ 		projection = mat3(gbufferModelViewInverse) * projection + gbufferModelViewInverse[3].xyz;
+-		if (depth < 1.0) projection += cameraPositionToPrevious;
++		if (depth > 0.0) projection += cameraPositionToPrevious;
+ 		projection = mat3(gbufferPreviousModelView) * projection + gbufferPreviousModelView[3].xyz;		
+ 		projection = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * projection + gbufferPreviousProjection1) / -projection.z * 0.5 + 0.5;
+@@ -57,7 +57,7 @@
+ 	float depth7 = SampleDepthFetch(depthSampler, nearestTexel + ivec2( 0,  1));
+ 	float depth8 = SampleDepthFetch(depthSampler, nearestTexel + ivec2( 1,  1));
+ 
+-	return min9(depth0, depth1, depth2, depth3, depth4, depth5, depth6, depth7, depth8);
++	return max9(depth0, depth1, depth2, depth3, depth4, depth5, depth6, depth7, depth8);
+ }
+ 
+ float SampleDepthFetch(usampler2D depthSampler, ivec2 coord){
+@@ -76,7 +76,7 @@
+ 	float depth7 = SampleDepthFetch(depthSampler, nearestTexel + ivec2( 0,  1));
+ 	float depth8 = SampleDepthFetch(depthSampler, nearestTexel + ivec2( 1,  1));
+ 
+-	return min9(depth0, depth1, depth2, depth3, depth4, depth5, depth6, depth7, depth8);
++	return max9(depth0, depth1, depth2, depth3, depth4, depth5, depth6, depth7, depth8);
+ }
+ 
+ vec3 MotionBlur(){
+@@ -94,1 +94,1 @@
+-			if (depth < 1.0){
++			if (depth > 0.0){
+@@ -111,1 +111,1 @@
+-				if (depth > 0.7 && materialIDs != MATID_END_PORTAL && materialIDs != MATID_ENTITIES_PLAYER) 
++				if (depth < 0.3 && materialIDs != MATID_END_PORTAL && materialIDs != MATID_ENTITIES_PLAYER) 
+@@ -113,1 +113,1 @@
+-				if (depth > 0.7 && materialIDs != MATID_END_PORTAL)
++				if (depth < 0.3 && materialIDs != MATID_END_PORTAL)
+@@ -157,1 +157,1 @@
+-					if (SampleDepthFetchClosest3x3(depthtexS, sampleCoord) < 0.7) continue;
++					if (SampleDepthFetchClosest3x3(depthtexS, sampleCoord) > 0.3) continue;
+@@ -262,1 +262,1 @@
+-		vec3 viewDir = normalize(ViewPos_From_ScreenPos_Raw(texCoord, 1.0));
++		vec3 viewDir = normalize(ViewPos_From_ScreenPos_Raw(texCoord, 0.0));
+diff --git a/Lib/Programs/Composite/PixelData_VS.glsl b/Lib/Programs/Composite/PixelData_VS.glsl
+--- a/Lib/Programs/Composite/PixelData_VS.glsl
++++ b/Lib/Programs/Composite/PixelData_VS.glsl
+@@ -87,1 +87,1 @@
+-			prevCenterDepth = prevCenterDepth <= 0.0 ? 0.98 : ScreenDepth_From_LinearDepth(prevCenterDepth);
++			prevCenterDepth = prevCenterDepth <= 0.0 ? 0.02 : ScreenDepth_From_LinearDepth(prevCenterDepth);
+@@ -109,1 +109,1 @@
+-				if (centerDepth == 1.0){
++				if (centerDepth == 0.0){
+diff --git a/Lib/Programs/Composite/Sky_End_FS.glsl b/Lib/Programs/Composite/Sky_End_FS.glsl
+--- a/Lib/Programs/Composite/Sky_End_FS.glsl
++++ b/Lib/Programs/Composite/Sky_End_FS.glsl
+@@ -33,1 +33,1 @@
+-		if (depth == 1.0) depth 	= texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++		if (depth == 0.0) depth 	= texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+@@ -36,1 +36,1 @@
+-	if (depth < 1.0) discard;
++	if (depth > 0.0) discard;
+diff --git a/Lib/Programs/Composite/Sky_Overworld_FS.glsl b/Lib/Programs/Composite/Sky_Overworld_FS.glsl
+--- a/Lib/Programs/Composite/Sky_Overworld_FS.glsl
++++ b/Lib/Programs/Composite/Sky_Overworld_FS.glsl
+@@ -73,1 +73,1 @@
+-		if (depth == 1.0) depth 	= texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++		if (depth == 0.0) depth 	= texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+@@ -76,1 +76,1 @@
+-	if (depth < 1.0) discard;
++	if (depth > 0.0) discard;
+@@ -78,1 +78,1 @@
+-	vec3 viewPos 					= ViewPos_From_ScreenPos(texCoord, 1.0);
++	vec3 viewPos 					= ViewPos_From_ScreenPos(texCoord, 0.0);
+diff --git a/Lib/Programs/Composite/Soild_FS.glsl b/Lib/Programs/Composite/Soild_FS.glsl
+--- a/Lib/Programs/Composite/Soild_FS.glsl
++++ b/Lib/Programs/Composite/Soild_FS.glsl
+@@ -538,1 +538,1 @@
+-		bool isDH = depth == 1.0;
++		bool isDH = depth == 0.0;
+@@ -542,1 +542,1 @@
+-	if (depth < 1.0){
++	if (depth > 0.0){
+@@ -553,1 +553,1 @@
+-				depth = depth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH + 1.0);
++				depth = depth * (4.0 / MC_HAND_DEPTH) - (2.0 / MC_HAND_DEPTH - 2.0);
+@@ -574,1 +574,1 @@
+-		float opaqueDist 			= depth < 1.0 ? length(viewPos) : farDist;
++		float opaqueDist 			= depth > 0.0 ? length(viewPos) : farDist;
+diff --git a/Lib/Programs/Composite/SpecularSpatial_0_FS.glsl b/Lib/Programs/Composite/SpecularSpatial_0_FS.glsl
+--- a/Lib/Programs/Composite/SpecularSpatial_0_FS.glsl
++++ b/Lib/Programs/Composite/SpecularSpatial_0_FS.glsl
+@@ -36,1 +36,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_0, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_0, texelCoord, 0).x;
+diff --git a/Lib/Programs/Composite/SpecularTemporal_FS.glsl b/Lib/Programs/Composite/SpecularTemporal_FS.glsl
+--- a/Lib/Programs/Composite/SpecularTemporal_FS.glsl
++++ b/Lib/Programs/Composite/SpecularTemporal_FS.glsl
+@@ -33,1 +33,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_0, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_0, texelCoord, 0).x;
+@@ -36,1 +36,1 @@
+-	if (abs(depth) == 1.0) discard;
++	if (abs(depth - 1.0) == 1.0) discard;
+diff --git a/Lib/Programs/Composite/SpecularTracing_FS.glsl b/Lib/Programs/Composite/SpecularTracing_FS.glsl
+--- a/Lib/Programs/Composite/SpecularTracing_FS.glsl
++++ b/Lib/Programs/Composite/SpecularTracing_FS.glsl
+@@ -71,1 +71,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_0, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_0, texelCoord, 0).x;
+@@ -74,1 +74,1 @@
+-	if (abs(depth) == 1.0){
++	if (abs(depth - 1.0) == 1.0){
+@@ -88,1 +88,1 @@
+-			if (depth < 0.0) viewPos = ViewPos_From_ScreenPos_LOD(texCoord, -depth);
++			if (depth > 1.0) viewPos = ViewPos_From_ScreenPos_LOD(texCoord, 2.0 - depth);
+diff --git a/Lib/Programs/Composite/SpecularVolumetric_FS.glsl b/Lib/Programs/Composite/SpecularVolumetric_FS.glsl
+--- a/Lib/Programs/Composite/SpecularVolumetric_FS.glsl
++++ b/Lib/Programs/Composite/SpecularVolumetric_FS.glsl
+@@ -118,1 +118,1 @@
+-		if (depth == 1.0) depth = -texelFetch(LOD_DEPTH_TEX_0, texelCoord, 0).x;
++		if (depth == 0.0) depth = 2.0 - texelFetch(LOD_DEPTH_TEX_0, texelCoord, 0).x;
+@@ -121,1 +121,1 @@
+-	if (abs(depth) == 1.0) discard;
++	if (abs(depth - 1.0) == 1.0) discard;
+@@ -135,1 +135,1 @@
+-			if (depth < 0.0) viewPos = ViewPos_From_ScreenPos_LOD(texCoord, -depth);
++			if (depth > 1.0) viewPos = ViewPos_From_ScreenPos_LOD(texCoord, 2.0 - depth);
+diff --git a/Lib/Programs/Composite/TAA.glsl b/Lib/Programs/Composite/TAA.glsl
+--- a/Lib/Programs/Composite/TAA.glsl
++++ b/Lib/Programs/Composite/TAA.glsl
+@@ -147,7 +147,7 @@
+ 		float depthMin = max9(depth0, depth1, depth2, depth3, depth4, depth5, depth6, depth7, depth8);
+ 		float depthMax = min9(depth0, depth1, depth2, depth3, depth4, depth5, depth6, depth7, depth8);
+ 
+-		return vec2(1.0 - depthMin, 1.0 - depthMax);
++		return vec2(depthMin, depthMax);
+ 	}
+ 
+ 	vec3 GetVariance3x3(ivec2 coord, vec3 currColor, out vec3 avgColor, out vec3 crossAvgColor, out vec2 referenceDepthMinMax){
+@@ -219,7 +219,7 @@
+ 		float depthMin = max9(depth0, depth1, depth2, depth3, depth4, depth5, depth6, depth7, depth8);
+ 		float depthMax = min9(depth0, depth1, depth2, depth3, depth4, depth5, depth6, depth7, depth8);
+ 
+-		return vec2(1.0 - depthMin, 1.0 - depthMax);
++		return vec2(depthMin, depthMax);
+ 	}
+ 
+ 	vec3 GetVariance3x3(ivec2 coord, vec3 currColor, out vec3 avgColor, out vec3 crossAvgColor){
+@@ -332,1 +332,1 @@
+-			blendWeight *= 1.0 - saturate(pow(dot(pixelVelocity, pixelVelocity), 0.25) * saturate(99999e5 - currDepthMin * 1e10) * 0.3) * 0.25;
++			blendWeight *= 1.0 - saturate(pow(dot(pixelVelocity, pixelVelocity), 0.25) * saturate(currDepthMin * 1e10 - 1e5) * 0.3) * 0.25;
+@@ -340,2 +340,2 @@
+-			blendWeight *= step(prevDepth.x - currDepthMin + velocity.z, threshold);
+-			blendWeight *= step(currDepthMin - velocity.z - prevDepth.y, threshold);
++			blendWeight *= step(currDepthMin - prevDepth.x - velocity.z, threshold);
++			blendWeight *= step(prevDepth.y - currDepthMin + velocity.z, threshold);
+@@ -361,1 +361,1 @@
+-	return vec4(currColor, 1.0 - currDepthMin);
++	return vec4(currColor, currDepthMin);
+@@ -378,17 +378,17 @@
+ 	float depth7 = SampleDepthFetch(depthSampler, coord + ivec2( 0,  1));
+ 	float depth8 = SampleDepthFetch(depthSampler, coord + ivec2( 1,  1));
+ 
+-	return min9(depth0, depth1, depth2, depth3, depth4, depth5, depth6, depth7, depth8);
++	return max9(depth0, depth1, depth2, depth3, depth4, depth5, depth6, depth7, depth8);
+ }
+ 
+ float SampleCurrDepthFetchClosest3x3(sampler2D depthSampler, ivec2 coord, out ivec2 closestCoord){
+-	float closestDepth = 2.0;
++	float closestDepth = -1.0;
+ 
+ 	for (int i = -1; i < 2; i++){
+ 	for (int j = -1; j < 2; j++){
+ 		ivec2 sampleCoord = coord + ivec2(i, j);
+ 		float sampleDepth = SampleDepthFetch(depthSampler, sampleCoord);
+-		if (sampleDepth < closestDepth){
++		if (sampleDepth > closestDepth){
+ 			closestDepth = sampleDepth;
+ 			closestCoord = sampleCoord;
+ 		}
+@@ -412,17 +412,17 @@
+ 	float depth7 = SampleDepthFetch(depthSampler, coord + ivec2( 0,  1));
+ 	float depth8 = SampleDepthFetch(depthSampler, coord + ivec2( 1,  1));
+ 
+-	return min9(depth0, depth1, depth2, depth3, depth4, depth5, depth6, depth7, depth8);
++	return max9(depth0, depth1, depth2, depth3, depth4, depth5, depth6, depth7, depth8);
+ }
+ 
+ float SampleCurrDepthFetchClosest3x3(usampler2D depthSampler, ivec2 coord, out ivec2 closestCoord){
+-	float closestDepth = 2.0;
++	float closestDepth = -1.0;
+ 
+ 	for (int i = -1; i < 2; i++){
+ 	for (int j = -1; j < 2; j++){
+ 		ivec2 sampleCoord = coord + ivec2(i, j);
+ 		float sampleDepth = SampleDepthFetch(depthSampler, sampleCoord);
+-		if (sampleDepth < closestDepth){
++		if (sampleDepth > closestDepth){
+ 			closestDepth = sampleDepth;
+ 			closestCoord = sampleCoord;
+ 		}
+@@ -475,1 +475,1 @@
+-		if (screenPos.z == 1.0){
++		if (screenPos.z == 0.0){
+@@ -484,3 +484,3 @@
+ 
+-			projection = vec3(screenPos * 2.0 - 1.0);
++			projection = vec3(screenPos.xy * 2.0 - 1.0, screenPos.z);
+ 
+@@ -491,1 +491,1 @@
+-			if (screenPos.z < 1.0) projection += cameraPositionToPrevious;
++			if (screenPos.z > 0.0) projection += cameraPositionToPrevious;
+@@ -492,5 +492,5 @@
+ 
+ 			projection = mat3(gbufferPreviousModelView) * projection + gbufferPreviousModelView[3].xyz;
+-			projection = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * projection + gbufferPreviousProjection1) / -projection.z * 0.5 + 0.5;
++			projection = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * projection + gbufferPreviousProjection1) / -projection.z * vec3(0.5, 0.5, 1.0) + vec3(0.5, 0.5, 0.0);
+ 
+ 			screenPos.z = ScreenDepth_From_LODScreenDepth(screenPos.z);
+@@ -507,3 +507,3 @@
+ 				
+-				projection = vec3(screenPos * 2.0 - 1.0);
++				projection = vec3(screenPos.xy * 2.0 - 1.0, screenPos.z);
+ 				projection = (vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * projection.xy, 0.0) + gbufferProjectionInverse1) / (gbufferProjectionInverse0.z * projection.z + gbufferProjectionInverse0.w);
+@@ -512,3 +512,3 @@
+ 				projection = mat3(gbufferPreviousModelView) * projection + gbufferPreviousModelView[3].xyz;
+-				projection = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * projection + gbufferPreviousProjection1) / -projection.z * 0.5 + 0.5;
++				projection = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * projection + gbufferPreviousProjection1) / -projection.z * vec3(0.5, 0.5, 1.0) + vec3(0.5, 0.5, 0.0);
+ 
+@@ -523,3 +523,3 @@
+ 
+-				projection = vec3(screenPos * 2.0 - 1.0);
++				projection = vec3(screenPos.xy * 2.0 - 1.0, screenPos.z);
+ 
+@@ -528,1 +528,1 @@
+-				if (depth < 0.7){
++				if (depth > 0.3){
+@@ -535,3 +535,3 @@
+ 				
+-				projection = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * projection + gbufferPreviousProjection1) / -projection.z * 0.5 + 0.5;
++				projection = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * projection + gbufferPreviousProjection1) / -projection.z * vec3(0.5, 0.5, 1.0) + vec3(0.5, 0.5, 0.0);
+ 
+@@ -570,1 +570,1 @@
+-		if (depth < 1.0 && materialIDs != MATID_WATER){
++		if (depth > 0.0 && materialIDs != MATID_WATER){
+@@ -575,13 +575,13 @@
+ 				if (materialIDs == MATID_WATER) screenPos.z = ScreenDepth_From_LinearDepth(uintBitsToFloat(texelFetch(waterDepth2D, texelCoord, 0).x));
+ 			#endif
+ 
+-			vec3 projection = screenPos * 2.0 - 1.0;
++			vec3 projection = vec3(screenPos.xy * 2.0 - 1.0, screenPos.z);
+ 
+ 			projection = (vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * projection.xy, 0.0) + gbufferProjectionInverse1) / (gbufferProjectionInverse0.z * projection.z + gbufferProjectionInverse0.w);
+ 			projection = mat3(gbufferModelViewInverse) * projection + gbufferModelViewInverse[3].xyz;
+-			if (depth < 1.0) projection += cameraPositionToPrevious;
++			if (depth > 0.0) projection += cameraPositionToPrevious;
+ 			projection = mat3(gbufferPreviousModelView) * projection + gbufferPreviousModelView[3].xyz;
+-			projection = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * projection + gbufferPreviousProjection1) / -projection.z * 0.5 + 0.5;
++			projection = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * projection + gbufferPreviousProjection1) / -projection.z * vec3(0.5, 0.5, 1.0) + vec3(0.5, 0.5, 0.0);
+ 
+ 			velocity = screenPos - projection;
+ 		}
+@@ -607,19 +607,19 @@
+ 				if (materialIDs == MATID_WATER) screenPos.z = ScreenDepth_From_LinearDepth(uintBitsToFloat(texelFetch(waterDepth2D, texelCoord, 0).x));
+ 			#endif
+ 
+-			vec3 projection = screenPos * 2.0 - 1.0;
++			vec3 projection = vec3(screenPos.xy * 2.0 - 1.0, screenPos.z);
+ 
+ 			projection = (vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * projection.xy, 0.0) + gbufferProjectionInverse1) / (gbufferProjectionInverse0.z * projection.z + gbufferProjectionInverse0.w);
+ 
+-			if (depth < 0.7){
++			if (depth > 0.3){
+ 				projection += (gbufferPreviousModelView[3].xyz - gbufferModelView[3].xyz) * MC_HAND_DEPTH;
+ 			}else{
+ 				projection = mat3(gbufferModelViewInverse) * projection + gbufferModelViewInverse[3].xyz;
+-				if (depth < 1.0) projection += cameraPositionToPrevious;
++				if (depth > 0.0) projection += cameraPositionToPrevious;
+ 				projection = mat3(gbufferPreviousModelView) * projection + gbufferPreviousModelView[3].xyz;
+ 			}
+ 			
+-			projection = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * projection + gbufferPreviousProjection1) / -projection.z * 0.5 + 0.5;
++			projection = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * projection + gbufferPreviousProjection1) / -projection.z * vec3(0.5, 0.5, 1.0) + vec3(0.5, 0.5, 0.0);
+ 
+ 			velocity = screenPos - projection;
+ 		}
+diff --git a/Lib/Programs/Composite/Translucent_FS.glsl b/Lib/Programs/Composite/Translucent_FS.glsl
+--- a/Lib/Programs/Composite/Translucent_FS.glsl
++++ b/Lib/Programs/Composite/Translucent_FS.glsl
+@@ -115,1 +115,1 @@
+-			float isHand = depth * (1.0 / 0.7);
++			float isHand = (1.0 - depth) * (1.0 / 0.7);
+@@ -157,1 +157,1 @@
+-		if (sampleDepth > depth && saturate(refractCoord) == refractCoord){
++		if (sampleDepth < depth && saturate(refractCoord) == refractCoord){
+@@ -177,1 +177,1 @@
+-				if (refractDepth == 1.0){
++				if (refractDepth == 0.0){
+@@ -184,1 +184,1 @@
+-					refractDepth = -refractDepth;
++					refractDepth = 2.0 - refractDepth;
+@@ -188,1 +188,1 @@
+-			opaqueDist = length(viewPosOpaque) + float(refractDepth == 1.0) * 1e10;
++			opaqueDist = length(viewPosOpaque) + float(refractDepth == 0.0) * 1e10;
+@@ -327,1 +327,1 @@
+-			shadowScreenPos = shadowScreenPos * 0.5 + 0.5;
++			shadowScreenPos = shadowScreenPos * vec3(0.5, 0.5, -0.5) + 0.5;
+@@ -337,1 +337,1 @@
+-			shadowScreenPos.z -= (1.0 + noise.y * 1.0) * max(3e-5, 1e-6 / warpPixelSizeMinMax.x) * 0.1; // todo
++			shadowScreenPos.z += (1.0 + noise.y * 1.0) * max(3e-5, 1e-6 / warpPixelSizeMinMax.x) * 0.1; // todo
+@@ -376,1 +376,1 @@
+-					float soildShadow = step(sampleCoord.z, textureLod(shadowtex1, sampleCoord.xy, 0.0).x);
++					float soildShadow = step(textureLod(shadowtex1, sampleCoord.xy, 0.0).x, sampleCoord.z);
+@@ -471,1 +471,1 @@
+-			vec3 projection = vec3(texCoord, abs(depth));
++			vec3 projection = vec3(texCoord, 1.0 - abs(1.0 - depth));
+@@ -473,1 +473,1 @@
+-			if (depth < 0.0){
++			if (depth > 1.0){
+@@ -477,3 +477,3 @@
+ 
+-				projection = projection * 2.0 - 1.0;
++				projection = vec3(projection.xy * 2.0 - 1.0, projection.z);
+ 				projection = (vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * projection.xy, 0.0) + lodProjectionInverse1) / (lodProjectionInverse0.x * projection.z + lodProjectionInverse0.y);
+@@ -496,3 +496,3 @@
+ 					
+-					projection = projection * 2.0 - 1.0;
++					projection = vec3(projection.xy * 2.0 - 1.0, projection.z);
+ 					projection = (vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * projection.xy, 0.0) + gbufferProjectionInverse1) / (gbufferProjectionInverse0.z * projection.z + gbufferProjectionInverse0.w);
+@@ -511,5 +511,5 @@
+ 					#endif
+ 
+-					projection = projection * 2.0 - 1.0;
++					projection = vec3(projection.xy * 2.0 - 1.0, projection.z);
+ 					projection = (vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * projection.xy, 0.0) + gbufferProjectionInverse1) / (gbufferProjectionInverse0.z * projection.z + gbufferProjectionInverse0.w);
+ 
+@@ -542,1 +542,1 @@
+-			if (depth < 1.0 && mask.water < 0.5){
++			if (depth > 0.0 && mask.water < 0.5){
+@@ -548,8 +548,8 @@
+ 				#endif
+ 				
+-				projection = projection * 2.0 - 1.0;
++				projection = vec3(projection.xy * 2.0 - 1.0, projection.z);
+ 				projection = (vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * projection.xy, 0.0) + gbufferProjectionInverse1) / (gbufferProjectionInverse0.z * projection.z + gbufferProjectionInverse0.w);
+ 				projection = mat3(gbufferModelViewInverse) * projection + gbufferModelViewInverse[3].xyz;
+-				if (depth < 1.0) projection += cameraPositionToPrevious;
++				if (depth > 0.0) projection += cameraPositionToPrevious;
+ 				projection = mat3(gbufferPreviousModelView) * projection + gbufferPreviousModelView[3].xyz;
+ 				projection = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * projection + gbufferPreviousProjection1) / -projection.z * 0.5 + 0.5;
+@@ -566,5 +566,5 @@
+ 				#endif
+ 				
+-				projection = projection * 2.0 - 1.0;
++				projection = vec3(projection.xy * 2.0 - 1.0, projection.z);
+ 				projection = (vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * projection.xy, 0.0) + gbufferProjectionInverse1) / (gbufferProjectionInverse0.z * projection.z + gbufferProjectionInverse0.w);
+ 
+@@ -575,1 +575,1 @@
+-					if (depth < 1.0) projection += cameraPositionToPrevious;
++					if (depth > 0.0) projection += cameraPositionToPrevious;
+@@ -607,3 +607,3 @@
+-		if (depth == 1.0){
+-			depth 					= -texelFetch(LOD_DEPTH_TEX_0, texelCoord, 0).x;
+-			viewPos 				= ViewPos_From_ScreenPos_LOD(texCoord, -depth);
++		if (depth == 0.0){
++			depth 					= 2.0 - texelFetch(LOD_DEPTH_TEX_0, texelCoord, 0).x;
++			viewPos 				= ViewPos_From_ScreenPos_LOD(texCoord, 2.0 - depth);
+@@ -612,3 +612,3 @@
+-		if (opaqueDepth == 1.0){
+-			opaqueDepth 			= -texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
+-			viewPosOpaque 			= ViewPos_From_ScreenPos_LOD(texCoord, -opaqueDepth);
++		if (opaqueDepth == 0.0){
++			opaqueDepth 			= 2.0 - texelFetch(LOD_DEPTH_TEX_1, texelCoord, 0).x;
++			viewPosOpaque 			= ViewPos_From_ScreenPos_LOD(texCoord, 2.0 - opaqueDepth);
+@@ -626,2 +626,2 @@
+-	float waterDist 				= length(viewPos) + float(abs(depth) == 1.0) * 1e10;
+-	float opaqueDist 				= length(viewPosOpaque) + float(abs(opaqueDepth) == 1.0) * 1e10;
++	float waterDist 				= length(viewPos) + float(abs(depth - 1.0) == 1.0) * 1e10;
++	float opaqueDist 				= length(viewPosOpaque) + float(abs(opaqueDepth - 1.0) == 1.0) * 1e10;
+@@ -643,1 +643,1 @@
+-			float velocityReferenceDepth = materialMask.water > 0.5 || depth < 0.0 ? depth : refractDepth;
++			float velocityReferenceDepth = materialMask.water > 0.5 || depth > 1.0 ? depth : refractDepth;
+@@ -657,1 +657,1 @@
+-		float referenceDepth = opaqueDepth < 0.0 ? -opaqueDepth - 1.0 : 1.0 - opaqueDepth;
++		float referenceDepth = opaqueDepth > 1.0 ? opaqueDepth - 2.0 : opaqueDepth;
+@@ -659,1 +659,1 @@
+-		float referenceDepth = 1.0 - opaqueDepth;
++		float referenceDepth = opaqueDepth;
+@@ -736,1 +736,1 @@
+-						if (refractDepth >= 0.0)
++						if (refractDepth <= 1.0)
+@@ -784,2 +784,2 @@
+-					if (refractDepth < 0.0){
+-						endViewPos = ViewPos_From_ScreenPos_LOD(refractCoord, -refractDepth);
++					if (refractDepth > 1.0){
++						endViewPos = ViewPos_From_ScreenPos_LOD(refractCoord, 2.0 - refractDepth);
+@@ -808,3 +808,3 @@
+ 						#ifdef LOD_RENDERING
+-							LandAtmosphericScattering(color, rayDist, worldPos, endPos, rayDir, abs(refractDepth) == 1.0);
++							LandAtmosphericScattering(color, rayDist, worldPos, endPos, rayDir, abs(refractDepth - 1.0) == 1.0);
+ 						#else
+@@ -812,1 +812,1 @@
+-								LandAtmosphericScattering(color, rayDist, worldPos, endPos, rayDir, abs(refractDepth) == 1.0);
++								LandAtmosphericScattering(color, rayDist, worldPos, endPos, rayDir, abs(refractDepth - 1.0) == 1.0);
+@@ -870,1 +870,1 @@
+-		float rrRoughness = depth == 1.0 ? 0.0 : gbuffer.material.roughness;
++		float rrRoughness = depth == 0.0 ? 0.0 : gbuffer.material.roughness;
+diff --git a/Lib/Programs/Composite/Volumetric_FS.glsl b/Lib/Programs/Composite/Volumetric_FS.glsl
+--- a/Lib/Programs/Composite/Volumetric_FS.glsl
++++ b/Lib/Programs/Composite/Volumetric_FS.glsl
+@@ -124,1 +124,1 @@
+-		if (depth == 1.0){
++		if (depth == 0.0){
+@@ -135,1 +135,1 @@
+-	float waterDist 				= length(viewPos) + float(depth == 1.0) * 1e10;
++	float waterDist 				= length(viewPos) + float(depth == 0.0) * 1e10;
+@@ -161,1 +161,1 @@
+-				vec3 rayWorldPos = worldDir * min(length(worldPos) + float(depth == 1.0) * 1e10, max(float(LOD_RENDER_DISTANCE), far) * 1.4);
++				vec3 rayWorldPos = worldDir * min(length(worldPos) + float(depth == 0.0) * 1e10, max(float(LOD_RENDER_DISTANCE), far) * 1.4);
+@@ -253,1 +253,1 @@
+-		if (depth == 1.0) color = vec3(0.0);
++		if (depth == 0.0) color = vec3(0.0);
+diff --git a/Lib/Programs/Composite/WaterRefraction_FS.glsl b/Lib/Programs/Composite/WaterRefraction_FS.glsl
+--- a/Lib/Programs/Composite/WaterRefraction_FS.glsl
++++ b/Lib/Programs/Composite/WaterRefraction_FS.glsl
+@@ -70,1 +70,1 @@
+-				if (opaqueDepth == 1.0){
++				if (opaqueDepth == 0.0){
+@@ -96,1 +96,1 @@
+-				if (depth > 0.999999) color = vec3(0.0);
++				if (depth < 1e-6) color = vec3(0.0);
+diff --git a/Lib/Programs/Gbuffers/Composite_Copy_CS.glsl b/Lib/Programs/Gbuffers/Composite_Copy_CS.glsl
+--- a/Lib/Programs/Gbuffers/Composite_Copy_CS.glsl
++++ b/Lib/Programs/Gbuffers/Composite_Copy_CS.glsl
+@@ -32,1 +32,1 @@
+-		if (gtransDepth == 1.0) gtransDepth = texelFetch(LOD_DEPTH_TEX_0, drawTexel, 0).x;
++		if (gtransDepth == 0.0) gtransDepth = texelFetch(LOD_DEPTH_TEX_0, drawTexel, 0).x;
+@@ -35,1 +35,1 @@
+-	if (gtransDepth < 1.0){
++	if (gtransDepth > 0.0){
+@@ -42,1 +42,1 @@
+-		copySolid = copySolid || (gtransMaterialIDs.x == MATID_PARTICLE && particleDepth > gtransDepth);
++		copySolid = copySolid || (gtransMaterialIDs.x == MATID_PARTICLE && particleDepth < gtransDepth);
+diff --git a/Lib/Programs/Gbuffers/DH_Water_FS.glsl b/Lib/Programs/Gbuffers/DH_Water_FS.glsl
+--- a/Lib/Programs/Gbuffers/DH_Water_FS.glsl
++++ b/Lib/Programs/Gbuffers/DH_Water_FS.glsl
+@@ -38,1 +38,1 @@
+-	vec3 ndcPos = vec3(coord, depth) * 2.0 - 1.0;
++	vec3 ndcPos = vec3(coord * 2.0 - 1.0, depth);
+@@ -44,1 +44,0 @@
+-	depth = depth * 2.0 - 1.0;
+@@ -72,1 +71,1 @@
+-		if (length(v_worldPos) < far * 0.7 || opaqueDepth < 1.0) discard;
++		if (length(v_worldPos) < far * 0.7 || opaqueDepth > 0.0) discard;
+@@ -74,1 +73,1 @@
+-		if (opaqueDepth < 1.0) discard;
++		if (opaqueDepth > 0.0) discard;
+diff --git a/Lib/Programs/Gbuffers/Entities_FS.glsl b/Lib/Programs/Gbuffers/Entities_FS.glsl
+--- a/Lib/Programs/Gbuffers/Entities_FS.glsl
++++ b/Lib/Programs/Gbuffers/Entities_FS.glsl
+@@ -521,2 +521,2 @@
+-			vec3 currScreenPos = (projectionDiagonal * currViewPos + projectionTrans) / -currViewPos.z * 0.5 + 0.5;
+-			vec3 prevScreenPos = (projectionDiagonal * prevViewPos + projectionTrans) / -prevViewPos.z * 0.5 + 0.5;
++			vec3 currScreenPos = (projectionDiagonal * currViewPos + projectionTrans) / -currViewPos.z * vec3(0.5, 0.5, 1.0) + vec3(0.5, 0.5, 0.0);
++			vec3 prevScreenPos = (projectionDiagonal * prevViewPos + projectionTrans) / -prevViewPos.z * vec3(0.5, 0.5, 1.0) + vec3(0.5, 0.5, 0.0);
+@@ -527,3 +527,3 @@
+ 				prevScreenPos = mat3(gbufferModelView) * v_worldPos + gbufferModelView[3].xyz - v_velocity;
+-				prevScreenPos = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * prevScreenPos + gbufferPreviousProjection1) / -prevScreenPos.z * 0.5 + 0.5;
++				prevScreenPos = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * prevScreenPos + gbufferPreviousProjection1) / -prevScreenPos.z * vec3(0.5, 0.5, 1.0) + vec3(0.5, 0.5, 0.0);
+ 			}else{
+@@ -531,3 +531,3 @@
+ 				prevScreenPos = mat3(gbufferPreviousModelView) * prevScreenPos + gbufferPreviousModelView[3].xyz;
+-				prevScreenPos = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * prevScreenPos + gbufferPreviousProjection1) / -prevScreenPos.z * 0.5 + 0.5;
++				prevScreenPos = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * prevScreenPos + gbufferPreviousProjection1) / -prevScreenPos.z * vec3(0.5, 0.5, 1.0) + vec3(0.5, 0.5, 0.0);
+ 			}
+diff --git a/Lib/Programs/Gbuffers/Line_FS_IMAGE.glsl b/Lib/Programs/Gbuffers/Line_FS_IMAGE.glsl
+--- a/Lib/Programs/Gbuffers/Line_FS_IMAGE.glsl
++++ b/Lib/Programs/Gbuffers/Line_FS_IMAGE.glsl
+@@ -30,1 +30,1 @@
+-	if(albedo.a > 0.1 && gl_FragCoord.z < texelFetch(depthtex0, ivec2(gl_FragCoord.xy), 0).x){
++	if(albedo.a > 0.1 && gl_FragCoord.z > texelFetch(depthtex0, ivec2(gl_FragCoord.xy), 0).x){
+diff --git a/Lib/Programs/Gbuffers/Terrain_FS.glsl b/Lib/Programs/Gbuffers/Terrain_FS.glsl
+--- a/Lib/Programs/Gbuffers/Terrain_FS.glsl
++++ b/Lib/Programs/Gbuffers/Terrain_FS.glsl
+@@ -585,1 +585,1 @@
+-		prevScreenPos = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * prevScreenPos + gbufferPreviousProjection1) / -prevScreenPos.z * 0.5 + 0.5;
++		prevScreenPos = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * prevScreenPos + gbufferPreviousProjection1) / -prevScreenPos.z * vec3(0.5, 0.5, 1.0) + vec3(0.5, 0.5, 0.0);
+diff --git a/Lib/Programs/Gbuffers/Textured_FS.glsl b/Lib/Programs/Gbuffers/Textured_FS.glsl
+--- a/Lib/Programs/Gbuffers/Textured_FS.glsl
++++ b/Lib/Programs/Gbuffers/Textured_FS.glsl
+@@ -47,1 +47,1 @@
+-	imageAtomicMin(img_depthtexS, ivec2(gl_FragCoord.xy), floatBitsToUint(gl_FragCoord.z));
++	imageAtomicMax(img_depthtexS, ivec2(gl_FragCoord.xy), floatBitsToUint(gl_FragCoord.z));
+diff --git a/Lib/Programs/Gbuffers/Water_FS.glsl b/Lib/Programs/Gbuffers/Water_FS.glsl
+--- a/Lib/Programs/Gbuffers/Water_FS.glsl
++++ b/Lib/Programs/Gbuffers/Water_FS.glsl
+@@ -59,1 +59,1 @@
+-	vec3 ndcPos = vec3(coord, depth) * 2.0 - 1.0;
++	vec3 ndcPos = vec3(coord * 2.0 - 1.0, depth);
+@@ -65,1 +65,0 @@
+-	depth = depth * 2.0 - 1.0;
+@@ -305,1 +304,1 @@
+-			prevScreenPos = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * prevScreenPos + gbufferPreviousProjection1) / -prevScreenPos.z * 0.5 + 0.5;
++			prevScreenPos = (vec3(gbufferPreviousProjection0.x, gbufferPreviousProjection0.y, gbufferPreviousProjection0.z) * prevScreenPos + gbufferPreviousProjection1) / -prevScreenPos.z * vec3(0.5, 0.5, 1.0) + vec3(0.5, 0.5, 0.0);
+diff --git a/Lib/RTWSM/BackwardAnalysis.glsl b/Lib/RTWSM/BackwardAnalysis.glsl
+--- a/Lib/RTWSM/BackwardAnalysis.glsl
++++ b/Lib/RTWSM/BackwardAnalysis.glsl
+@@ -40,1 +40,1 @@
+-	if (depth >= 0.7 && depth < 1.0){
++	if (depth <= 0.3 && depth > 0.0){
+diff --git a/Lib/Uniform/GbufferTransforms.glsl b/Lib/Uniform/GbufferTransforms.glsl
+--- a/Lib/Uniform/GbufferTransforms.glsl
++++ b/Lib/Uniform/GbufferTransforms.glsl
+@@ -6,3 +6,3 @@
+ 	#endif
+-	vec3 ndcPos = vec3(coord, depth) * 2.0 - 1.0;
++	vec3 ndcPos = vec3(coord * 2.0 - 1.0, depth);
+ 	vec3 viewPos = vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * ndcPos.xy, 0.0) + gbufferProjectionInverse1;
+@@ -12,3 +12,3 @@
+ vec3 ViewPos_From_ScreenPos_Raw(vec2 coord, float depth){
+-	vec3 ndcPos = vec3(coord, depth) * 2.0 - 1.0;
++	vec3 ndcPos = vec3(coord * 2.0 - 1.0, depth);
+ 	vec3 viewPos = vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * ndcPos.xy, 0.0) + gbufferProjectionInverse1;
+@@ -19,3 +19,3 @@
+ 	vec3 screenPos = vec3(gbufferProjection0.x, gbufferProjection0.y, gbufferProjection0.z) * viewPos + gbufferProjection1;
+-	screenPos = screenPos * (0.5 / -viewPos.z) + 0.5;
++	screenPos = screenPos * (vec3(0.5, 0.5, 1.0) / -viewPos.z) + vec3(0.5, 0.5, 0.0);
+ 	#if defined TAA || defined SUPER_RESOLUTION
+@@ -28,3 +28,3 @@
+ 	vec3 screenPos = vec3(gbufferProjection0.x, gbufferProjection0.y, gbufferProjection0.z) * viewPos + gbufferProjection1;
+-	return screenPos * (0.5 / -viewPos.z) + 0.5;
++	return screenPos * (vec3(0.5, 0.5, 1.0) / -viewPos.z) + vec3(0.5, 0.5, 0.0);
+ }
+@@ -32,3 +32,2 @@
+ float LinearDepth_From_ScreenDepth(float depth){
+-	depth = depth * 2.0 - 1.0;
+ 	return 1.0 / (depth * gbufferProjectionInverse0.z + gbufferProjectionInverse0.w);
+@@ -38,3 +37,3 @@
+ 	depth = (1.0 / depth - gbufferProjectionInverse0.w) / gbufferProjectionInverse0.z;
+-	return depth * 0.5 + 0.5;
++	return depth;
+ }
+@@ -47,3 +46,3 @@
+ 		#endif
+-		vec3 ndcPos = vec3(coord, depth) * 2.0 - 1.0;
++		vec3 ndcPos = vec3(coord * 2.0 - 1.0, depth);
+ 		vec3 viewPos = vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * ndcPos.xy, 0.0) + lodProjectionInverse1;
+@@ -53,3 +52,3 @@
+ 	vec3 ViewPos_From_ScreenPos_Raw_LOD(vec2 coord, float depth){
+-		vec3 ndcPos = vec3(coord, depth) * 2.0 - 1.0;
++		vec3 ndcPos = vec3(coord * 2.0 - 1.0, depth);
+ 		vec3 viewPos = vec3(vec2(gbufferProjectionInverse0.x, gbufferProjectionInverse0.y) * ndcPos.xy, 0.0) + lodProjectionInverse1;
+@@ -61,1 +60,1 @@
+-		screenPos = screenPos * (0.5 / -viewPos.z) + 0.5;
++		screenPos = screenPos * (vec3(0.5, 0.5, 1.0) / -viewPos.z) + vec3(0.5, 0.5, 0.0);
+@@ -70,1 +69,1 @@
+-		return screenPos * (0.5 / -viewPos.z) + 0.5;
++		return screenPos * (vec3(0.5, 0.5, 1.0) / -viewPos.z) + vec3(0.5, 0.5, 0.0);
+@@ -73,3 +72,2 @@
+ 	float LinearDepth_From_ScreenDepth_LOD(float depth){
+-		depth = depth * 2.0 - 1.0;
+ 		return 1.0 / (depth * lodProjectionInverse0.x + lodProjectionInverse0.y);
+@@ -80,1 +78,1 @@
+-		return depth * 0.5 + 0.5;
++		return depth;
+@@ -82,15 +80,13 @@
+ 
+ 	float ScreenDepth_From_LODScreenDepth(float depth){
+-		depth = depth * 2.0 - 1.0;
+ 		depth = 1.0 / (depth * lodProjectionInverse0.x + lodProjectionInverse0.y);
+ 		depth = (1.0 / depth - gbufferProjectionInverse0.w) / gbufferProjectionInverse0.z;
+-    	return depth * 0.5 + 0.5;
++    	return depth;
+ 	}
+ 
+ 	vec4 ScreenDepth_From_LODScreenDepth(vec4 depth){
+-		depth = depth * 2.0 - 1.0;
+ 		depth = 1.0 / (depth * lodProjectionInverse0.x + lodProjectionInverse0.y);
+ 		depth = (1.0 / depth - gbufferProjectionInverse0.w) / gbufferProjectionInverse0.z;
+-    	return depth * 0.5 + 0.5;
++    	return depth;
+ 	}
+ 
+diff --git a/Lib/Uniform/ShadowTransforms.glsl b/Lib/Uniform/ShadowTransforms.glsl
+--- a/Lib/Uniform/ShadowTransforms.glsl
++++ b/Lib/Uniform/ShadowTransforms.glsl
+@@ -14,1 +14,1 @@
+-	return shadowPos * 0.5 + 0.5;
++	return shadowPos * vec3(0.5, 0.5, -0.5) + 0.5;
+@@ -24,1 +24,1 @@
+-	if (shadowPos.xy != saturate(shadowPos.xy)) shadowPos.z = -1e20;
++	if (shadowPos.xy != saturate(shadowPos.xy)) shadowPos.z = 1e20;
+@@ -35,1 +35,1 @@
+-	vec4 shadow = step(coord.z, textureGather(shadowSampler, coord.xy, 0));
++	vec4 shadow = step(textureGather(shadowSampler, coord.xy, 0), vec4(coord.z));

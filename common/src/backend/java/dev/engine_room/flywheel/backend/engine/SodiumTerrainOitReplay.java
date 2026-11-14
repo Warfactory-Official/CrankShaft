@@ -46,13 +46,13 @@ public interface SodiumTerrainOitReplay {
      * or 3 deferred material capture;
      * {@code producer} is the claimed terrain pipeline for that pass. Called on the render thread.
      */
-    default void replayGuest(RenderPipeline producer, int pass, GpuTextureView lightmapView, GpuSampler clampLinear) {
+    default void replayGuest(RenderPipeline _, int _, GpuTextureView _, GpuSampler _) {
     }
 
     /**
-     * Whether this replay supports the insert (single-geometry-pass) OIT path: true for the GPU-driven translucent
-     * batch (the MDI stream and the mesh-shader strategy both have insert twins). A {@code false} keeps the whole
-     * frame on the wavelet chain. Default {@code false} (the VK / no-op impls).
+     * Whether this replay supports the insert (single-geometry-pass) OIT path: true for the Sodium arena (the MDI
+     * stream, the mesh-shader strategy and the CPU per-section batch all have insert twins). A {@code false} keeps the
+     * whole frame on the wavelet chain. Default {@code false} (the VK / no-op impls).
      */
     default boolean supportsInsert() {
         return false;
@@ -60,11 +60,11 @@ public interface SodiumTerrainOitReplay {
 
     /**
      * Replay the captured translucent sections into an open INSERT producer pass (one call, no OIT-read samplers):
-     * the MDI streams draw with the {@code chunkSodiumMlab} insert pipeline (a registered mesh strategy draws via
-     * its {@code drawInsert} instead), writing the per-pixel sample SSBOs the chain raw-bound. Only invoked when
+     * the MDI streams or the per-section batch draw with a {@code chunkSodiumMlab} insert pipeline (a registered mesh
+     * strategy draws via its {@code drawInsert} instead), writing the per-pixel sample SSBOs the chain raw-bound. Only invoked when
      * {@link #supportsInsert()} is {@code true}.
      */
-    default void replayInsert(RenderPass pass, OitInsertMode mode, GpuTextureView lightmapView,
-                              GpuSampler clampLinear) {
+    default void replayInsert(RenderPass _, OitInsertMode _, GpuTextureView _,
+                              GpuSampler _) {
     }
 }

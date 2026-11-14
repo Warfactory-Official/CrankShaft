@@ -50,9 +50,17 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
     private final BitSet carryScratch = new BitSet();
     private final SlabFactory slabFactory;
     public ObjectMapping mapping;
+    /**
+     * Whether a draw blends in submission order: the cull then keeps visible instances in page order.
+     */
+    boolean ordered;
+    int orderedPageOffset = -1;
+    int orderedPageVersion = -1;
     private int modelIndex = -1;
     private int baseInstance = -1;
     private @Nullable Slab slabBuffer;
+    // Whether InstancePage#setChanged records indices; set at each upload for the next frame.
+    private boolean tracksMoves;
 
     public IndirectInstancer(InstancerKey<I> key, Recreate<I> recreate, SlabFactory slabFactory) {
         super(key, recreate);
@@ -144,10 +152,16 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
         validityChanged.clear();
     }
 
+    protected final void updateIndices(int modelIndex, int baseInstance) {
+        this.modelIndex = modelIndex;
+        this.baseInstance = baseInstance;
+    }
+
     public void writeModel(long ptr) {
         MemoryUtil.memPutInt(ptr, 0); // instanceCount - to be incremented by the cull shader
         MemoryUtil.memPutInt(ptr + 4, baseInstance); // baseInstance
-        MemoryUtil.memPutInt(ptr + 8, environment.matrixIndex() | (noOcclusionCull ? Integer.MIN_VALUE : 0));
+        MemoryUtil.memPutInt(ptr + 8, environment.matrixIndex() | (noOcclusionCull ? Integer.MIN_VALUE : 0)
+                | (ordered ? 1 << 30 : 0));
         MemoryUtil.memPutFloat(ptr + 12, boundingSphere.x()); // boundingSphere
         MemoryUtil.memPutFloat(ptr + 16, boundingSphere.y());
         MemoryUtil.memPutFloat(ptr + 20, boundingSphere.z());
@@ -155,10 +169,24 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
     }
 
     public void uploadInstances(SlabPageCopier copier) {
-        uploadInstances(copier, false);
+        uploadInstances(copier, false, null);
+    }
+
+    /**
+     * {@code history}: receives this upload's fresh and moved instances; {@code null} drops them.
+     */
+    void uploadInstances(SlabPageCopier copier, @Nullable History history) {
+        uploadInstances(copier, false, history);
     }
 
     public void uploadInstances(SlabPageCopier copier, boolean carry) {
+        uploadInstances(copier, carry, null);
+    }
+
+    private void uploadInstances(SlabPageCopier copier, boolean carry, @Nullable History history) {
+        // Untracked writes (before history was kept) are unknown: every uploaded instance then counts as moved.
+        boolean tracked = tracksMoves;
+        tracksMoves = history != null;
         if (carry) {
             carryScratch.clear();
             for (int page = contentsChanged.nextSetBit(0); page >= 0; page = contentsChanged.nextSetBit(page + 1)) {
@@ -197,6 +225,8 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
                 }
                 long baseByte = mapping.page2ByteOffset(page);
                 int valid = pages[page].valid.get();
+                int fresh = pages[page].fresh.getAndSet(0) & valid;
+                int moved = history == null ? 0 : (tracked ? pages[page].changed.getAndSet(0) : -1) & valid & ~fresh;
                 if (baseByte < 0 || valid == 0) {
                     continue;
                 }
@@ -206,6 +236,17 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
                 long offset = first * instanceStride;
                 copier.copyPage(slabBuffer, (long) page * pageBytes + offset, baseByte + offset,
                         (end - first) * instanceStride);
+                while (history != null && fresh != 0) {
+                    int start = Integer.numberOfTrailingZeros(fresh);
+                    int run = Integer.numberOfTrailingZeros(~(fresh >>> start));
+                    long runOffset = start * instanceStride;
+                    history.fresh(slabBuffer, (long) page * pageBytes + runOffset, baseByte + runOffset,
+                            run * instanceStride);
+                    fresh &= ~(int) (((1L << run) - 1) << start);
+                }
+                if (moved != 0) {
+                    history.moved(baseByte, (int) (instanceStride >> 2), moved);
+                }
             }
             spanStart = contentsChanged.nextSetBit(spanEnd + 1);
         }
@@ -300,6 +341,8 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
 
         addInner(instance, handle, 0);
 
+        trackFaces(instance);
+
         return instance;
     }
 
@@ -310,7 +353,7 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
     }
 
     @Override
-    public void stealInstance(@Nullable I instance) {
+    protected void moveInstance(@Nullable I instance) {
         if (instance == null) {
             return;
         }
@@ -413,14 +456,35 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
         return modelVertexCount;
     }
 
+    int strideUints() {
+        return (int) (instanceStride >> 2);
+    }
+
     @Override
     public int instanceCount() {
         return instanceCount.get();
     }
 
+    /**
+     * The previous frame's objects (shaderpack motion vectors), fed during {@link #uploadInstances}.
+     */
+    interface History {
+        /**
+         * Instances new at their object offset since their page's last upload (added, revealed, stolen, merged):
+         * their previous-frame data is this frame's.
+         */
+        void fresh(Slab slab, long srcByteOffset, long dstByteOffset, long byteSize);
+
+        /**
+         * {@code mask}: the instances of the page at {@code pageByteOffset} written since last frame at an unchanged
+         * offset.
+         */
+        void moved(long pageByteOffset, int strideUints, int mask);
+    }
+
     @Override
     public void clear() {
-        InstancePage<I>[] old = this.pages.getAndSet(pageArray(0));
+        InstancePage<I>[] old = pages.getAndSet(pageArray(0));
         for (InstancePage<I> page : old) {
             page.dispose();
         }
@@ -448,18 +512,26 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
          * A bitset describing which indices in the instances/handles arrays contain live instances.
          */
         private final AtomicInteger valid;
+        /**
+         * Indices whose occupant changed since the page's last upload.
+         */
+        private final AtomicInteger fresh = new AtomicInteger();
+        /**
+         * Indices passed to {@link #setChanged} since the page's last upload, while {@link #tracksMoves}.
+         */
+        private final AtomicInteger changed = new AtomicInteger();
         long slabPtr;
         boolean transient_;
 
         private InstancePage(IndirectInstancer<I> parent, int pageNo) {
             this.parent = parent;
             this.pageNo = pageNo;
-            this.slabPtr = FlwMemoryTracker.calloc(PAGE_SIZE, parent.instanceStride);
+            slabPtr = FlwMemoryTracker.calloc(PAGE_SIZE, parent.instanceStride);
             FlwMemoryTracker._allocCpuMemory(PAGE_SIZE * parent.instanceStride);
-            this.transient_ = true;
-            this.instances = instanceArray();
-            this.handles = handleArray();
-            this.valid = new AtomicInteger(0);
+            transient_ = true;
+            instances = instanceArray();
+            handles = handleArray();
+            valid = new AtomicInteger(0);
         }
 
         private void dispose() {
@@ -499,6 +571,7 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
                     long destination = slabPtr + (long) index * parent.instanceStride;
                     if (source == 0) parent.type.seed().accept(destination);
                     else MemoryUtil.memCopy(source, destination, parent.type.layout().byteSize());
+                    fresh.accumulateAndGet(1 << index, (bits, bit) -> bits | bit);
 
                     handle.state = this;
                     // Handle index is unique amongst all pages of this instancer.
@@ -527,6 +600,9 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
 
         @Override
         public InstanceHandleImpl.State<I> setChanged(int index) {
+            if (parent.tracksMoves) {
+                changed.accumulateAndGet(1 << (index & PAGE_MASK), (bits, bit) -> bits | bit);
+            }
             parent.contentsChanged.set(pageNo);
             return this;
         }
@@ -617,8 +693,9 @@ public class IndirectInstancer<I extends Instance> extends AbstractInstancer<I> 
                 handles[writePos].index = local2HandleIndex(writePos);
 
                 MemoryUtil.memCopy(other.slabPtr + (long) i * parent.instanceStride,
-                        this.slabPtr + (long) writePos * parent.instanceStride,
+                        slabPtr + (long) writePos * parent.instanceStride,
                         parent.instanceStride);
+                fresh.accumulateAndGet(1 << writePos, (bits, bit) -> bits | bit);
 
                 // Clear out the other page.
                 otherValid &= ~mask;

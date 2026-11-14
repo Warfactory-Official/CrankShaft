@@ -44,6 +44,22 @@ public class ShaderCache {
             return cached.unwrap();
         }
 
+        ShaderResult out = context(glslVersion, profile, shaderType, callback, sourceComponents).compile(shaderType,
+                name);
+        inner.put(key, out);
+        return out.unwrap();
+    }
+
+    /**
+     * {@link #compile}'s driver text, uncompiled.
+     */
+    public static String source(GlslVersion glslVersion, GlslProfile profile, ShaderType shaderType, String name,
+                                Consumer<Compilation> callback, List<SourceComponent> sourceComponents) {
+        return context(glslVersion, profile, shaderType, callback, sourceComponents).driverSource(shaderType, name);
+    }
+
+    private static Compilation context(GlslVersion glslVersion, GlslProfile profile, ShaderType shaderType,
+                                       Consumer<Compilation> callback, List<SourceComponent> sourceComponents) {
         Compilation ctx = new Compilation();
         ctx.version(glslVersion, profile);
         ctx.define(shaderType.define);
@@ -51,10 +67,7 @@ public class ShaderCache {
         callback.accept(ctx);
 
         expand(sourceComponents, ctx::appendComponent);
-
-        ShaderResult out = ctx.compile(shaderType, name);
-        inner.put(key, out);
-        return out.unwrap();
+        return ctx;
     }
 
     public void delete() {

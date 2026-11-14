@@ -187,8 +187,8 @@ public class VanillaVisuals {
             .translate(-0.5F, -0.5F, -0.5F);
     private static final Function<LivingEntity, BlockState> MOOSHROOM_MUSHROOM = e ->
             (((MushroomCow) e).getVariant() == MushroomCow.Variant.BROWN ? Blocks.BROWN_MUSHROOM : Blocks.RED_MUSHROOM).defaultBlockState();
-    private static final Function<LivingEntity, BlockState> SNOW_GOLEM_PUMPKIN = e -> Blocks.CARVED_PUMPKIN.defaultBlockState();
-    private static final Function<LivingEntity, BlockState> IRON_GOLEM_FLOWER = e -> Blocks.POPPY.defaultBlockState();
+    private static final Function<LivingEntity, BlockState> SNOW_GOLEM_PUMPKIN = _ -> Blocks.CARVED_PUMPKIN.defaultBlockState();
+    private static final Function<LivingEntity, BlockState> IRON_GOLEM_FLOWER = _ -> Blocks.POPPY.defaultBlockState();
     private static final Matrix4fc IRON_FLOWER = new Matrix4f()
             .translate(-1.1875F, 1.0625F, -0.9375F)
             .translate(0.5F, 0.5F, 0.5F)
@@ -236,7 +236,7 @@ public class VanillaVisuals {
         float step = ((CreeperRenderState) state).swelling;
         return (int) (step * 10.0F) % 2 == 0 ? 0.0F : Mth.clamp(step, 0.5F, 1.0F);
     };
-    private static final LivingEntityVisual.Rotations SQUID_ROTATIONS = (pose, state, bodyRot, entityScale) -> {
+    private static final LivingEntityVisual.Rotations SQUID_ROTATIONS = (pose, state, bodyRot, _) -> {
         SquidRenderState s = (SquidRenderState) state;
         pose.translate(0.0F, s.isBaby ? 0.25F : 0.5F, 0.0F);
         PoseStackOps.rotateDegrees(pose, Axis.YP, 180.0F - bodyRot);
@@ -332,7 +332,7 @@ public class VanillaVisuals {
                                                                          .cardinalLightingMode(CardinalLightingMode.OFF)
                                                                          .useLight(false)
                                                                          .build();
-    private static final ToIntFunction<LivingEntityRenderState> CREEPER_SWIRL_TINT = s -> 0xFF808080;
+    private static final ToIntFunction<LivingEntityRenderState> CREEPER_SWIRL_TINT = _ -> 0xFF808080;
     private static final Predicate<LivingEntityRenderState> CREEPER_POWERED = s -> ((CreeperRenderState) s).isPowered;
     private static final Identifier SHEEP_WOOL_TEX = Identifier.withDefaultNamespace(
             "textures/entity/sheep/sheep_wool.png");
@@ -408,7 +408,7 @@ public class VanillaVisuals {
         LivingEntityVisual.baseRotations(pose, state, bodyRot, entityScale, 90.0F);
         PoseStackOps.rotateDegrees(pose, Axis.XP, state.xRot);
     };
-    private static final LivingEntityVisual.ItemPose WITCH_NOSE = (model, state) -> {
+    private static final LivingEntityVisual.ItemPose WITCH_NOSE = (model, _) -> {
         PoseStack ps = new PoseStack();
         ModelPart root = model.root();
         root.translateAndRotate(ps);
@@ -497,7 +497,7 @@ public class VanillaVisuals {
             PoseStackOps.rotateDegrees(pose, Axis.XP, Mth.lerp(s.lieOnBackAmount, s.xRot, s.xRot + 180.0F));
         }
     };
-    private static final LivingEntityVisual.ItemPose PANDA_HELD = (model, state) -> {
+    private static final LivingEntityVisual.ItemPose PANDA_HELD = (_, state) -> {
         PandaRenderState s = (PandaRenderState) state;
         float z = -0.6F;
         float y = 1.4F;
@@ -549,7 +549,7 @@ public class VanillaVisuals {
         case HIGH -> WOLF_CRACK_HIGH;
         default -> null;
     };
-    private static final LivingEntityVisual.Rotations ARMOR_STAND_ROTATIONS = (pose, state, bodyRot, entityScale) -> {
+    private static final LivingEntityVisual.Rotations ARMOR_STAND_ROTATIONS = (pose, state, bodyRot, _) -> {
         PoseStackOps.rotateDegrees(pose, Axis.YP, 180.0F - bodyRot);
         float wiggle = ((ArmorStandRenderState) state).wiggle;
         if (wiggle < 5.0F) {
@@ -669,18 +669,22 @@ public class VanillaVisuals {
 
         builder(BlockEntityTypes.SHULKER_BOX)
                 .factory(ShulkerBoxVisual::new)
+                .far(Vanillin.rl("shulker_box"), ContainerFarVisuals.SHULKER_BOX)
                 .apply(STABLE);
 
         builder(BlockEntityTypes.CHEST)
                 .factory(ChestVisual::new)
+                .far(Vanillin.rl("chest"), ContainerFarVisuals.CHEST)
                 .apply(STABLE);
 
         builder(BlockEntityTypes.TRAPPED_CHEST)
                 .factory(ChestVisual::new)
+                .far(Vanillin.rl("trapped_chest"), ContainerFarVisuals.CHEST)
                 .apply(STABLE);
 
         builder(BlockEntityTypes.ENDER_CHEST)
                 .factory(ChestVisual::new)
+                .far(Vanillin.rl("ender_chest"), ContainerFarVisuals.CHEST)
                 .apply(STABLE);
 
         builder(EntityTypes.BLOCK_DISPLAY).factory(BlockDisplayVisual::new)
@@ -802,7 +806,7 @@ public class VanillaVisuals {
                 .apply(STABLE);
         builder(EntityTypes.SPECTRAL_ARROW)
                 .factory((ctx, entity, partialTick) -> new ArrowVisual<>(ctx, entity, partialTick,
-                        s -> SpectralArrowRenderer.SPECTRAL_ARROW_LOCATION))
+                        _ -> SpectralArrowRenderer.SPECTRAL_ARROW_LOCATION))
                 .apply(STABLE);
         builder(EntityTypes.TRIDENT)
                 .factory(TridentVisual::new)
@@ -864,7 +868,7 @@ public class VanillaVisuals {
                 .scrollOverlay(ModelLayers.BREEZE_WIND,
                         LivingEntityVisual.irisRouted(BREEZE_WIND_MATERIAL, PackIdentity.ENTITIES_TRANSLUCENT), 0.02F,
                         0.0F, null, null)
-                .emissiveTranslucentOverlay(ModelLayers.BREEZE_EYES, BREEZE_EYES, s -> -1, null)).apply(STABLE);
+                .emissiveTranslucentOverlay(ModelLayers.BREEZE_EYES, BREEZE_EYES, _ -> -1, null)).apply(STABLE);
         living(EntityTypes.GUARDIAN, cfg(ModelLayers.GUARDIAN).vanillaFallback(GUARDIAN_BEAMING)).apply(STABLE);
         living(EntityTypes.VINDICATOR, cfg(ModelLayers.VINDICATOR)
                 .heldItems(s -> ((IllagerRenderState) s).isAggressive).headItem()).apply(STABLE);
@@ -939,7 +943,7 @@ public class VanillaVisuals {
                                        .headItem()
                                        .overlay(ModelLayers.BOGGED_OUTER_LAYER, BOGGED_OUTER_TEX)).apply(STABLE);
         living(EntityTypes.WARDEN, cfg(ModelLayers.WARDEN)
-                .emissiveTranslucentOverlay(ModelLayers.WARDEN_BIOLUMINESCENT, WARDEN_BIOLUMINESCENT_TEX, s -> -1, null)
+                .emissiveTranslucentOverlay(ModelLayers.WARDEN_BIOLUMINESCENT, WARDEN_BIOLUMINESCENT_TEX, _ -> -1, null)
                 .emissiveTranslucentOverlay(ModelLayers.WARDEN_PULSATING_SPOTS, WARDEN_SPOTS_1_TEX,
                         s -> ARGB.white(wardenSpots1(s)), s -> wardenSpots1(s) > 1.0E-5F)
                 .emissiveTranslucentOverlay(ModelLayers.WARDEN_PULSATING_SPOTS, WARDEN_SPOTS_2_TEX,
@@ -1196,7 +1200,7 @@ public class VanillaVisuals {
                                                 EquipmentAssets.TRADER_LLAMA, IS_TRADER_LLAMA)).apply(STABLE);
         ageable(EntityTypes.TRADER_LLAMA, baby -> baby
                 ? cfg(ModelLayers.TRADER_LLAMA_BABY).modelFactory(BabyLlamaModel::new)
-                                                    .bodyEquipment(e -> ItemStack.EMPTY,
+                                                    .bodyEquipment(_ -> ItemStack.EMPTY,
                                                             EquipmentClientInfo.LayerType.LLAMA_BODY,
                                                             ModelLayers.LLAMA_BABY_DECOR,
                                                             EquipmentAssets.TRADER_LLAMA_BABY, null)
@@ -1376,7 +1380,7 @@ public class VanillaVisuals {
                                                                                                   .getSection(
                                                                                                           VillagerMetadataSection.TYPE)
                                                                                                   .map(VillagerMetadataSection::hat);
-                                                                               } catch (IOException ignored) {
+                                                                               } catch (IOException _) {
                                                                                    return Optional.empty();
                                                                                }
                                                                            })
@@ -1474,7 +1478,7 @@ public class VanillaVisuals {
                                                                             ModelLayerLocation layer, boolean raft) {
         return builder(type)
                 .factory((ctx, entity, partialTick) -> new BoatVisual(ctx, entity, partialTick, layer, raft))
-                .skipVanillaPrimary(entity -> true);
+                .skipVanillaPrimary(_ -> true);
     }
 
     private static <T extends Entity & ItemSupplier> EntityVisualizerBuilder<T> thrownItem(EntityType<T> type,
@@ -1488,7 +1492,7 @@ public class VanillaVisuals {
 
     public static <T extends AbstractMinecart> EntityVisualizerBuilder<T> minecart(EntityType<T> type,
                                                                                    ModelLayerLocation variant) {
-        return composable(type).shouldVisualize((ctx, cart) -> MinecartVisual.isSupported(cart))
+        return composable(type).shouldVisualize((_, cart) -> MinecartVisual.isSupported(cart))
                                .apply(VanillaVisuals::commonElements)
                                .with(element(VisualElements.SHADOW).configure(
                                                                            new ShadowElement.Config(0.7f, ShadowElement.Config.DEFAULT_STRENGTH))

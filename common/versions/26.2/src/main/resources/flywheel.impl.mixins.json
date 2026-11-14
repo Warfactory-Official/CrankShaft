@@ -2,7 +2,9 @@
   "client": [
     "CloudRendererMixin",
     "LevelRendererTransparencyMixin",
+    "LevelRenderStateMixin",
     "MixinChunkSectionsToRender",
-    "ShaderManagerMixin"
+    "ShaderManagerMixin",
+    "VulkanShaderInputMixin"
   ]
 }

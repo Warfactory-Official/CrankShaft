@@ -29,9 +29,11 @@ public class EmbeddedEnvironment implements VisualEmbedding, Environment {
     private final Matrix3f normal = new Matrix3f();
     private final Matrix4f poseComposed = new Matrix4f();
     private final Matrix3f normalComposed = new Matrix3f();
+    private final Matrix4f posePrevious = new Matrix4f();
 
     public int matrixIndex = 0;
 
+    private boolean flushed = false;
     private boolean deleted = false;
 
     public EmbeddedEnvironment(EngineImpl engine, Vec3i renderOrigin, @Nullable EmbeddedEnvironment parent,
@@ -107,14 +109,37 @@ public class EmbeddedEnvironment implements VisualEmbedding, Environment {
         return normalComposed;
     }
 
+    /**
+     * The composed pose of the previous {@link #flush}; the current one on the first.
+     */
+    public Matrix4fc posePrevious() {
+        return posePrevious;
+    }
+
     public void flush(long ptr) {
+        posePrevious.set(poseComposed);
         poseComposed.identity();
         normalComposed.identity();
 
         composeMatrices(poseComposed, normalComposed);
+        if (!flushed) {
+            posePrevious.set(poseComposed);
+            flushed = true;
+        }
 
         ExtraMemoryOps.putMatrix4f(ptr, poseComposed);
         ExtraMemoryOps.putMatrix3fPadded(ptr + 16 * Float.BYTES, normalComposed);
+    }
+
+    /**
+     * Copies current hierarchy transforms into a retained capture's origin, before the next GPU flush.
+     */
+    public void captureTransforms(Vec3i captureOrigin, Matrix4f pose, Matrix3f normal) {
+        composeMatrices(pose, normal);
+        var engineOrigin = engine.renderOrigin();
+        pose.m30(pose.m30() + engineOrigin.getX() - captureOrigin.getX());
+        pose.m31(pose.m31() + engineOrigin.getY() - captureOrigin.getY());
+        pose.m32(pose.m32() + engineOrigin.getZ() - captureOrigin.getZ());
     }
 
     private void composeMatrices(Matrix4f pose, Matrix3f normal) {

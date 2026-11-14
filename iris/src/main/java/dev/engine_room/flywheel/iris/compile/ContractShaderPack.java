@@ -13,9 +13,22 @@ public interface ContractShaderPack {
 
     @Nullable DeferredOitProfile flywheel$deferredOit();
 
+    @Nullable DeferredOitProfile flywheel$forwardProfile();
+
     boolean flywheel$deferredEmissive();
 
     boolean flywheel$deferredTranslucent();
 
     boolean flywheel$emissiveLight();
+
+    /**
+     * Whether the pack's programs take Minecraft's raw reversed depth and projections instead of Iris's forward
+     * conversion.
+     */
+    boolean flywheel$nativeDepth();
+
+    /**
+     * Super Resolution's {@code SR_RENDER_SCALE_FACTOR} the pack's sources were preprocessed with; 1 without it.
+     */
+    float flywheel$renderScale();
 }

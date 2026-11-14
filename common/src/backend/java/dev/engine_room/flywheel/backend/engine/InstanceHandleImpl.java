@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceHandle;
 import dev.engine_room.flywheel.lib.memory.FlwMemoryTracker;
 import dev.engine_room.flywheel.lib.memory.MemoryBlock;
+import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
 
 public class InstanceHandleImpl<I extends Instance> implements InstanceHandle {
@@ -16,6 +17,7 @@ public class InstanceHandleImpl<I extends Instance> implements InstanceHandle {
 
     public State<I> state;
     public int index;
+    FaceCulling.@Nullable Tracked<?> face;
 
     public InstanceHandleImpl(State<I> state) {
         this.state = state;
@@ -24,6 +26,8 @@ public class InstanceHandleImpl<I extends Instance> implements InstanceHandle {
     @Override
     public void setChanged() {
         state = state.setChanged(index);
+        var face = this.face;
+        if (face != null) face.changed();
     }
 
     @Override
@@ -42,6 +46,8 @@ public class InstanceHandleImpl<I extends Instance> implements InstanceHandle {
     @Override
     public void setVisible(boolean visible) {
         state = state.setVisible(this, index, visible);
+        var face = this.face;
+        if (face != null) face.changed();
     }
 
     @Override
@@ -51,6 +57,9 @@ public class InstanceHandleImpl<I extends Instance> implements InstanceHandle {
 
     public void clear() {
         index = -1;
+        var face = this.face;
+        this.face = null;
+        if (face != null) face.changed();
     }
 
     public interface State<I extends Instance> {
@@ -101,12 +110,12 @@ public class InstanceHandleImpl<I extends Instance> implements InstanceHandle {
         }
 
         @Override
-        public State<I> setChanged(int index) {
+        public State<I> setChanged(int _) {
             return this;
         }
 
         @Override
-        public State<I> setDeleted(int index) {
+        public State<I> setDeleted(int _) {
             handle.state = Deleted.instance();
             handle.clear();
             recreate.drawManager().releaseHidden(this);
@@ -115,7 +124,7 @@ public class InstanceHandleImpl<I extends Instance> implements InstanceHandle {
         }
 
         @Override
-        public State<I> setVisible(InstanceHandleImpl<I> handle, int index, boolean visible) {
+        public State<I> setVisible(InstanceHandleImpl<I> handle, int _, boolean visible) {
             if (!visible) {
                 return this;
             }
@@ -128,7 +137,7 @@ public class InstanceHandleImpl<I extends Instance> implements InstanceHandle {
         }
 
         @Override
-        public long slabPtrAt(int index) {
+        public long slabPtrAt(int _) {
             return ptr;
         }
     }
@@ -142,22 +151,22 @@ public class InstanceHandleImpl<I extends Instance> implements InstanceHandle {
         }
 
         @Override
-        public State<I> setChanged(int index) {
+        public State<I> setChanged(int _) {
             return this;
         }
 
         @Override
-        public State<I> setDeleted(int index) {
+        public State<I> setDeleted(int _) {
             return this;
         }
 
         @Override
-        public State<I> setVisible(InstanceHandleImpl<I> handle, int index, boolean visible) {
+        public State<I> setVisible(InstanceHandleImpl<I> _, int _, boolean _) {
             return this;
         }
 
         @Override
-        public long slabPtrAt(int index) {
+        public long slabPtrAt(int _) {
             return SLAB_TRASH_PTR;
         }
     }

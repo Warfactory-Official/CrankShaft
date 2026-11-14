@@ -39,20 +39,24 @@ public final class GlProgramBinaryCache {
     private static final int MAGIC = 0x46574250;
     private static final long LIMIT = 1L << 30;
     private static final long TARGET = 768L << 20;
-    private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("crankshaft.gl.programCache", "true"));
-    private static @Nullable Path directory;
-    private static boolean initialized;
     public static int hits;
     public static int misses;
     public static int rejected;
     public static long storedBytes;
+    private static @Nullable Path directory;
+    private static boolean initialized;
 
     private GlProgramBinaryCache() {
     }
 
-    /** The program's binary key, or null when this context cannot load binaries. */
+    /**
+     * The program's binary key, or null when this context cannot load binaries.
+     */
     public static @Nullable String key(int[] types, String[] sources, String[] attributes) {
-        if (!available()) return null;
+        return available() ? digest(types, sources, attributes) : null;
+    }
+
+    public static String digest(int[] types, String[] sources, String[] attributes) {
         MessageDigest digest;
         try {
             digest = MessageDigest.getInstance("SHA-256");
@@ -75,7 +79,9 @@ public final class GlProgramBinaryCache {
         return HexFormat.of().formatHex(digest.digest());
     }
 
-    /** Loads {@code key}'s binary into the unlinked {@code program}; false leaves it to be compiled and linked. */
+    /**
+     * Loads {@code key}'s binary into the unlinked {@code program}; false leaves it to be compiled and linked.
+     */
     public static boolean load(String key, int program) {
         Path path = directory.resolve(key + ".bin");
         if (!Files.exists(path)) {
@@ -109,12 +115,16 @@ public final class GlProgramBinaryCache {
         return true;
     }
 
-    /** Before linking a program whose binary {@link #store} will read. */
+    /**
+     * Before linking a program whose binary {@link #store} will read.
+     */
     public static void retrievable(int program) {
         GL41C.glProgramParameteri(program, GL41C.GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL11C.GL_TRUE);
     }
 
-    /** Persists the linked {@code program} under {@code key}. */
+    /**
+     * Persists the linked {@code program} under {@code key}.
+     */
     public static void store(String key, int program) {
         Path path = directory.resolve(key + ".bin");
         // In-batch duplicate linked before the first stored; Windows refuses replacing a just-written file.
@@ -177,10 +187,10 @@ public final class GlProgramBinaryCache {
         RenderSystem.assertOnRenderThread();
         initialized = true;
         GLCapabilities caps = GL.getCapabilities();
-        if (!ENABLED || caps.glProgramBinary == MemoryUtil.NULL || caps.glGetProgramBinary == MemoryUtil.NULL
+        if (caps.glProgramBinary == MemoryUtil.NULL || caps.glGetProgramBinary == MemoryUtil.NULL
                 || caps.glProgramParameteri == MemoryUtil.NULL
                 || GL11C.glGetInteger(GL41C.GL_NUM_PROGRAM_BINARY_FORMATS) <= 0) {
-            FlwBackend.LOGGER.info("GL program binary cache off (enabled={})", ENABLED);
+            FlwBackend.LOGGER.info("GL program binary cache unavailable");
             return false;
         }
         String driver = GL11C.glGetString(GL11C.GL_VENDOR) + '\n' + GL11C.glGetString(GL11C.GL_RENDERER) + '\n'
@@ -188,7 +198,7 @@ public final class GlProgramBinaryCache {
         String identity;
         try {
             identity = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(driver.getBytes(StandardCharsets.UTF_8)), 0, 8);
+                                                             .digest(driver.getBytes(StandardCharsets.UTF_8)), 0, 8);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }

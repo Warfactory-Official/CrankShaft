@@ -30,8 +30,8 @@ public class MixinRenderRegionManager {
             + "Ljava/util/Collection;"
             + "Lnet/caffeinemc/mods/sodium/client/render/chunk/UniformBufferManager;)V",
             at = @At("HEAD"), require = 1)
-    private void flywheel$acquireRegionId(RenderRegion region, Collection<BuilderTaskOutput> results,
-                                          UniformBufferManager uniforms, CallbackInfo ci) {
+    private void flywheel$acquireRegionId(RenderRegion region, Collection<BuilderTaskOutput> _,
+                                          UniformBufferManager _, CallbackInfo _) {
         region.getOrAcquireId(freeIds);
     }
 
@@ -40,7 +40,7 @@ public class MixinRenderRegionManager {
             + "Lnet/caffeinemc/mods/sodium/client/render/chunk/UniformBufferManager;)V",
             at = @At("RETURN"), require = 1)
     private void flywheel$onMeshApplied(RenderRegion region, Collection<BuilderTaskOutput> results,
-                                        UniformBufferManager uniforms, CallbackInfo ci) {
+                                        UniformBufferManager _, CallbackInfo _) {
         TerrainSectionListener listener = TerrainSectionListener.published();
         if (listener == null) {
             return;
@@ -54,7 +54,7 @@ public class MixinRenderRegionManager {
             at = @At(value = "INVOKE",
                     target = "Lnet/caffeinemc/mods/sodium/client/render/chunk/IntPool;release(I)V"),
             require = 1)
-    private void flywheel$onRegionFreed(CallbackInfo ci, @Local RenderRegion region) {
+    private void flywheel$onRegionFreed(CallbackInfo _, @Local RenderRegion region) {
         TerrainSectionListener listener = TerrainSectionListener.attached();
         if (listener == null) {
             return;

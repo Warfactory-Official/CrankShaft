@@ -1,22 +1,34 @@
 package dev.engine_room.flywheel.impl.compat;
 
-#if MC < 26.3
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.renderpearl.backend.opengl.GlTextureView;
+import dev.engine_room.flywheel.api.lod.LodSurface;
+import dev.engine_room.flywheel.backend.engine.far.FarDepth;
+import dev.engine_room.flywheel.impl.far.FarHost;
+import dev.engine_room.flywheel.impl.far.FarVisuals;
+import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
+import me.cortex.voxy.client.config.VoxyConfig;
+import me.cortex.voxy.client.core.AbstractRenderPipeline;
+#if MC >= 26.3
+import me.cortex.voxy.client.core.IrisVoxyRenderPipeline;
+import me.cortex.voxy.client.iris.IGetVoxyPatchData;
+#endif
+import me.cortex.voxy.client.core.NormalRenderPipeline;
 import me.cortex.voxy.client.core.IVoxyRenderSystemHolder;
 import me.cortex.voxy.client.core.VoxyRenderSystem;
 import me.cortex.voxy.client.core.rendering.Viewport;
 import me.cortex.voxy.client.core.util.IrisUtil;
-import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
-import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRenderPasses;
-import net.caffeinemc.mods.sodium.client.util.FogParameters;
+#if MC >= 26.3
+import me.cortex.voxy.client.iris.IGetVoxyPatchData;
 #endif
-import dev.engine_room.flywheel.api.lod.LodSurface;
-import me.cortex.voxy.client.config.VoxyConfig;
 import me.cortex.voxy.common.world.WorldEngine;
 import me.cortex.voxy.common.world.WorldSection;
 import me.cortex.voxy.common.world.other.Mapper;
 import me.cortex.voxy.commonImpl.WorldIdentifier;
+import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
+import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRenderPasses;
+import net.caffeinemc.mods.sodium.client.util.FogParameters;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.util.Util;
 import net.minecraft.world.level.Level;
@@ -34,27 +46,50 @@ public final class VoxyCompat {
     private VoxyCompat() {
     }
 
-    public static void init() {
-        #if MC >= 26.3
-        // TODO: no Voxy build targets Renderpearl.
-        if (ACTIVE) {
-            throw new IllegalStateException(
-                    "CrankShaft 26.3 does not support Voxy until a Voxy build targets Renderpearl");
-        }
-        #endif
-    }
-
-    #if MC < 26.3
     public static void renderInPlaceOfCutout(ChunkRenderMatrices matrices, FogParameters fog, double x, double y,
                                              double z) {
         if (ACTIVE) {
             Internals.renderOpaque(matrices, fog, x, y, z);
         }
     }
-    #endif
 
     public static int distance() {
         return ACTIVE ? Internals.distance() : 0;
+    }
+
+    /**
+     * Whether Voxy draws its LoDs into this Iris pipeline's targets and exposes their depth to its programs.
+     */
+    public static boolean drawsInto(Object irisPipeline) {
+        #if MC >= 26.3
+        return ACTIVE && Internals.drawsInto(irisPipeline);
+        #else
+        // 26.2: Voxy 0.2.19 draws no LoDs under a shaderpack.
+        return false;
+        #endif
+    }
+
+    public static boolean staticVisualsAvailable() {
+        #if MC >= 26.3
+        return ACTIVE && VoxyConfig.CONFIG.isRenderingEnabled() && VoxyStaticVisuals.available();
+        #else
+        return false;
+        #endif
+    }
+
+    /**
+     * Far visuals into Voxy's opaque targets. Render thread, mid-pipeline (Voxy's GL state).
+     */
+    public static void drawFarVisuals(NormalRenderPipeline pipeline, int colour, Viewport<?> viewport) {
+        Internals.drawFarVisuals(pipeline, colour, viewport);
+    }
+
+    /**
+     * Supplies completed opaque terrain and actual vanilla depth before either receives retained visuals.
+     */
+    public static void afterOpaque(AbstractRenderPipeline pipeline, Viewport<?> viewport, int sourceDepth,
+                                   int sourceWidth, int sourceHeight) {
+        Internals.afterOpaque(pipeline, viewport, sourceDepth, sourceWidth, sourceHeight);
     }
 
     public static CompletableFuture<LodSurface> surface(ClientLevel level, Heightmap.Types type, int minX, int minZ,
@@ -65,12 +100,52 @@ public final class VoxyCompat {
     }
 
     private static final class Internals {
+        static void afterOpaque(AbstractRenderPipeline pipeline, Viewport<?> viewport, int sourceDepth,
+                                int sourceWidth, int sourceHeight) {
+            if (IrisUtil.irisShadowActive()) return;
+            var manager = VisualizationManagerImpl.get(Minecraft.getInstance().level);
+            var far = manager == null ? null : manager.farVisuals();
+            if (far == null) return;
+            float uScale = (float) viewport.width / sourceWidth;
+            float vScale = (float) viewport.height / sourceHeight;
+            #if MC >= 26.3
+            if (pipeline instanceof IrisVoxyRenderPipeline iris && !iris._getData().useViewportDims) {
+                uScale = vScale = 1.0f;
+            }
+            #endif
+            var properties = pipeline.properties;
+            far.afterOpaque(new FarDepth(pipeline.fb.getDepthTex().id, sourceDepth, viewport.width, viewport.height,
+                    viewport.projection, viewport.vanillaProjection,
+                    properties.isZero2One(), properties.isReverseZ(),
+                    properties.isZero2One(), properties.isReverseZ(), uScale, vScale));
+        }
+
+        static void drawFarVisuals(NormalRenderPipeline pipeline, int colour, Viewport<?> viewport) {
+            VisualizationManagerImpl manager = VisualizationManagerImpl.get(Minecraft.getInstance().level);
+            FarVisuals far = manager == null ? null : manager.farVisuals();
+            if (far == null || far.size() == 0) {
+                return;
+            }
+            // Voxy's setup leaves stencil 1 where no vanilla terrain was drawn: only there may LoDs draw. The main
+            // depth holds vanilla terrain alone until Voxy's final blit.
+            far.draw(new FarHost(colour, pipeline.fb.getDepthTex().id, viewport.width, viewport.height,
+                    viewport.projection, pipeline.properties.isZero2One(), pipeline.properties.isReverseZ(), 1));
+            far.drawMain();
+        }
+
         static int distance() {
             VoxyConfig config = VoxyConfig.CONFIG;
             return config.isRenderingEnabled() ? Math.round(config.sectionRenderDistance * 32 * 16) : 0;
         }
 
-        #if MC < 26.3
+        #if MC >= 26.3
+        // Its Iris uniforms register only with rendering and shader support on; its samplers only with the pack's patch.
+        static boolean drawsInto(Object irisPipeline) {
+            return VoxyConfig.CONFIG.isRenderingEnabled() && IrisUtil.SHADER_SUPPORT
+                    && irisPipeline instanceof IGetVoxyPatchData patched && patched.voxy$getPatchData() != null;
+        }
+        #endif
+
         static void renderOpaque(ChunkRenderMatrices matrices, FogParameters fog, double x, double y, double z) {
             VoxyRenderSystem renderer = IVoxyRenderSystemHolder.getNullable();
             if (renderer == null) {
@@ -88,7 +163,6 @@ public final class VoxyCompat {
             renderer.renderOpaque(viewport, ((GlTextureView) target.getDepthTextureView()).glId(),
                     ((GlTextureView) target.getColorTextureView()).glId());
         }
-        #endif
     }
 
     private static final class Heights {
@@ -134,7 +208,7 @@ public final class VoxyCompat {
                     return null;
                 }
                 engine.acquireRef();
-            } catch (IllegalStateException freed) {
+            } catch (IllegalStateException _) {
                 return null;
             }
             try {
@@ -148,7 +222,7 @@ public final class VoxyCompat {
                     }
                 }
                 return heights.tops;
-            } catch (IllegalStateException freed) {
+            } catch (IllegalStateException _) {
                 return null;
             } finally {
                 if (engine.isLive()) {

@@ -1,0 +1,34 @@
+layout(local_size_x = 128) in;
+
+layout(std430, binding = 0) buffer FlwSortKeys {
+    uvec4 flw_keys[];
+};
+layout(std430, binding = 2) readonly buffer FlwSortControl {
+    uint flw_sortControl[];
+};
+
+shared uvec4 flw_smallKeys[128];
+
+bool flw_keyGreater(uvec4 left, uvec4 right) {
+    return left.y > right.y || (left.y == right.y && left.x > right.x);
+}
+
+void main() {
+    uint count = flw_sortControl[0];
+    uint lane = gl_LocalInvocationID.x;
+    if (lane < count) flw_smallKeys[lane] = flw_keys[lane];
+    barrier();
+    if (lane == 0u) {
+        for (uint index = 1u; index < count; index++) {
+            uvec4 key = flw_smallKeys[index];
+            uint destination = index;
+            while (destination > 0u && flw_keyGreater(flw_smallKeys[destination - 1u], key)) {
+                flw_smallKeys[destination] = flw_smallKeys[destination - 1u];
+                destination--;
+            }
+            flw_smallKeys[destination] = key;
+        }
+    }
+    barrier();
+    if (lane < count) flw_keys[lane] = flw_smallKeys[lane];
+}

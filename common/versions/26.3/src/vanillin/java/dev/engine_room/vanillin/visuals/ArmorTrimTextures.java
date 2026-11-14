@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 final class ArmorTrimTextures {
     private static final RendererReloadCache<Boolean, Generation> GENERATIONS = new RendererReloadCache<>(
-            $ -> new Generation());
+            _ -> new Generation());
 
     private ArmorTrimTextures() {
     }
@@ -46,7 +46,7 @@ final class ArmorTrimTextures {
         Key key = new Key(baseTexture, palette, decal, !decal || basePolygonOffset);
         Generation generation = GENERATIONS.get(true);
         CompletableFuture<Prepared> future = generation.results.computeIfAbsent(key,
-                $ -> prepare(generation, key));
+                _ -> prepare(generation, key));
         if (GENERATIONS.get(true) != generation || !future.isDone()) {
             return null;
         }

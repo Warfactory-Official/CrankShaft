@@ -30,7 +30,7 @@ public record SimplePlan<C>(List<RunnableWithContext<C>> parallelTasks)
     }
 
     @Override
-    public void executeDirect(TaskExecutor executor, C context) {
+    public void executeDirect(TaskExecutor _, C context) {
         for (RunnableWithContext<C> parallelTask : parallelTasks) {
             parallelTask.run(context);
         }

@@ -18,7 +18,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(Entity.class)
 abstract class EntityConversionMixin {
     @Inject(method = "onSyncedDataUpdated(Lnet/minecraft/network/syncher/EntityDataAccessor;)V", at = @At("RETURN"))
-    private void flywheel$retagConvertingVillager(EntityDataAccessor<?> accessor, CallbackInfo ci) {
+    private void flywheel$retagConvertingVillager(EntityDataAccessor<?> accessor, CallbackInfo _) {
         if (!((Object) this instanceof ZombieVillager villager)
                 || !WorldRenderingSettings.INSTANCE.hasVillagerConversionId()
                 || !accessor.equals(ZombieVillager.DATA_CONVERTING_ID)) {

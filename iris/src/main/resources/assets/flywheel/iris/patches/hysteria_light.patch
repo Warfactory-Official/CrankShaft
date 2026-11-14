@@ -1,0 +1,19 @@
+diff --git a/program/composite1.glsl b/program/composite1.glsl
+--- a/program/composite1.glsl
++++ b/program/composite1.glsl
+@@ -69,1 +69,7 @@
+ uniform sampler2D colortex12; // clouds data
++uniform sampler2D colortex17;
++/*
++const int colortex17Format = RGBA16F;
++const bool colortex17Clear = true;
++const vec4 colortex17ClearColor = vec4(0.0, 0.0, 0.0, 0.0);
++*/
+@@ -249,2 +255,3 @@
++		scene_color += texelFetch(colortex17, texel, 0).rgb;
+ 		// purkinje shift
+ 		scene_color = purkinje_shift(scene_color, vec2(0.0, 1.0));
+@@ -520,2 +527,3 @@
++	scene_color += texelFetch(colortex17, texel, 0).rgb;
+ 	// Apply purkinje shift
+ 	scene_color = purkinje_shift(scene_color, light_levels);

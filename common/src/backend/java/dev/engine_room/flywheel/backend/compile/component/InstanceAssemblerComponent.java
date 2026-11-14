@@ -15,6 +15,12 @@ public abstract class InstanceAssemblerComponent implements SourceComponent {
     protected static final String STRUCT_NAME = "FlwInstance";
     protected static final String UNPACK_FN_NAME = "_flw_unpackInstance";
     protected static final String UNPACK_ARG = "index";
+    protected static final String BUFFER_NAME = "_flw_instances";
+    /**
+     * The previous frame's instances at this frame's indices (shaderpack motion vectors).
+     */
+    public static final String HISTORY_BUFFER_NAME = "_flw_prevInstances";
+    protected static final String HISTORY_UNPACK_FN_NAME = "_flw_unpackPrevInstance";
 
     private static final boolean BIG_ENDIAN = ByteOrder.nativeOrder() == ByteOrder.BIG_ENDIAN;
 

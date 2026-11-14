@@ -4,7 +4,7 @@ import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 
 @FunctionalInterface
 public interface VisualizationPredicate<T> {
-    VisualizationPredicate<?> ALWAYS_EXIST = (ctx, t) -> true;
+    VisualizationPredicate<?> ALWAYS_EXIST = (_, _) -> true;
 
     @SuppressWarnings("unchecked")
     static <T> VisualizationPredicate<T> alwaysTrue() {

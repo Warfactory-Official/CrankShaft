@@ -21,7 +21,7 @@ abstract class LevelRendererMixin {
             at = @At(value = "INVOKE",
                     target = "Lnet/minecraft/client/renderer/LevelRenderer;submitFeatures(Lnet/minecraft/client/renderer/state/level/LevelRenderState;Lnet/minecraft/client/renderer/SubmitNodeCollector;Z)V",
                     shift = At.Shift.BEFORE), require = 1)
-    private void flywheel$dispatchFramePlan(CallbackInfo ci) {
+    private void flywheel$dispatchFramePlan(CallbackInfo _) {
         Minecraft minecraft = Minecraft.getInstance();
         if (!(minecraft.level instanceof ClientLevel level)) {
             return;
@@ -30,6 +30,15 @@ abstract class LevelRendererMixin {
         if (manager != null) {
             manager.renderDispatcher().onStartLevelRender(flywheel$buildContext(level));
         }
+    }
+
+    // Voxy traverses inside vanilla's opaque render pass; new far materials can upload textures.
+    @Inject(method = "render", at = @At(value = "INVOKE",
+            target = "Lcom/mojang/blaze3d/framegraph/FrameGraphBuilder;execute(Lcom/mojang/blaze3d/resource/GraphicsResourceAllocator;Lcom/mojang/blaze3d/framegraph/FrameGraphBuilder$Inspector;)V"),
+            require = 1)
+    private void flywheel$prepareFarFrame(CallbackInfo _) {
+        var manager = VisualizationManagerImpl.get(Minecraft.getInstance().level);
+        if (manager != null) manager.prepareFarFrame();
     }
 
     private RenderContextImpl flywheel$buildContext(ClientLevel level) {

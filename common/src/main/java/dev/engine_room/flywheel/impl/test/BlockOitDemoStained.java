@@ -27,7 +27,7 @@ public abstract class BlockOitDemoStained extends BlockOitDemoGlass {
     }
 
     @Override
-    protected ItemStack getCloneItemStack(LevelReader level, BlockPos pos, BlockState state, boolean includeData) {
+    protected ItemStack getCloneItemStack(LevelReader _, BlockPos _, BlockState state, boolean _) {
         ItemStack stack = new ItemStack(this.asItem());
         stack.set(DataComponents.BLOCK_STATE, BlockItemStateProperties.EMPTY.with(COLOR, state));
         return stack;

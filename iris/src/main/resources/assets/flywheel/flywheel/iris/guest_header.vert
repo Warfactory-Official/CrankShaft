@@ -56,14 +56,36 @@ layout(std140, binding = 11) uniform _FlwInstanceDraw {
 layout(std140) uniform _FlwInstanceDraw {
 #endif
     uvec2 _flw_drawPackedMaterial;
-    float flw_systemSeconds;
+    float _flw_drawSystemSeconds;
     float flw_glintSpeedOption;
     float flw_glintStrengthOption;
     uint _flw_drawItemTag;
-    float flw_partialTick;
-    float flw_renderTicks;
-    float flw_renderSeconds;
+    float _flw_drawPartialTick;
+    float _flw_drawRenderTicks;
+    float _flw_drawRenderSeconds;
+    uint _flw_drawGameMillis;
+    float _flw_drawSystemSecondsPrev;
+    float _flw_drawPartialTickPrev;
+    float _flw_drawRenderTicksPrev;
+    float _flw_drawRenderSecondsPrev;
+    uint _flw_drawGameMillisPrev;
 };
+
+// The time inputs instance and material vertex shaders read: this frame's, or the previous frame's while the
+// previous-frame vertex pass of shaderpack motion vectors runs.
+float flw_systemSeconds;
+float flw_partialTick;
+float flw_renderTicks;
+float flw_renderSeconds;
+uint flw_gameMillis;
+
+void _flw_guestTime(bool previous) {
+    flw_systemSeconds = previous ? _flw_drawSystemSecondsPrev : _flw_drawSystemSeconds;
+    flw_partialTick = previous ? _flw_drawPartialTickPrev : _flw_drawPartialTick;
+    flw_renderTicks = previous ? _flw_drawRenderTicksPrev : _flw_drawRenderTicks;
+    flw_renderSeconds = previous ? _flw_drawRenderSecondsPrev : _flw_drawRenderSeconds;
+    flw_gameMillis = previous ? _flw_drawGameMillisPrev : _flw_drawGameMillis;
+}
 
 #ifdef FLW_EMBEDDED
 mat4 _flw_modelMatrix;
@@ -107,6 +129,9 @@ vec2 _flw_getCrumblingTexCoord() {
 // ids as unsigned shorts: unmapped (-1) reads 65535.
 uint _flw_drawTag;
 uint _flw_itemTag;
+#ifdef _FLW_GUEST_STATIC
+uint _flw_staticIdentity;
+#endif
 
 ivec4 _flw_guestIrisEntity() {
     ivec4 ids = ivec4(-1, -1, -1, 0);
@@ -125,6 +150,9 @@ ivec4 _flw_guestIrisEntity() {
 }
 
 ivec2 _flw_guestMcEntity() {
+    #ifdef _FLW_GUEST_STATIC
+    return ivec2(-1, _FLW_GUEST_STATIC_RENDER_TYPE);
+    #endif
     if ((_flw_drawTag >> 24u) == 5u) {
         return ivec2(int(_flw_drawTag & 0xFFFFFFu) - 1, _flw_aIrisEntity.y);
     }
@@ -171,6 +199,32 @@ vec3 _flw_guestIrisNormal() {
 vec3 _flw_guestNormal() {
     return dot(_flw_aFaceNormal.xyz, _flw_aFaceNormal.xyz) > 0.0 ? _flw_aFaceNormal.xyz : _flw_aNormal;
 }
+
+// The mesh vertex before the instance/material/embed transform.
+void _flw_meshLayout() {
+    flw_vertexPos = vec4(_flw_aPosition, 1.0);
+    flw_vertexColor = _flw_aColor;
+    flw_vertexTexCoord = _flw_aTexCoord;
+    flw_vertexOverlay = ivec2(0, 10);
+    flw_vertexLight = vec2(_flw_aLight) / 256.0;
+    flw_vertexNormal = _flw_guestNormal();
+}
+
+// Super Resolution's at_velocity: this frame's view position minus the previous frame's.
+vec3 _flw_guestVelocity = vec3(0.0);
+
+#ifdef _FLW_GUEST_VELOCITY
+uniform mat4 _flw_prevModelView;
+
+// FIXME: an instance whose type does not declare timeAnimated() takes the previous pass only when written or re-posed,
+// so a material vertex shader moving it from time reports no motion.
+void _flw_guestMotion(vec4 previousPos) {
+    vec3 velocity = (flw_view * flw_vertexPos).xyz - (_flw_prevModelView * previousPos).xyz;
+    // FIXME: Compat with Super Resolution: its extension writes exact zero where it has no history and packs read zero
+    // so (iterationRP: reprojected as static), leaving true stillness relative to the camera unrepresentable.
+    _flw_guestVelocity = velocity == vec3(0.0) ? vec3(0.0, 0.0, 1e-20) : velocity;
+}
+#endif
 
 vec4 _flw_proxyCentre;
 

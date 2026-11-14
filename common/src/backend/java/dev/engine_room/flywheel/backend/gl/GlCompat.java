@@ -21,7 +21,7 @@ public final class GlCompat {
         GLCapabilities caps;
         try {
             caps = GL.getCapabilities();
-        } catch (IllegalStateException e) {
+        } catch (IllegalStateException _) {
             // This happens with vulkanmod installed.
             FlwBackend.LOGGER.warn("Failed to get GL capabilities; default Flywheel backends will be disabled.");
             caps = null;
@@ -45,6 +45,8 @@ public final class GlCompat {
     public static final int MAX_TEXTURE_BUFFER_SIZE = maxTextureBufferSize();
     public static final boolean SUPPORTS_INDIRECT = isIndirectSupported();
     public static final int MAX_SHADER_STORAGE_BUFFER_BINDINGS = maxShaderStorageBufferBindings();
+    public static final long MAX_SHADER_STORAGE_BLOCK_SIZE = SUPPORTS_INDIRECT
+            ? GL32C.glGetInteger64(GL43C.GL_MAX_SHADER_STORAGE_BLOCK_SIZE) : 0;
     public static final boolean SUPPORTS_NV_BUFFER_LOAD = isNvBufferLoadSupported();
     @Nullable
     public static final String TERRAIN_UNSUPPORTED_REASON = terrainUnsupportedReason();
@@ -69,7 +71,8 @@ public final class GlCompat {
     public static void requireTextureBufferSize(long bytes, int texelBytes, String label) {
         long limit = (long) MAX_TEXTURE_BUFFER_SIZE * texelBytes;
         if (bytes > limit) {
-            throw new BackendUnavailableException(label + " needs " + bytes + " bytes; texture-buffer limit is " + limit);
+            throw new BackendUnavailableException(
+                    label + " needs " + bytes + " bytes; texture-buffer limit is " + limit);
         }
     }
 
@@ -292,7 +295,8 @@ public final class GlCompat {
         if (handle == 0) {
             int error = GL11C.glGetError();
             if (error == GL11C.GL_OUT_OF_MEMORY) throw new OutOfMemoryError("Allocating GLSL version probe");
-            throw new IllegalStateException("Could not allocate GLSL version probe: GL error 0x" + Integer.toHexString(error));
+            throw new IllegalStateException(
+                    "Could not allocate GLSL version probe: GL error 0x" + Integer.toHexString(error));
         }
         try {
             // Compat with legacy NVIDIA: #version can succeed while wavelet's fragment fma is unavailable.
@@ -312,8 +316,10 @@ public final class GlCompat {
             boolean success = GL20.glGetShaderi(handle, GL20.GL_COMPILE_STATUS) == GL11.GL_TRUE;
             if (!success) {
                 int error = GL11C.glGetError();
-                if (error == GL11C.GL_OUT_OF_MEMORY) throw new OutOfMemoryError("Compiling GLSL version probe " + version.version);
-                if (error == GL45C.GL_CONTEXT_LOST) throw new IllegalStateException("OpenGL context lost while compiling GLSL version probe " + version.version);
+                if (error == GL11C.GL_OUT_OF_MEMORY)
+                    throw new OutOfMemoryError("Compiling GLSL version probe " + version.version);
+                if (error == GL45C.GL_CONTEXT_LOST) throw new IllegalStateException(
+                        "OpenGL context lost while compiling GLSL version probe " + version.version);
             }
             return success;
         } finally {

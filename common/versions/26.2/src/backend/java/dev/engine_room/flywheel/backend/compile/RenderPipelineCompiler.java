@@ -6,6 +6,7 @@ import com.mojang.blaze3d.opengl.GlRenderPipeline;
 import com.mojang.blaze3d.opengl.GlShaderModule;
 import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.opengl.Uniform;
+import com.mojang.blaze3d.pipeline.BindGroupLayout;
 import com.mojang.blaze3d.pipeline.CompiledRenderPipeline;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.preprocessor.GlslPreprocessor;
@@ -13,6 +14,7 @@ import com.mojang.blaze3d.shaders.ShaderSource;
 import com.mojang.blaze3d.shaders.ShaderType;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
+import dev.engine_room.flywheel.backend.FlwBackend;
 import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.GL11C;
@@ -20,8 +22,11 @@ import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL45C;
 
 import java.util.*;
+import java.util.function.Consumer;
 
 public final class RenderPipelineCompiler {
+    private static final Map<RenderPipeline, GlAsyncCompiler.Pending> PENDING = new IdentityHashMap<>();
+    private static final List<RenderPipeline> RELEASED = new ArrayList<>();
     private static @Nullable Map<RenderPipeline, ShaderSource> collecting;
     private static @Nullable Map<RenderPipeline, ProgramAvailability.Feature> collectingFeatures;
     private static ProgramAvailability.@Nullable Feature feature;
@@ -33,6 +38,7 @@ public final class RenderPipelineCompiler {
         if (RenderSystem.getDevice().backend instanceof GlDevice device) {
             GlRenderPipeline cached = device.pipelineCache.get(pipeline);
             if (cached == null) {
+                cancelPending(pipeline);
                 warm(() -> precompile(pipeline, source));
                 cached = Objects.requireNonNull(device.pipelineCache.get(pipeline));
             }
@@ -50,12 +56,102 @@ public final class RenderPipelineCompiler {
         return compiled;
     }
 
-    /** Declares inside {@link #warm}; synchronous otherwise. */
+    /**
+     * Declares inside {@link #warm}; synchronous otherwise.
+     */
     public static void precompile(RenderPipeline pipeline, ShaderSource source) {
         if (collecting != null) {
             collecting.putIfAbsent(pipeline, source);
             if (feature == null || !collectingFeatures.containsKey(pipeline)) collectingFeatures.put(pipeline, feature);
         } else compile(pipeline, source);
+    }
+
+    /**
+     * Draw-time compilation: GL with parallel compilation builds in the background and {@link #poll} publishes;
+     * without it, compiles now. Declares like {@link #precompile} inside {@link #warm}. A failure throws from the
+     * compiling call or the publishing poll, attributed to {@code owner} when non-null.
+     */
+    public static void request(RenderPipeline pipeline, ShaderSource source,
+                               ProgramAvailability.@Nullable Feature owner) {
+        if (collecting != null) {
+            if (owner == null) precompile(pipeline, source);
+            else feature(owner, () -> precompile(pipeline, source));
+            return;
+        }
+        RenderSystem.assertOnRenderThread();
+        if (ready(pipeline) || PENDING.containsKey(pipeline)) return;
+        if (!GlAsyncCompiler.available()) {
+            if (owner == null) compile(pipeline, source);
+            else ProgramAvailability.run(owner, () -> compile(pipeline, source));
+            return;
+        }
+        GlDevice device = (GlDevice) RenderSystem.getDevice().backend;
+        String label = pipeline.getLocation().toString();
+        var vertex = new GlDevice.ShaderCompilationKey(pipeline.getVertexShader(), ShaderType.VERTEX,
+                pipeline.getShaderDefines());
+        var fragment = new GlDevice.ShaderCompilationKey(pipeline.getFragmentShader(), ShaderType.FRAGMENT,
+                pipeline.getShaderDefines());
+        int[] types = {GL20C.GL_VERTEX_SHADER, GL20C.GL_FRAGMENT_SHADER};
+        String[] sources = {stageSource(source, vertex, pipeline), stageSource(source, fragment, pipeline)};
+        String[] attributes = attributes(pipeline);
+        GlNativeProgramPool.Key key = nativeKey(pipeline, types, sources, attributes, owner);
+        PENDING.put(pipeline, GlNativeProgramRequests.request(key,
+                (callback, failure) -> GlAsyncCompiler.submit(label, types, sources,
+                        new String[]{vertex.toString(), fragment.toString()}, attributes, owner, null, callback,
+                        failure),
+                entry -> {
+                    PENDING.remove(pipeline);
+                    publish(device, pipeline, entry);
+                }, () -> PENDING.remove(pipeline)));
+    }
+
+    public static boolean ready(RenderPipeline pipeline) {
+        GlRenderPipeline compiled = ((GlDevice) RenderSystem.getDevice().backend).pipelineCache.get(pipeline);
+        return compiled != null && compiled.isValid();
+    }
+
+    /**
+     * Building in the background or declared in the running {@link #warm}.
+     */
+    public static boolean pending(RenderPipeline pipeline) {
+        return PENDING.containsKey(pipeline) || collecting != null && collecting.containsKey(pipeline);
+    }
+
+    /**
+     * A superseded pipeline: cancelled while building, otherwise destroyed at the next {@link #poll}.
+     */
+    public static void release(RenderPipeline pipeline) {
+        if (!cancelPending(pipeline)) RELEASED.add(pipeline);
+    }
+
+    /**
+     * Render thread, at a frame boundary outside any pass: destroys released pipelines and publishes completed
+     * background compilations.
+     */
+    public static void poll() {
+        RenderSystem.assertOnRenderThread();
+        if (!RELEASED.isEmpty()) {
+            GlDevice device = (GlDevice) RenderSystem.getDevice().backend;
+            for (RenderPipeline pipeline : RELEASED) {
+                GlRenderPipeline compiled = device.pipelineCache.remove(pipeline);
+                if (compiled != null && compiled.isValid()) compiled.program().close();
+            }
+            RELEASED.clear();
+        }
+        GlNativeProgramRequests.poll();
+        GlAsyncCompiler.poll();
+    }
+
+    private static boolean cancelPending(RenderPipeline pipeline) {
+        GlAsyncCompiler.Pending pending = PENDING.remove(pipeline);
+        if (pending == null) return false;
+        pending.cancel();
+        return true;
+    }
+
+    private static String stageSource(ShaderSource source, GlDevice.ShaderCompilationKey key, RenderPipeline pipeline) {
+        return GlslPreprocessor.injectDefines(Objects.requireNonNull(source.get(key.id(), key.type()),
+                "Missing shader source: " + key), pipeline.getShaderDefines());
     }
 
     public static void feature(ProgramAvailability.Feature owner, Runnable declarations) {
@@ -77,7 +173,9 @@ public final class RenderPipelineCompiler {
         }
     }
 
-    /** Render thread; declarations complete before validation/publication. */
+    /**
+     * Render thread; declarations complete before validation/publication.
+     */
     public static void warm(Runnable declarations) {
         RenderSystem.assertOnRenderThread();
         Map<RenderPipeline, ShaderSource> requests = new LinkedHashMap<>();
@@ -92,10 +190,12 @@ public final class RenderPipelineCompiler {
         }
         GlDevice device = (GlDevice) RenderSystem.getDevice().backend;
         Map<GlDevice.ShaderCompilationKey, GlShaderModule> pendingShaders = new LinkedHashMap<>();
-        int uncached = 0;
-        for (RenderPipeline pipeline : requests.keySet()) if (device.pipelineCache.get(pipeline) == null) uncached++;
         try (GlCompilationBatch batch = new GlCompilationBatch()) {
-            batch.splash(uncached);
+            batch.splash(0);
+            Map<GlNativeProgramPool.Key, List<Consumer<GlNativeProgramPool.Entry>>> grouped =
+                    new LinkedHashMap<>();
+            List<Runnable> pooled = new ArrayList<>();
+            int sharedRequests = 0;
             for (var request : requests.entrySet()) {
                 RenderPipeline pipeline = request.getKey();
                 GlRenderPipeline cached = device.pipelineCache.get(pipeline);
@@ -105,19 +205,39 @@ public final class RenderPipelineCompiler {
                     }
                     continue;
                 }
+                cancelPending(pipeline);
                 GlShaderModule vertex = shader(device, pendingShaders, batch, pipeline.getVertexShader(),
                         ShaderType.VERTEX, pipeline, request.getValue());
                 GlShaderModule fragment = shader(device, pendingShaders, batch, pipeline.getFragmentShader(),
                         ShaderType.FRAGMENT, pipeline, request.getValue());
                 String[] attributes = attributes(pipeline);
-                String label = pipeline.getLocation().toString();
-                batch.link(label, new int[]{vertex.getShaderId(), fragment.getShaderId()}, attributes, handle -> {
-                    GlProgram program = new GlProgram(handle, label);
-                    program.setupBindGroupLayouts(pipeline.getBindGroupLayouts());
-                    device.debugLabels.applyLabel(program);
-                    device.pipelineCache.put(pipeline, new GlRenderPipeline(pipeline, program));
-                });
+                int[] stages = {vertex.getShaderId(), fragment.getShaderId()};
+                int[] types = {GL20C.GL_VERTEX_SHADER, GL20C.GL_FRAGMENT_SHADER};
+                String[] sources = {batch.source(stages[0]), batch.source(stages[1])};
+                GlNativeProgramPool.Key key = nativeKey(pipeline, types, sources, attributes, features.get(pipeline));
+                sharedRequests++;
+                var group = grouped.get(key);
+                if (group == null) {
+                    group = new ArrayList<>();
+                    grouped.put(key, group);
+                    var members = group;
+                    if (GlNativeProgramPool.contains(key)) {
+                        pooled.add(() -> members.forEach(member ->
+                                member.accept(Objects.requireNonNull(GlNativeProgramPool.acquire(key)))));
+                    } else {
+                        batch.link(pipeline.getLocation().toString(), stages, attributes, handle -> {
+                            GlNativeProgramPool.Entry entry = GlNativeProgramPool.adopt(key, handle);
+                            for (int i = 0; i < members.size(); i++) {
+                                if (i != 0) entry = Objects.requireNonNull(GlNativeProgramPool.acquire(key));
+                                members.get(i).accept(entry);
+                            }
+                        });
+                    }
+                }
+                group.add(entry -> publish(device, pipeline, entry));
             }
+            FlwBackend.LOGGER.info("native GL program sharing: {} requests, {} distinct keys",
+                    sharedRequests, grouped.size());
             batch.finish(() -> {
                 for (var entry : pendingShaders.entrySet()) {
                     GlShaderModule module = entry.getValue();
@@ -126,6 +246,7 @@ public final class RenderPipelineCompiler {
                     device.shaderCache.put(entry.getKey(), module);
                     batch.retainShader(module.getShaderId());
                 }
+                pooled.forEach(Runnable::run);
             });
         } catch (GlCompilationBatch.Failure failure) {
             ProgramAvailability.Feature owner = null;
@@ -152,14 +273,44 @@ public final class RenderPipelineCompiler {
             }
             return module;
         }
-        String assembled = GlslPreprocessor.injectDefines(
-                Objects.requireNonNull(source.get(id, type), "Missing shader source: " + key),
-                pipeline.getShaderDefines());
         int handle = batch.shader(type == ShaderType.VERTEX ? GL20C.GL_VERTEX_SHADER : GL20C.GL_FRAGMENT_SHADER,
-                assembled, key.toString());
+                stageSource(source, key, pipeline), key.toString());
         module = new GlShaderModule(handle, id, type);
         pending.put(key, module);
         return module;
+    }
+
+    private static GlNativeProgramPool.Key nativeKey(RenderPipeline pipeline, int[] types, String[] sources,
+                                                     String[] attributes,
+                                                     ProgramAvailability.@Nullable Feature owner) {
+        return GlNativeProgramPool.key(types, sources, attributes,
+                BindGroupLayout.flattenUniforms(pipeline.getBindGroupLayouts()),
+                BindGroupLayout.flattenSamplers(pipeline.getBindGroupLayouts()), owner);
+    }
+
+    private static final class ProgramLease extends GlProgram {
+        private final GlNativeProgramPool.Entry entry;
+        private boolean closed;
+
+        private ProgramLease(GlNativeProgramPool.Entry entry, String label) {
+            super(entry.handle(), label);
+            this.entry = entry;
+        }
+
+        @Override
+        public void close() {
+            if (closed) return;
+            closed = true;
+            getUniforms().values().forEach(Uniform::close);
+            entry.release();
+        }
+    }
+
+    private static void publish(GlDevice device, RenderPipeline pipeline, GlNativeProgramPool.Entry entry) {
+        GlProgram program = new ProgramLease(entry, pipeline.getLocation().toString());
+        program.setupBindGroupLayouts(pipeline.getBindGroupLayouts());
+        device.debugLabels.applyLabel(program);
+        device.pipelineCache.put(pipeline, new GlRenderPipeline(pipeline, program));
     }
 
     private static String[] attributes(RenderPipeline pipeline) {
@@ -190,5 +341,8 @@ public final class RenderPipelineCompiler {
 
     public static void reset() {
         // Vanilla's shader reload owns the 26.2 device cache.
+        PENDING.values().forEach(GlAsyncCompiler.Pending::cancel);
+        PENDING.clear();
+        RELEASED.clear();
     }
 }

@@ -1,0 +1,629 @@
+diff --git a/libs/GbufferData.glsl b/libs/GbufferData.glsl
+--- a/libs/GbufferData.glsl
++++ b/libs/GbufferData.glsl
+@@ -84,1 +84,1 @@
+-        vec3 projPos = vec3(coord.xy, depth) * 2.0 - 1.0;
++        vec3 projPos = vec3(coord.xy * 2.0 - 1.0, depth);
+@@ -138,1 +138,0 @@
+-        depth = depth * 2.0 - 1.0;
+@@ -144,1 +143,1 @@
+-        return depth * 0.5 + 0.5;
++        return depth;
+@@ -337,3 +336,3 @@
+ vec3 screenToViewPos(vec2 coord, float depth) {
+-    vec3 projPos = vec3(coord.xy, depth) * 2.0 - 1.0;
++    vec3 projPos = vec3(coord.xy * 2.0 - 1.0, depth);
+     #ifdef TAA
+@@ -410,3 +409,2 @@
+ float screenToViewDepth(float depth) {
+-    depth = depth * 2.0 - 1.0;
+     return 1.0 / (depth * gbufferProjectionInverse[2].w + gbufferProjectionInverse[3].w);
+@@ -416,3 +414,3 @@
+     depth = (1.0 / depth - gbufferProjectionInverse[3].w) / gbufferProjectionInverse[2].w;
+-    return depth * 0.5 + 0.5;
++    return depth;
+ }
+diff --git a/libs/GlobalIllumination.glsl b/libs/GlobalIllumination.glsl
+--- a/libs/GlobalIllumination.glsl
++++ b/libs/GlobalIllumination.glsl
+@@ -7,1 +7,1 @@
+-        originDepth -= float(originDepth == 1.0) * (1.0 + getLodDepthSolidDeferred(texcoord));
++        originDepth += float(originDepth == 0.0) * (2.0 - getLodDepthSolidDeferred(texcoord));
+@@ -9,1 +9,1 @@
+-    if (abs(originDepth) < 0.999999) {
++    if (abs(originDepth - 1.0) < 0.999999) {
+@@ -23,2 +23,2 @@
+-            if (originDepth < 0.0) {
+-                originViewPos = screenToViewPosLod(texcoord, -originDepth);
++            if (originDepth > 1.0) {
++                originViewPos = screenToViewPosLod(texcoord, 2.0 - originDepth);
+@@ -48,1 +48,1 @@
+-                    if (sampleDepth == 1.0) {
++                    if (sampleDepth == 0.0) {
+diff --git a/libs/Reflection.glsl b/libs/Reflection.glsl
+--- a/libs/Reflection.glsl
++++ b/libs/Reflection.glsl
+@@ -182,2 +182,2 @@
+-        if (gbufferData.depth > 1.0) {
+-            viewPos = screenToViewPosLod(texcoord, gbufferData.depth - 1.0 - 1e-7);
++        if (gbufferData.depth < 0.0) {
++            viewPos = screenToViewPosLod(texcoord, gbufferData.depth + 1.0 + 1e-7);
+@@ -187,1 +187,1 @@
+-        viewPos = screenToViewPos(texcoord, gbufferData.depth - 1e-7);
++        viewPos = screenToViewPos(texcoord, gbufferData.depth + 1e-7);
+@@ -632,2 +632,2 @@
+-                if (all(lessThan(abs(originCoord.st), vec2(1.0))) && originCoord.z > -1.0) {
+-                    originCoord = originCoord * 0.5 + 0.5;
++                if (all(lessThan(abs(originCoord.st), vec2(1.0))) && originCoord.z < 1.0 && originProjPos.w > 0.0) {
++                    originCoord.st = originCoord.st * 0.5 + 0.5;
+@@ -641,1 +641,1 @@
+-                    vec4 targetCoord = vec4(targetProjPos.xyz * targetProjScale + 0.5, 0.0);
++                    vec4 targetCoord = vec4(targetProjPos.xy * targetProjScale + 0.5, targetProjPos.z / targetProjPos.w, 0.0);
+@@ -646,2 +646,2 @@
+-                        originCoord.w = originProjDepthLod * originProjScale * 0.5 + 0.5;
+-                        targetCoord.w = (originProjDepthLod + projDirection.z * traceLength) * targetProjScale + 0.5;
++                        originCoord.w = originProjDepthLod * originProjScale;
++                        targetCoord.w = (originProjDepthLod + projDirection.z * traceLength) / targetProjPos.w;
+@@ -663,1 +663,1 @@
+-                        bool hitCheck = originCoord.z > sampleDepth && sampleDepth < 1.0;
++                        bool hitCheck = originCoord.z < sampleDepth && sampleDepth > 0.0;
+@@ -670,1 +670,1 @@
+-                            hitCheck = hitCheck || (sampleDepth == 1.0 && originCoord.w > sampleDepthLod && sampleDepthLod < 1.0);
++                            hitCheck = hitCheck || (sampleDepth == 0.0 && originCoord.w < sampleDepthLod && sampleDepthLod > 0.0);
+@@ -676,1 +676,1 @@
+-                                float stepDirection = sampleDepth - refinementCoord.z;
++                                float stepDirection = refinementCoord.z - sampleDepth;
+@@ -683,2 +683,2 @@
+-                                    float stepDirectionLod = sampleDepthLod - refinementCoord.w;
+-                                    stepDirection = mix(stepDirection, stepDirectionLod, float(sampleDepth == 1.0));
++                                    float stepDirectionLod = refinementCoord.w - sampleDepthLod;
++                                    stepDirection = mix(stepDirection, stepDirectionLod, float(sampleDepth == 0.0));
+@@ -690,1 +690,1 @@
+-                            bool hitTerrain = abs(refinementCoord.z - sampleDepth) < minimumThichness && sampleDepth < 1.0;
++                            bool hitTerrain = abs(refinementCoord.z - sampleDepth) < minimumThichness && sampleDepth > 0.0;
+@@ -692,1 +692,1 @@
+-                                hitTerrain = hitTerrain || (sampleDepth == 1.0 && abs(refinementCoord.w - sampleDepthLod) < minimumThichnessLod && sampleDepthLod < 1.0);
++                                hitTerrain = hitTerrain || (sampleDepth == 0.0 && abs(refinementCoord.w - sampleDepthLod) < minimumThichnessLod && sampleDepthLod > 0.0);
+@@ -700,1 +700,1 @@
+-                        if (any(greaterThan(floatBitsToUint(originCoord.st), floatBitsToUint(screenEdge))) || originCoord.z < 0.0) break;
++                        if (any(greaterThan(floatBitsToUint(originCoord.st), floatBitsToUint(screenEdge))) || originCoord.z > 1.0) break;
+@@ -716,2 +716,2 @@
+-                            if (originCoord.z >= 1.0) {
+-                                projectionScale = projLod()[3].z / (originCoord.w * 2.0 - 1.0 + projLod()[2].z);
++                            if (originCoord.z <= 0.0) {
++                                projectionScale = projLod()[3].z / (originCoord.w + projLod()[2].z);
+@@ -721,1 +721,1 @@
+-                            projectionScale = gbufferProjection[3].z / (originCoord.z * 2.0 - 1.0 + gbufferProjection[2].z);
++                            projectionScale = gbufferProjection[3].z / (originCoord.z + gbufferProjection[2].z);
+@@ -769,1 +769,1 @@
+-                                targetDepth = max(targetDepth, getLodDepthSolid(targetCoord));
++                                targetDepth = min(targetDepth, getLodDepthSolid(targetCoord));
+@@ -771,1 +771,1 @@
+-                            skyLightLevelFix = clamp(skyLightLevelFix + float(targetDepth == 1.0), 0.0, 1.0);
++                            skyLightLevelFix = clamp(skyLightLevelFix + float(targetDepth == 0.0), 0.0, 1.0);
+diff --git a/libs/Shadow.glsl b/libs/Shadow.glsl
+--- a/libs/Shadow.glsl
++++ b/libs/Shadow.glsl
+@@ -7,1 +7,1 @@
+-        shadowCoord.z = shadowCoord.z * 0.1 + 0.5;
++        shadowCoord.z = shadowCoord.z * 0.2 + 0.4;
+@@ -79,1 +79,1 @@
+-                shadowCoord.z -= 4e-5;
++                shadowCoord.z += 4e-5;
+@@ -87,1 +87,1 @@
+-                    float opticalDepth = clamp(shadowCoord.z - shadowDepth + sssOffsetZ, 0.0, 1.0);
++                    float opticalDepth = clamp(shadowDepth - shadowCoord.z - sssOffsetZ, 0.0, 1.0);
+diff --git a/programs/common/Common.vert b/programs/common/Common.vert
+--- a/programs/common/Common.vert
++++ b/programs/common/Common.vert
+@@ -46,1 +46,1 @@
+-        float prevCenterDepth = texelFetch(colortex7, ivec2(screenSize - 0.5), 0).w;
++        float prevCenterDepth = texelFetch(colortex7, ivec2(screenSize - 0.5), 0).w + 1.0;
+@@ -54,1 +54,1 @@
+-        float fadeFactor = exp(log(0.5) * frameTime * 10.0 / centerDepthHalflife) * float(prevCenterDepth > 0.0);
++        float fadeFactor = exp(log(0.5) * frameTime * 10.0 / centerDepthHalflife) * float(prevCenterDepth < 1.0);
+diff --git a/programs/composite/Composite0.frag b/programs/composite/Composite0.frag
+--- a/programs/composite/Composite0.frag
++++ b/programs/composite/Composite0.frag
+@@ -27,1 +27,1 @@
+-        if (depth == 1.0) {
++        if (depth == 0.0) {
+@@ -30,1 +30,1 @@
+-            depth = -depth;
++            depth = 2.0 - depth;
+@@ -46,1 +46,1 @@
+-    if (abs(depth) < 1.0) {
++    if (abs(1.0 - depth) < 1.0) {
+@@ -73,1 +73,1 @@
+-            if (waterDepth == 1.0) {
++            if (waterDepth == 0.0) {
+diff --git a/programs/composite/Composite1.frag b/programs/composite/Composite1.frag
+--- a/programs/composite/Composite1.frag
++++ b/programs/composite/Composite1.frag
+@@ -42,1 +42,1 @@
+-        if (solidDepth == 1.0) {
++        if (solidDepth == 0.0) {
+@@ -45,1 +45,1 @@
+-            solidDepth += 1.0;
++            solidDepth -= 1.0;
+@@ -53,1 +53,1 @@
+-        if (waterDepth == 1.0) {
++        if (waterDepth == 0.0) {
+@@ -56,1 +56,1 @@
+-            waterDepth += 1.0;
++            waterDepth -= 1.0;
+@@ -73,1 +73,1 @@
+-    if (waterDepth < solidDepth) {
++    if (waterDepth > solidDepth) {
+@@ -106,1 +106,1 @@
+-                targetSolidDepth += float(targetSolidDepth == 1.0) * getLodDepthSolid(refractionTarget);
++                targetSolidDepth += float(targetSolidDepth == 0.0) * (getLodDepthSolid(refractionTarget) - 1.0);
+@@ -108,1 +108,1 @@
+-            if (waterDepth < targetSolidDepth) {
++            if (waterDepth > targetSolidDepth) {
+@@ -113,2 +113,2 @@
+-                    if (targetSolidDepth > 1.0) {
+-                        viewPos = screenToViewPosLod(refractionTarget, targetSolidDepth - 1.0);
++                    if (targetSolidDepth < 0.0) {
++                        viewPos = screenToViewPosLod(refractionTarget, targetSolidDepth + 1.0);
+@@ -134,1 +134,1 @@
+-            solidDepth -= float(solidDepth > 1.0);
++            solidDepth += float(solidDepth < 0.0);
+@@ -136,1 +136,1 @@
+-        waterDistance = mix(waterDistance, 114514.0, step(0.999999, solidDepth));
++        waterDistance = mix(waterDistance, 114514.0, step(solidDepth, 1e-6));
+@@ -151,1 +151,1 @@
+-                if (solidDepth > 0.999999) {
++                if (solidDepth < 1e-6) {
+@@ -159,1 +159,1 @@
+-                    float isSky = step(0.999999, solidDepth);
++                    float isSky = step(solidDepth, 1e-6);
+@@ -337,2 +337,2 @@
+-    waterDepth -= float(waterDepth > 1.0);
+-    float waterViewDepth = mix(waterViewDepthNoLimit, 114514.0, step(0.999999, waterDepth));
++    waterDepth += float(waterDepth < 0.0);
++    float waterViewDepth = mix(waterViewDepthNoLimit, 114514.0, step(waterDepth, 1e-6));
+@@ -348,1 +348,1 @@
+-            if (waterDepth > 0.999999) {
++            if (waterDepth < 1e-6) {
+@@ -357,1 +357,1 @@
+-                    float isSky = step(0.999999, waterDepth);
++                    float isSky = step(waterDepth, 1e-6);
+diff --git a/programs/composite/Composite10.frag b/programs/composite/Composite10.frag
+--- a/programs/composite/Composite10.frag
++++ b/programs/composite/Composite10.frag
+@@ -107,1 +107,1 @@
+-    texBuffer7 = vec4(pow(currColor * 0.01, vec3(1.0 / 2.2)) * 10.0, textureLod(depthtex0, texcoord, 0.0).r);
++    texBuffer7 = vec4(pow(currColor * 0.01, vec3(1.0 / 2.2)) * 10.0, textureLod(depthtex0, texcoord, 0.0).r - 1.0);
+@@ -109,1 +109,1 @@
+-        texBuffer7.w += getLodDepthWater(texcoord) * float(texBuffer7.w == 1.0);
++        texBuffer7.w += (getLodDepthWater(texcoord) - 1.0) * float(texBuffer7.w == -1.0);
+@@ -116,1 +116,1 @@
+-        texBuffer7.w = smoothCenterDepth;
++        texBuffer7.w = smoothCenterDepth - 1.0;
+diff --git a/programs/composite/Composite14.frag b/programs/composite/Composite14.frag
+--- a/programs/composite/Composite14.frag
++++ b/programs/composite/Composite14.frag
+@@ -427,1 +427,1 @@
+-        if (screenDepth == 1.0) {
++        if (screenDepth == 0.0) {
+@@ -430,1 +430,1 @@
+-            screenDepth += lodDepth;
++            screenDepth += lodDepth - 1.0;
+@@ -435,1 +435,1 @@
+-        screenDepth += float(screenDepth == 1.0);
++        screenDepth -= float(screenDepth == 0.0);
+@@ -438,2 +438,2 @@
+-        float skyLight = clamp(unpack2x8Bit(texelFetch(colortex2, ivec2(sampleCoord * screenSize), 0).r).y + float(screenDepth > 1.0), 0.0, 1.0);
+-        skyLight = max(clamp(skyLight * (1.0 - exp2(-viewDepth * 0.01 * RAIN_BLOOM_FOG_DENSITY)) + float(screenDepth == 2.0), 0.0, 1.0), eyeBrightnessSmooth.y / 240.0);
++        float skyLight = clamp(unpack2x8Bit(texelFetch(colortex2, ivec2(sampleCoord * screenSize), 0).r).y + float(screenDepth < 0.0), 0.0, 1.0);
++        skyLight = max(clamp(skyLight * (1.0 - exp2(-viewDepth * 0.01 * RAIN_BLOOM_FOG_DENSITY)) + float(screenDepth == -1.0), 0.0, 1.0), eyeBrightnessSmooth.y / 240.0);
+diff --git a/programs/composite/Composite2.frag b/programs/composite/Composite2.frag
+--- a/programs/composite/Composite2.frag
++++ b/programs/composite/Composite2.frag
+@@ -30,1 +30,1 @@
+-                if (waterDepth == 1.0) {
++                if (waterDepth == 0.0) {
+diff --git a/programs/composite/Composite3.frag b/programs/composite/Composite3.frag
+--- a/programs/composite/Composite3.frag
++++ b/programs/composite/Composite3.frag
+@@ -40,2 +40,2 @@
+-        waterDepth += float(waterDepth == 1.0) * getLodDepthWater(texcoord);
+-        solidDepth += float(solidDepth == 1.0) * getLodDepthSolid(texcoord);
++        waterDepth += float(waterDepth == 0.0) * (getLodDepthWater(texcoord) - 1.0);
++        solidDepth += float(solidDepth == 0.0) * (getLodDepthSolid(texcoord) - 1.0);
+@@ -55,1 +55,1 @@
+-    if (waterDepth < solidDepth) {
++    if (waterDepth > solidDepth) {
+diff --git a/programs/composite/Composite4.frag b/programs/composite/Composite4.frag
+--- a/programs/composite/Composite4.frag
++++ b/programs/composite/Composite4.frag
+@@ -18,1 +18,1 @@
+-    if (depth < getSolidDepth(texcoord) && originData.w > 0.0025)
++    if (depth > getSolidDepth(texcoord) && originData.w > 0.0025)
+diff --git a/programs/composite/Composite5.frag b/programs/composite/Composite5.frag
+--- a/programs/composite/Composite5.frag
++++ b/programs/composite/Composite5.frag
+@@ -18,1 +18,1 @@
+-    if (depth < getSolidDepth(texcoord) && originData.w > 0.0025) {
++    if (depth > getSolidDepth(texcoord) && originData.w > 0.0025) {
+diff --git a/programs/composite/Composite6.frag b/programs/composite/Composite6.frag
+--- a/programs/composite/Composite6.frag
++++ b/programs/composite/Composite6.frag
+@@ -35,1 +35,1 @@
+-        if (waterDepth < texelFetch(depthtex1, texel, 0).r) {
++        if (waterDepth > texelFetch(depthtex1, texel, 0).r) {
+diff --git a/programs/composite/Composite7.frag b/programs/composite/Composite7.frag
+--- a/programs/composite/Composite7.frag
++++ b/programs/composite/Composite7.frag
+@@ -37,1 +37,1 @@
+-    farthest = max(max(samples.x, samples.y), max(samples.z, samples.w));
++    farthest = min(min(samples.x, samples.y), min(samples.z, samples.w));
+@@ -40,1 +40,1 @@
+-    farthest = max(max(samples.x, samples.y), max(samples.z, farthest));
++    farthest = min(min(samples.x, samples.y), min(samples.z, farthest));
+@@ -43,2 +43,2 @@
+-    farthest = max(farthest, texelFetch(colortex7, texel + ivec2( 1, -1), 0).w);
+-    farthest = max(farthest, texelFetch(colortex7, texel + ivec2(-1,  1), 0).w);
++    farthest = min(farthest, texelFetch(colortex7, texel + ivec2( 1, -1), 0).w);
++    farthest = min(farthest, texelFetch(colortex7, texel + ivec2(-1,  1), 0).w);
+@@ -46,1 +46,1 @@
+-    return farthest;
++    return farthest + 1.0;
+@@ -65,1 +65,1 @@
+-    float closest = 2.0;
++    float closest = -1.0;
+@@ -69,1 +69,1 @@
+-        samples += step(1.0, samples) * depthGatherLod(coord - vec2(0.5) * texelSize);
++        samples += step(samples, vec4(0.0)) * (depthGatherLod(coord - vec2(0.5) * texelSize) - 1.0);
+@@ -71,1 +71,1 @@
+-    closest = min(min(samples.x, samples.y), min(samples.z, samples.w));
++    closest = max(max(samples.x, samples.y), max(samples.z, samples.w));
+@@ -75,1 +75,1 @@
+-        samples += step(1.0, samples) * depthGatherLod(coord + vec2(0.5) * texelSize);
++        samples += step(samples, vec4(0.0)) * (depthGatherLod(coord + vec2(0.5) * texelSize) - 1.0);
+@@ -77,1 +77,1 @@
+-    closest = min(min(samples.x, samples.y), min(samples.z, closest));
++    closest = max(max(samples.x, samples.y), max(samples.z, closest));
+@@ -84,1 +84,1 @@
+-        samples.xy += step(vec2(1.0), samples.xy) * vec2(
++        samples.xy += step(samples.xy, vec2(0.0)) * (vec2(
+@@ -87,1 +87,1 @@
+-        );
++        ) - 1.0);
+@@ -90,1 +90,1 @@
+-    closest = min(closest, min(samples.x, samples.y));
++    closest = max(closest, max(samples.x, samples.y));
+@@ -99,2 +99,2 @@
+-        view = view * 2.0 - 1.0;
+-        view.z /= MC_HAND_DEPTH;
++        view.xy = view.xy * 2.0 - 1.0;
++        view.z = view.z / MC_HAND_DEPTH - 0.5 / MC_HAND_DEPTH + 0.5;
+@@ -115,3 +115,3 @@
+-        view.z *= MC_HAND_DEPTH;
+-        view = view * 0.5 + 0.5;
+-    } else if (coord.z > 0.7) {
++        view.z = view.z * MC_HAND_DEPTH - 0.5 * MC_HAND_DEPTH + 0.5;
++        view.xy = view.xy * 0.5 + 0.5;
++    } else if (coord.z < 0.3) {
+@@ -119,3 +119,3 @@
+-            if (coord.z > 1.0) {
+-                view.z -= 1.0;
+-                view = projectionToViewPosLod(view * 2.0 - 1.0);
++            if (coord.z < 0.0) {
++                view.z += 1.0;
++                view = projectionToViewPosLod(vec3(view.xy * 2.0 - 1.0, view.z));
+@@ -125,1 +125,1 @@
+-            view = projectionToViewPos(view * 2.0 - 1.0);
++            view = projectionToViewPos(vec3(view.xy * 2.0 - 1.0, view.z));
+@@ -127,1 +127,1 @@
+-        if (coord.z - float(coord.z > 1.0) < 1.0 && materialID != MAT_END_PORTAL) {
++        if (coord.z + float(coord.z < 0.0) > 0.0 && materialID != MAT_END_PORTAL) {
+@@ -140,5 +140,5 @@
+         #ifdef LOD
+-            if (coord.z > 1.0) {
++            if (coord.z < 0.0) {
+                 view = prevViewToProjectionPosLod(view);
+-                view.z += 2.0;
++                view.z -= 1.0;
+             } else
+@@ -148,3 +148,3 @@
+         }
+-        view = view * 0.5 + 0.5;
++        view.xy = view.xy * 0.5 + 0.5;
+     }
+@@ -158,1 +158,1 @@
+-    float depthDiffFactor = step(coord.z + velocity.z, prevDepth + 1e-3);
++    float depthDiffFactor = step(prevDepth - 1e-3, coord.z + velocity.z);
+@@ -221,1 +221,1 @@
+-            if (sampleCoC > radius && sampleDepth <= centerDepth) {
++            if (sampleCoC > radius && sampleDepth >= centerDepth) {
+@@ -246,1 +246,1 @@
+-        blendWeight *= TAA_HISTORY_WEIGHT - TAA_HISTORY_WEIGHT * min(0.8, 4.5 * pow(dot(velocity.xy, velocity.xy), 0.25)) * step(closest.z, 0.999999);
++        blendWeight *= TAA_HISTORY_WEIGHT - TAA_HISTORY_WEIGHT * min(0.8, 4.5 * pow(dot(velocity.xy, velocity.xy), 0.25)) * step(1e-6, closest.z);
+diff --git a/programs/deferred/Deferred0.frag b/programs/deferred/Deferred0.frag
+--- a/programs/deferred/Deferred0.frag
++++ b/programs/deferred/Deferred0.frag
+@@ -56,2 +56,2 @@
+-        if (gbufferData.depth < 0.0) {
+-            viewPos = screenToViewPosLod(texcoord, -gbufferData.depth - 1e-7);
++        if (gbufferData.depth > 1.0) {
++            viewPos = screenToViewPosLod(texcoord, 2.0 - gbufferData.depth + 1e-7);
+@@ -64,1 +64,1 @@
+-        viewPos = screenToViewPos(texcoord, gbufferData.depth - 1e-7);
++        viewPos = screenToViewPos(texcoord, gbufferData.depth + 1e-7);
+@@ -115,1 +115,1 @@
+-            traceOffset *= 0.5 / SSGI_STEPS;
++            traceOffset *= vec4(0.5, 0.5, 1.0, 1.0) / SSGI_STEPS;
+@@ -117,1 +117,1 @@
+-            sampleCoord = screenOrigin * 0.5 + 0.5;
++            sampleCoord = vec4(screenOrigin.xy * 0.5 + 0.5, screenOrigin.zw);
+@@ -140,3 +140,3 @@
+                 #ifdef SSGI_PARALLAX
+-                    if (sampleDepth < 1.0) {
++                    if (sampleDepth > 0.0) {
+                         sampleNormalData = texelFetch(colortex1, sampleTexel, 0);
+@@ -150,1 +150,1 @@
+-                bool hitCheck = sampleCoord.z > sampleDepth && sampleDepth < 1.0;
++                bool hitCheck = sampleCoord.z < sampleDepth && sampleDepth > 0.0;
+@@ -153,1 +153,1 @@
+-                    hitCheck = hitCheck || (sampleDepth == 1.0 && sampleCoord.w > sampleDepthLod && sampleDepthLod < 1.0);
++                    hitCheck = hitCheck || (sampleDepth == 0.0 && sampleCoord.w < sampleDepthLod && sampleDepthLod > 0.0);
+@@ -159,1 +159,1 @@
+-                        float stepDirection = sampleDepth - refinementCoord.z;
++                        float stepDirection = refinementCoord.z - sampleDepth;
+@@ -162,2 +162,2 @@
+-                            float stepDirectionLod = sampleDepthLod - refinementCoord.w;
+-                            stepDirection = mix(stepDirection, stepDirectionLod, float(sampleDepth == 1.0));
++                            float stepDirectionLod = refinementCoord.w - sampleDepthLod;
++                            stepDirection = mix(stepDirection, stepDirectionLod, float(sampleDepth == 0.0));
+@@ -175,1 +175,1 @@
+-                            if (sampleDepth < 1.0) {
++                            if (sampleDepth > 0.0) {
+@@ -186,1 +186,1 @@
+-                    bool hitTerrain = abs(refinementCoord.z - sampleDepth) < minimumThichness && sampleDepth < 1.0;
++                    bool hitTerrain = abs(refinementCoord.z - sampleDepth) < minimumThichness && sampleDepth > 0.0;
+@@ -188,1 +188,1 @@
+-                        hitTerrain = hitTerrain || (sampleDepth == 1.0 && abs(refinementCoord.w - sampleDepthLod) < minimumThichnessLod && sampleDepthLod < 1.0);
++                        hitTerrain = hitTerrain || (sampleDepth == 0.0 && abs(refinementCoord.w - sampleDepthLod) < minimumThichnessLod && sampleDepthLod > 0.0);
+@@ -207,1 +207,1 @@
+-                if (clamp(sampleCoord.st, 0.0, 1.0) != sampleCoord.st || sampleCoord.z < 0.0) break;
++                if (clamp(sampleCoord.st, 0.0, 1.0) != sampleCoord.st || sampleCoord.z > 1.0) break;
+@@ -394,1 +394,1 @@
+-                    if (sampleCoord.z >= 1.0) {
++                    if (sampleCoord.z <= 0.0) {
+@@ -499,1 +499,1 @@
+-        gbufferData.depth -= (1.0 + getLodDepthSolidDeferred(texcoord)) * float(gbufferData.depth == 1.0);
++        gbufferData.depth += (2.0 - getLodDepthSolidDeferred(texcoord)) * float(gbufferData.depth == 0.0);
+@@ -505,1 +505,1 @@
+-    if (abs(gbufferData.depth) < 0.999999) {
++    if (abs(gbufferData.depth - 1.0) < 0.999999) {
+diff --git a/programs/deferred/Deferred1.frag b/programs/deferred/Deferred1.frag
+--- a/programs/deferred/Deferred1.frag
++++ b/programs/deferred/Deferred1.frag
+@@ -383,1 +383,1 @@
+-    float prevSampleDepth = min(1.0, uintBitsToFloat(texelFetch(colortex3, sampleTexel, 0).w));
++    float prevSampleDepth = max(0.0, uintBitsToFloat(texelFetch(colortex3, sampleTexel, 0).w));
+@@ -393,2 +393,2 @@
+-        if (prevSampleDepth < 0.0) {
+-            prevSampleViewPos = prevProjectionToViewPosLod(vec3(screenCoord, -prevSampleDepth) * 2.0 - 1.0);
++        if (prevSampleDepth > 1.0) {
++            prevSampleViewPos = prevProjectionToViewPosLod(vec3(screenCoord * 2.0 - 1.0, 2.0 - prevSampleDepth));
+@@ -401,1 +401,1 @@
+-        prevSampleViewPos = prevProjectionToViewPos(vec3(screenCoord, prevSampleDepth) * 2.0 - 1.0);
++        prevSampleViewPos = prevProjectionToViewPos(vec3(screenCoord * 2.0 - 1.0, prevSampleDepth));
+@@ -417,1 +417,1 @@
+-    isPrevValid *= clamp(1.0 - positionDistance, 0.0, 1.0) * step(abs(prevSampleDepth), 0.999999);
++    isPrevValid *= clamp(1.0 - positionDistance, 0.0, 1.0) * step(abs(prevSampleDepth - 1.0), 0.999999);
+@@ -481,1 +481,1 @@
+-        depth -= float(depth == 1.0) * (1.0 + getLodDepthSolidDeferred(texcoord));
++        depth += float(depth == 0.0) * (2.0 - getLodDepthSolidDeferred(texcoord));
+@@ -500,1 +500,1 @@
+-    bool accumGI = abs(depth) < 0.999999;
++    bool accumGI = abs(depth - 1.0) < 0.999999;
+@@ -510,2 +510,2 @@
+-            if (depth < 0.0) {
+-                viewPos = screenToViewPosLod(texcoord, -depth);
++            if (depth > 1.0) {
++                viewPos = screenToViewPosLod(texcoord, 2.0 - depth);
+diff --git a/programs/deferred/Deferred10.frag b/programs/deferred/Deferred10.frag
+--- a/programs/deferred/Deferred10.frag
++++ b/programs/deferred/Deferred10.frag
+@@ -20,1 +20,1 @@
+-        originDepth -= float(originDepth == 1.0) * (1.0 + getLodDepthSolidDeferred(texcoord));
++        originDepth += float(originDepth == 0.0) * (2.0 - getLodDepthSolidDeferred(texcoord));
+@@ -30,2 +30,2 @@
+-        if (originDepth < 0.0) {
+-            originViewPos = screenToViewPosLod(texcoord, -originDepth);
++        if (originDepth > 1.0) {
++            originViewPos = screenToViewPosLod(texcoord, 2.0 - originDepth);
+@@ -56,1 +56,1 @@
+-        abs(originDepth) < 0.999999
++        abs(originDepth - 1.0) < 0.999999
+@@ -87,1 +87,1 @@
+-                    if (sampleDepth == 1.0) {
++                    if (sampleDepth == 0.0) {
+diff --git a/programs/deferred/Deferred11.frag b/programs/deferred/Deferred11.frag
+--- a/programs/deferred/Deferred11.frag
++++ b/programs/deferred/Deferred11.frag
+@@ -38,2 +38,2 @@
+-        offset *= inversesqrt(max(dot(offset.xy, offset.xy), dot(offset, offset) * 0.09)) * 0.1 / shadowDistance;
+-        offset.z *= 0.1;
++        offset *= inversesqrt(max(dot(offset.xy, offset.xy), (dot(offset.xy, offset.xy) + 4.0 * offset.z * offset.z) * 0.09)) * 0.1 / shadowDistance;
++        offset.z *= 0.2;
+@@ -53,1 +53,1 @@
+-            normalOffset.z *= 0.1;
++            normalOffset.z *= 0.2;
+@@ -70,1 +70,1 @@
+-            basicShadowCoordNoDistort.z -= 2e-5;
++            basicShadowCoordNoDistort.z += 2e-5;
+@@ -82,1 +82,1 @@
+-                    avgOcclusionDepth += clamp(sampleCoord.z - sampleDepth, 0.0, 1.0);
++                    avgOcclusionDepth += clamp(sampleDepth - sampleCoord.z, 0.0, 1.0);
+@@ -92,1 +92,1 @@
+-                ) && depthSum < 8.9999
++                ) && depthSum > 1e-4
+@@ -94,1 +94,1 @@
+-                if (depthSum < 8.9999) {
++                if (depthSum > 1e-4) {
+@@ -124,1 +124,1 @@
+-                            opticalDepth += clamp(sssSampleCoord.z - shadowDepth + 1e-4, 0.0, 1.0);
++                            opticalDepth += clamp(shadowDepth - sssSampleCoord.z + 1e-4, 0.0, 1.0);
+@@ -186,1 +186,1 @@
+-        vec4 originCoord = vec4(originProjPos.xyz * projScale + 0.5, 0.0);
++        vec4 originCoord = vec4(originProjPos.xy * projScale + 0.5, originProjPos.z / originProjPos.w, 0.0);
+@@ -192,1 +192,1 @@
+-        vec4 targetCoord = vec4(targetProjPos.xyz * targetProjScale + 0.5, 0.0);
++        vec4 targetCoord = vec4(targetProjPos.xy * targetProjScale + 0.5, targetProjPos.z / targetProjPos.w, 0.0);
+@@ -197,2 +197,2 @@
+-            originCoord.w = originProjDepthLod * projScale + 0.5;
+-            targetCoord.w = (originProjDepthLod + projDirection.z * traceLength) * targetProjScale + 0.5;
++            originCoord.w = originProjDepthLod / originProjPos.w;
++            targetCoord.w = (originProjDepthLod + projDirection.z * traceLength) / targetProjPos.w;
+@@ -221,1 +221,1 @@
+-            if (targetCoord.z >= 1.0) {
++            if (targetCoord.z <= 0.0) {
+@@ -232,1 +232,1 @@
+-        sampleCoord.zw -= 2e-7;
++        sampleCoord.zw += 2e-7;
+@@ -238,1 +238,1 @@
+-        sampleCoord.zw -= vec2(maximumThickness, maximumThicknessLod);
++        sampleCoord.zw += vec2(maximumThickness, maximumThicknessLod);
+@@ -247,1 +247,1 @@
+-                if (sampleDepth == 1.0) {
++                if (sampleDepth == 0.0) {
+@@ -249,1 +249,1 @@
+-                    hit = abs(sampleCoord.w - sampleDepthLod) < maximumThicknessLod && sampleDepthLod < 1.0;
++                    hit = abs(sampleCoord.w - sampleDepthLod) < maximumThicknessLod && sampleDepthLod > 0.0;
+@@ -256,1 +256,1 @@
+-                hit = abs(sampleCoord.z - sampleDepth) < maximumThickness && sampleDepth < 1.0;
++                hit = abs(sampleCoord.z - sampleDepth) < maximumThickness && sampleDepth > 0.0;
+@@ -326,1 +326,1 @@
+-        if (gbufferData.depth == 1.0) {
++        if (gbufferData.depth == 0.0) {
+@@ -328,1 +328,1 @@
+-            viewPos = screenToViewPosLod(texcoord, gbufferData.depth - 1e-7);
++            viewPos = screenToViewPosLod(texcoord, gbufferData.depth + 1e-7);
+@@ -330,1 +330,1 @@
+-            gbufferData.depth = -gbufferData.depth;
++            gbufferData.depth = 2.0 - gbufferData.depth;
+@@ -337,3 +337,3 @@
+-        viewPosNoPOM = screenToViewPos(texcoord, gbufferData.depth - 1e-7);
+-        gbufferData.depth += abs(diffuseData.w) / 512.0;
+-        viewPos = screenToViewPos(texcoord, gbufferData.depth - 1e-7);
++        viewPosNoPOM = screenToViewPos(texcoord, gbufferData.depth + 1e-7);
++        gbufferData.depth -= abs(diffuseData.w) / 512.0;
++        viewPos = screenToViewPos(texcoord, gbufferData.depth + 1e-7);
+@@ -346,1 +346,1 @@
+-    if (abs(gbufferData.depth) < 1.0) {
++    if (abs(gbufferData.depth - 1.0) < 1.0) {
+diff --git a/programs/deferred/Deferred12.frag b/programs/deferred/Deferred12.frag
+--- a/programs/deferred/Deferred12.frag
++++ b/programs/deferred/Deferred12.frag
+@@ -63,1 +63,1 @@
+-                gbufferData.depth += float(gbufferData.depth == 1.0) * getLodDepthSolidDeferred(texcoord);
++                gbufferData.depth += float(gbufferData.depth == 0.0) * (getLodDepthSolidDeferred(texcoord) - 1.0);
+diff --git a/programs/deferred/Deferred13.frag b/programs/deferred/Deferred13.frag
+--- a/programs/deferred/Deferred13.frag
++++ b/programs/deferred/Deferred13.frag
+@@ -17,1 +17,1 @@
+-        depth += float(depth == 1.0) * (getLodDepthSolidDeferred(texcoord) - 1.0);
++        depth += float(depth == 0.0) * getLodDepthSolidDeferred(texcoord);
+@@ -21,1 +21,1 @@
+-    if (abs(depth) < 1.0 && originData.w > 0.0025) {
++    if (abs(depth - 1.0) < 1.0 && originData.w > 0.0025) {
+diff --git a/programs/deferred/Deferred14.frag b/programs/deferred/Deferred14.frag
+--- a/programs/deferred/Deferred14.frag
++++ b/programs/deferred/Deferred14.frag
+@@ -17,1 +17,1 @@
+-        depth += float(depth == 1.0) * (getLodDepthSolidDeferred(texcoord) - 1.0);
++        depth += float(depth == 0.0) * getLodDepthSolidDeferred(texcoord);
+@@ -21,1 +21,1 @@
+-    if (abs(depth) < 1.0 && originData.w > 0.0025) {
++    if (abs(depth - 1.0) < 1.0 && originData.w > 0.0025) {
+diff --git a/programs/deferred/Deferred15.frag b/programs/deferred/Deferred15.frag
+--- a/programs/deferred/Deferred15.frag
++++ b/programs/deferred/Deferred15.frag
+@@ -23,1 +23,1 @@
+-            depth += float(depth == 1.0) * (getLodDepthSolidDeferred(texcoord) - 1.0);
++            depth += float(depth == 0.0) * getLodDepthSolidDeferred(texcoord);
+@@ -25,1 +25,1 @@
+-        if (depth < 1.0) {
++        if (depth > 0.0) {
+diff --git a/programs/deferred/Deferred2.frag b/programs/deferred/Deferred2.frag
+--- a/programs/deferred/Deferred2.frag
++++ b/programs/deferred/Deferred2.frag
+@@ -18,1 +18,1 @@
+-        originDepth += float(originDepth == 1.0) * getLodDepthSolidDeferred(gl_FragCoord.st * texelSize);
++        originDepth += float(originDepth == 0.0) * (getLodDepthSolidDeferred(gl_FragCoord.st * texelSize) - 1.0);
+@@ -21,1 +21,1 @@
+-    if (originDepth - float(originDepth > 1.0) < 0.999999) {
++    if (originDepth + float(originDepth < 0.0) > 1e-6) {
+@@ -38,1 +38,1 @@
+-                    sampleDepth += float(sampleDepth == 1.0) * getLodDepthSolidDeferred((sampleTexel + 0.5) * texelSize);
++                    sampleDepth += float(sampleDepth == 0.0) * (getLodDepthSolidDeferred((sampleTexel + 0.5) * texelSize) - 1.0);
+diff --git a/programs/deferred/Deferred99.frag b/programs/deferred/Deferred99.frag
+--- a/programs/deferred/Deferred99.frag
++++ b/programs/deferred/Deferred99.frag
+@@ -14,1 +14,1 @@
+-    float overlay = clamp(trasnparent.w * 1e+3, 0.0, 1.0) * float(texelFetch(depthtex1, texel, 0).r == 1.0);
++    float overlay = clamp(trasnparent.w * 1e+3, 0.0, 1.0) * float(texelFetch(depthtex1, texel, 0).r == 0.0);
+diff --git a/programs/gbuffers/ColorwheelCull.comp b/programs/gbuffers/ColorwheelCull.comp
+--- a/programs/gbuffers/ColorwheelCull.comp
++++ b/programs/gbuffers/ColorwheelCull.comp
+@@ -14,1 +14,1 @@
+-    return vertexClipZ * 0.2;
++    return vertexClipZ * 0.2 + 0.4;
+diff --git a/programs/gbuffers/Shadow.frag b/programs/gbuffers/Shadow.frag
+--- a/programs/gbuffers/Shadow.frag
++++ b/programs/gbuffers/Shadow.frag
+@@ -76,1 +76,1 @@
+-                vec3 shadowProjPos = vec3(centerTexelOffset / 1024.0, gl_FragCoord.z * 10.0 - 5.0);
++                vec3 shadowProjPos = vec3(centerTexelOffset / 1024.0, gl_FragCoord.z * 5.0 - 2.0);
+@@ -82,1 +82,1 @@
+-                gl_FragDepth = gl_FragCoord.z + offsetLength * shadowProjection[2].z * 0.1;
++                gl_FragDepth = gl_FragCoord.z + offsetLength * shadowProjection[2].z * 0.2;
+diff --git a/programs/gbuffers/Shadow.geom b/programs/gbuffers/Shadow.geom
+--- a/programs/gbuffers/Shadow.geom
++++ b/programs/gbuffers/Shadow.geom
+@@ -158,1 +158,1 @@
+-                gl_Position = vec4(voxelCoord + voxelCoordOffset[i], depth, 1.0);
++                gl_Position = vec4(voxelCoord + voxelCoordOffset[i], 0.5 - 0.5 * depth, 1.0);
+diff --git a/programs/gbuffers/Shadow.vert b/programs/gbuffers/Shadow.vert
+--- a/programs/gbuffers/Shadow.vert
++++ b/programs/gbuffers/Shadow.vert
+@@ -143,1 +143,1 @@
+-        gl_Position.z *= 0.2;
++        gl_Position.z = gl_Position.z * 0.2 + 0.4 * gl_Position.w;
+diff --git a/programs/gbuffers/ShadowColorwheel.frag b/programs/gbuffers/ShadowColorwheel.frag
+--- a/programs/gbuffers/ShadowColorwheel.frag
++++ b/programs/gbuffers/ShadowColorwheel.frag
+@@ -74,1 +74,1 @@
+-            vec3 shadowProjPos = vec3(centerTexelOffset / 1024.0, gl_FragCoord.z * 10.0 - 5.0);
++            vec3 shadowProjPos = vec3(centerTexelOffset / 1024.0, gl_FragCoord.z * 5.0 - 2.0);
+@@ -80,1 +80,1 @@
+-            gl_FragDepth = gl_FragCoord.z + offsetLength * shadowProjection[2].z * 0.1;
++            gl_FragDepth = gl_FragCoord.z + offsetLength * shadowProjection[2].z * 0.2;
+diff --git a/programs/gbuffers/ShadowColorwheel.vert b/programs/gbuffers/ShadowColorwheel.vert
+--- a/programs/gbuffers/ShadowColorwheel.vert
++++ b/programs/gbuffers/ShadowColorwheel.vert
+@@ -37,2 +37,2 @@
+-        gl_Position.z *= 0.2;
+-        gl_Position.z += 1e+6 * clamp(abs(texcoord.y - 0.5) - 2.0, 0.0, 1.0);
++        gl_Position.z = gl_Position.z * 0.2 + 0.4 * gl_Position.w;
++        gl_Position.z -= 5e+5 * clamp(abs(texcoord.y - 0.5) - 2.0, 0.0, 1.0);
+diff --git a/programs/gbuffers/Textured.vert b/programs/gbuffers/Textured.vert
+--- a/programs/gbuffers/Textured.vert
++++ b/programs/gbuffers/Textured.vert
+@@ -76,1 +76,1 @@
+-            gl_Position.z = (gl_Position.z * 0.5 + 0.5) * 0.02 - 0.01;
++            gl_Position.z = gl_Position.z * 0.01 + 0.495 * gl_Position.w;
+@@ -81,1 +81,1 @@
+-        gl_Position.z -= 1e-5;
++        gl_Position.z += 5e-6;
+diff --git a/programs/gbuffers/WaterDH.frag b/programs/gbuffers/WaterDH.frag
+--- a/programs/gbuffers/WaterDH.frag
++++ b/programs/gbuffers/WaterDH.frag
+@@ -24,1 +24,1 @@
+-    if (max(dot(worldPos.xz, worldPos.xz), worldPos.y * worldPos.y) < (far - 16.0) * (far - 16.0) || texture2D(depthtex0, gl_FragCoord.st * texelSize).r < 1.0) {
++    if (max(dot(worldPos.xz, worldPos.xz), worldPos.y * worldPos.y) < (far - 16.0) * (far - 16.0) || texture2D(depthtex0, gl_FragCoord.st * texelSize).r > 0.0) {

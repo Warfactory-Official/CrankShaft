@@ -28,12 +28,15 @@ import java.util.Map;
 public final class RenderPassUniforms {
     // The uniform storage rounds the block to the device's min uniform-offset alignment,
     // so the small declared sizes are just the written-byte counts.
-    private final UniformStorage<MaterialUniform> material = UniformStorageOps.create("flywheel:material", 48, 64);
+    private final UniformStorage<MaterialUniform> material = UniformStorageOps.create("flywheel:material", 64, 64);
     private final UniformStorage<RenderOriginUniform> renderOrigin = UniformStorageOps.create(
             "flywheel:render_origin", DynamicLights.UNIFORM_SIZE, 2);
     // Embedded-environment per-draw UBOs: instancing carries the composed pose/normal directly (mat4 + mat4 =
-    // 128 B); indirect carries only the MultiDraw's draw-command start offset (the matrix rides the SSBO).
+    // 128 B; + the previous pose for shaderpack motion vectors); indirect carries only the MultiDraw's draw-command
+    // start offset (the matrix rides the SSBO).
     private final UniformStorage<EmbedUniform> embed = UniformStorageOps.create("flywheel:embed", 128, 16);
+    private final UniformStorage<EmbedUniform> embedHistory = UniformStorageOps.create("flywheel:embed_history",
+            192, 16);
     private final UniformStorage<EmbedDrawUniform> embedDraw = UniformStorageOps.create("flywheel:embed_draw", 4, 16);
     private final UniformStorage<LineFrameUniform> lineFrame = UniformStorageOps.create(
             "flywheel:line_frame", FrameUniforms.size(), 2);
@@ -41,18 +44,17 @@ public final class RenderPassUniforms {
     // Per-frame reuse: each write flushes its mapped range (NV GPU copy). gl_instancing 150-mob lineup: 1420 -> 24
     // writes, 111 -> 138 fps.
     private final Int2ObjectOpenHashMap<GpuBufferSlice> materialSlices = new Int2ObjectOpenHashMap<>();
+    private final Int2ObjectOpenHashMap<GpuBufferSlice> embedDrawSlices = new Int2ObjectOpenHashMap<>();
     // Inner maps outlive the frame: few distinct guest tags.
     private final Map<DrawTags, Int2ObjectOpenHashMap<GpuBufferSlice>> taggedMaterialSlices = new HashMap<>();
     private GpuBufferSlice renderOriginSlice;
     private GpuBufferSlice lineFrameSlice;
     // Frame-constant glint/time inputs the material and instance vertex shaders read; written into every
     // _FlwInstanceDraw slice (the RenderPass port has no flywheel frame/options UBO -- see header.vsh).
-    private float frameSystemSeconds;
     private float frameGlintSpeedOption;
     private float frameGlintStrengthOption;
-    private float framePartialTick;
-    private float frameRenderTicks;
-    private float frameRenderSeconds;
+    private FrameTime frameTime;
+    private FrameTime previousFrameTime;
 
     /**
      * Rotate the rings for a new frame and write this frame's render origin and dynamic lights (constant across
@@ -63,10 +65,12 @@ public final class RenderPassUniforms {
         material.endFrame();
         renderOrigin.endFrame();
         embed.endFrame();
+        embedHistory.endFrame();
         embedDraw.endFrame();
         lineFrame.endFrame();
         lineFrameSlice = null;
         materialSlices.clear();
+        embedDrawSlices.clear();
         taggedMaterialSlices.values()
                             .forEach(Int2ObjectOpenHashMap::clear);
         DynamicLights.collect(Minecraft.getInstance().gameRenderer.mainCamera().position());
@@ -75,12 +79,12 @@ public final class RenderPassUniforms {
                         constantAmbientLight ? 1 : 0));
         // Glint animation inputs, constant across the frame (upstream FrameUniforms.writeTime +
         // OptionsUniforms parity: Util.getMillis()/1000 + the glintSpeed accessibility option).
-        frameSystemSeconds = Util.getMillis() / 1000.0f;
         frameGlintSpeedOption = Minecraft.getInstance().options.glintSpeed().get().floatValue();
         frameGlintStrengthOption = Minecraft.getInstance().options.glintStrength().get().floatValue();
-        framePartialTick = FrameUniforms.partialTick();
-        frameRenderTicks = FrameUniforms.renderTicks();
-        frameRenderSeconds = FrameUniforms.renderSeconds();
+        FrameTime time = new FrameTime(Util.getMillis() / 1000.0f, FrameUniforms.partialTick(),
+                FrameUniforms.renderTicks(), FrameUniforms.renderSeconds(), FrameUniforms.gameMillis());
+        previousFrameTime = frameTime == null ? time : frameTime;
+        frameTime = time;
     }
 
     public GpuBufferSlice renderOriginSlice() {
@@ -105,12 +109,12 @@ public final class RenderPassUniforms {
      */
     public GpuBufferSlice material(int packedProperties, @Nullable DrawTags tags) {
         Int2ObjectOpenHashMap<GpuBufferSlice> slices = tags == null ? materialSlices
-                : taggedMaterialSlices.computeIfAbsent(tags, $ -> new Int2ObjectOpenHashMap<>());
+                : taggedMaterialSlices.computeIfAbsent(tags, _ -> new Int2ObjectOpenHashMap<>());
         GpuBufferSlice slice = slices.get(packedProperties);
         if (slice == null) {
             slice = material.writeUniform(new MaterialUniform(tags == null ? 0 : tags.drawTag(), packedProperties,
-                    frameSystemSeconds, frameGlintSpeedOption, frameGlintStrengthOption,
-                    tags == null ? 0 : tags.itemTag(), framePartialTick, frameRenderTicks, frameRenderSeconds));
+                    frameGlintSpeedOption, frameGlintStrengthOption, tags == null ? 0 : tags.itemTag(), frameTime,
+                    previousFrameTime));
             slices.put(packedProperties, slice);
         }
         return slice;
@@ -120,39 +124,65 @@ public final class RenderPassUniforms {
      * Instancing embed: the composed pose/normal for one embedded draw ({@code _FlwEmbed}).
      */
     public GpuBufferSlice embed(Matrix4fc pose, Matrix3fc normal) {
-        return embed.writeUniform(new EmbedUniform(new Matrix4f(pose), new Matrix4f(normal)));
+        return embed.writeUniform(new EmbedUniform(new Matrix4f(pose), new Matrix4f(normal), null));
+    }
+
+    /**
+     * {@link #embed} followed by {@code previousPose} ({@code _flw_embedPosePrev}, shaderpack motion vectors).
+     */
+    public GpuBufferSlice embed(Matrix4fc pose, Matrix3fc normal, Matrix4fc previousPose) {
+        return embedHistory.writeUniform(new EmbedUniform(new Matrix4f(pose), new Matrix4f(normal),
+                new Matrix4f(previousPose)));
     }
 
     /**
      * Indirect embed: the MultiDraw's start offset into the draw-command buffer ({@code _FlwEmbedDraw}).
      */
     public GpuBufferSlice embedDraw(int baseDraw) {
-        return embedDraw.writeUniform(new EmbedDrawUniform(baseDraw));
+        return embedDrawSlices.computeIfAbsent(baseDraw,
+                value -> embedDraw.writeUniform(new EmbedDrawUniform(value)));
     }
 
     public void delete() {
         material.close();
         renderOrigin.close();
         embed.close();
+        embedHistory.close();
         embedDraw.close();
         lineFrame.close();
     }
 
-    private record MaterialUniform(int drawTag, int packedProperties, float systemSeconds, float glintSpeedOption,
-                                   float glintStrengthOption, int itemTag,
-                                   float partialTick, float renderTicks, float renderSeconds) implements UniformData {
+    /**
+     * One frame's time inputs; shaderpack guests evaluate time-animated instances again at the previous frame's.
+     */
+    private record FrameTime(float systemSeconds, float partialTick, float renderTicks, float renderSeconds,
+                             int gameMillis) {
+        void write(ByteBuffer buf) {
+            buf.putFloat(systemSeconds);
+            buf.putFloat(partialTick);
+            buf.putFloat(renderTicks);
+            buf.putFloat(renderSeconds);
+            buf.putInt(gameMillis);
+        }
+    }
+
+    private record MaterialUniform(int drawTag, int packedProperties, float glintSpeedOption,
+                                   float glintStrengthOption, int itemTag, FrameTime time,
+                                   FrameTime previous) implements UniformData {
         @Override
         public void write(ByteBuffer buf) {
-            buf.putInt(drawTag);               // _flw_drawPackedMaterial.x
-            buf.putInt(packedProperties);      // _flw_drawPackedMaterial.y
-            buf.putFloat(systemSeconds);       // flw_systemSeconds
-            buf.putFloat(glintSpeedOption);    // flw_glintSpeedOption
-            buf.putFloat(glintStrengthOption); // flw_glintStrengthOption
-            buf.putInt(itemTag);               // _flw_drawItemTag (shaderpack guests)
-            buf.putFloat(partialTick);          // flw_partialTick
-            buf.putFloat(renderTicks);          // flw_renderTicks
-            buf.putFloat(renderSeconds);        // flw_renderSeconds
-            buf.putInt(0).putLong(0L);          // std140 block padding
+            buf.putInt(drawTag);                    // _flw_drawPackedMaterial.x
+            buf.putInt(packedProperties);           // _flw_drawPackedMaterial.y
+            buf.putFloat(time.systemSeconds());     // flw_systemSeconds
+            buf.putFloat(glintSpeedOption);         // flw_glintSpeedOption
+            buf.putFloat(glintStrengthOption);      // flw_glintStrengthOption
+            buf.putInt(itemTag);                    // _flw_drawItemTag (shaderpack guests)
+            buf.putFloat(time.partialTick());       // flw_partialTick
+            buf.putFloat(time.renderTicks());       // flw_renderTicks
+            buf.putFloat(time.renderSeconds());     // flw_renderSeconds
+            buf.putInt(time.gameMillis());          // flw_gameMillis
+            previous.write(buf);                    // guest_header.vert *Prev
+            buf.putInt(0);                          // std140 block padding
         }
     }
 
@@ -172,11 +202,15 @@ public final class RenderPassUniforms {
 
     // The normal mat3 rides the upper-left of a mat4 (std140 simplicity); the shader's mat3(_flw_embedNormal)
     // extracts the 3x3. Copies guard against the environment mutating its composed matrices next frame.
-    private record EmbedUniform(Matrix4f pose, Matrix4f normal) implements UniformData {
+    private record EmbedUniform(Matrix4f pose, Matrix4f normal, @Nullable Matrix4f previousPose)
+            implements UniformData {
         @Override
         public void write(ByteBuffer buf) {
             pose.get(0, buf);    // mat4 _flw_embedPose (column-major)
             normal.get(64, buf); // mat4 _flw_embedNormal
+            if (previousPose != null) {
+                previousPose.get(128, buf); // mat4 _flw_embedPosePrev
+            }
         }
     }
 

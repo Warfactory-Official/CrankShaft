@@ -3,9 +3,13 @@ package dev.engine_room.flywheel.backend.engine.instancing;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
+import com.mojang.renderpearl.backend.opengl.GlBuffer;
 import dev.engine_room.flywheel.backend.engine.LightStorage;
+import dev.engine_room.flywheel.backend.engine.indirect.BufferBindings;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import org.jspecify.annotations.Nullable;
+import org.lwjgl.opengl.GL30;
+import org.lwjgl.opengl.GL43;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
@@ -55,6 +59,16 @@ public class InstancedLight {
 
     public GpuBuffer sectionsBuffer() {
         return sections;
+    }
+
+    /**
+     * Binds both buffers at the indirect light storage bindings, for the insert OIT producers.
+     */
+    public void bindStorage() {
+        GL30.glBindBufferRange(GL43.GL_SHADER_STORAGE_BUFFER, BufferBindings.LIGHT_LUT, ((GlBuffer) lut).handle(), 0L,
+                lut.size());
+        GL30.glBindBufferRange(GL43.GL_SHADER_STORAGE_BUFFER, BufferBindings.LIGHT_SECTION,
+                ((GlBuffer) sections).handle(), 0L, sections.size());
     }
 
     public void flush(LightStorage light) {

@@ -87,6 +87,7 @@ final class GuestDrawTags {
                         case "spidereyes" -> TaggedEnvironment.KIND_ENTITY_EYES;
                         case "entities_translucent" -> TaggedEnvironment.KIND_ENTITY_TRANSLUCENT;
                         case "entities" -> TaggedEnvironment.KIND_ENTITY_BLENDED;
+                        case "particles_translucent" -> TaggedEnvironment.KIND_ENTITY_PARTICLES_TRANSLUCENT;
                         default -> throw new IllegalArgumentException("No guest route to Iris program " + irisProgram);
                     };
                     if (irisEntity != null) {

@@ -11,6 +11,9 @@ struct _FlwGuestVertex { uint words[_FLW_VERTEX_WORDS]; };
 #endif
 struct _FlwGuestArena { restrict _FlwGuestVertex * geometry; restrict _FLW_HISTORY_TYPE * visibility; };
 struct _FlwGuestRun { uvec4 draw; uvec4 dispatch; };
+#ifdef _FLW_TERRAIN_OVERLAYS
+struct _FlwGuestReceivers { restrict uint * ids; };
+#endif
 
 layout(std140, binding = 7) uniform _FlwGuestMeshScene {
     restrict readonly uvec4 * _flw_regionInput;
@@ -22,7 +25,17 @@ layout(std140, binding = 7) uniform _FlwGuestMeshScene {
     uint _flw_taskPhase;
     ivec2 _flw_viewSize;
     restrict uint * _flw_compactedCommands;
+#ifdef _FLW_TERRAIN_OVERLAYS
+    restrict readonly _FlwGuestReceivers * _flw_receiverPointers;
+#endif
 };
+
+#ifdef _FLW_TERRAIN_OVERLAYS
+uint _flw_terrainReceiverAt(uint slot, uint vertex) {
+    restrict uint * ids = _flw_receiverPointers[slot].ids;
+    return uint64_t(ids) != uint64_t(0) && vertex < ids[0] ? ids[vertex + 1u] : 0u;
+}
+#endif
 
 uniform int _flw_commandBase;
 

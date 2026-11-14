@@ -20,7 +20,7 @@ in float flw_oitViewZ; // eye-space Z (negative looking down -Z); eye-linear dep
 flat in uvec2 _flw_ids;
 #endif
 
-#ifndef _FLW_DEPTH_RANGE
+#if !defined(_FLW_DEPTH_RANGE) || defined(_FLW_DEPTH_RANGE_DISCARD)
 
 #ifdef _FLW_BINDLESS
 flat in uint _flw_texIndex;
@@ -46,7 +46,7 @@ uniform sampler2D Sampler2; // lightmap
 void main() {
     float linearDepth = -flw_oitViewZ;
 
-    #ifdef _FLW_DEPTH_RANGE
+    #if defined(_FLW_DEPTH_RANGE) && !defined(_FLW_DEPTH_RANGE_DISCARD)
 
     _flw_writeDepthRange(linearDepth, gl_FragCoord.z);
 
@@ -58,13 +58,13 @@ void main() {
     flw_fragLight = lightCoord;
     _flw_unpackMaterialProperties(_flw_packedMaterial.y, flw_material);
     flw_materialFragment();
-    // Perf: COLLECT_COEFFS reads alpha only and NV does not dead-code the light chain => skip it explicitly.
+    // Perf: COLLECT_COEFFS/DEPTH_RANGE read alpha only and NV does not dead-code the light chain => skip it explicitly.
     // Invariant: light shaders never write alpha.
-    #ifndef _FLW_COLLECT_COEFFS
+    #if !defined(_FLW_COLLECT_COEFFS) && !defined(_FLW_DEPTH_RANGE)
     flw_shaderLight();
     #endif
 
-    // Per-material cutout (COEFFS/EVALUATE only); uber dispatches on the draw command's cutout index.
+    // Per-material cutout; uber dispatches on the draw command's cutout index.
     #ifdef _FLW_UBER_FRAGMENT
     if (flw_discardPredicateUber(_flw_packedMaterial.x & 0xFFFFu, flw_fragColor)) {
         discard;
@@ -75,7 +75,7 @@ void main() {
     }
     #endif
 
-    #ifndef _FLW_COLLECT_COEFFS
+    #if !defined(_FLW_COLLECT_COEFFS) && !defined(_FLW_DEPTH_RANGE)
     float diffuseFactor = _flw_diffuseFactor();
     flw_fragColor.rgb *= diffuseFactor;
     if (flw_material.useOverlay) {
@@ -91,7 +91,7 @@ void main() {
     #endif
 
     #ifdef _FLW_DEBUG
-    #ifdef _FLW_COLLECT_COEFFS
+    #if defined(_FLW_COLLECT_COEFFS) || defined(_FLW_DEPTH_RANGE)
     flw_fragColor.a = 1.; // every debug mode below writes alpha 1
     #elif _FLW_DEBUG == 1
     flw_fragColor = vec4(flw_vertexNormal * .5 + .5, 1.);
@@ -115,7 +115,18 @@ void main() {
     vec4 color = flw_fogFilter(flw_fragColor, sphericalVertexDistance, cylindricalVertexDistance);
     #endif
 
-    #if defined(_FLW_OIT_EMISSION) && defined(_FLW_OIT_INSERT)
+    #ifndef _FLW_OIT_INSERT
+    // Exact: alpha 0 adds no absorbance or premultiplied color => keep it out of every pass, depth range included.
+    if (color.a <= 0.) {
+        discard;
+    }
+    #endif
+
+    #ifdef _FLW_DEPTH_RANGE
+    _flw_writeDepthRange(linearDepth, gl_FragCoord.z);
+    #elif defined(_FLW_MLAB_EMISSION)
+    _flw_mlabEmit(color.rgb * color.a, gl_FragCoord.z);
+    #elif defined(_FLW_OIT_EMISSION) && defined(_FLW_OIT_INSERT)
     _flw_mlabInsertPremul(color.rgb * color.a, 0., gl_FragCoord.z);
     #elif defined(_FLW_OIT_EMISSION)
     _flw_oitEmitAdditive(color.rgb * color.a, linearDepth);

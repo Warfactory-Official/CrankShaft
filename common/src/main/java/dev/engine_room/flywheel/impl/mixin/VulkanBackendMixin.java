@@ -46,7 +46,7 @@ abstract class VulkanBackendMixin {
     private static void flywheel$appendDeviceRequests(Collection<String> deviceExtensions,
                                                       VulkanPhysicalDevice physicalDevice,
                                                       Set<VulkanFeature> vulkanFeatures,
-                                                      CallbackInfoReturnable<VkDevice> cir) {
+                                                      CallbackInfoReturnable<VkDevice> _) {
         VkDeviceNegotiation.appendDeviceRequests(deviceExtensions, physicalDevice, vulkanFeatures);
     }
     #endif

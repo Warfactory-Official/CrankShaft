@@ -25,7 +25,12 @@ public enum PackRole {
     EYES(ProgramId.SpiderEyes, false),
     GLINT(ProgramId.ArmorGlint, false),
     ENTITIES_TRANSLUCENT(ProgramId.EntitiesTrans, false),
-    ENTITIES(ProgramId.Entities, false);
+    ENTITIES(ProgramId.Entities, false),
+    PARTICLES_TRANSLUCENT(ProgramId.ParticlesTrans, false),
+    // A single-record particle program's cloud: its layers composited by CrankShaft's own program, then handed to the
+    // pack's particle program as one record per pixel.
+    PARTICLES_FLATTEN(ProgramId.ParticlesTrans, false),
+    PARTICLES_HANDOFF(ProgramId.ParticlesTrans, false);
 
     final ProgramId programId;
     final boolean shadow;
@@ -52,6 +57,10 @@ public enum PackRole {
             case TaggedEnvironment.KIND_ENTITY_EYES -> shadow ? ENTITY_SHADOW : EYES;
             case TaggedEnvironment.KIND_ENTITY_TRANSLUCENT -> shadow ? ENTITY_SHADOW : ENTITIES_TRANSLUCENT;
             case TaggedEnvironment.KIND_ENTITY_BLENDED -> shadow ? ENTITY_SHADOW : ENTITIES;
+            case TaggedEnvironment.KIND_ENTITY_PARTICLES_TRANSLUCENT -> {
+                if (shadow) throw new IllegalStateException("Translucent particles cast no shadow");
+                yield PARTICLES_TRANSLUCENT;
+            }
             default -> this;
         };
     }

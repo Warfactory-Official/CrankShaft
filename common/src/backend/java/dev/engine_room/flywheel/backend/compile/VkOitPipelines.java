@@ -1,7 +1,9 @@
 package dev.engine_room.flywheel.backend.compile;
 
+import com.mojang.renderpearl.backend.vulkan.VulkanConst;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.engine.BerFamily;
+import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout;
@@ -9,6 +11,7 @@ import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline;
 import dev.engine_room.flywheel.backend.vk.shader.VkShaderCompiler;
 import dev.engine_room.flywheel.backend.vk.shader.VkShaderTransform;
 import org.jspecify.annotations.Nullable;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkDevice;
 
@@ -22,12 +25,13 @@ import static dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout.
  * and the shared OIT pipeline-config vocabulary.
  */
 public final class VkOitPipelines {
-    public static final int[] FOLDED_INPUT_INDICES = {0, 1, 2, 3, 4, VK12.VK_ATTACHMENT_UNUSED};
-    static final int FMT_RGBA32F = VK12.VK_FORMAT_R32G32B32A32_SFLOAT;
-    static final int FMT_RGBA16F = VK12.VK_FORMAT_R16G16B16A16_SFLOAT;
-    public static final int[] FOLDED_FORMATS = {FMT_RGBA32F, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F};
-    static final int FMT_R32F = VK12.VK_FORMAT_R32_SFLOAT;
-    static final int FMT_RGBA8 = VK12.VK_FORMAT_R8G8B8A8_UNORM;
+    public static final int[] FOLDED_INPUT_INDICES = {0, 1, 2, 3, 4, VK10.VK_ATTACHMENT_UNUSED};
+    static final int FMT_RGBA16F = VK10.VK_FORMAT_R16G16B16A16_SFLOAT;
+    public static final int FMT_BOUNDS = VulkanConst.toVk(OitFramebuffer.depthBoundsFormat());
+    public static final int FMT_INSTANCE_BOUNDS = VulkanConst.toVk(OitFramebuffer.INSTANCE_BOUNDS_FORMAT);
+    public static final int[] FOLDED_FORMATS = {FMT_BOUNDS, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F};
+    static final int FMT_R32F = VK10.VK_FORMAT_R32_SFLOAT;
+    static final int FMT_RGBA8 = VK10.VK_FORMAT_R8G8B8A8_UNORM;
     static final int[] MLAB_NO_COLOR = new int[0];
     private static final VkGraphicsPipeline.Blend REPLACE = new VkGraphicsPipeline.Blend(false, 0, 0, 0, 0, 0, 0,
             VkGraphicsPipeline.COLOR_WRITE_RGBA);
@@ -39,6 +43,8 @@ public final class VkOitPipelines {
     private final VkGraphicsPipeline[][] chunkMlab = new VkGraphicsPipeline[2][OitInsertMode.values().length];
     private final VkGraphicsPipeline[][] chunkMlabMultidraw = new VkGraphicsPipeline[2][OitInsertMode.values().length];
     private final VkGraphicsPipeline[] mlabResolve = new VkGraphicsPipeline[OitInsertMode.values().length];
+    private final VkGraphicsPipeline[] boundsMerge = new VkGraphicsPipeline[2];
+    private final int depthFormat;
     @Nullable
     private VkGraphicsPipeline composite;
     @Nullable
@@ -49,7 +55,6 @@ public final class VkOitPipelines {
     private VkGraphicsPipeline mlabNearestDepth;
     @Nullable
     private VkGraphicsPipeline depth;
-    private final int depthFormat;
     #if MC < 26.3
     @Nullable
     private VkFabulousOitPipelines fabulous;
@@ -69,10 +74,18 @@ public final class VkOitPipelines {
     #endif
 
     static VkGraphicsPipeline.Config oitProducerConfig(OitMode mode, int depthFormat) {
-        int ge = VK12.VK_COMPARE_OP_GREATER_OR_EQUAL;
-        int cull = VK12.VK_CULL_MODE_BACK_BIT;
+        return oitProducerConfig(mode, depthFormat, FMT_BOUNDS);
+    }
+
+    static VkGraphicsPipeline.Config instanceProducerConfig(OitMode mode, int depthFormat) {
+        return oitProducerConfig(mode, depthFormat, FMT_INSTANCE_BOUNDS);
+    }
+
+    private static VkGraphicsPipeline.Config oitProducerConfig(OitMode mode, int depthFormat, int boundsFormat) {
+        int ge = VK10.VK_COMPARE_OP_GREATER_OR_EQUAL;
+        int cull = VK10.VK_CULL_MODE_BACK_BIT;
         return switch (mode) {
-            case DEPTH_RANGE -> new VkGraphicsPipeline.Config(new int[]{FMT_RGBA32F},
+            case DEPTH_RANGE -> new VkGraphicsPipeline.Config(new int[]{boundsFormat},
                     new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.max()}, true, false, ge,
                     VkGraphicsPipeline.Vertex.INTERNAL, cull, depthFormat);
             case GENERATE_COEFFICIENTS -> new VkGraphicsPipeline.Config(
@@ -87,7 +100,7 @@ public final class VkOitPipelines {
     }
 
     public static int[] foldedLocations(OitMode mode) {
-        int u = VK12.VK_ATTACHMENT_UNUSED;
+        int u = VK10.VK_ATTACHMENT_UNUSED;
         return switch (mode) {
             case DEPTH_RANGE -> new int[]{0, u, u, u, u, u};
             case GENERATE_COEFFICIENTS -> new int[]{u, 0, 1, 2, 3, u};
@@ -114,7 +127,7 @@ public final class VkOitPipelines {
 
     static VkGraphicsPipeline.Config foldedProducerConfig(OitMode mode, int depthFormat) {
         return new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(mode), true, false,
-                VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.INTERNAL, VK12.VK_CULL_MODE_BACK_BIT,
+                VK10.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.INTERNAL, VK10.VK_CULL_MODE_BACK_BIT,
                 depthFormat)
                 .withLocalRead(foldedLocations(mode), FOLDED_INPUT_INDICES);
     }
@@ -167,7 +180,7 @@ public final class VkOitPipelines {
     }
 
     private static int berCullMode(BerFamily family) {
-        return family.cull ? VK12.VK_CULL_MODE_BACK_BIT : VK12.VK_CULL_MODE_NONE;
+        return family.cull ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE;
     }
 
     private static List<Binding> berBindings(BerFamily family) {
@@ -214,7 +227,18 @@ public final class VkOitPipelines {
         VkDevice device = VkContext.vkDevice();
         for (long module : modules) {
             if (module != 0L) {
-                VK12.vkDestroyShaderModule(device, module, null);
+                VK10.vkDestroyShaderModule(device, module, null);
+            }
+        }
+    }
+
+    private static void deleteChunkPipelines(VkGraphicsPipeline[][] pipelines) {
+        for (VkGraphicsPipeline[] variants : pipelines) {
+            for (int i = 0; i < variants.length; i++) {
+                if (variants[i] != null) {
+                    variants[i].delete();
+                    variants[i] = null;
+                }
             }
         }
     }
@@ -222,7 +246,8 @@ public final class VkOitPipelines {
     private VkGraphicsPipeline.Config writebackConfig() {
         return new VkGraphicsPipeline.Config(new int[]{FMT_RGBA8},
                 new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.noColorWrite()}, true, true,
-                VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_NONE, depthFormat);
+                VK10.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.NONE, VK10.VK_CULL_MODE_NONE,
+                depthFormat);
     }
 
     /**
@@ -256,7 +281,7 @@ public final class VkOitPipelines {
             VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(new int[]{FMT_RGBA8},
                     new VkGraphicsPipeline.Blend[]{emission ? VkGraphicsPipeline.premultiplied()
                             : VkGraphicsPipeline.composite()},
-                    true, false, VK12.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_NONE,
+                    true, false, VK10.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.NONE, VK10.VK_CULL_MODE_NONE,
                     depthFormat);
             List<Binding> bindings = compositeBindings();
             if (emission) {
@@ -287,7 +312,7 @@ public final class VkOitPipelines {
                                 VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(new int[]{FMT_RGBA8},
                         new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.additive()},
-                        true, false, VK12.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.NONE, VK12.VK_CULL_MODE_NONE,
+                        true, false, VK10.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.NONE, VK10.VK_CULL_MODE_NONE,
                         depthFormat);
                 layout = new VkDescriptorLayout(List.of(new Binding(28, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT),
                         new Binding(38, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT)), 0, 0);
@@ -315,8 +340,13 @@ public final class VkOitPipelines {
                 fs = VkShaderCompiler.compileModule("oit_depth",
                         VkShaderTransform.toVulkan(RenderPassShaders.assembleOitDepth(),
                                 VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
-                layout = new VkDescriptorLayout(List.of(new Binding(28, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT),
-                        new Binding(14, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT)), 0, 0);
+                List<Binding> bindings = new ArrayList<>(
+                        List.of(new Binding(28, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT),
+                                new Binding(14, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT)));
+                if (OitFramebuffer.depthBoundsFormat().componentCount() == 2) {
+                    bindings.add(new Binding(16, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT));
+                }
+                layout = new VkDescriptorLayout(bindings, 0, 0);
                 depth = new VkGraphicsPipeline(layout, vs, fs, writebackConfig());
             } catch (Throwable t) {
                 if (layout != null) {
@@ -327,6 +357,46 @@ public final class VkOitPipelines {
             }
         }
         return depth;
+    }
+
+    /**
+     * {@code folded}: local-read rendering or native subpass; else a single bounds attachment.
+     */
+    public VkGraphicsPipeline boundsMergePipeline(boolean folded) {
+        int i = folded ? 1 : 0;
+        if (boundsMerge[i] == null) {
+            long vs = 0;
+            long fs = 0;
+            VkDescriptorLayout layout = null;
+            try {
+                vs = VkShaderCompiler.compileModule("oit_fullscreen",
+                        VkShaderTransform.toVulkan(RenderPassShaders.fullscreenVertex(),
+                                VkShaderTransform.Stage.VERTEX), VkShaderCompiler.KIND_VERTEX);
+                fs = VkShaderCompiler.compileModule("oit_bounds_merge",
+                        VkShaderTransform.toVulkan(RenderPassShaders.assembleOitBoundsMerge(),
+                                VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
+                VkGraphicsPipeline.Config config = folded
+                        ? new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(OitMode.DEPTH_RANGE), false, false,
+                        VK10.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.NONE, VK10.VK_CULL_MODE_NONE, depthFormat)
+                          .withLocalRead(foldedLocations(OitMode.DEPTH_RANGE), FOLDED_INPUT_INDICES)
+                        : new VkGraphicsPipeline.Config(new int[]{FMT_BOUNDS},
+                        new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.max()}, false, false,
+                        VK10.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.NONE, VK10.VK_CULL_MODE_NONE, depthFormat);
+                layout = new VkDescriptorLayout(List.of(new Binding(43, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT),
+                        new Binding(16, TYPE_UNIFORM_BUFFER, STAGE_FRAGMENT)), 0, 0);
+                boundsMerge[i] = new VkGraphicsPipeline(layout, vs, fs, config);
+            } catch (Throwable t) {
+                if (layout != null) {
+                    layout.delete();
+                }
+                destroyModules(vs, fs);
+                if (folded && t instanceof BackendUnavailableException failure) {
+                    throw VkPrograms.tagged(ProgramAvailability.Feature.LOCAL_READ, failure);
+                }
+                throw t;
+            }
+        }
+        return boundsMerge[i];
     }
 
     public VkGraphicsPipeline mlabNearestDepthPipeline(OitInsertMode mode) {
@@ -379,7 +449,7 @@ public final class VkOitPipelines {
                         VkShaderCompiler.KIND_FRAGMENT);
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(mode),
                         true, false,
-                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, berVertex(family), berCullMode(family), depthFormat)
+                        VK10.VK_COMPARE_OP_GREATER_OR_EQUAL, berVertex(family), berCullMode(family), depthFormat)
                         .withLocalRead(foldedLocations(mode), FOLDED_INPUT_INDICES);
                 layout = new VkDescriptorLayout(berFoldedBindings(family, mode), 0, 0);
                 p = new VkGraphicsPipeline(layout, vs, fs, config);
@@ -420,9 +490,9 @@ public final class VkOitPipelines {
                         VkShaderCompiler.KIND_FRAGMENT);
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(FOLDED_FORMATS, foldedBlends(mode),
                         true, false,
-                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL,
+                        VK10.VK_COMPARE_OP_GREATER_OR_EQUAL,
                         multidraw ? VkGraphicsPipeline.Vertex.BLOCK_MULTIDRAW : VkGraphicsPipeline.Vertex.BLOCK,
-                        VK12.VK_CULL_MODE_BACK_BIT, depthFormat)
+                        VK10.VK_CULL_MODE_BACK_BIT, depthFormat)
                         .withLocalRead(foldedLocations(mode), FOLDED_INPUT_INDICES);
                 layout = new VkDescriptorLayout(chunkFoldedBindings(mode, multidraw), 0, 0);
                 p = new VkGraphicsPipeline(layout, vs, fs, config);
@@ -455,7 +525,7 @@ public final class VkOitPipelines {
                                 VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(MLAB_NO_COLOR, MLAB_NO_BLEND, true,
                         false,
-                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, berVertex(family), berCullMode(family), depthFormat);
+                        VK10.VK_COMPARE_OP_GREATER_OR_EQUAL, berVertex(family), berCullMode(family), depthFormat);
                 List<Binding> b = berBindings(family);
                 mlabBindings(b, oitMode);
                 layout = new VkDescriptorLayout(b, 0, 0);
@@ -495,9 +565,9 @@ public final class VkOitPipelines {
                                 VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
                 VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(MLAB_NO_COLOR, MLAB_NO_BLEND, true,
                         false,
-                        VK12.VK_COMPARE_OP_GREATER_OR_EQUAL,
+                        VK10.VK_COMPARE_OP_GREATER_OR_EQUAL,
                         multidraw ? VkGraphicsPipeline.Vertex.BLOCK_MULTIDRAW : VkGraphicsPipeline.Vertex.BLOCK,
-                        VK12.VK_CULL_MODE_BACK_BIT, depthFormat);
+                        VK10.VK_CULL_MODE_BACK_BIT, depthFormat);
                 List<Binding> b = chunkBindings(multidraw);
                 mlabBindings(b, oitMode);
                 layout = new VkDescriptorLayout(b, 0, 0);
@@ -534,12 +604,12 @@ public final class VkOitPipelines {
                     VkShaderTransform.toVulkan(RenderPassShaders.fullscreenVertex(),
                             VkShaderTransform.Stage.VERTEX), VkShaderCompiler.KIND_VERTEX);
             fs = VkShaderCompiler.compileModule("mlab_resolve_" + oitMode,
-                    VkShaderTransform.toVulkan(RenderPassShaders.assembleMlabResolve(oitMode),
+                    VkShaderTransform.toVulkan(RenderPassShaders.assembleMlabResolve(oitMode, false),
                             VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
             VkGraphicsPipeline.Config config = new VkGraphicsPipeline.Config(new int[]{FMT_RGBA8, FMT_R32F},
                     new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.premultiplied(), REPLACE},
-                    true, false, VK12.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.NONE,
-                    VK12.VK_CULL_MODE_NONE, depthFormat);
+                    true, false, VK10.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.NONE,
+                    VK10.VK_CULL_MODE_NONE, depthFormat);
             List<Binding> b = new ArrayList<>();
             mlabBindings(b, oitMode);
             b.add(new Binding(29, TYPE_COMBINED_IMAGE_SAMPLER, STAGE_FRAGMENT));
@@ -582,6 +652,12 @@ public final class VkOitPipelines {
             depth.delete();
             depth = null;
         }
+        for (int i = 0; i < boundsMerge.length; i++) {
+            if (boundsMerge[i] != null) {
+                boundsMerge[i].delete();
+                boundsMerge[i] = null;
+            }
+        }
         #if MC < 26.3
         if (fabulous != null) {
             fabulous.delete();
@@ -610,17 +686,6 @@ public final class VkOitPipelines {
                 if (perFamily[m] != null) {
                     perFamily[m].delete();
                     perFamily[m] = null;
-                }
-            }
-        }
-    }
-
-    private static void deleteChunkPipelines(VkGraphicsPipeline[][] pipelines) {
-        for (VkGraphicsPipeline[] variants : pipelines) {
-            for (int i = 0; i < variants.length; i++) {
-                if (variants[i] != null) {
-                    variants[i].delete();
-                    variants[i] = null;
                 }
             }
         }

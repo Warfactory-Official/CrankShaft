@@ -46,7 +46,7 @@ public record ForEachPlan<T, C>(SupplierWithContext<C, List<T>> listSupplier,
     }
 
     @Override
-    public void executeDirect(TaskExecutor executor, C context) {
+    public void executeDirect(TaskExecutor _, C context) {
         List<T> values = listSupplier.get(context);
         for (T value : values) {
             action.accept(value, context);

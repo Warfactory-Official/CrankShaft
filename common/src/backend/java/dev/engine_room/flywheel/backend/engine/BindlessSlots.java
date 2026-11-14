@@ -33,7 +33,7 @@ public final class BindlessSlots {
      * The permanent slot for {@code material}'s texture + filter pair; allocates on first sight.
      */
     public static int slot(Material material) {
-        Key key = new Key(material.texture(), material.blur(), material.mipmap());
+        Key key = new Key(material.texture(), material.blur(), material.mipmap(), material.useTextureSampler());
         int s = slots.getInt(key);
         if (s == 0) {
             s = keys.size() + FIRST_MATERIAL_SLOT;
@@ -54,6 +54,6 @@ public final class BindlessSlots {
         return keys.get(i);
     }
 
-    public record Key(Identifier texture, boolean blur, boolean mipmap) {
+    public record Key(Identifier texture, boolean blur, boolean mipmap, boolean useTextureSampler) {
     }
 }

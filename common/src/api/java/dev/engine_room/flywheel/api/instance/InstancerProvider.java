@@ -6,6 +6,34 @@ import dev.engine_room.flywheel.api.model.Model;
 @BackendImplemented
 public interface InstancerProvider {
     /**
+     * Whether this provider can create GPU simulations.
+     */
+    default boolean supportsGpuSimulation() {
+        return false;
+    }
+
+    /**
+     * Get a persistent GPU population for an effect identity. Reusing the identity reacquires its existing
+     * simulation state, including after a render-origin change. Delete the population when the effect ends.
+     *
+     * The arguments supply the effect's stable identity, the output instances' layout and shaders, the model to
+     * render for each instance, the simulation programs and storage sizes, the maximum number of population slots,
+     * and the draw ordering bias, as in {@link #instancer(InstanceType, Model, int)}.
+     */
+    default GpuPopulation gpuPopulation(Object _, InstanceType<?> _, Model _,
+                                        GpuSimulation _, int _, int _) {
+        throw new UnsupportedOperationException("This backend does not support GPU simulations");
+    }
+
+    /**
+     * Get a persistent GPU population with {@code bias == 0}.
+     */
+    default GpuPopulation gpuPopulation(Object identity, InstanceType<?> type, Model model,
+                                        GpuSimulation simulation, int capacity) {
+        return gpuPopulation(identity, type, model, simulation, capacity, 0);
+    }
+
+    /**
      * Get an instancer for the given instance type rendering the given model.
      *
      * <p>Calling this method twice with the same arguments in the

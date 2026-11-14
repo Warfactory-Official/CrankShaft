@@ -1,0 +1,48 @@
+layout(local_size_x = 128) in;
+
+layout(std430, binding = 0) readonly buffer FlwPopulationControl {
+    uint flw_populationControl[];
+};
+
+layout(std430, binding = 1) readonly buffer FlwPopulationAddresses {
+    uint flw_populationAddresses[];
+};
+
+layout(std430, binding = 2) buffer FlwPopulationPages {
+    uvec4 flw_populationPages[];
+};
+
+layout(std430, binding = 3) readonly buffer FlwPopulationKeys {
+    uvec4 flw_populationKeys[];
+};
+
+uniform uint flw_capacity;
+
+shared uint flw_populationFlags[128];
+
+void main() {
+    uint lane = gl_LocalInvocationID.x;
+    uint rank = gl_GlobalInvocationID.x;
+    uint flag = 0u;
+    if (rank < flw_populationControl[0]) {
+        flag = flw_populationKeys[rank].w;
+    }
+    flw_populationFlags[lane] = flag;
+    barrier();
+
+    if (lane >= 4u) {
+        return;
+    }
+    uint page = gl_WorkGroupID.x * 4u + lane;
+    if (page >= (flw_capacity + 31u) / 32u) {
+        return;
+    }
+    uint valid = 0u;
+    for (uint bit = 0u; bit < 32u; bit++) {
+        if (flw_populationFlags[lane * 32u + bit] != 0u) {
+            valid |= 1u << bit;
+        }
+    }
+    uint slot = flw_populationAddresses[flw_capacity + page];
+    flw_populationPages[slot].y = valid;
+}

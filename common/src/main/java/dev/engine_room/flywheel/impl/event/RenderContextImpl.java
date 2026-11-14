@@ -6,6 +6,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.RenderBuffers;
+import net.minecraft.client.renderer.state.level.LevelRenderState;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 
@@ -30,7 +31,13 @@ public record RenderContextImpl(LevelRenderer renderer, ClientLevel level, Rende
         // camera's combined view-rotation-projection and the (rotation-only) modelView.
         Matrix4f viewProjection = camera.getViewRotationProjectionMatrix(new Matrix4f());
         Matrix4f projection = new Matrix4f(viewProjection).mul(new Matrix4f(modelView).invert());
-        float partialTick = minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+        // The frame's extraction tick, not the live timer: a re-render with its own DeltaTracker extracts with that.
+        LevelRenderState levelState = minecraft.gameRenderer.gameRenderState().levelRenderState;
+        #if MC >= 26.3
+        float partialTick = levelState.worldPartialTicks;
+        #else
+        float partialTick = levelState.flywheel$worldPartialTicks();
+        #endif
         return create(renderer, level, minecraft.gameRenderer.renderBuffers(), modelView, projection, camera,
                 partialTick);
     }

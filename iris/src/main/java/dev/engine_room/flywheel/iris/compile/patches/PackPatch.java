@@ -21,20 +21,26 @@ import java.util.regex.Pattern;
  * {@code deferredTranslucent}: its translucent program writes G-buffers that composite finds by
  * {@code depthtex0 != depthtex1}. {@code emissiveLight}: its emissive contract adds light to the lit colour target
  * directly or through a buffer merged by a {@code patches} diff; {@code programs} builds that contract.
+ * {@code resources} stages bundled includes at virtual pack paths. {@code nativeDepth} ports the pack to Minecraft's
+ * reversed depth ({@link NativeDepthAudit}).
  */
-record PackPatch(int schema, String name, List<String> testedVersions, List<SourceMatch> matches, List<FileEdit> files,
+record PackPatch(int schema, String name, List<String> testedVersions, List<SourceMatch> matches,
+                 Map<String, String> resources, List<FileEdit> files,
                  List<Wrapper> wrappers, List<BlendCopy> blends, String properties, @Nullable SourceGuard forwardOit,
                  @Nullable DeferredAdapter deferred, boolean deferredEmissive, boolean deferredTranslucent,
-                 List<String> patches, List<Program> programs, boolean emissiveLight) {
+                 List<String> patches, List<Program> programs, boolean emissiveLight,
+                 @Nullable NativeDepth nativeDepth) {
     private static final String RESOURCE_ROOT = "/assets/flywheel/iris/patches/";
-    private static final Pattern INCLUDE = Pattern.compile("(?m)^\\h*#\\h*include\\h+\"([^\"]+)\"");
-    private static final List<PackPatch> PATCHES = List.of("complementary", "euphoria", "solas", "iteration", "sundial",
-                                                               "bsl",
+    static final Pattern INCLUDE = Pattern.compile("(?m)^\\h*#\\h*include\\h+\"([^\"]+)\"");
+    private static final List<PackPatch> PATCHES = List.of("complementary", "euphoria", "solas", "iteration",
+                                                               "iteration_0831", "sundial", "bsl", "bsl_nodh",
                                                                "makeup", "photon", "bliss", "sildur", "hysteria",
-                                                               "seus_hrr21", "seus_hrr3", "seus_gfme")
+                                                               "seus_hrr21", "seus_hrr3", "seus_gfme", "rethinking_voxels",
+                                                               "mellow", "astralex")
                                                        .stream().map(PackPatch::load).toList();
 
     PackPatch {
+        resources = resources == null ? Map.of() : resources;
         patches = patches == null ? List.of() : patches;
         programs = programs == null ? List.of() : programs;
     }
@@ -61,6 +67,14 @@ record PackPatch(int schema, String name, List<String> testedVersions, List<Sour
             if (patch.deferred != null) {
                 DeferredOitProfile.valueOf(patch.deferred.profile);
                 validate(patch.deferred.sources);
+            }
+            if (patch.nativeDepth != null) {
+                if (patch.nativeDepth.patches.isEmpty() || patch.nativeDepth.depthLines.isEmpty()
+                        || patch.nativeDepth.depthLines.values().stream()
+                                                       .anyMatch(hash -> !hash.matches("[0-9a-f]{16}"))) {
+                    throw new IllegalStateException("Invalid native depth port: " + id);
+                }
+                for (String diff : patch.nativeDepth.patches) UnifiedPatch.parse(resource(diff));
             }
             return patch;
         } catch (IOException e) {
@@ -179,6 +193,14 @@ record PackPatch(int schema, String name, List<String> testedVersions, List<Sour
     }
 
     record DeferredAdapter(String profile, SourceGuard sources) {
+    }
+
+    /**
+     * Diffs giving every depth use in the pack's program closure Minecraft's raw reversed convention, staged as one
+     * transaction after the recipe. {@code depthLines} certifies each ported file's depth lines by fingerprint
+     * ({@link NativeDepthAudit}); a pack whose depth lines differ keeps the forward contract.
+     */
+    record NativeDepth(List<String> patches, Map<String, String> depthLines) {
     }
 
     /**

@@ -3,8 +3,12 @@ package dev.engine_room.flywheel.backend.compile;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.api.backend.BackendManager;
+import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.OitConfig;
+import dev.engine_room.flywheel.backend.SodiumClassLoadCheck;
+import dev.engine_room.flywheel.backend.engine.indirect.OitPipelines;
+import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.lib.util.ShadersModHelper;
 import net.minecraft.client.Minecraft;
@@ -12,7 +16,9 @@ import net.minecraft.client.Minecraft;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Loading and configuration boundaries for native OIT compilation; no draw-time polling. */
+/**
+ * Loading and configuration boundaries for native OIT compilation; no draw-time polling.
+ */
 public final class NativeOitWarmup {
     private static final List<Runnable> OWNER_PREPARATIONS = new ArrayList<>();
     private static final List<Runnable> DECLARATIONS = new ArrayList<>();
@@ -24,17 +30,23 @@ public final class NativeOitWarmup {
     private NativeOitWarmup() {
     }
 
-    /** Foreign renderer class initialization; hooks re-register current declarations after resource reload. */
+    /**
+     * Foreign renderer class initialization; hooks re-register current declarations after resource reload.
+     */
     public static void registerDeclarations(Runnable declarations) {
         DECLARATIONS.add(declarations);
     }
 
-    /** Client/module initialization; creates actual owners on the render thread before selected compilation. */
+    /**
+     * Client/module initialization; creates actual owners on the render thread before selected compilation.
+     */
     public static void registerOwnerPreparation(Runnable preparation) {
         OWNER_PREPARATIONS.add(preparation);
     }
 
-    /** Platform client initialization supplies this capability before resource-loading warmup. */
+    /**
+     * Platform client initialization supplies this capability before resource-loading warmup.
+     */
     public static void customCloudsSupported(boolean supported) {
         customCloudsSupported = supported;
     }
@@ -58,7 +70,9 @@ public final class NativeOitWarmup {
         configurationChanged();
     }
 
-    /** Joins the existing loading batch after native declarations are available. Render thread only. */
+    /**
+     * Joins the existing loading batch after native declarations are available. Render thread only.
+     */
     public static void declareSelected() {
         if (!enabled()) return;
         preparingOwners = true;
@@ -68,12 +82,24 @@ public final class NativeOitWarmup {
             preparingOwners = false;
         }
         for (Runnable declarations : DECLARATIONS) declarations.run();
+        if (BackendConfig.INSTANCE.shaderCompilation() == ShaderCompilationMode.ON_DEMAND) return;
         if (VkContext.isVulkanHost()) NativeVkWarmup.precompileSelected(OitConfig.resolveInsertMode());
-        else NativeOitPipelines.precompileSelected(BackendManager.currentBackend() == Backends.INSTANCING
-                    ? null : OitConfig.resolveInsertMode());
+        else {
+            NativeOitPipelines.precompileSelected(OitConfig.resolveInsertMode());
+            if (SodiumClassLoadCheck.PRESENT && OitConfig.resolveInsertMode() != null) {
+                // Insert's native full-opacity culling still replays terrain through the depth-bounds producer.
+                OitPipelines.chunkSodiumProducer(OitMode.DEPTH_RANGE);
+                if (GlCompat.SUPPORTS_TERRAIN) {
+                    OitPipelines.chunkSodiumProducer(OitMode.DEPTH_RANGE, false);
+                    OitPipelines.chunkSodiumProducer(OitMode.DEPTH_RANGE, true);
+                }
+            }
+        }
     }
 
-    /** Keeps off-thread configuration publication and its compilation together before rendering resumes. */
+    /**
+     * Keeps off-thread configuration publication and its compilation together before rendering resumes.
+     */
     public static void configure(Runnable changes) {
         if (initialized && !RenderSystem.isOnRenderThread()) {
             Minecraft.getInstance().schedule(() -> configure(changes));
@@ -101,12 +127,14 @@ public final class NativeOitWarmup {
         return supports(BackendManager.currentBackend());
     }
 
-    /** Native Improved Transparency producer backend on the current host. */
+    /**
+     * Native Improved Transparency producer backend on the current host.
+     */
     public static boolean supports(Backend backend) {
         return VkContext.isVulkanHost()
                 ? backend == Backends.VK_INDIRECT
                 || Backends.VK_MESH_SHADER_ID.equals(Backend.REGISTRY.getIdOrThrow(backend))
                 : backend == Backends.INSTANCING || backend == Backends.INDIRECT
-                        || Backends.GL_MESH_SHADER_ID.equals(Backend.REGISTRY.getIdOrThrow(backend));
+                || Backends.GL_MESH_SHADER_ID.equals(Backend.REGISTRY.getIdOrThrow(backend));
     }
 }

@@ -24,12 +24,7 @@ import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.vulkan.KHRPushDescriptor;
-import org.lwjgl.vulkan.VK12;
-import org.lwjgl.vulkan.VkCommandBuffer;
-import org.lwjgl.vulkan.VkDescriptorBufferInfo;
-import org.lwjgl.vulkan.VkDescriptorImageInfo;
-import org.lwjgl.vulkan.VkWriteDescriptorSet;
+import org.lwjgl.vulkan.*;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -70,7 +65,9 @@ public final class VkNativeOitPipelines {
         return context(scope.variant, scope.localRead(), scope.owner.compatibility());
     }
 
-    /** A separate native pass, right after its creation; later producer lookups target its exact attachments. */
+    /**
+     * A separate native pass, right after its creation; later producer lookups target its exact attachments.
+     */
     public static void bindPass(List<@Nullable GpuTextureView> colors, GpuTextureView depth) {
         RenderSystem.assertOnRenderThread();
         NativeOitScope scope = Objects.requireNonNull(NativeOitScope.active(),
@@ -100,7 +97,9 @@ public final class VkNativeOitPipelines {
         return selected.compiled.frontend();
     }
 
-    /** Allows loading/configuration warmup to populate the same context that producer draws select. */
+    /**
+     * Allows loading/configuration warmup to populate the same context that producer draws select.
+     */
     public static void precompileWavelet(RenderPipeline base, OitMode mode, boolean emission, boolean localRead,
                                          VkNativePipelineCompiler.Compatibility compatibility) {
         RenderSystem.assertOnRenderThread();
@@ -113,13 +112,15 @@ public final class VkNativeOitPipelines {
         prepare(base, context(Variant.insert(mode), false, compatibility));
     }
 
-    /** Separate-pass warmup: the engine chain's attachment formats and one producer depth attachment format. */
+    /**
+     * Separate-pass warmup: the engine chain's attachment formats and one producer depth attachment format.
+     */
     public static void precompileSeparate(RenderPipeline base, OitMode mode, boolean emission,
                                           @Nullable OitInsertMode insert, int depthFormat) {
         RenderSystem.assertOnRenderThread();
         Variant variant = insert != null ? Variant.insert(insert) : Variant.wavelet(mode, emission);
         List<@Nullable GpuFormat> colors = switch (variant) {
-            case DEPTH -> List.of(OitFramebuffer.DEPTH_BOUNDS_FORMAT);
+            case DEPTH -> List.of(OitFramebuffer.depthBoundsFormat());
             case COEFFICIENTS -> Collections.nCopies(4, OitFramebuffer.COEFFICIENTS_FORMAT);
             case ACCUMULATE, EMISSION -> List.of(OitFramebuffer.ACCUMULATE_FORMAT);
             case KBUFFER, MLAB, ABUFFER, ORIGINAL -> List.of();
@@ -145,7 +146,9 @@ public final class VkNativeOitPipelines {
     }
 
     private static PreparedPipeline prepare(RenderPipeline base, PreparedContext context) {
-        PreparedPipeline cached = context.pipelines.get(base);
+        var overlays = TerrainOverlayPipelines.requestedSources();
+        var pipelines = context.pipelines(overlays);
+        var cached = pipelines.get(base);
         if (cached != null) return cached;
         boolean producer = NativeOitProducers.isProducer(base.getShaderDefines());
         Variant variant = producer ? context.key.variant : Variant.ORIGINAL;
@@ -154,13 +157,14 @@ public final class VkNativeOitPipelines {
         var exact = new VkNativePipelineCompiler.Compatibility(compatibility.renderPass(), compatibility.subpass(),
                 compatibility.depthFormat(), pipelineColors(base, variant, compatibility.colorTargets()));
         Utility utility = utility(base);
-        var adapted = new AdaptedPipeline(base, variant, exact, utility);
+        var adapted = new AdaptedPipeline(base, variant, exact, utility, overlays);
         try (var compiler = new VkNativeFrontendCompiler()) {
-            var compiled = compiler.compile(adapted, new NativeSource(variant, context.key.localRead, utility),
+            var compiled = compiler.compile(adapted, new NativeSource(variant, context.key.localRead, utility, overlays,
+                            base.getShaderDefines().values().getOrDefault("ALPHA_CUTOUT", "0.0")),
                     engineBindings(context.key.localRead), exact);
             PreparedPipeline selected = new PreparedPipeline(compiled,
                     producer && NativeOitProducers.defined(base.getShaderDefines(), NativeOitProducers.ADDITIVE));
-            context.pipelines.put(base, selected);
+            pipelines.put(base, selected);
             return selected;
         }
     }
@@ -191,17 +195,20 @@ public final class VkNativeOitPipelines {
         return result;
     }
 
-    private static List<BindGroupLayout> layouts(RenderPipeline base, Variant variant, Utility utility) {
+    private static List<BindGroupLayout> layouts(RenderPipeline base, Variant variant, Utility utility,
+                                                 List<Identifier> overlays) {
         boolean producer = variant != Variant.ORIGINAL;
-        return NativeOitProducers.layouts(base, name -> producer && NativeOitProducers.NATIVE_READS.contains(name)
+        var result = NativeOitProducers.layouts(base, name -> producer && NativeOitProducers.NATIVE_READS.contains(name)
                 || utility != Utility.NONE && utility.sampler.equals(name), producer);
+        result.addAll(TerrainOverlayPipelines.layouts(overlays));
+        return result;
     }
 
     private static Map<String, VkNativePipelineCompiler.EngineBinding> engineBindings(boolean localRead) {
-        int read = localRead ? VK12.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT
-                : VK12.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        int sampler = VK12.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        int storage = VK12.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        int read = localRead ? VK10.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT
+                : VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        int sampler = VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        int storage = VK10.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         return Map.ofEntries(
                 binding("_flw_depthRange", DEPTH_RANGE, read),
                 binding("_flw_blueNoise", BLUE_NOISE, sampler),
@@ -211,19 +218,21 @@ public final class VkNativeOitPipelines {
                 binding("_flw_coefficients3", OIT_SLOT_3, read),
                 binding("_FlwMlabCount", OIT_SLOT_0, storage),
                 binding("_FlwMlabData", OIT_SLOT_1, storage),
-                binding("_FlwMlabUniforms", OIT_SLOT_2, VK12.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
+                binding("_FlwMlabUniforms", OIT_SLOT_2, VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
                 binding("_FlwAbufHead", OIT_SLOT_0, storage),
                 binding("_FlwAbufNodes", OIT_SLOT_1, storage),
                 binding("_FlwAbufCounter", OIT_SLOT_3, storage),
-                binding(UTILITY_INPUT, DEPTH_RANGE, VK12.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT));
+                binding(UTILITY_INPUT, DEPTH_RANGE, VK10.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT));
     }
 
     private static Map.Entry<String, VkNativePipelineCompiler.EngineBinding> binding(String name, int binding,
-            int type) {
+                                                                                     int type) {
         return Map.entry(name, new VkNativePipelineCompiler.EngineBinding(binding, type));
     }
 
-    /** Called after native descriptor pushes, including draws whose native uniform list was already clean. */
+    /**
+     * Called after native descriptor pushes, including draws whose native uniform list was already clean.
+     */
     public static void pushDescriptors(VkCommandBuffer commandBuffer, VulkanRenderPipeline pipeline) {
         NativeOitScope scope = NativeOitScope.active();
         if (scope == null || scope.selected == null || scope.selected.backend() != pipeline) return;
@@ -234,12 +243,13 @@ public final class VkNativeOitPipelines {
             for (int i = 0; i < resources.size(); i++) {
                 var resource = resources.get(i);
                 var write = writes.get(i).sType$Default().dstBinding(resource.binding()).descriptorCount(1)
-                        .descriptorType(resource.descriptorType());
-                if (resource.descriptorType() == VK12.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT) {
+                                  .descriptorType(resource.descriptorType());
+                if (resource.descriptorType() == VK10.VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT) {
                     write.pImageInfo(VkDescriptorImageInfo.calloc(1, stack)
-                            .imageView(VkContext.imageView(scope.owner.inputViews()[resource.inputAttachmentIndex()]))
-                            .imageLayout(VK12.VK_IMAGE_LAYOUT_GENERAL));
-                } else if (resource.descriptorType() == VK12.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
+                                                          .imageView(VkContext.imageView(
+                                                                  scope.owner.inputViews()[resource.inputAttachmentIndex()]))
+                                                          .imageLayout(VK10.VK_IMAGE_LAYOUT_GENERAL));
+                } else if (resource.descriptorType() == VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
                     GpuTextureView view;
                     long sampler;
                     if (resource.binding() == BLUE_NOISE) {
@@ -251,7 +261,7 @@ public final class VkNativeOitPipelines {
                         sampler = VkContext.sampler(scope.frame.oitSampler());
                     }
                     write.pImageInfo(VkDescriptorImageInfo.calloc(1, stack).imageView(VkContext.imageView(view))
-                            .sampler(sampler).imageLayout(VK12.VK_IMAGE_LAYOUT_GENERAL));
+                                                          .sampler(sampler).imageLayout(VK10.VK_IMAGE_LAYOUT_GENERAL));
                 } else {
                     VkBuffer buffer = switch (resource.binding()) {
                         case OIT_SLOT_0 -> scope.storage.buf24();
@@ -261,22 +271,24 @@ public final class VkNativeOitPipelines {
                         default -> throw new IllegalStateException("Unknown native engine buffer " + resource.name());
                     };
                     write.pBufferInfo(VkDescriptorBufferInfo.calloc(1, stack).buffer(buffer.vkBuffer())
-                            .offset(0).range(buffer.sizeBytes()));
+                                                            .offset(0).range(buffer.sizeBytes()));
                 }
             }
-            KHRPushDescriptor.vkCmdPushDescriptorSetKHR(commandBuffer, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS,
+            KHRPushDescriptor.vkCmdPushDescriptorSetKHR(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS,
                     scope.selected.pipelineLayout(), 0, writes);
         }
         VkDescriptorHeap.notifyForeignBind();
     }
 
-    /** Resource reload and render-pass graph destruction close all variants before native handles are reused. */
+    /**
+     * Resource reload and render-pass graph destruction close all variants before native handles are reused.
+     */
     public static void reset() {
         RenderSystem.assertOnRenderThread();
         if (NativeOitScope.active() != null) {
             throw new IllegalStateException("Cannot reset native Vulkan variants during replay");
         }
-        CONTEXTS.values().forEach(context -> context.pipelines.values().forEach(pipeline -> pipeline.compiled.close()));
+        CONTEXTS.values().forEach(PreparedContext::close);
         CONTEXTS.clear();
         NativeOitProducers.reset();
         INCLUDES.values().forEach(ShaderSource.CachedIncludeSource::close);
@@ -290,28 +302,63 @@ public final class VkNativeOitPipelines {
         return Utility.NONE;
     }
 
+    private enum Utility {
+        NONE(""), IN_SAMPLER("InSampler"), DEPTH_BOUNDS("DepthBoundsSampler");
+        private final String sampler;
+
+        Utility(String sampler) {
+            this.sampler = sampler;
+        }
+    }
+
     private static final class NativeSource implements ShaderSource {
         // Link the reusable cache loader while constructing the source, before shaderc can invoke getInclude.
         private static final Function<Identifier, CachedIncludeSource> INCLUDE_LOADER = NativeSource::loadInclude;
         private final Variant variant;
         private final boolean localRead;
         private final Utility utility;
+        private final List<Identifier> overlays;
+        private final String cutoff;
 
-        private NativeSource(Variant variant, boolean localRead, Utility utility) {
+        private NativeSource(Variant variant, boolean localRead, Utility utility, List<Identifier> overlays,
+                             String cutoff) {
             this.variant = variant;
             this.localRead = localRead;
             this.utility = utility;
+            this.overlays = overlays;
+            this.cutoff = cutoff;
+        }
+
+        private static CachedIncludeSource loadInclude(Identifier id) {
+            try (var stream = Minecraft.getInstance().getResourceManager()
+                                       .getResource(id.withPrefix("shaders/include/")).orElseThrow().open()) {
+                return CachedIncludeSource.create(id, new String(stream.readAllBytes(), StandardCharsets.UTF_8));
+            } catch (IOException | RuntimeException failure) {
+                // Native callbacks return an error result; exceptions cannot cross the shaderc upcall boundary.
+                return CachedIncludeSource.createError(new StringBuilder("Could not read native Vulkan shader include ")
+                        .append(id).append(": ").append(failure.getMessage()).toString());
+            }
         }
 
         @Override
         public String getShader(Identifier id, ShaderType type) {
             Compilation compilation = new Compilation();
             compilation.version(ShaderAssembly.glslVersion());
+            if (!overlays.isEmpty()) compilation.define("_FLW_TERRAIN_EXPLICIT_VARYINGS");
             if (type == ShaderType.FRAGMENT && variant != Variant.ORIGINAL) {
-                NativeOitProducers.assembleFragment(compilation, variant, localRead, false, id);
+                NativeOitProducers.assembleFragment(compilation, variant, localRead, false, id, overlays, cutoff);
                 return compilation.assembledSource();
             }
             String raw = NativeOitProducers.rawShader(id, type);
+            if (type == ShaderType.VERTEX && !overlays.isEmpty()) {
+                compilation.define("gl_VertexID", "gl_VertexIndex");
+                compilation.define("main", "_flw_terrainVertexBase");
+            }
+            if (type == ShaderType.FRAGMENT && !overlays.isEmpty()) {
+                compilation.define("main", "_flw_terrainBase");
+                ShaderAssembly.appendComponents(compilation,
+                        TerrainOverlayPipelines.nativePrelude(overlays, cutoff, true));
+            }
             if (type == ShaderType.FRAGMENT && utility != Utility.NONE) {
                 String declaration = "uniform sampler2D " + utility.sampler + ";";
                 if (!raw.contains(declaration)) {
@@ -326,23 +373,16 @@ public final class VkNativeOitPipelines {
                                 + UTILITY_INPUT + ";"));
             }
             compilation.appendComponent(new ShaderAssembly.RawSource(id.toString(), raw));
+            if (type == ShaderType.VERTEX && !overlays.isEmpty())
+                ShaderAssembly.appendComponents(compilation, TerrainOverlayPipelines.vertexTail());
+            if (type == ShaderType.FRAGMENT && !overlays.isEmpty())
+                ShaderAssembly.appendComponents(compilation, TerrainOverlayPipelines.nativePostlude(true));
             return compilation.assembledSource();
         }
 
         @Override
         public CachedIncludeSource getInclude(Identifier id) {
             return INCLUDES.computeIfAbsent(id, INCLUDE_LOADER);
-        }
-
-        private static CachedIncludeSource loadInclude(Identifier id) {
-            try (var stream = Minecraft.getInstance().getResourceManager()
-                    .getResource(id.withPrefix("shaders/include/")).orElseThrow().open()) {
-                return CachedIncludeSource.create(id, new String(stream.readAllBytes(), StandardCharsets.UTF_8));
-            } catch (IOException | RuntimeException failure) {
-                // Native callbacks return an error result; exceptions cannot cross the shaderc upcall boundary.
-                return CachedIncludeSource.createError(new StringBuilder("Could not read native Vulkan shader include ")
-                        .append(id).append(": ").append(failure.getMessage()).toString());
-            }
         }
 
         @Override
@@ -353,9 +393,10 @@ public final class VkNativeOitPipelines {
     private static final class AdaptedPipeline extends RenderPipeline {
         private AdaptedPipeline(RenderPipeline base, Variant variant,
                                 VkNativePipelineCompiler.Compatibility compatibility,
-                                Utility utility) {
-            super(NativeOitProducers.location("native_oit_vk", variant, base), base.getShaders(),
-                    base.getShaderDefines(), layouts(base, variant, utility),
+                                Utility utility, List<Identifier> overlays) {
+            super(TerrainOverlayPipelines.withSources(NativeOitProducers.location("native_oit_vk", variant, base),
+                            overlays), base.getShaders(),
+                    base.getShaderDefines(), layouts(base, variant, utility, overlays),
                     compatibility.colorTargets().toArray(ColorTargetState[]::new), base.getDepthStencilState(),
                     base.getPolygonMode(), base.isCull(), base.getVertexFormatBindings().toArray(VertexFormat[]::new),
                     base.getPrimitiveTopology(), base.pushConstantSize(), base.getSortKey());
@@ -369,21 +410,24 @@ public final class VkNativeOitPipelines {
     static final class PreparedContext {
         private final ContextKey key;
         private final Map<RenderPipeline, PreparedPipeline> pipelines = new IdentityHashMap<>();
+        private final Map<List<Identifier>, Map<RenderPipeline, PreparedPipeline>> overlayPipelines = new HashMap<>();
 
         private PreparedContext(ContextKey key) {
             this.key = key;
         }
+
+        private Map<RenderPipeline, PreparedPipeline> pipelines(List<Identifier> overlays) {
+            return overlays.isEmpty() ? pipelines
+                    : overlayPipelines.computeIfAbsent(overlays, _ -> new IdentityHashMap<>());
+        }
+
+        private void close() {
+            pipelines.values().forEach(pipeline -> pipeline.compiled.close());
+            overlayPipelines.values().forEach(variants ->
+                    variants.values().forEach(pipeline -> pipeline.compiled.close()));
+        }
     }
 
     private record PreparedPipeline(VkNativeFrontendCompiler.CompiledPipeline compiled, boolean additive) {
-    }
-
-    private enum Utility {
-        NONE(""), IN_SAMPLER("InSampler"), DEPTH_BOUNDS("DepthBoundsSampler");
-        private final String sampler;
-
-        Utility(String sampler) {
-            this.sampler = sampler;
-        }
     }
 }

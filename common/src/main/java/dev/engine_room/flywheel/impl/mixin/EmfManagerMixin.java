@@ -14,7 +14,7 @@ import traben.entity_model_features.models.parts.EMFModelPartRoot;
 abstract class EmfManagerMixin {
     // Every EMF model substitution.
     @Inject(method = "injectIntoModelRootGetter", at = @At("RETURN"))
-    private void flywheel$rootBaked(ModelLayerLocation layer, ModelPart root, CallbackInfoReturnable<ModelPart> cir) {
+    private void flywheel$rootBaked(ModelLayerLocation _, ModelPart _, CallbackInfoReturnable<ModelPart> cir) {
         if (cir.getReturnValue() instanceof EMFModelPartRoot) {
             EntityFeatureCompat.emfRootBaked();
         }

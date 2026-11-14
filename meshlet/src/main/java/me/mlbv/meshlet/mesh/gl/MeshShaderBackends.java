@@ -3,10 +3,17 @@
 package me.mlbv.meshlet.mesh.gl;
 
 import dev.engine_room.flywheel.api.backend.Backend;
+import dev.engine_room.flywheel.api.backend.BackendManager;
+import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.FlwBackend;
+import dev.engine_room.flywheel.backend.TerrainMode;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
+#if MC >= 26.3
+import dev.engine_room.flywheel.backend.compile.NativeOitWarmup;
+#endif
 import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
+import dev.engine_room.flywheel.backend.compile.ShaderCompilationMode;
 import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.engine.EngineImpl;
 import dev.engine_room.flywheel.backend.engine.indirect.MeshVisualDrawManager;
@@ -35,6 +42,9 @@ public final class MeshShaderBackends {
             IrisMeshBackends.init();
         }
         ShaderWarmup.register(ProgramAvailability.Feature.MESH, MeshShaderBackends::warmUp);
+        #if MC >= 26.3
+        NativeOitWarmup.registerDeclarations(MeshShaderBackends::warmNativeTerrain);
+        #endif
         return SimpleBackend.builder()
                             .engineFactory(MeshShaderBackends::createEngine)
                             .priority(PRIORITY)
@@ -44,7 +54,10 @@ public final class MeshShaderBackends {
     }
 
     private static void warmUp() {
-        if (VkContext.isVulkanHost() || !isSupported()) {
+        if (BackendManager.currentBackend() != GL_MESH_SHADER || VkContext.isVulkanHost()
+                || BackendConfig.INSTANCE.terrainMode() == TerrainMode.OFF
+                || BackendConfig.INSTANCE.shaderCompilation() == ShaderCompilationMode.ON_DEMAND
+                || !isSupported()) {
             return;
         }
         GlMeshPipelines pipelines = new GlMeshPipelines();
@@ -54,6 +67,17 @@ public final class MeshShaderBackends {
             pipelines.destroy();
         }
     }
+
+    #if MC >= 26.3
+    private static void warmNativeTerrain() {
+        MeshEngine owner = MeshEngine.terrainOwner;
+        if (owner != null && BackendManager.currentBackend() == GL_MESH_SHADER
+                && BackendConfig.INSTANCE.terrainMode().compositesTranslucent()
+                && BackendConfig.INSTANCE.shaderCompilation() != ShaderCompilationMode.ON_DEMAND) {
+            owner.pipelines.warmTranslucent();
+        }
+    }
+    #endif
 
     private static boolean isSupported() {
         boolean meshSupport = GlCompat.SUPPORTS_TERRAIN_MESH;
@@ -91,6 +115,9 @@ public final class MeshShaderBackends {
                 terrainOwner = this;
                 TerrainDrawDispatcher.setMeshDrawStrategy(rasterizer::draw);
                 TerrainDrawDispatcher.setTranslucentMeshDrawStrategy(translucentRasterizer);
+                #if MC >= 26.3
+                NativeOitWarmup.configurationChanged();
+                #endif
             }
         }
 

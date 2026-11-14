@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.backend.compile;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import dev.engine_room.flywheel.backend.vk.VkContext;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -8,16 +9,17 @@ import net.minecraft.client.gui.screens.LoadingOverlay;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.Mth;
+
 public final class ShaderWarmupSplash {
-    private static final long DELAY = Long.getLong("crankshaft.splash.delayMs", 250) * 1_000_000L;
+    private static final long DELAY = 250_000_000L;
     private static final long INTERVAL = 50_000_000L;
     private static final int WHITE = 0xFFFFFFFF;
+    static boolean cancelled;
     private static boolean active;
     private static long start;
     private static long lastFrame;
     private static int done;
     private static int total;
-    static boolean cancelled;
 
     private ShaderWarmupSplash() {
     }
@@ -86,7 +88,8 @@ public final class ShaderWarmupSplash {
                     x0 + 2 + (int) (span * Mth.clamp((center + 10) / 100F, 0, 1)), y1 - 2, WHITE);
         }
         Font font = minecraft.font;
-        String label = total > 0 ? "CrankShaft shaders " + done + "/" + total : "CrankShaft shaders " + done;
+        String prefix = VkContext.isVulkanHost() ? "CrankShaft compilation " : "CrankShaft programs ";
+        String label = prefix + done + (total > 0 ? "/" + total : "");
         graphics.text(font, label, centerX - font.width(label) / 2, y1 + 4, WHITE, false);
         return true;
     }

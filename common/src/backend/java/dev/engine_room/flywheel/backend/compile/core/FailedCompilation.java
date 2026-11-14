@@ -80,7 +80,7 @@ public class FailedCompilation {
                 out.accept(interpretPattern2(matcher));
                 return;
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable _) {
             // noop, if parsing/span matching fails somehow lets just emit the raw error string.
         }
 

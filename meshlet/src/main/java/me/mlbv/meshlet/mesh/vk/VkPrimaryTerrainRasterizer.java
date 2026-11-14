@@ -12,10 +12,13 @@ import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.renderpearl.backend.vulkan.VulkanGpuBuffer;
 import com.mojang.renderpearl.backend.vulkan.VulkanGpuSampler;
 import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
+import dev.engine_room.flywheel.backend.compile.TerrainOverlayPipelines;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher.VisibleRegionBatch;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainOverlayDraw;
 import dev.engine_room.flywheel.backend.engine.terrain.VkTerrainDrawManager;
 import dev.engine_room.flywheel.backend.engine.terrain.VkTerrainMeshDrawStrategy;
+
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.buffer.VkBuffer;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorWriter;
@@ -25,6 +28,7 @@ import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import org.lwjgl.vulkan.EXTMeshShader;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
@@ -35,15 +39,16 @@ import org.lwjgl.vulkan.VkCommandBuffer;
 public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrategy {
     private static final int PASS_COUNT = 2;
     private static final int COMMAND_STRIDE = 32; // VkDrawMeshTasksIndirectCommandEXT + the per-region record
-    private static final int COLOR_FORMAT = VK12.VK_FORMAT_R8G8B8A8_UNORM;
-    private static final int STORAGE = VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    private static final int INDIRECT = VK12.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    private static final int COLOR_FORMAT = VK10.VK_FORMAT_R8G8B8A8_UNORM;
+    private static final int STORAGE = VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    private static final int INDIRECT = VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
     private final VkMeshPipelines pipelines;
     private final VkDescriptorWriter writer = new VkDescriptorWriter();
 
     private final VkBuffer[][] meshCommands = new VkBuffer[PASS_COUNT][2];
     private final VkBuffer[][] compactSections = new VkBuffer[PASS_COUNT][2];
     private final VkBuffer[][] geoAddrTable = new VkBuffer[PASS_COUNT][2];
+    private final VkBuffer[][] receiverAddrTable = new VkBuffer[PASS_COUNT][2];
 
     private final Long2LongOpenHashMap geoAddrCache = new Long2LongOpenHashMap();
     private int cacheParity = -1;
@@ -66,8 +71,14 @@ public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrate
         VkCommandBuffer cmd = VkContext.beginCommands();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/mesh/emit/" + (pass == 0 ? "solid" : "cutout"));
         buildGeoAddrTable(batch, pass, parity, n);
+        if (!TerrainOverlayDraw.isEmpty()) {
+            if (receiverAddrTable[pass][parity] == null)
+                receiverAddrTable[pass][parity] = new VkBuffer(STORAGE, n * 8L);
+            else receiverAddrTable[pass][parity].ensureCapacity(n * 8L);
+            VkMeshUtil.writeReceiverAddrTable(receiverAddrTable[pass][parity].mappedAddress(), batch, n);
+        }
         VkComputePipeline emit = pipelines.emitPipeline();
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, emit.handle());
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, emit.handle());
         writer.storage(0, manager.regionInputVk(pass), 0L, manager.regionInputBytes(pass));
         writer.storage(1, manager.registry.sectionDataVkBuffer(pass), 0L,
                 manager.registry.sectionDataByteCapacity(pass));
@@ -78,8 +89,8 @@ public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrate
         writer.uniform(6, manager.regionCountUboVk(pass), 0L, manager.regionCountUboBytes(pass));
         writer.storage(7, compactSections[pass][parity]);
         writer.storage(8, meshCommands[pass][parity]);
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, emit.layout());
-        VK12.vkCmdDispatch(cmd, n, 1, 1);
+        writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, emit.layout());
+        VK10.vkCmdDispatch(cmd, n, 1, 1);
         VkMeshUtil.emitBarrier(cmd);
         VkContext.popLabel(cmd);
         VkContext.submitCommands(cmd);
@@ -96,7 +107,7 @@ public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrate
         Minecraft mc = Minecraft.getInstance();
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/mesh/draw/" + (pass == 0 ? "solid" : "cutout"));
         VkMeshPipeline draw = pipelines.drawPipeline(pass != 0, COLOR_FORMAT);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, draw.handle());
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, draw.handle());
 
         long atlasView = ((VulkanGpuTextureView) mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS)
                                                    .getTextureView()).vkImageView();
@@ -122,7 +133,11 @@ public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrate
         writer.uniform(18, ((VulkanGpuBuffer) fog.buffer()).vkBuffer(), fog.offset(), fog.length());
         writer.uniform(20, ((VulkanGpuBuffer) globals).vkBuffer(), 0L, globals.size());
         writer.uniform(21, manager.chunkSectionUboVk(), 0L, manager.chunkSectionUboSize());
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, draw.layout());
+        if (!TerrainOverlayDraw.isEmpty()) {
+            writer.storage(TerrainOverlayPipelines.RECEIVER_BINDING, receiverAddrTable[pass][parity]);
+            TerrainOverlayDraw.bind(writer);
+        }
+        writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, draw.layout());
 
         EXTMeshShader.vkCmdDrawMeshTasksIndirectEXT(cmd, meshCommands[pass][parity].vkBuffer(), 0L, n, COMMAND_STRIDE);
         VkContext.popLabel(cmd);
@@ -160,6 +175,7 @@ public final class VkPrimaryTerrainRasterizer implements VkTerrainMeshDrawStrate
                 if (geoAddrTable[p][q] != null) {
                     geoAddrTable[p][q].delete();
                 }
+                if (receiverAddrTable[p][q] != null) receiverAddrTable[p][q].delete();
             }
         }
     }

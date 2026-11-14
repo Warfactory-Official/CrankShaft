@@ -14,6 +14,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 public final class VkCaps {
+    public static boolean SHADER_FLOAT64_SUPPORTED;
+    public static boolean SHADER_FLOAT64_NEGOTIATED;
     private static final int DESCRIPTOR_SAMPLER = 0;
     private static final int DESCRIPTOR_UNIFORM = 1;
     private static final int DESCRIPTOR_STORAGE = 2;
@@ -58,6 +60,7 @@ public final class VkCaps {
     public static boolean GPU_TRANSLUCENT_CULL;
     public static long DB_OFFSET_ALIGNMENT;
     public static int DB_UNIFORM_BUFFER_SIZE;
+    public static int DB_UNIFORM_TEXEL_BUFFER_SIZE;
     public static int DB_STORAGE_BUFFER_SIZE;
     public static int DB_COMBINED_IMAGE_SAMPLER_SIZE;
     public static int DB_STORAGE_IMAGE_SIZE;
@@ -68,6 +71,7 @@ public final class VkCaps {
     public static boolean SUBGROUP_BALLOT;
     public static boolean FRAGMENT_SUBGROUP_BALLOT;
     public static int BINDLESS_TABLE_CAPACITY;
+    public static long MAX_BOUND_DESCRIPTOR_SETS;
     public static int MESH_MAX_WORKGROUP_COUNT_X = 65535;
     public static int MESH_MAX_OUTPUT_VERTICES = 256;
     public static int MESH_MAX_OUTPUT_PRIMITIVES = 256;
@@ -119,6 +123,7 @@ public final class VkCaps {
         MAX_PER_STAGE_DESCRIPTOR_STORAGE_IMAGES = unsigned(limits.maxPerStageDescriptorStorageImages());
         MAX_PER_STAGE_DESCRIPTOR_INPUT_ATTACHMENTS = unsigned(limits.maxPerStageDescriptorInputAttachments());
         MAX_COLOR_ATTACHMENTS = unsigned(limits.maxColorAttachments());
+        MAX_BOUND_DESCRIPTOR_SETS = unsigned(limits.maxBoundDescriptorSets());
         MAX_DRAW_INDIRECT_COUNT = unsigned(limits.maxDrawIndirectCount());
         MAX_UNIFORM_BUFFER_RANGE = unsigned(limits.maxUniformBufferRange());
         MAX_STORAGE_BUFFER_RANGE = unsigned(limits.maxStorageBufferRange());

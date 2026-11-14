@@ -54,6 +54,12 @@ public interface Engine {
 
     void onLightUpdate(long sectionPos, LightLayer layer);
 
+    default void onBlockChanged(BlockPos _) {
+    }
+
+    default void onChunkChanged(int _, int _) {
+    }
+
     /**
      * Render all instances necessary for the given visual type.
      *

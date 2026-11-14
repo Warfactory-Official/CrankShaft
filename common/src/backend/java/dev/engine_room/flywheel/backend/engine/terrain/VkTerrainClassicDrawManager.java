@@ -10,6 +10,7 @@ import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
+import dev.engine_room.flywheel.backend.compile.TerrainOverlayPipelines;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.SodiumTerrainOitReplay;
 import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
@@ -39,6 +40,7 @@ import net.minecraft.util.Util;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
@@ -75,7 +77,7 @@ final class VkTerrainClassicDrawManager implements TerrainDispatcher, SodiumTerr
 
     @Override
     public boolean drawOpaqueSolid(ChunkRenderMatrices matrices, RenderSectionManager manager,
-                                   @Nullable Collection<RenderRegion> selfEnum) {
+                                   @Nullable Collection<RenderRegion> _) {
         if (BackendConfig.INSTANCE.terrainMode().compositesTranslucent()) {
             captureTranslucentArena(matrices, manager);
         }
@@ -151,7 +153,7 @@ final class VkTerrainClassicDrawManager implements TerrainDispatcher, SodiumTerr
     }
 
     private float visibility(RenderRegion region, int section, long now) {
-        FadeTimes times = fades.computeIfAbsent(region, ignored -> new FadeTimes());
+        FadeTimes times = fades.computeIfAbsent(region, _ -> new FadeTimes());
         if (times.starts[section] == 0L) {
             times.starts[section] = now;
             times.durations[section] = TerrainSectionMath.computeFadeDuration(
@@ -169,7 +171,7 @@ final class VkTerrainClassicDrawManager implements TerrainDispatcher, SodiumTerr
     }
 
     @Override
-    public void prepareCull(GpuTextureView depthView, int width, int height, boolean insert) {
+    public void prepareCull(GpuTextureView _, int _, int _, boolean _) {
     }
 
     @Override
@@ -189,13 +191,14 @@ final class VkTerrainClassicDrawManager implements TerrainDispatcher, SodiumTerr
     }
 
     private void replayFoldedOrUnfolded(VkCommandBuffer cmd, OitMode mode, OitFramebuffer framebuffer,
-                                       GpuTextureView lightmapView, GpuTextureView blueNoiseView, GpuSampler clampLinear,
-                                       GpuSampler oitSampler, GpuSampler noiseSampler, boolean folded) {
+                                        GpuTextureView lightmapView, GpuTextureView blueNoiseView,
+                                        GpuSampler clampLinear,
+                                        GpuSampler oitSampler, GpuSampler noiseSampler, boolean folded) {
         if (!captured || draws.isEmpty()) {
             return;
         }
         VkGraphicsPipeline pipeline = programs.terrain().classicTranslucentProducerPipeline(mode, folded);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS,
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS,
                 #if MC >= 26.3 VkNativeOitPass.enginePipeline(pipeline) #else pipeline.handle() #endif);
         writeCommon(lightmapView, clampLinear);
         if (mode != OitMode.DEPTH_RANGE) {
@@ -227,7 +230,7 @@ final class VkTerrainClassicDrawManager implements TerrainDispatcher, SodiumTerr
             return;
         }
         VkGraphicsPipeline pipeline = programs.terrain().classicTranslucentMlabPipeline(mode);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS,
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS,
                 #if MC >= 26.3 VkNativeOitPass.enginePipeline(pipeline) #else pipeline.handle() #endif);
         writeCommon(lightmapView, clampLinear);
         mlab.bind(writer);
@@ -237,12 +240,13 @@ final class VkTerrainClassicDrawManager implements TerrainDispatcher, SodiumTerr
     private void writeCommon(GpuTextureView lightmapView, GpuSampler clampLinear) {
         Minecraft mc = Minecraft.getInstance();
         long atlasView = VkContext.imageView(mc.getTextureManager()
-                .getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView());
+                                               .getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView());
         writer.sampler(10, atlasView, VkContext.sampler(TerrainAtlasFilter.sampler()))
-                .sampler(12, VkContext.imageView(lightmapView), VkContext.sampler(clampLinear))
-                .uniform(16, RenderSystem.getProjectionMatrixBuffer())
-                .uniform(18, RenderSystem.getShaderFog())
-                .uniform(20, RenderSystem.getGlobalSettingsUniform());
+              .sampler(12, VkContext.imageView(lightmapView), VkContext.sampler(clampLinear))
+              .uniform(16, RenderSystem.getProjectionMatrixBuffer())
+              .uniform(18, RenderSystem.getShaderFog())
+              .uniform(20, RenderSystem.getGlobalSettingsUniform());
+        TerrainOverlayDraw.bind(writer);
     }
 
     private void submit(VkCommandBuffer cmd, VkGraphicsPipeline pipeline) {
@@ -258,13 +262,15 @@ final class VkTerrainClassicDrawManager implements TerrainDispatcher, SodiumTerr
                 VkCmd.bindVertexBuffer(cmd, VkContext.buffer(draw.geometry()));
                 vertexBuffer = draw.geometry();
             }
+            if (!TerrainOverlayDraw.isEmpty())
+                TerrainReceiverBuffers.bind(writer, TerrainOverlayPipelines.RECEIVER_BINDING, draw.geometry());
             if (indexBuffer != drawIndices) {
-                VK12.vkCmdBindIndexBuffer(cmd, VkContext.buffer(drawIndices), 0L, VK12.VK_INDEX_TYPE_UINT32);
+                VK10.vkCmdBindIndexBuffer(cmd, VkContext.buffer(drawIndices), 0L, VK10.VK_INDEX_TYPE_UINT32);
                 indexBuffer = drawIndices;
             }
             writer.uniform(21, draw.chunk()).uniform(23, draw.origin());
-            writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
-            VK12.vkCmdDrawIndexed(cmd, draw.count(), 1, draw.firstIndex(), draw.baseVertex(), 0);
+            writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+            VK10.vkCmdDrawIndexed(cmd, draw.count(), 1, draw.firstIndex(), draw.baseVertex(), 0);
         }
     }
 
@@ -293,7 +299,8 @@ final class VkTerrainClassicDrawManager implements TerrainDispatcher, SodiumTerr
         programs.release();
     }
 
-    private record SectionDraw(GpuBuffer geometry, @Nullable GpuBuffer indices, int count, int firstIndex, int baseVertex,
+    private record SectionDraw(GpuBuffer geometry, @Nullable GpuBuffer indices, int count, int firstIndex,
+                               int baseVertex,
                                GpuBufferSlice origin, GpuBufferSlice chunk) {
     }
 

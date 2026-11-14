@@ -1,5 +1,7 @@
 {
   "client": [
+    "DhLevelRendererMixin",
+    "DhClientApiMixin",
     "FrontendCommandEncoderDescriptorMixin",
     "FrontendGpuDeviceLodMixin",
     "FrontendRenderPassDescriptorMixin",
@@ -8,6 +10,15 @@
     "LevelRendererSolidPassMixin",
     "OitRenderPassProviderMixin",
     "RenderSystemNativeOitMixin",
+    "VoxyStaticAsyncNodesMixin",
+    "VoxyStaticGeometryMixin",
+    "VoxyStaticGeometryManagerMixin",
+    "VoxyStaticNodeManagerMixin",
+    "VoxyStaticPublicationMixin",
+    "VoxyStaticRenderGenerationAccessor",
+    "VoxyStaticRendererMixin",
+    "VoxyStaticSyncResultsMixin",
+    "VoxyStaticWorldMixin",
     "VulkanDepthlessPipelineMixin"
   ]
 }

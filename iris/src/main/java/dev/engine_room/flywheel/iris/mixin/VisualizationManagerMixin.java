@@ -18,7 +18,7 @@ abstract class VisualizationManagerMixin {
 
     // The guest returns before the ordinary runOitChain finally rotates these terrain-owned uniform rings.
     @Inject(method = "renderTranslucentOitSodium", at = @At("RETURN"), require = 1)
-    private void flywheel$finishGuestTerrain(CallbackInfoReturnable<Boolean> cir) {
+    private void flywheel$finishGuestTerrain(CallbackInfoReturnable<Boolean> _) {
         if (GuestTerrainGate.packActive && !ShadowRenderingState.areShadowsCurrentlyBeingRendered()
                 && terrainDrawDispatcher != null) terrainDrawDispatcher.endFrame();
     }

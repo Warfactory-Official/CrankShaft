@@ -6,10 +6,8 @@ import com.mojang.renderpearl.backend.opengl.GlSampler;
 import com.mojang.renderpearl.backend.opengl.GlTexture;
 import dev.engine_room.flywheel.backend.engine.BindlessSlots;
 import dev.engine_room.flywheel.backend.engine.MaterialSamplers;
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.client.renderer.texture.TextureManager;
-import org.lwjgl.opengl.ARBBindlessTexture;
-import org.lwjgl.opengl.GL45C;
+import org.lwjgl.opengl.*;
 
 /**
  * GL_ARB_bindless_texture handle table: one std430 SSBO of {@code uvec2} handles at binding
@@ -17,16 +15,15 @@ import org.lwjgl.opengl.GL45C;
  */
 public final class GlBindlessTable {
     public static final int HANDLES_BINDING = 8;
-    // Two slots can still resolve the same (texture, sampler) handle, and re-making a resident
-    // handle resident is a GL error -- dedup by handle.
-    private static final LongOpenHashSet resident = new LongOpenHashSet();
     private static int ssbo;
     private static long ssboBytes;
     // Staleness is keyed by OBJECT identity, never by GL name or handle value: a reload closes the
     // old GlTexture and the driver may recycle both the name and the handle value.
     private static GpuTexture[] writtenTexture = new GpuTexture[64];
     private static GpuSampler[] writtenSampler = new GpuSampler[64];
+    private static GpuTexture[] resolved = new GpuTexture[64];
     private static long[] handles = new long[64];
+    private static int version;
 
     private GlBindlessTable() {
     }
@@ -39,32 +36,48 @@ public final class GlBindlessTable {
         ensureCapacity(count);
         for (int i = 0; i < count; i++) {
             int slot = i + BindlessSlots.FIRST_MATERIAL_SLOT;
-            GpuTexture old = writtenTexture[slot];
-            if (old != null && old != textureManager.getTexture(BindlessSlots.key(i).texture()).getTextureView()
-                                                    .texture()) {
-                resident.remove(handles[slot]);
-                writtenTexture[slot] = null;
-            }
+            GpuTexture texture = textureManager.getTexture(BindlessSlots.key(i).texture()).getTextureView().texture();
+            resolved[slot] = texture;
         }
         for (int i = 0; i < count; i++) {
             BindlessSlots.Key key = BindlessSlots.key(i);
-            GpuTexture texture = textureManager.getTexture(key.texture()).getTextureView().texture();
             int slot = i + BindlessSlots.FIRST_MATERIAL_SLOT;
+            GpuTexture texture = resolved[slot];
             // The policy sampler is not immutable: the atlas filter follows Sodium's live pixel-filtering setting.
-            GpuSampler sampler = MaterialSamplers.get(key.texture(), key.blur(), key.mipmap());
+            GpuSampler sampler = MaterialSamplers.get(key.texture(), key.blur(), key.mipmap(), key.useTextureSampler());
             if (writtenTexture[slot] == texture && writtenSampler[slot] == sampler) {
                 continue;
             }
             long handle = ARBBindlessTexture.glGetTextureSamplerHandleARB(((GlTexture) texture).glId(),
-                    (int) ((GlSampler) sampler).getId());
-            if (resident.add(handle)) {
-                ARBBindlessTexture.glMakeTextureHandleResidentARB(handle);
-            }
+                    ((GlSampler) sampler).getId());
+            makeResident(handle);
             GL45C.glNamedBufferSubData(ssbo, (long) slot * Long.BYTES, new long[]{handle});
+            version++;
             writtenTexture[slot] = texture;
             writtenSampler[slot] = sampler;
             handles[slot] = handle;
         }
+    }
+
+    public static long handle(int slot) {
+        return handles[slot];
+    }
+
+    /**
+     * Makes a shared material handle resident once, including shaderpack companion textures. Render thread.
+     */
+    public static void makeResident(long handle) {
+        // Texture deletion ends residency; a reload may recycle the same handle for a new texture object.
+        if (!ARBBindlessTexture.glIsTextureHandleResidentARB(handle)) {
+            ARBBindlessTexture.glMakeTextureHandleResidentARB(handle);
+        }
+    }
+
+    /**
+     * Bumps whenever a slot's handle changes.
+     */
+    public static int version() {
+        return version;
     }
 
     /**
@@ -72,7 +85,7 @@ public final class GlBindlessTable {
      */
     public static void bind() {
         if (ssbo != 0) {
-            GL45C.glBindBufferBase(GL45C.GL_SHADER_STORAGE_BUFFER, HANDLES_BINDING, ssbo);
+            GL30C.glBindBufferBase(GL43C.GL_SHADER_STORAGE_BUFFER, HANDLES_BINDING, ssbo);
         }
     }
 
@@ -84,7 +97,7 @@ public final class GlBindlessTable {
             ssbo = GL45C.glCreateBuffers();
         }
         if (bytes > ssboBytes) {
-            GL45C.glNamedBufferData(ssbo, bytes, GL45C.GL_STATIC_DRAW);
+            GL45C.glNamedBufferData(ssbo, bytes, GL15C.GL_STATIC_DRAW);
             ssboBytes = bytes;
             int cap = (int) (bytes / Long.BYTES);
             long[] grown = new long[cap];
@@ -93,6 +106,7 @@ public final class GlBindlessTable {
             // Deliberately NOT copying the written* arrays: nulls force a full rewrite into the reallocated buffer.
             writtenTexture = new GpuTexture[cap];
             writtenSampler = new GpuSampler[cap];
+            resolved = new GpuTexture[cap];
         }
     }
 }

@@ -1,0 +1,94 @@
+layout(local_size_x = 128) in;
+
+layout(location = 0) uniform uint _flw_staticFrame;
+layout(location = 1) uniform uint _flw_staticHashMask;
+layout(location = 2) uniform uint _flw_staticCoverageFrame;
+
+layout(std430, binding = 0) readonly restrict buffer HostSelection {
+    uint _flw_staticSectionCount;
+    uint _flw_staticSectionIds[];
+};
+layout(std430, binding = 1) readonly restrict buffer HostMetadata {
+    uvec4 _flw_staticHostMetadata[];
+};
+layout(std430, binding = 2) readonly restrict buffer HostVisibility {
+    uint _flw_staticVisibility[];
+};
+layout(std430, binding = 3) readonly restrict buffer SectionLookup {
+    uvec4 _flw_staticSectionHash[];
+};
+layout(std430, binding = 4) readonly restrict buffer SectionGroups {
+    uvec4 _flw_staticGroups[];
+};
+struct StaticTemplate {
+    uvec4 geometry;
+    vec3 lo;
+    uint flags;
+    vec3 hi;
+    uint padding;
+};
+layout(std430, binding = 5) readonly restrict buffer Templates {
+    StaticTemplate _flw_staticTemplates[];
+};
+layout(std430, binding = 6) readonly restrict buffer CommandPartitions {
+    uvec2 _flw_staticPartitions[];
+};
+layout(std430, binding = 7) restrict buffer DrawCounts {
+    uint _flw_staticDrawCounts[];
+};
+struct StaticDrawCommand {
+    uint count;
+    uint instanceCount;
+    uint firstIndex;
+    uint baseVertex;
+    uint baseInstance;
+};
+layout(std430, binding = 8) writeonly restrict buffer DrawCommands {
+    StaticDrawCommand _flw_staticDrawCommands[];
+};
+layout(std430, binding = 9) readonly restrict buffer CoverageHeaders {
+    uvec2 _flw_staticCoverageHeaders[];
+};
+layout(std430, binding = 10) readonly restrict buffer CoverageLinks {
+    uint _flw_staticCoverageLinks[];
+};
+layout(std430, binding = 11) restrict buffer CoverageFrames {
+    uint _flw_staticCoverageFrames[];
+};
+
+uint _flw_staticHash(uvec2 key) {
+    uint value = key.x ^ key.y;
+    value ^= value >> 16u;
+    value *= 0x7feb352du;
+    value ^= value >> 15u;
+    value *= 0x846ca68bu;
+    return value ^ (value >> 16u);
+}
+
+void main() {
+    uint selected = gl_GlobalInvocationID.x;
+    if (selected >= _flw_staticSectionCount) return;
+    uint section = _flw_staticSectionIds[selected];
+    if ((_flw_staticVisibility[section] & 0x7fffffffu) != _flw_staticFrame) return;
+    // Voxy serializes the high word first; the capture index uses the low/high GPU buffer order.
+    uvec2 key = _flw_staticHostMetadata[section * 2u].yx;
+    uint slot = _flw_staticHash(key) & _flw_staticHashMask;
+    uvec4 match;
+    while (true) {
+        match = _flw_staticSectionHash[slot];
+        if (match.w == 0u) return;
+        if (match.w != 0xffffffffu && all(equal(match.xy, key))) break;
+        slot = (slot + 1u) & _flw_staticHashMask;
+    }
+    uint clip = _flw_staticGroups[match.z].w;
+    uvec2 coverage = _flw_staticCoverageHeaders[clip];
+    for (uint at = coverage.x; at < coverage.x + coverage.y; at++) {
+        atomicExchange(_flw_staticCoverageFrames[_flw_staticCoverageLinks[at]], _flw_staticCoverageFrame);
+    }
+    for (uint at = match.z; at < match.z + match.w; at++) {
+        uvec4 group = _flw_staticGroups[at];
+        uvec4 geometry = _flw_staticTemplates[group.x].geometry;
+        uint command = _flw_staticPartitions[group.x].x + atomicAdd(_flw_staticDrawCounts[group.x], 1u);
+        _flw_staticDrawCommands[command] = StaticDrawCommand(geometry.y, group.z, geometry.x, geometry.z, group.y);
+    }
+}

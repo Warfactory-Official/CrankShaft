@@ -2,7 +2,6 @@ package dev.engine_room.flywheel.impl.compat;
 
 import dev.tr7zw.entityculling.EntityCullingModBase;
 import dev.tr7zw.entityculling.NMSCullingHelper;
-import dev.tr7zw.entityculling.access.Cullable;
 import net.minecraft.world.entity.Entity;
 
 /**
@@ -30,9 +29,8 @@ public final class EntityCullingCompat {
             if (EntityCullingModBase.instance.config.skipEntityCulling) {
                 return;
             }
-            Cullable cullable = (Cullable) entity;
-            if (cullable.isForcedVisible() || !cullable.isCulled() || NMSCullingHelper.ignoresCulling(entity)) {
-                cullable.setOutOfCamera(false);
+            if (entity.isForcedVisible() || !entity.isCulled() || NMSCullingHelper.ignoresCulling(entity)) {
+                entity.setOutOfCamera(false);
             }
         }
     }

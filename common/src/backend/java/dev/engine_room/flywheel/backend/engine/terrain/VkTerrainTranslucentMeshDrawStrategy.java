@@ -1,8 +1,10 @@
 package dev.engine_room.flywheel.backend.engine.terrain;
 
 import com.mojang.renderpearl.api.textures.GpuSampler;
+
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
+import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
 import dev.engine_room.flywheel.backend.engine.indirect.VkMlabBuffers;
@@ -16,7 +18,7 @@ public interface VkTerrainTranslucentMeshDrawStrategy {
               GpuTextureView lightmapView, GpuTextureView blueNoiseView, GpuSampler clampLinear, GpuSampler oitSampler,
               GpuSampler noiseSampler, boolean localRead);
 
-    void drawMlab(VkTerrainDrawManager manager, dev.engine_room.flywheel.backend.compile.OitInsertMode oitMode,
+    void drawMlab(VkTerrainDrawManager manager, OitInsertMode oitMode,
                   VkCommandBuffer cmd, boolean fading, VkMlabBuffers mlab, GpuTextureView lightmapView,
                   GpuSampler clampLinear);
 }

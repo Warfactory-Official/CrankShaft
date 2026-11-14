@@ -27,12 +27,12 @@ public class TridentVisual extends EntityModelVisual<ThrownTrident, ThrownTriden
     }
 
     @Override
-    protected Identifier texture(ThrownTridentRenderState state) {
+    protected Identifier texture(ThrownTridentRenderState _) {
         return ThrownTridentRenderer.TRIDENT_LOCATION;
     }
 
     @Override
-    protected Material material(Identifier texture) {
+    protected Material material(Identifier _) {
         return MATERIAL;
     }
 

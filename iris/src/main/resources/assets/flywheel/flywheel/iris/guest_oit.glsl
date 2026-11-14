@@ -7,6 +7,10 @@ vec4 _flw_oitReadLayer(int set, int layer);
 #define _FLW_COEFFICIENT_TYPE sampler2DArray
 #endif
 
+#ifndef _FLW_GUEST_OIT_PIXEL
+#define _FLW_GUEST_OIT_PIXEL ivec2(gl_FragCoord.xy)
+#endif
+
 const float _FLW_GUEST_OIT_NOISE = 0.07;
 
 uniform sampler2D _flw_depthRange;
@@ -54,7 +58,7 @@ float _flw_oitCoefficient(_FLW_COEFFICIENT_TYPE coefficients, int index) {
     #ifdef _FLW_GUEST_FLAT_COEFFICIENTS
     return _flw_oitReadLayer(coefficients, index >> 2)[index & 3];
     #else
-    return texelFetch(coefficients, ivec3(gl_FragCoord.xy, index >> 2), 0)[index & 3];
+    return texelFetch(coefficients, ivec3(_FLW_GUEST_OIT_PIXEL, index >> 2), 0)[index & 3];
     #endif
 }
 

@@ -12,6 +12,8 @@ import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
 import dev.engine_room.flywheel.backend.engine.indirect.OitPipelines;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainOverlayDraw;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainReceiverBuffers;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 
@@ -55,7 +57,15 @@ public final class ChunkTranslucentReplay {
             if (!draws.isEmpty()) {
                 // Vanilla reverses TRANSLUCENT for back-to-front; OIT is order-independent, but mirror it so
                 // the per-draw ChunkSection upload + cutout edge cases match vanilla exactly.
-                pass.drawMultipleIndexed(draws.reversed(), indexBuffer, indexType, CHUNK_SECTION_UNIFORM, chunkInfos);
+                var reversed = draws.reversed();
+                if (TerrainOverlayDraw.isEmpty()) {
+                    pass.drawMultipleIndexed(reversed, indexBuffer, indexType, CHUNK_SECTION_UNIFORM, chunkInfos);
+                } else {
+                    TerrainReceiverBuffers.forEachRun(reversed, (receivers, run) -> {
+                        pass.setUniform("TerrainReceiverIds", receivers);
+                        pass.drawMultipleIndexed(run, indexBuffer, indexType, CHUNK_SECTION_UNIFORM, chunkInfos);
+                    });
+                }
             }
         }
         #endif

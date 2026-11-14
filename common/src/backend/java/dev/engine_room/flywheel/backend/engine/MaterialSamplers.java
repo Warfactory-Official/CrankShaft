@@ -6,6 +6,7 @@ import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.renderpearl.api.textures.GpuSampler;
 
 import dev.engine_room.flywheel.api.material.Material;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.resources.Identifier;
 
@@ -38,7 +39,12 @@ public final class MaterialSamplers {
                            .getRepeat(blur ? FilterMode.LINEAR : FilterMode.NEAREST, mipmap);
     }
 
+    public static GpuSampler get(Identifier texture, boolean blur, boolean mipmap, boolean useTextureSampler) {
+        return useTextureSampler ? Minecraft.getInstance().getTextureManager().getTexture(texture).getSampler()
+                : get(texture, blur, mipmap);
+    }
+
     public static GpuSampler get(Material material) {
-        return get(material.texture(), material.blur(), material.mipmap());
+        return get(material.texture(), material.blur(), material.mipmap(), material.useTextureSampler());
     }
 }

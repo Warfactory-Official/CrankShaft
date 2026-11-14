@@ -20,6 +20,10 @@ import java.nio.ByteOrder;
 public final class ExperimentalInstancer<I extends Instance> extends InstancedInstancer<I> {
     final Vector4fc bounds;
     final int typeId;
+    /**
+     * Whether a draw blends in submission order: the cull then keeps visible instances in instance order.
+     */
+    boolean ordered;
     private final ExperimentalInstanceArena arena;
     private final ByteBuffer rangeData = ByteBuffer.allocateDirect(16).order(ByteOrder.nativeOrder());
     GpuBufferSlice range;

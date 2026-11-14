@@ -36,6 +36,7 @@ layout(std140, binding = 9) uniform _FlwMeshVisualFrame {
     float _flw_mvPartialTick;
     float _flw_mvRenderTicks;
     float _flw_mvRenderSeconds;
+    uint _flw_mvGameMillis;
 };
 
 // Live bob-included ProjMat (26.2 bobs the projection, not the camera): clip with this to bob exactly like MDI.

@@ -1,7 +1,8 @@
 package dev.engine_room.flywheel.impl.visualization;
 
-import dev.engine_room.flywheel.impl.mixin.sodium.RenderSectionManagerAccessor;
+import dev.engine_room.flywheel.backend.engine.far.SceneOcclusion;
 import com.mojang.renderpearl.api.textures.GpuSampler;
+import dev.engine_room.flywheel.impl.mixin.sodium.RenderSectionManagerAccessor;
 #if MC >= 26.3
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.backend.compile.NativeOitWarmup;
@@ -9,6 +10,8 @@ import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.indirect.VkNativeOitPass;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 #endif
+import dev.engine_room.flywheel.impl.far.FarVisuals;
+import dev.engine_room.flywheel.api.visualization.FarVisualRegistry;
 import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.backend.RenderContext;
@@ -18,6 +21,7 @@ import dev.engine_room.flywheel.api.visual.BlockEntityVisual;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
 import dev.engine_room.flywheel.api.visual.Effect;
 import dev.engine_room.flywheel.api.visual.TickableVisual;
+import dev.engine_room.flywheel.api.visual.Visual;
 import dev.engine_room.flywheel.api.visualization.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.Backends;
@@ -58,12 +62,14 @@ import net.minecraft.core.Vec3i;
 import net.minecraft.server.level.BlockDestructionProgress;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
 import org.jspecify.annotations.Nullable;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -113,6 +119,9 @@ public class VisualizationManagerImpl implements VisualizationManager {
     private @Nullable TerrainDispatcher terrainDrawDispatcher;
     @Nullable
     private RenderContext lastFrameCtx;
+    private final @Nullable FarVisuals farVisuals;
+    private boolean farFramePending;
+    private boolean earlyFarWork;
 
     #if MC < 26.3
     private boolean oitDeferred;
@@ -145,7 +154,40 @@ public class VisualizationManagerImpl implements VisualizationManager {
         if (level instanceof Level l) {
             LevelExtension.getAllLoadedEntities(l)
                           .forEach(entities::queueAdd);
+            farVisuals = FarVisuals.of(l);
+            blockEntities.getStorage().farVisuals(farVisuals, this::renderOrigin);
+        } else {
+            farVisuals = null;
         }
+    }
+
+    public @Nullable FarVisuals farVisuals() {
+        return farVisuals;
+    }
+
+    /**
+     * A chunk arrived from the server, its block entities created. Render thread.
+     */
+    public void onChunkLoaded(LevelChunk chunk) {
+        if (farVisuals != null) {
+            farVisuals.chunkLoaded(chunk);
+        }
+    }
+
+    /**
+     * A chunk leaves the client, its block entities' removal about to be queued. Render thread.
+     */
+    public void onChunkDropping(LevelChunk chunk) {
+        if (farVisuals == null) {
+            return;
+        }
+        farVisuals.chunkDropping(chunk.getPos());
+        chunk.getBlockEntities().forEach((pos, blockEntity) -> {
+            Visual visual = blockEntities.getStorage().visualAtPos(pos.asLong());
+            if (visual != null && FarVisuals.keeps(visual, blockEntity.getBlockState())) {
+                farVisuals.dropping(pos);
+            }
+        });
     }
 
     public static boolean supportsVisualization(@Nullable LevelAccessor level) {
@@ -245,8 +287,24 @@ public class VisualizationManagerImpl implements VisualizationManager {
         if (lastFrameCtx == null) {
             return null;
         }
-        taskExecutor.syncUntil(frameFlag::isRaised);
+        syncFrame();
         return getEngineImpl();
+    }
+
+    /**
+     * Joins live updates before a LoD host consumes retained geometry, only when either side has work. Render thread.
+     */
+    public void prepareFarFrame() {
+        if (!farFramePending || !earlyFarWork) return;
+        syncFrame();
+    }
+
+    private void syncFrame() {
+        taskExecutor.syncUntil(frameFlag::isRaised);
+        if (farFramePending) {
+            farVisuals.render(lastFrameCtx, renderOrigin());
+            farFramePending = false;
+        }
     }
 
     public boolean isShaderPackGuest() {
@@ -265,13 +323,16 @@ public class VisualizationManagerImpl implements VisualizationManager {
         tickFlag.lower();
 
         lateInit().tickPlan.execute(taskExecutor, TickableVisualContextImpl.INSTANCE);
+        if (farVisuals != null && lastFrameCtx != null) {
+            farVisuals.tick(lastFrameCtx.camera().position());
+        }
     }
 
     /**
      * Begin execution of the frame plan.
      */
     private void beginFrame(RenderContext context) {
-        this.lastFrameCtx = context;
+        lastFrameCtx = context;
 
         // Make sure we're done with the last tick.
         // Note we don't lower here because many frames may happen per tick.
@@ -281,6 +342,13 @@ public class VisualizationManagerImpl implements VisualizationManager {
 
         frameLimiter.tick();
 
+        SceneOcclusion.of(context.camera().entity().level()).beginFrame(context);
+        if (farVisuals != null) {
+            farFramePending = true;
+            earlyFarWork = farVisuals.size() != 0 || blockEntities.visualCount() != 0
+                    || blockEntities.hasQueuedTransactions()
+                    || FarVisualRegistry.hasProviders() && FarVisuals.available();
+        }
         lateInit().framePlan.execute(taskExecutor, context);
     }
 
@@ -294,8 +362,13 @@ public class VisualizationManagerImpl implements VisualizationManager {
      * Draw all visuals of the given type.
      */
     private void render(RenderContext context) {
-        taskExecutor.syncUntil(frameFlag::isRaised);
+        syncFrame();
         lateInit().engine.render(context);
+        // DH applied its colour before vanilla terrain, without depth; Voxy's hook already composited.
+        if (farVisuals != null) {
+            farVisuals.drawStaticMain(context);
+            farVisuals.drawMain();
+        }
     }
 
     private boolean renderOit(RenderContext context, @Nullable ChunkSectionsToRender chunks,
@@ -338,7 +411,9 @@ public class VisualizationManagerImpl implements VisualizationManager {
     }
 
     #if MC >= 26.3
-    /** Prepared native producers stay live until the chain completes; only this boundary rotates the terrain ring. */
+    /**
+     * Prepared native producers stay live until the chain completes; only this boundary rotates the terrain ring.
+     */
     public boolean renderNativeTranslucentOit(NativeOitReplay replay) {
         boolean sodium = SodiumCompat.ACTIVE;
         SodiumTerrainOitReplay terrain = sodium && BackendConfig.INSTANCE.terrainMode().compositesTranslucent()
@@ -633,6 +708,14 @@ public class VisualizationManagerImpl implements VisualizationManager {
         effects.onLightUpdate(longPos);
     }
 
+    public void onBlockChanged(BlockPos pos) {
+        if (lateInit != null) lateInit.engine.onBlockChanged(pos);
+    }
+
+    public void onChunkChanged(int chunkX, int chunkZ) {
+        if (lateInit != null) lateInit.engine.onChunkChanged(chunkX, chunkZ);
+    }
+
     /**
      * True iff any storage holds a {@code LightUpdatedVisual} in this section.
      */
@@ -721,8 +804,9 @@ public class VisualizationManagerImpl implements VisualizationManager {
                 enginePhase = NestedPlan.of(parallel);
             }
 
+            // Rebuilt visuals still get this frame's update, or every visual posed per frame vanishes for a frame.
             framePlan = IfElsePlan.on((RenderContext ctx) -> engine.updateRenderOrigin(ctx.camera()))
-                                  .ifTrue(recreate)
+                                  .ifTrue(recreate.then(update))
                                   .ifFalse(update)
                                   .plan()
                                   .then(SimplePlan.of(() -> {

@@ -25,6 +25,14 @@ public interface Mesh {
     int indexCount();
 
     /**
+     * Vertex storage shared by index-only views. The source must have the same vertices and vertex count;
+     * mesh pools retain it while any view is live. Ordinary meshes own their storage.
+     */
+    default Mesh vertexSource() {
+        return this;
+    }
+
+    /**
      * Get a vec4 representing this mesh's bounding sphere in the format (x, y, z, radius).
      *
      * @return A vec4 view.

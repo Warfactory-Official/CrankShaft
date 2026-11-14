@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.backend;
 import dev.engine_room.flywheel.backend.gl.GlGpuTimer;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.VkGpuTimer;
+import net.minecraft.network.chat.Component;
 
 /**
  * Backend-neutral front for the UE-style GPU timers: routes to {@link VkGpuTimer} on a Vulkan host and
@@ -26,7 +27,7 @@ public final class GpuTimer {
         return vulkan() ? VkGpuTimer.captureOnce() : GlGpuTimer.captureOnce();
     }
 
-    public static String commandReport() {
+    public static Component commandReport() {
         return vulkan() ? VkGpuTimer.commandReport() : GlGpuTimer.commandReport();
     }
 

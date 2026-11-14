@@ -16,8 +16,9 @@ public final class DistantHorizonsFade {
     }
 
     public static void prepare(DhApiRenderParam params) {
+        Matrix4f projection = joml(params.mcProjectionMatrix);
         LodDepthPass.prepareFadeMask(params.renderPass == EDhApiRenderPass.TRANSPARENT,
-                joml(params.mcProjectionMatrix).mul(joml(params.mcModelViewMatrix)).invert());
+                new Matrix4f(projection).mul(joml(params.mcModelViewMatrix)).invert(), projection.invert());
     }
 
     public static GpuTexture mask() {

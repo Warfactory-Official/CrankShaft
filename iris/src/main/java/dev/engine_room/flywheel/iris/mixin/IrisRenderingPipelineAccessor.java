@@ -1,7 +1,6 @@
 package dev.engine_room.flywheel.iris.mixin;
 
 import net.irisshaders.iris.gl.buffer.ShaderStorageBufferHolder;
-import net.irisshaders.iris.gl.image.GlImage;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 #if MC >= 26.3
 import net.irisshaders.iris.pipeline.WorldRenderingPhase;
@@ -15,7 +14,6 @@ import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
-import java.util.Set;
 import java.util.function.Supplier;
 
 @Mixin(IrisRenderingPipeline.class)
@@ -42,7 +40,4 @@ public interface IrisRenderingPipelineAccessor {
 
     @Accessor("shaderStorageBufferHolder")
     @Nullable ShaderStorageBufferHolder flywheel$shaderStorageBuffers();
-
-    @Accessor("customImages")
-    Set<GlImage> flywheel$customImages();
 }

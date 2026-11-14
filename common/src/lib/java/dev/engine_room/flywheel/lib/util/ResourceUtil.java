@@ -58,7 +58,7 @@ public final class ResourceUtil {
 
         try {
             return parseFlywheelDefault(s);
-        } catch (IdentifierException e) {
+        } catch (IdentifierException _) {
             reader.setCursor(i);
             throw ERROR_INVALID.createWithContext(reader);
         }

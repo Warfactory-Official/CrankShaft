@@ -10,7 +10,7 @@ import net.neoforged.neoforgespi.language.IModInfo;
 
 import java.util.*;
 
-public class NeoForgeVanillinConfig {
+public class NeoForgeVanillinConfig implements VanillinConfig {
     public static final NeoForgeVanillinConfig INSTANCE = new NeoForgeVanillinConfig(VanillaVisuals.CONFIGURATOR);
 
     private final Configurator configurator;
@@ -120,6 +120,37 @@ public class NeoForgeVanillinConfig {
         builder.pop();
 
         return out;
+    }
+
+    @Override
+    public boolean enabled() {
+        return enabled.get();
+    }
+
+    @Override
+    public void setEnabled(boolean value) {
+        enabled.set(value);
+    }
+
+    @Override
+    public boolean configurable(boolean blockEntity, String key) {
+        return (blockEntity ? blockEntities : entities).config().containsKey(key);
+    }
+
+    @Override
+    public VisualConfigValue visual(boolean blockEntity, String key) {
+        return (blockEntity ? blockEntities : entities).config().get(key).get();
+    }
+
+    @Override
+    public void setVisual(boolean blockEntity, String key, VisualConfigValue value) {
+        (blockEntity ? blockEntities : entities).config().get(key).set(value);
+    }
+
+    @Override
+    public void saveAndApply() {
+        clientSpec.save();
+        apply();
     }
 
     public void apply() {

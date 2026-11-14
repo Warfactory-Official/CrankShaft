@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.backend.engine.indirect;
 
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
+import dev.engine_room.flywheel.backend.compile.ProgramGeneration;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.BindlessSlots;
@@ -24,6 +25,7 @@ public class IndirectDraw {
     private final int packedFogAndCutout;
     private final int packedMaterialProperties;
     private final int packedTexIndices;
+    private final ProgramGeneration required;
     private final @Nullable DrawTags tags;
     private boolean deleted;
 
@@ -43,7 +45,16 @@ public class IndirectDraw {
         boolean bindless = VkContext.isVulkanHost() ? VkPrograms.bindlessTexturesEnabled()
                 : GlCompat.SUPPORTS_BINDLESS_TEXTURES;
         int texSlot = bindless ? BindlessSlots.slot(material) : 0;
-        this.packedTexIndices = texSlot | (InstanceTypeIds.id(instancer.type) << 16);
+        int typeId = InstanceTypeIds.id(instancer.type);
+        this.packedTexIndices = texSlot | (typeId << 16);
+        this.required = ProgramGeneration.required(typeId, packedFogAndCutout & 0xFFFF, packedFogAndCutout >>> 16);
+    }
+
+    /**
+     * The generation an uber program needs to draw this.
+     */
+    public ProgramGeneration required() {
+        return required;
     }
 
     public boolean deleted() {
@@ -56,6 +67,10 @@ public class IndirectDraw {
 
     public InstanceType<?> instanceType() {
         return instancer.type;
+    }
+
+    public boolean viewDepthSorted() {
+        return instancer instanceof GpuIndirectInstancer<?> gpu && gpu.simulation.viewDepthSorted();
     }
 
     public boolean isEmbedded() {

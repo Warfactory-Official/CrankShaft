@@ -29,6 +29,6 @@ public interface TaskExecutor extends Executor {
      * Receives plan-execution failures; FJP-aware executors override
      * to surface throwables to the render loop.
      */
-    default void recordFailure(Throwable throwable) {
+    default void recordFailure(Throwable _) {
     }
 }

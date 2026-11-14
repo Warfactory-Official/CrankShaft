@@ -124,7 +124,7 @@ public class GlProgram extends GlObject {
     }
 
     public int getUniformLocation(String uniform) {
-        return uniformLocationCache.computeIfAbsent(uniform, s -> {
+        return uniformLocationCache.computeIfAbsent(uniform, _ -> {
             int index = glGetUniformLocation(this.handle(), uniform);
 
             if (index < 0) {

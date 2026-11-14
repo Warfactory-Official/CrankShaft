@@ -19,6 +19,7 @@ public final class ShaderWarmupRegistry {
     private static final Set<InstanceType<?>> TYPES = new LinkedHashSet<>();
     // Materials may be resource-generation-specific or temporary; retaining them would retain obsolete textures.
     private static final Set<Material> MATERIALS = Collections.newSetFromMap(new WeakHashMap<>());
+    private static final Set<Material> PARTICLES_TRANSLUCENT_MATERIALS = Collections.newSetFromMap(new WeakHashMap<>());
 
     private ShaderWarmupRegistry() {
     }
@@ -31,6 +32,15 @@ public final class ShaderWarmupRegistry {
         MATERIALS.add(material);
     }
 
+    /**
+     * A material a model draws as a translucent particle
+     * ({@link dev.engine_room.flywheel.lib.model.PackIdentity#PARTICLES_TRANSLUCENT}); {@code PackTaggedModel}
+     * registers its meshes' materials. Shaderpack guests warm that route only for these.
+     */
+    public static synchronized void registerParticlesTranslucent(Material material) {
+        PARTICLES_TRANSLUCENT_MATERIALS.add(material);
+    }
+
     public static synchronized List<InstanceType<?>> types() {
         return List.copyOf(TYPES);
     }
@@ -40,8 +50,19 @@ public final class ShaderWarmupRegistry {
      * seeding assigns the cutout/fog indices baked into generated sources, which key cached program binaries.
      */
     public static synchronized List<Material> materials() {
+        return variants(MATERIALS);
+    }
+
+    /**
+     * Variants of the {@link #registerParticlesTranslucent} materials, keyed as {@link #materials}.
+     */
+    public static synchronized List<Material> particlesTranslucentMaterials() {
+        return variants(PARTICLES_TRANSLUCENT_MATERIALS);
+    }
+
+    private static List<Material> variants(Set<Material> materials) {
         Map<Key, Material> variants = new TreeMap<>(Key.ORDER);
-        for (Material material : MATERIALS) {
+        for (Material material : materials) {
             variants.putIfAbsent(new Key(material), material);
         }
         return List.copyOf(variants.values());

@@ -1,0 +1,52 @@
+{
+  "schema": 2,
+  "name": "Rethinking Voxels",
+  "testedVersions": [
+    "rethinking-voxels_r0.1-beta9"
+  ],
+  "matches": [
+    {
+      "path": "program/gbuffers_entities.glsl",
+      "contains": [
+        "Complementary Shaders",
+        "FRAGMENT_SHADER"
+      ],
+      "excludes": [
+        "Euphoria Patches"
+      ]
+    },
+    {
+      "path": "lib/common.glsl",
+      "contains": [
+        "VX_VOL_SIZE"
+      ]
+    }
+  ],
+  "files": [],
+  "wrappers": [],
+  "blends": [],
+  "properties": "oit.gbuffers = true\noit.gbuffers.colortex0 = 0\noit.gbuffers.colortex3 = 1\noit.gbuffers.colortex6 = frontmost\nblend.clrwl_gbuffers_additive=ONE ONE ZERO ONE\n",
+  "forwardOit": {
+    "programs": [
+      "gbuffers_water"
+    ],
+    "paths": [],
+    "fingerprints": [
+      "fe12254ca88dae31a301b48f854f865d201b5ae905d9303c7cab1ea81f0a465d"
+    ]
+  },
+  "programs": [
+    {
+      "target": "clrwl_gbuffers_additive",
+      "fragment": "complementary_light.fsh",
+      "vertex": "gbuffers_beaconbeam"
+    },
+    {
+      "target": "crankshaft_gbuffers_additive",
+      "fragment": "complementary_light.fsh",
+      "vertex": "gbuffers_beaconbeam",
+      "nativeDraw": true
+    }
+  ],
+  "emissiveLight": true
+}

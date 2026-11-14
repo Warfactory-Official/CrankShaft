@@ -43,6 +43,8 @@ public final class InstanceTypes {
                                                                                                       ptr + TransformedInstance.OFF_POSE,
                                                                                                       IDENTITY_M4);
                                                                                           })
+                                                                                          .transform(
+                                                                                                  InstanceTransforms.TRANSFORMED)
                                                                                           .vertexShader(ResourceUtil.rl(
                                                                                                   "instance/transformed.vert"))
                                                                                           .cullShader(ResourceUtil.rl(
@@ -80,6 +82,7 @@ public final class InstanceTypes {
                                                                                           ptr + PosedInstance.OFF_NORMAL,
                                                                                           IDENTITY_M3);
                                                                               })
+                                                                              .transform(InstanceTransforms.TRANSFORMED)
                                                                               .vertexShader(ResourceUtil.rl(
                                                                                       "instance/posed.vert"))
                                                                               .cullShader(ResourceUtil.rl(
@@ -120,6 +123,8 @@ public final class InstanceTypes {
                                                                                                 ptr + OrientedInstance.OFF_ROT,
                                                                                                 IDENTITY_QUAT);
                                                                                     })
+                                                                                    .transform(
+                                                                                            InstanceTransforms.ORIENTED)
                                                                                     .vertexShader(ResourceUtil.rl(
                                                                                             "instance/oriented.vert"))
                                                                                     .cullShader(ResourceUtil.rl(
@@ -161,6 +166,8 @@ public final class InstanceTypes {
                                                                                                                ptr + TransformedInstance.OFF_POSE,
                                                                                                                IDENTITY_M4);
                                                                                                    })
+                                                                                                   .transform(
+                                                                                                           InstanceTransforms.CLIP_TRANSFORMED)
                                                                                                    .vertexShader(
                                                                                                            ResourceUtil.rl(
                                                                                                                    "instance/clip_transformed.vert"))
@@ -203,6 +210,8 @@ public final class InstanceTypes {
                                                                                                            0.0f, 0.0f,
                                                                                                            1.0f, 1.0f);
                                                                                                })
+                                                                                               .transform(
+                                                                                                       InstanceTransforms.TRANSFORMED)
                                                                                                .vertexShader(
                                                                                                        ResourceUtil.rl(
                                                                                                                "instance/transformed_uv.vert"))
@@ -242,6 +251,8 @@ public final class InstanceTypes {
                                                                                                   0.0f, 0.0f,
                                                                                                   1.0f, 1.0f);
                                                                                       })
+                                                                                      .transform(
+                                                                                              InstanceTransforms.BILLBOARD)
                                                                                       .vertexShader(ResourceUtil.rl(
                                                                                               "instance/billboard.vert"))
                                                                                       .cullShader(ResourceUtil.rl(
@@ -292,6 +303,7 @@ public final class InstanceTypes {
                                                                                           ptr + GlyphInstance.OFF_DEPTH,
                                                                                           0.0f);
                                                                               })
+                                                                              .transform(InstanceTransforms.GLYPH)
                                                                               .vertexShader(ResourceUtil.rl(
                                                                                       "instance/glyph.vert"))
                                                                               .cullShader(ResourceUtil.rl(
@@ -343,8 +355,9 @@ public final class InstanceTypes {
                                                                                                      .scalar("radius",
                                                                                                              FloatRepr.FLOAT)
                                                                                                      .build())
-                                                                                .seed(ptr -> {
+                                                                                .seed(_ -> {
                                                                                 })
+                                                                                .transform(InstanceTransforms.SHADOW)
                                                                                 .vertexShader(ResourceUtil.rl(
                                                                                         "instance/shadow.vert"))
                                                                                 .cullShader(ResourceUtil.rl(

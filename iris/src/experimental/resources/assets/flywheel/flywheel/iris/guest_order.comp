@@ -1,0 +1,38 @@
+// Per ordered model: (first instance word, visible base, first draw index, stride in words),
+// (instances, draws, first visibility word, 0).
+struct _FlwGuestOrder {
+    uvec4 offsets;
+    uvec4 counts;
+};
+
+layout(std430) readonly buffer _FlwGuestOrders { _FlwGuestOrder _flw_guestOrders[]; };
+
+layout(std430) readonly buffer _FlwGuestOrderWords { uint _flw_guestOrderWords[]; };
+
+layout(std430) writeonly buffer _FlwVisibleInstances { uint _flw_visibleInstances[]; };
+
+layout(std430) buffer _FlwGuestCommands { uint _flw_guestCommands[]; };
+
+layout(std430) readonly buffer _FlwGuestDrawIndices { uint _flw_guestDrawIndices[]; };
+
+#include "flywheel:internal/indirect/order_scan.glsl"
+
+_FlwGuestOrder _flw_order;
+
+uint _flw_orderedPage(uint page, out uint firstObject) {
+    firstObject = _flw_order.offsets.x + page * 32u * _flw_order.offsets.w;
+    return _flw_guestOrderWords[_flw_order.counts.z + page];
+}
+
+void _flw_orderedEmit(uint rank, uint objectUint) {
+    _flw_visibleInstances[_flw_order.offsets.y + rank] = objectUint;
+}
+
+void main() {
+    _flw_order = _flw_guestOrders[gl_WorkGroupID.x];
+    uint count = _flw_orderedCompact((_flw_order.counts.x + 31u) / 32u, _flw_order.offsets.w);
+    uint lane = gl_LocalInvocationID.x;
+    for (uint draw = lane; draw < _flw_order.counts.y; draw += _FLW_ORDER_GROUP) {
+        _flw_guestCommands[_flw_guestDrawIndices[_flw_order.offsets.z + draw] * 12u + 1u] = count;
+    }
+}

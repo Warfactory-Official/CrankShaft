@@ -5,6 +5,7 @@ import dev.engine_room.flywheel.backend.engine.SlabPageCopier;
 import dev.engine_room.flywheel.lib.memory.FlwMemoryTracker;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
 
 import java.util.ArrayList;
@@ -24,6 +25,7 @@ final class GlSlabArena implements SlabPageCopier {
     private final List<Chunk> chunks = new ArrayList<>();
     private final Long2ObjectOpenHashMap<LongArrayList> freeSlots = new Long2ObjectOpenHashMap<>();
     private int dstVbo;
+    private @Nullable ObjectHistory history;
     private List<ArenaSlab> retiredThisFrame = new ArrayList<>();
     private List<ArenaSlab> retiredLastFrame = new ArrayList<>();
 
@@ -39,7 +41,7 @@ final class GlSlabArena implements SlabPageCopier {
         return slot & 0xFFFFFFFFL;
     }
 
-    Slab create(long pageBytes, int initialPages) {
+    Slab create(long pageBytes, int _) {
         return new ArenaSlab(pageBytes);
     }
 
@@ -48,7 +50,7 @@ final class GlSlabArena implements SlabPageCopier {
      */
     void beginFrame() {
         for (ArenaSlab slab : retiredLastFrame) {
-            LongArrayList free = freeSlots.computeIfAbsent(slab.pageBytes, b -> new LongArrayList());
+            LongArrayList free = freeSlots.computeIfAbsent(slab.pageBytes, _ -> new LongArrayList());
             free.addElements(free.size(), slab.slots, 0, slab.slotCount);
         }
         retiredLastFrame.clear();
@@ -57,12 +59,21 @@ final class GlSlabArena implements SlabPageCopier {
         retiredThisFrame = tmp;
     }
 
-    void beginUpload(int dstVbo) {
+    /**
+     * {@code history}: records this frame's object writes.
+     */
+    void beginUpload(int dstVbo, @Nullable ObjectHistory history) {
         this.dstVbo = dstVbo;
+        this.history = history;
     }
 
     @Override
     public void copyPage(Slab source, long srcByteOffset, long dstByteOffset, long byteSize) {
+        enqueue(source, srcByteOffset, dstByteOffset, byteSize, dstVbo);
+        if (history != null) history.record(dstByteOffset, byteSize);
+    }
+
+    void enqueue(Slab source, long srcByteOffset, long dstByteOffset, long byteSize, int dstVbo) {
         ArenaSlab slab = (ArenaSlab) source;
         long pageBytes = slab.pageBytes;
         int page = (int) (srcByteOffset / pageBytes);
@@ -149,7 +160,7 @@ final class GlSlabArena implements SlabPageCopier {
         }
 
         @Override
-        public void flushRange(long byteOffset, long byteSize) {
+        public void flushRange(long _, long _) {
         }
 
         @Override

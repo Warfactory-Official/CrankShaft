@@ -4,13 +4,16 @@ import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.pipeline.IndexType;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
+import dev.engine_room.flywheel.iris.compile.ForwardOit;
 import dev.engine_room.flywheel.iris.experimental.CompositeIndirectDraw;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.backend.GraphicsPipeline;
 import net.irisshaders.iris.backend.SyncCommand;
 import net.irisshaders.iris.gl.framebuffer.ViewportData;
 import net.irisshaders.iris.pipeline.programs.CompositeProgram;
+import net.irisshaders.iris.uniforms.buffer.BufferUniformHolder;
 import org.joml.Vector2i;
+import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
@@ -30,12 +33,17 @@ abstract class ExperimentalCompositeProgramMixin implements CompositeIndirectDra
     @Shadow
     private GpuBuffer quadIndices;
 
+    @Shadow
+    public abstract void prepare(List<GpuTextureView> targets);
+
+    @Shadow
+    public abstract BufferUniformHolder getUniforms();
+
     @Override
     public void flywheel$drawIndirect(List<GpuTextureView> targets, ViewportData viewport, GpuBufferSlice command,
-                                      long tick, long frame) {
-        var program = (CompositeProgram) (Object) this;
-        program.prepare(targets);
-        program.getUniforms().update(tick, frame);
+                                      ForwardOit.@Nullable SnapshotRect scissor, long tick, long frame) {
+        prepare(targets);
+        getUniforms().update(tick, frame);
         var backend = Iris.getRenderBackend();
         var sync = backend.createSync().read(pipeline).read(command, SyncCommand.Access.INDIRECT);
         for (int i = 0; i < targets.size(); i++) sync.write(targets.get(i), SyncCommand.Access.COLOR_ATTACHMENT);
@@ -45,6 +53,7 @@ abstract class ExperimentalCompositeProgramMixin implements CompositeIndirectDra
                 flywheel$viewport.set(width, height))) {
             pass.setViewport((int) (viewport.viewportX() * width), (int) (viewport.viewportY() * height),
                     (int) (width * viewport.scale()), (int) (height * viewport.scale()));
+            if (scissor != null) pass.enableScissor(scissor.x(), scissor.y(), scissor.width(), scissor.height());
             pass.setVertexBuffer(0, vertices.slice());
             pass.setIndexBuffer(quadIndices, IndexType.SHORT);
             pass.bindPipeline(pipeline);

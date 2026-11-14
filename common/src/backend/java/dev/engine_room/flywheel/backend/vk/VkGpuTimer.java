@@ -1,12 +1,15 @@
 package dev.engine_room.flywheel.backend.vk;
 
 import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
+
 import dev.engine_room.flywheel.backend.GpuTimer;
 import dev.engine_room.flywheel.backend.util.GpuTimerReport;
+import net.minecraft.network.chat.Component;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 
 import java.nio.LongBuffer;
+import java.util.Arrays;
 
 public final class VkGpuTimer {
     private static final int SLOT_COUNT = 2;
@@ -128,11 +131,9 @@ public final class VkGpuTimer {
         }
     }
 
-    public static String commandReport() {
+    public static Component commandReport() {
         collectCompleted();
-        StringBuilder out = new StringBuilder(1024);
-        report.appendSummary(out, true, enabled, oneShot);
-        return out.toString();
+        return report.commandReport(enabled, oneShot);
     }
 
     public static void appendDebugInfo(StringBuilder out) {
@@ -305,9 +306,7 @@ public final class VkGpuTimer {
             this.scopeCount = 0;
             this.droppedScopes = 0;
             this.collected = false;
-            for (int i = 0; i < names.length; i++) {
-                names[i] = null;
-            }
+            Arrays.fill(names, null);
         }
     }
 }

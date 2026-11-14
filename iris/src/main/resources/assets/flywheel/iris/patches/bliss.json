@@ -16,7 +16,24 @@
   "files": [],
   "wrappers": [],
   "blends": [],
-  "properties": "oit.gbuffers = true\noit.gbuffers.colortex2 = 0\noit.gbuffers.colortex7 = frontmost\noit.gbuffers.colortex11 = frontmost\noit.gbuffers.colortex14 = frontmost\n",
+  "patches": [
+    "bliss_light.patch"
+  ],
+  "properties": "oit.gbuffers = true\noit.gbuffers.colortex2 = 0\noit.gbuffers.colortex7 = frontmost\noit.gbuffers.colortex11 = frontmost\noit.gbuffers.colortex14 = frontmost\nblend.clrwl_gbuffers_additive = ONE ONE ONE ONE\n",
+  "programs": [
+    {
+      "target": "clrwl_gbuffers_additive",
+      "fragment": "bliss_light.fsh",
+      "vertex": "gbuffers_spidereyes"
+    },
+    {
+      "target": "crankshaft_gbuffers_additive",
+      "fragment": "bliss_light.fsh",
+      "vertex": "gbuffers_spidereyes",
+      "nativeDraw": true
+    }
+  ],
+  "emissiveLight": true,
   "forwardOit": {
     "programs": [
       "gbuffers_water"

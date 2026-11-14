@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class MixinRenderRegion {
     @Inject(method = "removeSection(Lnet/caffeinemc/mods/sodium/client/render/chunk/RenderSection;)V",
             at = @At("HEAD"), require = 1)
-    private void flywheel$onSectionRemoved(RenderSection section, CallbackInfo ci) {
+    private void flywheel$onSectionRemoved(RenderSection section, CallbackInfo _) {
         TerrainSectionListener listener = TerrainSectionListener.published();
         if (listener == null) {
             return;
@@ -23,7 +23,7 @@ public class MixinRenderRegion {
     // Compat with Sodium 0.9.2: shared arenas relocate a region's segments (defragmentation) and move it between
     // buffers outside its own uploads; the mirrored section records carry the stale offsets until re-fed.
     @Inject(method = "onGeometryBufferChange()V", at = @At("TAIL"), require = 1)
-    private void flywheel$onGeometryBufferChange(CallbackInfo ci) {
+    private void flywheel$onGeometryBufferChange(CallbackInfo _) {
         TerrainSectionListener listener = TerrainSectionListener.published();
         if (listener != null) {
             listener.markRegion((RenderRegion) (Object) this);
@@ -31,7 +31,7 @@ public class MixinRenderRegion {
     }
 
     @Inject(method = "onIndexBufferChange()V", at = @At("TAIL"), require = 1)
-    private void flywheel$onIndexBufferChange(CallbackInfo ci) {
+    private void flywheel$onIndexBufferChange(CallbackInfo _) {
         TerrainSectionListener listener = TerrainSectionListener.published();
         if (listener != null) {
             listener.markRegion((RenderRegion) (Object) this);
@@ -39,7 +39,7 @@ public class MixinRenderRegion {
     }
 
     @Inject(method = "onGeometrySegmentChange(I)V", at = @At("TAIL"), require = 1)
-    private void flywheel$onGeometrySegmentChange(int ownerIndex, CallbackInfo ci) {
+    private void flywheel$onGeometrySegmentChange(int ownerIndex, CallbackInfo _) {
         TerrainSectionListener listener = TerrainSectionListener.published();
         if (listener != null) {
             listener.markSection((RenderRegion) (Object) this, RenderRegion.unpackSectionIndex(ownerIndex));
@@ -47,7 +47,7 @@ public class MixinRenderRegion {
     }
 
     @Inject(method = "onIndexSegmentChange(I)V", at = @At("TAIL"), require = 1)
-    private void flywheel$onIndexSegmentChange(int ownerIndex, CallbackInfo ci) {
+    private void flywheel$onIndexSegmentChange(int ownerIndex, CallbackInfo _) {
         TerrainSectionListener listener = TerrainSectionListener.published();
         if (listener == null) {
             return;

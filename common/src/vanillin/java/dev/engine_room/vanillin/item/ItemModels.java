@@ -39,9 +39,9 @@ public final class ItemModels {
 
     // Port: bakes capture their stack, so each map rides one RendererReloadCache entry and drops with its reloads.
     private static final RendererReloadCache<Boolean, Map<ModelKey, Baked>> MODEL_CACHE = new RendererReloadCache<>(
-            $ -> new ConcurrentHashMap<>());
+            _ -> new ConcurrentHashMap<>());
     private static final RendererReloadCache<Boolean, Map<SupportKey, Boolean>> SUPPORT_CACHE =
-            new RendererReloadCache<>($ -> new ConcurrentHashMap<>());
+            new RendererReloadCache<>(_ -> new ConcurrentHashMap<>());
 
     private ItemModels() {
     }
@@ -52,7 +52,7 @@ public final class ItemModels {
             return false;
         }
         return SUPPORT_CACHE.get(true).computeIfAbsent(
-                new SupportKey(stack.getItem(), stack.get(DataComponents.ITEM_MODEL), displayContext), $ -> {
+                new SupportKey(stack.getItem(), stack.get(DataComponents.ITEM_MODEL), displayContext), _ -> {
                     ItemMeshes result = BakedModelBufferer.INSTANCE.bufferItem(stack, displayContext, owner, seed);
                     return result != null && result.stackDetermined();
                 });
@@ -75,7 +75,7 @@ public final class ItemModels {
             return EMPTY_BAKED;
         }
         return MODEL_CACHE.get(true).computeIfAbsent(new ModelKey(displayContext, result.identity(), stack.getItem(),
-                stack.get(DataComponents.ITEM_MODEL), result.foil()), $ -> buildModel(result));
+                stack.get(DataComponents.ITEM_MODEL), result.foil()), _ -> buildModel(result));
     }
 
     // TODO: revisit -- rebake was consolidated onto ItemModels from a per-visual helper; reconsider

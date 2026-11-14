@@ -30,7 +30,7 @@ public class MixinChunkSectionsToRender {
     }
 
     @Inject(method = "renderGroup", at = @At("RETURN"), require = 1)
-    private void flywheel$captureTranslucentTerrain(ChunkSectionLayerGroup group, GpuSampler sampler, CallbackInfo ci) {
+    private void flywheel$captureTranslucentTerrain(ChunkSectionLayerGroup group, GpuSampler _, CallbackInfo _) {
         if (group == ChunkSectionLayerGroup.TRANSLUCENT) {
             LodCompat.captureTerrainDepth(2);
         }

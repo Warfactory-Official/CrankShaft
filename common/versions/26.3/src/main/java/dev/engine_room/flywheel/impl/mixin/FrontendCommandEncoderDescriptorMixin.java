@@ -16,8 +16,8 @@ abstract class FrontendCommandEncoderDescriptorMixin {
     @Inject(
             method = "createRenderPass(Lcom/mojang/renderpearl/api/commands/RenderPassDescriptor;)Lcom/mojang/renderpearl/api/commands/RenderPass;",
             at = @At("HEAD"))
-    private void flywheel$rejectNestedNativeOitPass(RenderPassDescriptor descriptor,
-                                                   CallbackInfoReturnable<RenderPass> cir) {
+    private void flywheel$rejectNestedNativeOitPass(RenderPassDescriptor _,
+                                                   CallbackInfoReturnable<RenderPass> _) {
         if (VkNativeOitPass.active()) throw new UnsupportedOperationException(
                 "Arbitrary nested RenderPass creation is unsupported inside fused native OIT; custom clouds must use "
                 + "supplied OIT passes");

@@ -22,12 +22,12 @@ public final class EndCrystalVisual extends EntityModelVisual<EndCrystal, EndCry
     }
 
     @Override
-    protected Identifier texture(EndCrystalRenderState state) {
+    protected Identifier texture(EndCrystalRenderState _) {
         return TEXTURE;
     }
 
     @Override
-    protected void setupRootPose(PoseStack pose, EndCrystalRenderState state) {
+    protected void setupRootPose(PoseStack pose, EndCrystalRenderState _) {
         pose.scale(2.0F, 2.0F, 2.0F);
         pose.translate(0.0F, -0.5F, 0.0F);
     }

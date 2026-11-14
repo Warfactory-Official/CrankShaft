@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.ModifyArg;
 
 @Mixin(VulkanGraphicsPipeline.class)
 abstract class ExperimentalVkBlendEquationMixin {
-    @ModifyArg(method = "<init>(Lorg/lwjgl/vulkan/VkDevice;Lnet/irisshaders/iris/vulkan/VulkanSamplerHeap;Lnet/irisshaders/iris/vulkan/VulkanResourceSets;Ljava/util/Map;[IILjava/util/List;Ljava/util/List;Ljava/util/BitSet;Lnet/irisshaders/iris/vulkan/VulkanGraphicsPipeline$WorldState;ILnet/irisshaders/iris/vulkan/VulkanResourceSets;Lnet/irisshaders/iris/vulkan/VulkanGraphicsPipeline$ShaderLibrary;Z)V", at = @At(value = "INVOKE",
+    @ModifyArg(method = "<init>(Lorg/lwjgl/vulkan/VkDevice;Lnet/irisshaders/iris/vulkan/VulkanSamplerHeap;Lnet/irisshaders/iris/vulkan/VulkanResourceSets;Ljava/util/Map;[IILjava/util/List;Ljava/util/List;Ljava/util/BitSet;Lnet/irisshaders/iris/vulkan/VulkanGraphicsPipeline$WorldState;ILnet/irisshaders/iris/vulkan/VulkanResourceSets;Lnet/irisshaders/iris/vulkan/VulkanGraphicsPipeline$ShaderLibrary;JZ)V", at = @At(value = "INVOKE",
             target = "Lorg/lwjgl/vulkan/VkPipelineColorBlendAttachmentState;colorBlendOp(I)Lorg/lwjgl/vulkan/VkPipelineColorBlendAttachmentState;"), index = 0)
     private int flywheel$colorEquation(int original, @Local(name = "state") RenderPipeline carrier,
                                        @Local(name = "i") int attachment) {
@@ -19,7 +19,7 @@ abstract class ExperimentalVkBlendEquationMixin {
         return blend == null ? original : VulkanConst.toVk(blend.color().op());
     }
 
-    @ModifyArg(method = "<init>(Lorg/lwjgl/vulkan/VkDevice;Lnet/irisshaders/iris/vulkan/VulkanSamplerHeap;Lnet/irisshaders/iris/vulkan/VulkanResourceSets;Ljava/util/Map;[IILjava/util/List;Ljava/util/List;Ljava/util/BitSet;Lnet/irisshaders/iris/vulkan/VulkanGraphicsPipeline$WorldState;ILnet/irisshaders/iris/vulkan/VulkanResourceSets;Lnet/irisshaders/iris/vulkan/VulkanGraphicsPipeline$ShaderLibrary;Z)V", at = @At(value = "INVOKE",
+    @ModifyArg(method = "<init>(Lorg/lwjgl/vulkan/VkDevice;Lnet/irisshaders/iris/vulkan/VulkanSamplerHeap;Lnet/irisshaders/iris/vulkan/VulkanResourceSets;Ljava/util/Map;[IILjava/util/List;Ljava/util/List;Ljava/util/BitSet;Lnet/irisshaders/iris/vulkan/VulkanGraphicsPipeline$WorldState;ILnet/irisshaders/iris/vulkan/VulkanResourceSets;Lnet/irisshaders/iris/vulkan/VulkanGraphicsPipeline$ShaderLibrary;JZ)V", at = @At(value = "INVOKE",
             target = "Lorg/lwjgl/vulkan/VkPipelineColorBlendAttachmentState;alphaBlendOp(I)Lorg/lwjgl/vulkan/VkPipelineColorBlendAttachmentState;"), index = 0)
     private int flywheel$alphaEquation(int original, @Local(name = "state") RenderPipeline carrier,
                                        @Local(name = "i") int attachment) {

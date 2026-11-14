@@ -1,7 +1,7 @@
 package dev.engine_room.flywheel.backend.compile;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import dev.engine_room.flywheel.backend.FlwBackend;
+
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import net.minecraft.client.Minecraft;
 import org.jspecify.annotations.Nullable;
@@ -25,19 +25,20 @@ import java.util.Map;
  * the generator's code identity and every input text. GL-only; render-thread access. Vulkan generators bypass it.
  */
 public final class GeneratedSourceCache {
-    private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty("crankshaft.glsl.sourceCache", "true"));
     private static final long LIMIT = 256L << 20;
     private static final long TARGET = 192L << 20;
-    private static @Nullable Path directory;
-    private static boolean initialized;
     private static final Map<List<Class<?>>, MessageDigest> IDENTITIES = new HashMap<>();
     public static int hits;
     public static int misses;
+    private static @Nullable Path directory;
+    private static boolean initialized;
 
     private GeneratedSourceCache() {
     }
 
-    /** A digest seeded with the bytes of {@code classes}, or null when the cache is off. */
+    /**
+     * A digest seeded with the bytes of {@code classes}, or null when the cache is unavailable.
+     */
     public static @Nullable MessageDigest digest(Class<?>... classes) {
         if (!available()) return null;
         try {
@@ -111,10 +112,6 @@ public final class GeneratedSourceCache {
         if (initialized) return directory != null;
         RenderSystem.assertOnRenderThread();
         initialized = true;
-        if (!ENABLED) {
-            FlwBackend.LOGGER.info("Generated GLSL cache off");
-            return false;
-        }
         Path current = Minecraft.getInstance().gameDirectory.toPath().resolve("cache/crankshaft/glsl");
         try {
             Files.createDirectories(current);

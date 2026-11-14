@@ -169,7 +169,7 @@ public final class VkContext {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             EXTDebugUtils.vkCmdBeginDebugUtilsLabelEXT(cmd,
                     VkDebugUtilsLabelEXT.calloc(stack).sType$Default().pLabelName(stack.UTF8(name)));
-        } catch (Throwable t) {
+        } catch (Throwable _) {
             labelsUnavailable = true;
         }
     }
@@ -181,7 +181,7 @@ public final class VkContext {
         }
         try {
             EXTDebugUtils.vkCmdEndDebugUtilsLabelEXT(cmd);
-        } catch (Throwable t) {
+        } catch (Throwable _) {
             labelsUnavailable = true;
         }
     }

@@ -77,7 +77,7 @@ public class ThrownItemVisual<T extends Entity & ItemSupplier> extends AbstractE
                 .setChanged();
     }
 
-    protected void orient(Matrix4f pose) {
+    protected void orient(Matrix4f _) {
     }
 
     @Override

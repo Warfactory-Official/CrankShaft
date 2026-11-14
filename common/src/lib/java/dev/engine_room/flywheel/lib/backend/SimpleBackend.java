@@ -16,13 +16,20 @@ public final class SimpleBackend implements Backend {
     private final IntSupplier priority;
     private final BooleanSupplier isSupported;
     private final BooleanSupplier gpuDriven;
+    private final boolean automatic;
 
     public SimpleBackend(Function<LevelAccessor, Engine> engineFactory, IntSupplier priority,
                          BooleanSupplier isSupported, BooleanSupplier gpuDriven) {
+        this(engineFactory, priority, isSupported, gpuDriven, true);
+    }
+
+    public SimpleBackend(Function<LevelAccessor, Engine> engineFactory, IntSupplier priority,
+                         BooleanSupplier isSupported, BooleanSupplier gpuDriven, boolean automaticSelection) {
         this.engineFactory = engineFactory;
         this.priority = priority;
         this.isSupported = isSupported;
         this.gpuDriven = gpuDriven;
+        this.automatic = automaticSelection;
     }
 
     public static Builder builder() {
@@ -49,6 +56,11 @@ public final class SimpleBackend implements Backend {
         return gpuDriven.getAsBoolean();
     }
 
+    @Override
+    public boolean automaticSelection() {
+        return automatic;
+    }
+
     public static final class Builder {
         @Nullable
         private Function<LevelAccessor, Engine> engineFactory;
@@ -56,6 +68,7 @@ public final class SimpleBackend implements Backend {
         @Nullable
         private BooleanSupplier isSupported;
         private BooleanSupplier gpuDriven = () -> false;
+        private boolean automaticSelection = true;
 
         public Builder engineFactory(Function<LevelAccessor, Engine> engineFactory) {
             this.engineFactory = engineFactory;
@@ -73,6 +86,14 @@ public final class SimpleBackend implements Backend {
 
         public Builder supported(BooleanSupplier isSupported) {
             this.isSupported = isSupported;
+            return this;
+        }
+
+        /**
+         * Controls default/fallback eligibility without hiding the backend from explicit selection.
+         */
+        public Builder automaticSelection(boolean automaticSelection) {
+            this.automaticSelection = automaticSelection;
             return this;
         }
 
@@ -97,7 +118,7 @@ public final class SimpleBackend implements Backend {
             Objects.requireNonNull(isSupported);
 
             return Backend.REGISTRY.registerAndGet(id,
-                    new SimpleBackend(engineFactory, priority, isSupported, gpuDriven));
+                    new SimpleBackend(engineFactory, priority, isSupported, gpuDriven, automaticSelection));
         }
     }
 }

@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class FrontendGpuDeviceLodMixin {
     // Device-lived buffers and textures must be released before the frontend closes its native backend.
     @Inject(method = "close", at = @At("HEAD"))
-    private void flywheel$closeLodResources(CallbackInfo ci) {
+    private void flywheel$closeLodResources(CallbackInfo _) {
         LodCompat.destroyGpuResources();
     }
 }

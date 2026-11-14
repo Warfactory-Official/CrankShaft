@@ -99,7 +99,7 @@ final class GuestQuadConstants {
              .forEach(parameter -> declared(parameter.getName().getName()));
         packedQuadData = declarations.getOrDefault("a_LightAndData", 0) == 1;
         index.getStream(FunctionDefinition.class).forEach(function -> {
-            functions.computeIfAbsent(name(function), ignored -> new ArrayList<>()).add(function);
+            functions.computeIfAbsent(name(function), _ -> new ArrayList<>()).add(function);
             exitGuards.put(function, new HashSet<>());
         });
         index.getStream(ReturnStatement.class).forEach(statement -> {
@@ -218,7 +218,7 @@ final class GuestQuadConstants {
     }
 
     private void add(String target, Set<String> values) {
-        dependencies.computeIfAbsent(target, ignored -> new HashSet<>()).addAll(values);
+        dependencies.computeIfAbsent(target, _ -> new HashSet<>()).addAll(values);
     }
 
     private Set<String> controls(ASTNode node) {

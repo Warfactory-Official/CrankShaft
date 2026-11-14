@@ -36,6 +36,7 @@ public final class AffineUvTransformedInstance extends UvTransformedInstance {
                 MemoryUtil.memPutFloat(ptr + OFF_UV_SHEAR, 0);
                 MemoryUtil.memPutFloat(ptr + OFF_UV_SHEAR + 4, 0);
             })
+            .transform(InstanceTransforms.TRANSFORMED)
             .vertexShader(ResourceUtil.rl("instance/transformed_affine_uv.vert"))
             .cullShader(ResourceUtil.rl("instance/cull/transformed.glsl")).build();
 

@@ -3,15 +3,30 @@ package dev.engine_room.flywheel.iris;
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.api.backend.Backend;
 import dev.engine_room.flywheel.backend.Backends;
+import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
 import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
 import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.engine.terrain.GuestTerrainGate;
+import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.backend.gl.Driver;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.impl.compat.CompatMod;
+import dev.engine_room.flywheel.impl.compat.DistantHorizonsCompat;
+import dev.engine_room.flywheel.impl.compat.DhStaticVisuals;
+import dev.engine_room.flywheel.impl.far.FarVisuals;
+import dev.engine_room.flywheel.backend.engine.far.FarMaterials;
+import dev.engine_room.flywheel.iris.engine.FarMaterialIds;
 import dev.engine_room.flywheel.iris.compile.GuestPipelines;
+import dev.engine_room.flywheel.iris.compile.FarDhProgram;
+import dev.engine_room.flywheel.iris.compile.FarLayerIrisBridge;
+import dev.engine_room.flywheel.iris.compile.FarStaticDhProgram;
+import dev.engine_room.flywheel.iris.compile.NativeDepth;
+#if MC >= 26.3
+import dev.engine_room.flywheel.impl.compat.VoxyStaticVisuals;
+import dev.engine_room.flywheel.iris.compile.FarStaticVoxyProgram;
+#endif
 import dev.engine_room.flywheel.iris.engine.GuestEngine;
 import dev.engine_room.flywheel.iris.engine.GuestIndirectDrawManager;
 import dev.engine_room.flywheel.iris.engine.GuestInstancedDrawManager;
@@ -62,11 +77,28 @@ public final class IrisBackends {
                                                     "iris_indirect"));
 
     static {
+        if (CompatMod.IRIS.isLoaded) {
+            OitConfig.registerShaderpackOit(IrisGate::supportsShaderpackOit, IrisGate::reload);
+        }
+
         // Iris re-enters Sodium's terrain draw for the shadow pass; the engine must leave that one alone.
         if (CompatMod.IRIS.isLoaded && !IrisRuntime.EXPERIMENTAL) {
+            FarVisuals.registerShaderpackBridge();
+            FarVisuals.registerTranslucentBridge(new FarLayerIrisBridge());
+            FarMaterials.register(FarMaterialIds::resolve);
+            if (DistantHorizonsCompat.ACTIVE) {
+                DistantHorizonsCompat.registerOpaque(FarDhProgram::afterOpaque);
+                DhStaticVisuals.registerShaderpack(new FarStaticDhProgram.Provider());
+            }
+            #if MC >= 26.3
+            if (CompatMod.VOXY.isLoaded) VoxyStaticVisuals.registerPack(new FarStaticVoxyProgram.Provider());
+            #endif
             ShaderWarmup.register(IrisWarmup::warm);
             GuestTerrainGate.setShadowPass(IrisShadow::active);
+            GuestTerrainGate.setPackInUse(IrisGate::isPackInUse);
             GuestTerrainGate.setShadowResolution(IrisShadow::resolution);
+            GuestTerrainGate.setShadowReversed(NativeDepth::active);
+            FrameUniforms.setRenderScale(IrisGate::renderScale);
         }
     }
 

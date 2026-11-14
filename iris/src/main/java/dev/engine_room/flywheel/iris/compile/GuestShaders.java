@@ -5,6 +5,7 @@ import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.CutoutShader;
 import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
+import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
 import dev.engine_room.flywheel.backend.compile.component.BufferTextureInstanceComponent;
@@ -14,16 +15,23 @@ import dev.engine_room.flywheel.backend.compile.component.UberInstanceComponent;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.indirect.BufferBindings;
 import dev.engine_room.flywheel.backend.engine.indirect.InstanceTypeIds;
+import dev.engine_room.flywheel.backend.gl.GlBindlessTable;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.glsl.GlslVersion;
 import dev.engine_room.flywheel.backend.glsl.SourceComponent;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.iris.IrisRuntime;
 import dev.engine_room.flywheel.iris.compile.patches.ContractPatches;
+import dev.engine_room.flywheel.iris.compile.patches.DeferredOitProfile;
+import dev.engine_room.flywheel.iris.compile.patches.OrderedBillboardCapture;
+import dev.engine_room.flywheel.iris.compile.patches.SortedBillboardBlend;
+import dev.engine_room.flywheel.iris.compile.patches.GuestLodOcclusion;
 import dev.engine_room.flywheel.iris.compile.patches.SundialTranslucent;
 import dev.engine_room.flywheel.iris.mixin.IrisRenderingPipelineAccessor;
+import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.FogShaders;
+import dev.engine_room.flywheel.lib.material.LightShaders;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import io.github.douira.glsl_transformer.ast.node.TranslationUnit;
 import io.github.douira.glsl_transformer.ast.node.Version;
@@ -32,6 +40,8 @@ import io.github.douira.glsl_transformer.ast.node.declaration.InterfaceBlockDecl
 import io.github.douira.glsl_transformer.ast.node.declaration.TypeAndInitDeclaration;
 import io.github.douira.glsl_transformer.ast.node.expression.Expression;
 import io.github.douira.glsl_transformer.ast.node.expression.LiteralExpression;
+import io.github.douira.glsl_transformer.ast.node.expression.ReferenceExpression;
+import io.github.douira.glsl_transformer.ast.node.expression.unary.FunctionCallExpression;
 import io.github.douira.glsl_transformer.ast.node.expression.unary.GroupingExpression;
 import io.github.douira.glsl_transformer.ast.node.expression.unary.NegationExpression;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.DeclarationExternalDeclaration;
@@ -42,9 +52,11 @@ import io.github.douira.glsl_transformer.ast.print.ASTPrinter;
 import io.github.douira.glsl_transformer.ast.print.PrintType;
 import io.github.douira.glsl_transformer.ast.query.Root;
 import io.github.douira.glsl_transformer.ast.query.RootSupplier;
+import io.github.douira.glsl_transformer.ast.transform.ASTInjectionPoint;
 import io.github.douira.glsl_transformer.ast.transform.JobParameters;
 import io.github.douira.glsl_transformer.ast.transform.SingleASTTransformer;
 import net.irisshaders.iris.gl.blending.AlphaTest;
+import net.irisshaders.iris.gl.blending.AlphaTests;
 import net.irisshaders.iris.gl.state.ShaderAttributeInputs;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.pipeline.transform.PatchShaderType;
@@ -55,10 +67,13 @@ import net.irisshaders.iris.shaderpack.properties.PackDirectives;
 import net.irisshaders.iris.shaderpack.texture.TextureStage;
 #endif
 import net.irisshaders.iris.vertices.IrisVertexFormats;
+import net.irisshaders.iris.vertices.ExtendedDataHelper;
 import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -75,6 +90,7 @@ public final class GuestShaders {
     private static final Identifier VERTEX_LIGHT = ResourceUtil.rl("iris/guest_vertex_light.vert");
     private static final Identifier INSTANCING = ResourceUtil.rl("iris/guest_instancing.vert");
     private static final Identifier INDIRECT = ResourceUtil.rl("iris/guest_indirect.vert");
+    private static final Identifier SORTED_BLEND_VERTEX = ResourceUtil.rl("iris/sorted_billboard_gate.vert");
     private static final Identifier DRAW_COMMAND = ResourceUtil.rl("internal/indirect/draw_command.glsl");
     private static final Identifier MATRICES = ResourceUtil.rl("internal/indirect/matrices.glsl");
     private static final Identifier CONTRACT_HEADER = ResourceUtil.rl("iris/guest_contract_header.frag");
@@ -85,7 +101,17 @@ public final class GuestShaders {
     private static final Identifier INDIRECT_LIGHT = ResourceUtil.rl("internal/indirect/light.glsl");
     private static final String CONTRACT_PROTOTYPE = "void clrwl_computeFragment(vec4 sampleColor, out vec4 fragColor, "
             + "out vec2 fragLight, out float ao, out vec4 fragOverlay);\nbool _flw_isUnlit();\n"
-            + "float _flw_unlitCardinalFactor();\nbool _flw_hasFog();\nfloat _flw_emissionCoverage();\nbool _flw_borrowedBlock();\n";
+            + "float _flw_unlitCardinalFactor();\nbool _flw_hasFog();\nfloat _flw_emissionCoverage();\nbool _flw_borrowedBlock();\n"
+            // Colorwheel's fragment vertex inputs: pack code precedes the library's ClrwlVertexData block.
+            + "vec4 _flw_clrwlVertexPos();\nvec4 _flw_clrwlVertexColor();\nvec2 _flw_clrwlVertexTexCoord();\n"
+            + "ivec2 _flw_clrwlVertexOverlay();\nvec2 _flw_clrwlVertexLight();\nvec3 _flw_clrwlVertexNormal();\n"
+            + "#define clrwl_vertexPos _flw_clrwlVertexPos()\n#define clrwl_vertexColor _flw_clrwlVertexColor()\n"
+            + "#define clrwl_vertexTexCoord _flw_clrwlVertexTexCoord()\n#define clrwl_vertexOverlay _flw_clrwlVertexOverlay()\n"
+            + "#define clrwl_vertexLight _flw_clrwlVertexLight()\n#define clrwl_vertexNormal _flw_clrwlVertexNormal()\n";
+    // Super Resolution's Iris extension: this frame's minus the previous frame's view position.
+    static final String VELOCITY = "at_velocity";
+    // Entity shadows recycle their block-aligned quads across blocks: no motion of their own.
+    static final Set<InstanceType<?>> STATIC_GEOMETRY = Set.of(InstanceTypes.SHADOW);
     private static final Pattern LEADING_DIRECTIVE = Pattern.compile(
             "[ \\t]*(?:#(?:extension|pragma)[^\\n]*|//[^\\n]*)?\\n");
     private static final Pattern STORAGE_BLOCK = Pattern.compile("\\bbuffer\\b");
@@ -102,8 +128,18 @@ public final class GuestShaders {
             Map.entry("mc_Entity", "ivec4(_flw_guestMcEntity(), 0, 1)"),
             Map.entry("mc_midTexCoord", "vec4(_flw_irisMidTexCoord, 0.0, 1.0)"),
             Map.entry("at_tangent", "_flw_guestTangent()"),
-            Map.entry("at_midBlock", "_flw_irisMidBlock"));
+            Map.entry("at_midBlock", "_flw_irisMidBlock"),
+            Map.entry(VELOCITY, "_flw_guestVelocity"));
     private static final List<String> PROXY_INPUTS = List.of("mc_midTexCoord", "at_tangent", "at_midBlock");
+    static final Set<String> ALBEDO = Set.of("tex", "texture", "gtexture", "u_MainSampler");
+    static final Set<String> ALBEDO_SAMPLES = Set.of("texture", "textureLod", "textureGrad", "textureProj",
+            "textureProjLod", "textureProjGrad", "texelFetch", "texelFetchOffset", "textureOffset", "textureLodOffset",
+            "textureGradOffset", "textureProjOffset", "textureProjLodOffset", "textureProjGradOffset");
+    private static final String ALBEDO_SOURCE = "sampler2D(_flw_textureHandles[_flw_guestTexSlot])";
+    private static final Map<String, String> ALBEDO_UNIFORMS = Map.of(
+            "atlasSize", "_flw_guestTextureInfo[_flw_guestTexSlot * 2u].xy",
+            "gtextureSize", "_flw_guestTextureInfo[_flw_guestTexSlot * 2u].zw",
+            "gtextureId", "_flw_guestTextureInfo[_flw_guestTexSlot * 2u + 1u].x");
 
     private static final ShaderAttributeInputs INPUTS = new ShaderAttributeInputs(IrisVertexFormats.ENTITY, false,
             false, false, false, false);
@@ -112,6 +148,11 @@ public final class GuestShaders {
             false, false, true, false, false);
 
     private static final Pattern VERSION_LINE = Pattern.compile("#version\\s+(\\d+)[^\\n]*\\n");
+    private static final Pattern EARLY_CAPTURE = Pattern.compile(
+            "layout\\s*\\(\\s*early_fragment_tests\\s*\\)\\s*in\\s*;");
+    private static final Pattern CAPTURE_TEST = Pattern.compile(
+            "const\\s+bool\\s+flw_captureTest\\s*=\\s*false\\s*;");
+    private static final Set<String> LATE_CAPTURES = ConcurrentHashMap.newKeySet();
     private static final Pattern ALPHA_DITHER_DISCARD = Pattern.compile(
             "(?m)^[ \\t]*if\\s*\\(\\s*[A-Za-z_]\\w*\\.a\\s*<[^;\\r\\n]*\\bdither\\b[^;\\r\\n]*\\)\\s*discard\\s*;[ \\t]*$");
 
@@ -121,6 +162,8 @@ public final class GuestShaders {
     private static final Map<String, String> CHUNK_FADE = new HashMap<>();
     private static final Map<String, String> SHIFTED = new HashMap<>();
     private static final Map<String, Rewritten> REWRITTEN = new HashMap<>();
+    private static final Map<TextPair, Bindless> BINDLESS = new HashMap<>();
+    private static final Map<TextPair, String> CUTOUT = new HashMap<>();
     private static final Map<String, OitFragment> DEMOTED = new HashMap<>();
     private static @Nullable VertexInterface lastInterface;
     private static @Nullable Map<Integer, String> lastOutputs;
@@ -179,22 +222,73 @@ public final class GuestShaders {
     }
 
     /**
+     * How a pipeline drawing {@code source}'s guest light capture tests depth. Under early fragment tests ({@code
+     * DeferredSources.earlyFragmentTests}) the live depth holds all the snapshot does, so the in-shader snapshot test
+     * ({@code flw_captureTest}) compiles out. A pipeline writing depth through a program that may discard keeps late
+     * tests (early ones would write that depth for discarded fragments too) and tests the seam's snapshot ({@code
+     * CaptureSnapshot}) in the shader; so does one with an always-passing depth test.
+     */
+    enum Capture {
+        EARLY,
+        SNAPSHOT,
+        TESTED,
+        LATE
+    }
+
+    static Capture capture(ProgramSource source, ProgramKey key, boolean depthWrite, boolean depthTested,
+                           String pipeline) {
+        String fragment = source.getFragmentSource().orElseThrow();
+        if (!fragment.contains("flw_captureLight(")) return Capture.EARLY;
+        boolean early = EARLY_CAPTURE.matcher(fragment).find();
+        if (early && depthWrite && (key.cutout() != CutoutShaders.OFF || fragment.contains("discard"))) {
+            if (LATE_CAPTURES.add(pipeline)) {
+                FlwBackend.LOGGER.debug("{} writes depth and may discard; {} captures light under late depth tests",
+                        pipeline, source.getName());
+            }
+            return Capture.LATE;
+        }
+        return early && depthTested ? Capture.EARLY : Capture.TESTED;
+    }
+
+    /**
      * {@code contract}: Colorwheel {@code clrwl_computeFragment} interface.
      */
+    /**
+     * {@code glyph}: R8 font coverage sampled as white RGB, red alpha (GuestGlyphAlbedo).
+     */
     static Stages build(IrisRenderingPipeline pipeline, ProgramSource source, AlphaTest alpha,
-                        ProgramKey key, boolean contract, @Nullable OitSpec oit) {
-        return build(pipeline, source, alpha, key, contract, oit, false);
+                        ProgramKey key, boolean contract, @Nullable OitSpec oit, boolean glyph, Capture capture) {
+        return build(pipeline, source, alpha, key, contract, oit, false, glyph, capture);
     }
 
     static Stages build(IrisRenderingPipeline pipeline, ProgramSource source, AlphaTest alpha,
-                        ProgramKey key, boolean contract, @Nullable OitSpec oit, boolean visibleInstances) {
+                        ProgramKey key, boolean contract, @Nullable OitSpec oit, boolean visibleInstances,
+                        boolean glyph, Capture capture) {
+        return build(pipeline, source, alpha, key, contract, oit, visibleInstances, glyph, capture, false);
+    }
+
+    static Stages buildStaticShadow(IrisRenderingPipeline pipeline, ProgramSource source, AlphaTest alpha,
+                                    ProgramKey key, boolean contract) {
+        return build(pipeline, source, alpha, key, contract, null, false, false, Capture.EARLY, true);
+    }
+
+    private static Stages build(IrisRenderingPipeline pipeline, ProgramSource source, AlphaTest alpha,
+                                ProgramKey key, boolean contract, @Nullable OitSpec oit, boolean visibleInstances,
+                                boolean glyph, Capture capture, boolean staticGeometry) {
         String packFragment = source.getFragmentSource().orElseThrow();
+        if (!IrisRuntime.EXPERIMENTAL)
+            packFragment = packFragment.replaceAll("\\bconst\\s+int\\s+flw_lightPhase\\s*=\\s*0\\s*;",
+                    "uniform int flw_lightPhase;");
+        if (capture == Capture.LATE) packFragment = EARLY_CAPTURE.matcher(packFragment).replaceAll("");
+        if (capture == Capture.TESTED || capture == Capture.LATE)
+            packFragment = CAPTURE_TEST.matcher(packFragment).replaceAll("const bool flw_captureTest = true;");
         if (key.role() == PackRole.ADDITIVE)
             packFragment = ALPHA_DITHER_DISCARD.matcher(packFragment).replaceAll("");
         String packVertex = source.getVertexSource().orElseThrow();
-        if (packFragment.contains(ContractPatches.NATIVE_TRANSLUCENT)
+        boolean adapted = packFragment.contains(ContractPatches.NATIVE_TRANSLUCENT)
                 || packFragment.contains(ContractPatches.NATIVE_SHADOW_TRANSLUCENT)
-                || packFragment.contains(ContractPatches.NATIVE_ADDITIVE)) contract = false;
+                || packFragment.contains(ContractPatches.NATIVE_ADDITIVE);
+        if (adapted) contract = false;
         if (contract && packFragment.contains(SundialTranslucent.MARKER)) {
             packFragment = ADAPTED.computeIfAbsent(new TextPair("fragment", source.getVertexSource().orElseThrow(),
                     packFragment), pair -> SundialTranslucent.adapt(pair.first(), pair.second()));
@@ -203,6 +297,9 @@ public final class GuestShaders {
             packVertex = ADAPTED.computeIfAbsent(new TextPair("shadowVertex", packVertex, packFragment),
                     pair -> SundialTranslucent.shadowVertex(pair.first(), pair.second()));
         }
+        GuestLodOcclusion.Source lod = key.role().shadow ? null : GuestLodOcclusion.source(pipeline);
+        if (lod != null) packFragment = GuestLodOcclusion.apply(packFragment, lod,
+                ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack().flywheel$nativeDepth());
         // Compat with Iris: virtual shadow names must satisfy its depth transform's shadow-name predicate.
         String transformName = key.role().shadow ? source.getName() + "_shadow" : source.getName();
         Map<PatchShaderType, String> patched = TransformPatcher.patchVanilla(transformName,
@@ -213,26 +310,44 @@ public final class GuestShaders {
                 pipeline.getTextureMap()
                 #if MC >= 26.3 , pipeline.getTextureOverrides(TextureStage.GBUFFERS_AND_SHADOW) #endif);
         patched.forEach((stage, text) -> requireSupportedStage(source.getName() + "/" + stage, text));
-
-        List<SourceComponent> body = new ArrayList<>();
-        if (key.indirect() && !key.crumbling()) {
-            body.add(FlwPrograms.SOURCES.get(DRAW_COMMAND));
-            body.add(FlwPrograms.SOURCES.get(MATRICES));
-            body.add(new UberInstanceComponent(InstanceTypeIds.snapshot()
-                                                              .types(), FlwPrograms.SOURCES));
-        } else {
-            InstanceType<?> type = Objects.requireNonNull(key.type());
-            body.add(new InstanceStructComponent(type));
-            body.add(FlwPrograms.SOURCES.get(type.vertexShader()));
-            body.add(key.indirect() || IrisRuntime.EXPERIMENTAL
-                    ? new SsboInstanceComponent(type) : new BufferTextureInstanceComponent(type));
+        String patchedVertex = patched.get(PatchShaderType.VERTEX);
+        String patchedFragment = patched.get(PatchShaderType.FRAGMENT);
+        if (key.farLayer()) patchedFragment = FarLayerMainGuest.fragment(patchedFragment);
+        if (!contract && !adapted && alpha == AlphaTests.OFF && key.cutoutPredicate()
+                && source.getDirectives().getAlphaTestOverride().isEmpty()) {
+            patchedFragment = CUTOUT.computeIfAbsent(new TextPair("cutout",
+                    FlwPrograms.SOURCES.get(Objects.requireNonNull(key.cutout()).source()).source(),
+                    patchedFragment), pair -> cutout(pair.first(), pair.second()));
         }
-        body.add(FlwPrograms.SOURCES.get(key.materialVertex()));
-        body.add(FlwPrograms.SOURCES.get(key.indirect() ? INDIRECT : INSTANCING));
+        if (glyph) {
+            patchedVertex = GuestGlyphAlbedo.patch(patchedVertex);
+            patchedFragment = GuestGlyphAlbedo.patch(patchedFragment);
+        }
+        Map<String, String> albedo = Map.of();
+        if (key.bindless()) {
+            Bindless converted = BINDLESS.computeIfAbsent(new TextPair("bindless", patchedVertex, patchedFragment),
+                    pair -> bindless(pair.first(), pair.second()));
+            patchedVertex = converted.vertex();
+            patchedFragment = converted.fragment();
+            albedo = converted.assignments();
+        }
+        boolean particleHandoff = key.role() == PackRole.PARTICLES_FLATTEN || key.role() == PackRole.PARTICLES_HANDOFF;
+        if (key.role() == PackRole.PARTICLES_FLATTEN) patchedFragment = GuestParticleFlatten.flatten(patchedFragment);
+        if (key.role() == PackRole.PARTICLES_HANDOFF) {
+            patchedFragment = GuestParticleFlatten.handoff(patchedFragment, key.alphaTest(), key.cutoutPredicate()
+                            ? FlwPrograms.SOURCES.get(Objects.requireNonNull(key.cutout()).source()).source() : null,
+                    !IrisRuntime.EXPERIMENTAL && GuestFlattenTarget.DEMOTE);
+        }
+        if (particleHandoff) {
+            albedo = new LinkedHashMap<>(albedo);
+            albedo.put(GuestParticleFlatten.HANDOFF_COLOR, "_flw_guestColor()");
+            albedo.put(GuestParticleFlatten.UV, "flw_vertexTexCoord");
+            albedo.put(GuestParticleFlatten.ID, "float(gl_InstanceID)");
+        }
 
         boolean shadow = key.role().shadow;
         Rewritten rewritten = REWRITTEN.computeIfAbsent(
-                shiftBufferBindings(modelChunkFade(patched.get(PatchShaderType.VERTEX), shadow)), text -> {
+                shiftBufferBindings(modelChunkFade(patchedVertex, shadow)), text -> {
                     String transformed = TRANSFORMER.transform(text);
                     VertexInterface rewrittenInputs = Objects.requireNonNull(lastInterface);
                     lastInterface = null;
@@ -240,16 +355,60 @@ public final class GuestShaders {
                 });
         String vertex = rewritten.source();
         VertexInterface inputs = rewritten.inputs();
+        // No previous shadow view. FIXME: experimental Iris (Vulkan hosts admit no loose uniforms) keeps at_velocity
+        // zero: nothing supplies it there yet. Its history would carry the previous view in a push constant.
+        boolean velocity = inputs.types().containsKey(VELOCITY) && !shadow && !IrisRuntime.EXPERIMENTAL;
+        boolean history = velocity && key.velocity();
+
+        boolean frozen = staticGeometry || key.farLayer();
+        List<SourceComponent> body = new ArrayList<>();
+        if (!frozen && key.indirect() && !key.crumbling()) {
+            List<InstanceType<?>> types = InstanceTypeIds.snapshot().types();
+            body.add(FlwPrograms.SOURCES.get(DRAW_COMMAND));
+            body.add(FlwPrograms.SOURCES.get(MATRICES));
+            body.add(new UberInstanceComponent(types, FlwPrograms.SOURCES));
+            if (history) {
+                body.add(UberInstanceComponent.history(types, BufferBindings.HISTORY_INSTANCE, STATIC_GEOMETRY));
+            }
+        } else if (!frozen) {
+            InstanceType<?> type = Objects.requireNonNull(key.type());
+            body.add(new InstanceStructComponent(type));
+            body.add(InstanceStructComponent.typeShader(type, FlwPrograms.SOURCES.get(type.vertexShader())));
+            body.add(key.indirect() || IrisRuntime.EXPERIMENTAL
+                    ? new SsboInstanceComponent(type) : new BufferTextureInstanceComponent(type));
+            if (history) {
+                body.add(key.indirect() ? SsboInstanceComponent.history(type, BufferBindings.HISTORY_INSTANCE)
+                        : BufferTextureInstanceComponent.history(type));
+            }
+        }
+        if (!frozen) {
+            body.add(FlwPrograms.SOURCES.get(key.materialVertex()));
+            body.add(FlwPrograms.SOURCES.get(key.indirect() ? INDIRECT : INSTANCING));
+        }
+
         boolean proxy = contract || PROXY_INPUTS.stream()
                                                 .anyMatch(inputs.types()::containsKey);
         boolean emissive = key.role() == PackRole.ADDITIVE;
-        String library = library(body, key, !contract && !key.crumbling() && !emissive && key.role() != PackRole.GLINT
+        String library = library(body, key,
+                !frozen && !contract && !key.crumbling() && !emissive && key.role() != PackRole.GLINT
                         ? source.getParent().getPackDirectives() : null, contract, oit != null, proxy, emissive,
                 emissive && ((IrisRenderingPipelineAccessor) pipeline).flywheel$pack().flywheel$deferredEmissive(),
-                visibleInstances);
-        String fragment = shiftBufferBindings(modelChunkFade(patched.get(PatchShaderType.FRAGMENT), shadow));
+                visibleInstances, velocity, history, frozen);
+        String fragment = modelChunkFade(patchedFragment, shadow);
+        if (key.sortedBlendPass() == SortedBlendPass.FAST) {
+            fragment = SortedBillboardBlend.applyFastFragment(fragment);
+        }
+        fragment = shiftBufferBindings(fragment);
+        if (key.sortedBlendPass() != SortedBlendPass.FAST
+                && contract && key.type() == InstanceTypes.BILLBOARD && !shadow && key.oit() == null
+                && source.getParent().flywheel$deferredOit() == DeferredOitProfile.ITERATION
+                && ContractProgram.byName(source.getName()) == ContractProgram.GBUFFERS_UNLIT_TRANSLUCENT
+                && OrderedBillboardCapture.enabled()) {
+            fragment = OrderedBillboardCapture.apply(fragment);
+        }
         if (contract) {
-            String fragmentLibrary = contractLibrary(key, source.getParent().getPackDirectives(), oit != null);
+            String fragmentLibrary = contractLibrary(key, source.getParent().getPackDirectives(), oit != null,
+                    frozen);
             if (oit != null) {
                 OitFragment demoted = demoteForOit(fragment);
                 fragment = demoted.source();
@@ -268,9 +427,40 @@ public final class GuestShaders {
             ShaderAssembly.appendComponents(ctx, List.of(FlwPrograms.SOURCES.get(CONTRACT_GEOMETRY)));
             geometry = afterLeadingDirectives(geometry, ctx.assembledSource());
         }
-        return new Stages(vertex(vertex, inputs, library), geometry,
+        String vertexStage = particleHandoff
+                ? vertex(vertex, inputs, library + GuestParticleFlatten.VERTEX_OUTPUTS, albedo, key.sortedBlendPass(),
+                false)
+                  .replace("iris_Color = vec4(_flw_guestColor());", "iris_Color = vec4(1.0);")
+                : vertex(vertex, inputs, library, albedo, key.sortedBlendPass(), key.farLayer());
+        return new Stages(vertexStage, geometry,
                 shiftBufferBindings(modelChunkFade(patched.get(PatchShaderType.TESS_CONTROL), shadow)),
                 shiftBufferBindings(modelChunkFade(patched.get(PatchShaderType.TESS_EVAL), shadow)), fragment);
+    }
+
+    // Where Iris appends its alpha test (CommonTransformer): iris_FragData0 only, so packs declaring their own outputs
+    // keep neither.
+    private static String cutout(String predicate, String fragment) {
+        var parser = versionedTransformer();
+        parser.setTransformation((tree, root) -> {
+            if (!root.identifierIndex.has("iris_FragData0")) return;
+            tree.parseAndInjectNode(parser, ASTInjectionPoint.BEFORE_FUNCTIONS, predicate);
+            if (root.identifierIndex.has("flw_sampleColor")) {
+                var samples = root.nodeIndex.getStream(FunctionCallExpression.class).filter(call ->
+                        call.getFunctionName() != null && ALBEDO_SAMPLES.contains(call.getFunctionName().getName())
+                                && !call.getParameters().isEmpty()
+                                && call.getParameters().getFirst() instanceof ReferenceExpression sampler
+                                && ALBEDO.contains(sampler.getIdentifier().getName())).toList();
+                if (samples.isEmpty())
+                    throw new UnsupportedOperationException("Native cutout requires an albedo sample");
+                tree.parseAndInjectNode(parser, ASTInjectionPoint.BEFORE_DECLARATIONS, "vec4 flw_sampleColor;");
+                for (var sample : samples)
+                    sample.replaceByAndDelete(parser.parseExpression(root,
+                            "(flw_sampleColor = " + ASTPrinter.printSimple(sample) + ")"));
+            }
+            tree.getOneMainDefinitionBody().getStatements()
+                .add(parser.parseStatement(root, "if (flw_discardPredicate(iris_FragData0)) discard;"));
+        });
+        return parser.transform(fragment);
     }
 
     private static @Nullable String modelChunkFade(@Nullable String stage, boolean shadow) {
@@ -320,7 +510,10 @@ public final class GuestShaders {
         return shiftBufferBindings(stage, GuestSsbos.BINDING_OFFSET);
     }
 
-    static @Nullable String shiftBufferBindings(@Nullable String stage, int offset) {
+    /**
+     * Shifts pack storage declarations above a host's borrowed geometry bindings during shader assembly.
+     */
+    public static @Nullable String shiftBufferBindings(@Nullable String stage, int offset) {
         if (IrisRuntime.EXPERIMENTAL || stage == null || !STORAGE_BLOCK.matcher(stage).find()) return stage;
         return SHIFTED.computeIfAbsent(offset + "\n" + stage, _ -> shifted(stage, offset));
     }
@@ -364,12 +557,21 @@ public final class GuestShaders {
         return parser.transform(stage);
     }
 
+    /**
+     * {@code velocity}: compute {@code _flw_guestVelocity}; {@code history}: from the previous frame's instances and
+     * embedding poses, else from this frame's (camera motion only).
+     */
     private static String library(List<SourceComponent> body, ProgramKey key,
                                   @Nullable PackDirectives vertexLight, boolean contract, boolean oit, boolean proxy,
-                                  boolean emissive, boolean emissivePeak, boolean visibleInstances) {
+                                  boolean emissive, boolean emissivePeak, boolean visibleInstances, boolean velocity,
+                                  boolean history, boolean frozen) {
         boolean crumbling = key.crumbling();
         boolean indirect = key.indirect();
         Compilation ctx = new Compilation();
+        if (frozen) {
+            ctx.define("_FLW_GUEST_STATIC");
+            ctx.define("_FLW_GUEST_STATIC_RENDER_TYPE", Integer.toString(ExtendedDataHelper.BLOCK_RENDER_TYPE));
+        }
         if (IrisRuntime.EXPERIMENTAL && !indirect) {
             ctx.define("_FLW_GUEST_STORAGE_INSTANCES");
             ctx.define("_FLW_GUEST_INSTANCE_UINTS", Integer.toString(
@@ -393,6 +595,18 @@ public final class GuestShaders {
         if (visibleInstances) {
             ctx.define("_FLW_GUEST_VISIBLE_INSTANCES");
         }
+        if (velocity) {
+            ctx.define("_FLW_GUEST_VELOCITY");
+        }
+        if (history) {
+            ctx.define("_FLW_GUEST_PREV_INSTANCES");
+            ctx.define("_FLW_PREV_MATRICES_BINDING", Integer.toString(BufferBindings.HISTORY_MATRICES));
+            ctx.define("_FLW_PREV_MOVED_BINDING", Integer.toString(BufferBindings.HISTORY_MOVED));
+            // The indirect uber shader asks _flw_timeAnimatedUber per type instead.
+            if ((crumbling || !indirect) && Objects.requireNonNull(key.type()).timeAnimated()) {
+                ctx.define("_FLW_GUEST_TIME_ANIMATED");
+            }
+        }
         if (contract) {
             ctx.define("_FLW_GUEST_CONTRACT");
         }
@@ -410,6 +624,11 @@ public final class GuestShaders {
         }
         if (key.role() == PackRole.GLINT && !contract) {
             ctx.define("_FLW_GUEST_GLINT");
+        }
+        if (key.bindless()) {
+            ctx.define("_FLW_GUEST_BINDLESS");
+            ctx.define("_FLW_TEXTURE_HANDLES_BINDING", Integer.toString(GlBindlessTable.HANDLES_BINDING));
+            ctx.define("_FLW_GUEST_TEXTURE_INFO_BINDING", Integer.toString(GuestTextureInfo.BINDING));
         }
         List<SourceComponent> roots = new ArrayList<>();
         roots.add(FlwPrograms.SOURCES.get(HEADER));
@@ -434,11 +653,19 @@ public final class GuestShaders {
             roots.add(FlwPrograms.SOURCES.get(VERTEX_LIGHT));
         }
         roots.addAll(body);
+        if (key.sortedBlendPass() != SortedBlendPass.NORMAL) {
+            ctx.define("_FLW_SORTED_BLEND_BINDING", Integer.toString(GuestSsbos.BINDING_OFFSET + 8));
+            ctx.define("_FLW_SORTED_BLEND_FAST", Boolean.toString(key.sortedBlendPass() == SortedBlendPass.FAST));
+            roots.add(FlwPrograms.SOURCES.get(SORTED_BLEND_VERTEX));
+        }
         ShaderAssembly.appendComponents(ctx, roots);
+        if (key.farLayer()) FarLayerMainGuest.vertex(ctx);
+        else if (frozen) FarStaticShadows.vertex(ctx);
         return ctx.assembledSource();
     }
 
-    private static String contractLibrary(ProgramKey key, PackDirectives directives, boolean oit) {
+    private static String contractLibrary(ProgramKey key, PackDirectives directives, boolean oit,
+                                          boolean frozen) {
         Compilation ctx = new Compilation();
         if (!VkContext.isVulkanHost()) ctx.polyfillFmaIfMissing();
         if (key.role() == PackRole.TERRAIN_TRANSLUCENT) ctx.define("_FLW_GUEST_BORROWED_BLOCK");
@@ -480,9 +707,15 @@ public final class GuestShaders {
             roots.add(FlwPrograms.SOURCES.get(GuestOitCodegen.LIBRARY));
         }
         roots.add(FlwPrograms.SOURCES.get(DIFFUSE));
-        roots.add(FlwPrograms.SOURCES.get(
-                key.indirect() || IrisRuntime.EXPERIMENTAL ? INDIRECT_LIGHT : INSTANCING_LIGHT));
-        roots.add(FlwPrograms.SOURCES.get(Objects.requireNonNull(key.light())));
+        if (frozen) {
+            // Frozen casters and retained layers carry captured light; their chunks no longer belong to the live
+            // light volume.
+            roots.add(FlwPrograms.SOURCES.get(LightShaders.NONE.source()));
+        } else {
+            roots.add(FlwPrograms.SOURCES.get(
+                    key.indirect() || IrisRuntime.EXPERIMENTAL ? INDIRECT_LIGHT : INSTANCING_LIGHT));
+            roots.add(FlwPrograms.SOURCES.get(Objects.requireNonNull(key.light())));
+        }
         roots.add(FlwPrograms.SOURCES.get(Objects.requireNonNull(key.materialFragment())));
         if (cutout != CutoutShaders.OFF) {
             ctx.define("_FLW_USE_DISCARD");
@@ -517,7 +750,7 @@ public final class GuestShaders {
         return versionPreamble() + extensions + body + '\n' + libraryBody;
     }
 
-    static OitFragment demoteForOit(String patchedFragment) {
+    public static OitFragment demoteForOit(String patchedFragment) {
         return DEMOTED.computeIfAbsent(patchedFragment, text -> {
             String transformed = FRAGMENT_TRANSFORMER.transform(text);
             Map<Integer, String> outputs = Objects.requireNonNull(lastOutputs);
@@ -527,11 +760,14 @@ public final class GuestShaders {
     }
 
     static void clearTransformMemos() {
+        BINDLESS.clear();
+        CUTOUT.clear();
         ADAPTED.clear();
         CHUNK_FADE.clear();
         SHIFTED.clear();
         REWRITTEN.clear();
         DEMOTED.clear();
+        GuestLodOcclusion.clearMemo();
     }
 
     private static String afterLeadingDirectives(String stage, String prelude) {
@@ -544,6 +780,76 @@ public final class GuestShaders {
         return stage.substring(0, body) + prelude + stage.substring(body);
     }
 
+    /**
+     * Adds variant directives through Compilation before the shader patch is printed.
+     */
+    static void preamble(SingleASTTransformer<JobParameters> parser, TranslationUnit tree,
+                         Consumer<Compilation> extra) {
+        var compilation = new Compilation();
+        extra.accept(compilation);
+        tree.parseAndInjectNodes(parser, ASTInjectionPoint.BEFORE_DECLARATIONS,
+                compilation.assembledSource().lines().filter(line -> !line.isBlank()).map(line -> line + '\n'));
+    }
+
+    /**
+     * Albedo samplers and Iris's albedo-derived uniforms become flat varyings the vertex stage reads from the bindless
+     * tables (GL_ARB_bindless_texture admits sampler varyings): merged batches mix textures within one draw.
+     */
+    private static Bindless bindless(String vertex, String fragment) {
+        Map<String, String> fragmentTypes = new LinkedHashMap<>();
+        String convertedFragment = albedoVaryings(fragment, "flat in", fragmentTypes, Map.of());
+        Map<String, String> vertexTypes = new LinkedHashMap<>(fragmentTypes);
+        String convertedVertex = albedoVaryings(vertex, "flat out", vertexTypes, fragmentTypes);
+        Map<String, String> assignments = new LinkedHashMap<>();
+        vertexTypes.forEach((name, type) -> assignments.put(name, ALBEDO.contains(name) ? ALBEDO_SOURCE
+                : type + "(" + ALBEDO_UNIFORMS.get(name) + ")"));
+        return new Bindless(convertedVertex, convertedFragment, assignments);
+    }
+
+    /**
+     * {@code types}: converted name -> GLSL type; {@code required} names are declared when the stage lacks them.
+     */
+    private static String albedoVaryings(String stage, String storage, Map<String, String> types,
+                                         Map<String, String> required) {
+        var parser = versionedTransformer();
+        parser.setTransformation((tree, root) -> {
+            preamble(parser, tree, compilation -> compilation.requireExtension("GL_ARB_bindless_texture"));
+            Set<String> declared = new HashSet<>();
+            for (ExternalDeclaration external : List.copyOf(tree.getChildren())) {
+                if (!(external instanceof DeclarationExternalDeclaration declaration)
+                        || !(declaration.getDeclaration() instanceof TypeAndInitDeclaration typed)
+                        || !hasStorage(typed.getType().getTypeQualifier(), StorageQualifier.StorageType.UNIFORM)) {
+                    continue;
+                }
+                String type = ASTPrinter.printSimple(typed.getType().getTypeSpecifier()).strip();
+                for (DeclarationMember member : List.copyOf(typed.getMembers())) {
+                    String name = member.getName().getName();
+                    if (member.getArraySpecifier() != null || !(ALBEDO.contains(name) ? type.equals("sampler2D")
+                            : ALBEDO_UNIFORMS.containsKey(name))) {
+                        continue;
+                    }
+                    types.put(name, type);
+                    declared.add(name);
+                    ExternalDeclaration varying = parser.parseExternalDeclaration(root,
+                            storage + " " + type + " " + name + ";");
+                    if (typed.getMembers().size() == 1) {
+                        external.replaceByAndDelete(varying);
+                    } else {
+                        member.detachAndDelete();
+                        tree.injectNode(ASTInjectionPoint.BEFORE_DECLARATIONS, varying);
+                    }
+                }
+            }
+            required.forEach((name, type) -> {
+                if (!declared.contains(name)) {
+                    tree.injectNode(ASTInjectionPoint.BEFORE_DECLARATIONS,
+                            parser.parseExternalDeclaration(root, storage + " " + type + " " + name + ";"));
+                }
+            });
+        });
+        return parser.transform(stage);
+    }
+
     private static void splitExtensions(String library, StringBuilder extensions, StringBuilder body) {
         for (String line : library.split("\n", -1)) {
             (line.startsWith("#extension") ? extensions : body).append(line)
@@ -551,7 +857,8 @@ public final class GuestShaders {
         }
     }
 
-    private static String vertex(String patched, VertexInterface inputs, String library) {
+    private static String vertex(String patched, VertexInterface inputs, String library, Map<String, String> albedo,
+                                 SortedBlendPass sortedBlendPass, boolean farLayer) {
         Matcher version = VERSION_LINE.matcher(patched);
         if (!version.find()) {
             throw new IllegalStateException("Printed vertex stage without #version");
@@ -566,7 +873,12 @@ public final class GuestShaders {
            .append(patched, version.end(), patched.length())
            .append('\n')
            .append(libraryBody)
-           .append("void main() {\n    _flw_guestVertex();\n");
+           .append("void main() {\n");
+        if (sortedBlendPass != SortedBlendPass.NORMAL) {
+            out.append("    if (!_flw_sortedBlendDrawEnabled()) { gl_Position = vec4(2.0, 0.0, 0.0, 1.0); return; }\n");
+        }
+        out.append("    _flw_guestVertex();\n");
+        albedo.forEach((name, source) -> out.append("    ").append(name).append(" = ").append(source).append(";\n"));
         inputs.types()
               .forEach((name, glslType) -> out.append("    ")
                                               .append(name)
@@ -579,7 +891,9 @@ public final class GuestShaders {
               .forEach(statement -> out.append("    ")
                                        .append(statement)
                                        .append('\n'));
-        return out.append("    _flw_irisMain();\n}\n")
+        out.append("    _flw_irisMain();\n");
+        if (farLayer) out.append("    _flw_farLayerRaster();\n");
+        return out.append("}\n")
                   .toString();
     }
 
@@ -643,6 +957,23 @@ public final class GuestShaders {
 
     static Map<Integer, String> demoteOutputs(TranslationUnit tree, Root root) {
         Map<Integer, String> outputs = new HashMap<>();
+        outputs(tree).forEach((location, typed) -> {
+            outputs.put(location, typed.getMembers()
+                                       .getFirst()
+                                       .getName()
+                                       .getName());
+            typed.getType()
+                 .setTypeQualifier(null);
+        });
+        root.rename("main", "_flw_irisMain");
+        return outputs;
+    }
+
+    /**
+     * Fragment outputs by layout location.
+     */
+    static Map<Integer, TypeAndInitDeclaration> outputs(TranslationUnit tree) {
+        Map<Integer, TypeAndInitDeclaration> outputs = new HashMap<>();
         for (ExternalDeclaration external : tree.getChildren()) {
             if (!(external instanceof DeclarationExternalDeclaration declaration)
                     || !(declaration.getDeclaration() instanceof TypeAndInitDeclaration typed)
@@ -659,13 +990,10 @@ public final class GuestShaders {
                                .getName()
                                .getName();
             if (outputs.put(location(typed.getType()
-                                          .getTypeQualifier(), name), name) != null) {
+                                          .getTypeQualifier(), name), typed) != null) {
                 throw new IllegalStateException("Fragment outputs share a location: " + name);
             }
-            typed.getType()
-                 .setTypeQualifier(null);
         }
-        root.rename("main", "_flw_irisMain");
         return outputs;
     }
 
@@ -699,13 +1027,16 @@ public final class GuestShaders {
     record OitSpec(OitPass pass, ContractProperties.Oit oit, int[] drawBuffers, boolean shadow) {
     }
 
-    record OitFragment(String source, Map<Integer, String> outputs) {
+    public record OitFragment(String source, Map<Integer, String> outputs) {
     }
 
     private record TextPair(String kind, String first, String second) {
     }
 
     private record Rewritten(String source, VertexInterface inputs) {
+    }
+
+    private record Bindless(String vertex, String fragment, Map<String, String> assignments) {
     }
 
     private record VertexInterface(Map<String, String> types, List<String> deferredInitializers) {

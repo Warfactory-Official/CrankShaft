@@ -46,7 +46,7 @@ public class Compile<K> {
         private final GlslProfile profile;
         private final ShaderType shaderType;
         private final List<BiFunction<K, ShaderSources, SourceComponent>> fetchers = new ArrayList<>();
-        private BiConsumer<K, Compilation> compilationCallbacks = ($, $$) -> {
+        private BiConsumer<K, Compilation> compilationCallbacks = (_, _) -> {
         };
         private Function<K, String> nameMapper = Object::toString;
 
@@ -76,11 +76,11 @@ public class Compile<K> {
         }
 
         public ShaderCompiler<K> withComponent(SourceComponent component) {
-            return withComponent($ -> component);
+            return withComponent(_ -> component);
         }
 
         public ShaderCompiler<K> withComponent(Function<K, SourceComponent> sourceFetcher) {
-            return with((key, $) -> sourceFetcher.apply(key));
+            return with((key, _) -> sourceFetcher.apply(key));
         }
 
         public ShaderCompiler<K> withResource(Function<K, Identifier> sourceFetcher) {
@@ -88,7 +88,15 @@ public class Compile<K> {
         }
 
         public ShaderCompiler<K> withResource(Identifier resourceLocation) {
-            return withResource($ -> resourceLocation);
+            return withResource(_ -> resourceLocation);
+        }
+
+        private List<SourceComponent> components(K key, ShaderSources loader) {
+            var components = new ArrayList<SourceComponent>();
+            for (var fetcher : fetchers) {
+                components.add(fetcher.apply(key, loader));
+            }
+            return components;
         }
 
         public ShaderCompiler<K> onCompile(BiConsumer<K, Compilation> cb) {
@@ -97,15 +105,15 @@ public class Compile<K> {
         }
 
         public ShaderCompiler<K> define(String def, int value) {
-            return onCompile(($, ctx) -> ctx.define(def, String.valueOf(value)));
+            return onCompile((_, ctx) -> ctx.define(def, String.valueOf(value)));
         }
 
         public ShaderCompiler<K> enableExtension(String extension) {
-            return onCompile(($, ctx) -> ctx.enableExtension(extension));
+            return onCompile((_, ctx) -> ctx.enableExtension(extension));
         }
 
         public ShaderCompiler<K> enableExtensions(String... extensions) {
-            return onCompile(($, ctx) -> {
+            return onCompile((_, ctx) -> {
                 for (String extension : extensions) {
                     ctx.enableExtension(extension);
                 }
@@ -113,7 +121,7 @@ public class Compile<K> {
         }
 
         public ShaderCompiler<K> enableExtensions(Collection<String> extensions) {
-            return onCompile(($, ctx) -> {
+            return onCompile((_, ctx) -> {
                 for (String extension : extensions) {
                     ctx.enableExtension(extension);
                 }
@@ -121,7 +129,7 @@ public class Compile<K> {
         }
 
         public ShaderCompiler<K> requireExtensions(Collection<String> extensions) {
-            return onCompile(($, ctx) -> {
+            return onCompile((_, ctx) -> {
                 for (String extension : extensions) {
                     ctx.requireExtension(extension);
                 }
@@ -131,11 +139,7 @@ public class Compile<K> {
         private GlShader compile(K key, ShaderCache compiler, ShaderSources loader) {
             long start = System.nanoTime();
 
-            var components = new ArrayList<SourceComponent>();
-            for (var fetcher : fetchers) {
-                components.add(fetcher.apply(key, loader));
-            }
-
+            var components = components(key, loader);
             Consumer<Compilation> cb = ctx -> compilationCallbacks.accept(key, ctx);
             var name = nameMapper.apply(key);
             var out = compiler.compile(glslVersion, profile, shaderType, name, cb, components);
@@ -149,10 +153,37 @@ public class Compile<K> {
     }
 
     public static class ProgramStitcher<K> implements CompilationHarness.KeyCompiler<K> {
+        @Override
+        public CompilationHarness.Stages stages(K key, ShaderSources loader) {
+            int count = compilers.size();
+            int[] types = new int[count];
+            String[] sources = new String[count];
+            String[] labels = new String[count];
+            int index = 0;
+            for (ShaderCompiler<K> compiler : compilers.values()) {
+                String name = compiler.nameMapper.apply(key);
+                types[index] = compiler.shaderType.glEnum;
+                sources[index] = ShaderCache.source(compiler.glslVersion, compiler.profile, compiler.shaderType, name,
+                        ctx -> compiler.compilationCallbacks.accept(key, ctx), compiler.components(key, loader));
+                labels[index++] = name + "." + compiler.shaderType.extension;
+            }
+            return new CompilationHarness.Stages(types, sources, labels);
+        }
+
+        @Override
+        public void preLink(K key, GlProgram program) {
+            preLink.accept(key, program);
+        }
+
+        @Override
+        public void postLink(K key, GlProgram program) {
+            postLink.accept(key, program);
+        }
+
         private final Map<ShaderType, ShaderCompiler<K>> compilers = new EnumMap<>(ShaderType.class);
-        private BiConsumer<K, GlProgram> postLink = (k, p) -> {
+        private BiConsumer<K, GlProgram> postLink = (_, _) -> {
         };
-        private BiConsumer<K, GlProgram> preLink = (k, p) -> {
+        private BiConsumer<K, GlProgram> preLink = (_, _) -> {
         };
 
         public CompilationHarness<K> harness(String marker, ShaderSources sources) {

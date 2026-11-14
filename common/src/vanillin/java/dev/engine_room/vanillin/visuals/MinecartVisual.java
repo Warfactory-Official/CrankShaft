@@ -79,7 +79,7 @@ public class MinecartVisual<T extends AbstractMinecart> extends AbstractEntityVi
     }
 
     @Override
-    public void tick(TickableVisual.Context context) {
+    public void tick(TickableVisual.Context _) {
         BlockState displayBlockState = entity.getDisplayBlockState();
 
         if (displayBlockState != blockState) {
@@ -197,7 +197,7 @@ public class MinecartVisual<T extends AbstractMinecart> extends AbstractEntityVi
         updateLight(partialTick);
     }
 
-    protected void updateContents(TransformedInstance contents, Matrix4f pose, float partialTick) {
+    protected void updateContents(TransformedInstance contents, Matrix4f pose, float _) {
         contents.setTransform(pose)
                 .setChanged();
     }

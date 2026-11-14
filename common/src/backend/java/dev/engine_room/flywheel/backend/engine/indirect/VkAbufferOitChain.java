@@ -24,7 +24,7 @@ final class VkAbufferOitChain extends VkInsertOitChain {
     }
 
     @Override
-    void ensurePayload(long pixels, int layers, int maxNodes) {
+    void ensurePayload(long _, int _, int maxNodes) {
         long nodesBytes = (long) maxNodes * 16L; // uvec4 per node
         if (nodes == null) {
             nodes = new VkBuffer(VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, nodesBytes, true);

@@ -24,6 +24,13 @@ public interface Material {
     boolean mipmap();
 
     /**
+     * Use the texture owner's sampler instead of the material's blur/mipmap policy.
+     */
+    default boolean useTextureSampler() {
+        return false;
+    }
+
+    /**
      * Should this material be rendered with backface culling?
      *
      * @return {@code true} if this material should be rendered with backface culling.
@@ -79,23 +86,24 @@ public interface Material {
         }
 
         // @formatter:off
-        return this.blur() == other.blur()
-                && this.mipmap() == other.mipmap()
-                && this.backfaceCulling() == other.backfaceCulling()
-                && this.polygonOffset() == other.polygonOffset()
-                && this.depthTest() == other.depthTest()
-                && this.transparency() == other.transparency()
-                && this.writeMask() == other.writeMask()
-                && this.useOverlay() == other.useOverlay()
-                && this.useLight() == other.useLight()
-                && this.cardinalLightingMode() == other.cardinalLightingMode()
-                && this.ambientOcclusion() == other.ambientOcclusion()
-                && this.shaders().fragmentSource().equals(other.shaders().fragmentSource())
-                && this.shaders().vertexSource().equals(other.shaders().vertexSource())
-                && this.cutout().source().equals(other.cutout().source())
-                && this.light().source().equals(other.light().source())
-                && this.fog().source().equals(other.fog().source())
-                && this.texture().equals(other.texture());
+        return blur() == other.blur()
+                && mipmap() == other.mipmap()
+                && useTextureSampler() == other.useTextureSampler()
+                && backfaceCulling() == other.backfaceCulling()
+                && polygonOffset() == other.polygonOffset()
+                && depthTest() == other.depthTest()
+                && transparency() == other.transparency()
+                && writeMask() == other.writeMask()
+                && useOverlay() == other.useOverlay()
+                && useLight() == other.useLight()
+                && cardinalLightingMode() == other.cardinalLightingMode()
+                && ambientOcclusion() == other.ambientOcclusion()
+                && shaders().fragmentSource().equals(other.shaders().fragmentSource())
+                && shaders().vertexSource().equals(other.shaders().vertexSource())
+                && cutout().source().equals(other.cutout().source())
+                && light().source().equals(other.light().source())
+                && fog().source().equals(other.fog().source())
+                && texture().equals(other.texture());
         // @formatter:on
     }
 }

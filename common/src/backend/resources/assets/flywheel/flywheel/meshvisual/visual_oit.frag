@@ -137,6 +137,7 @@ void main() {
     vec4 color = flw_fogFilterUber(v_in.fogCutout >> 16u, flw_fragColor, fogDistance.x, fogDistance.y);
 
     #if defined(_FLW_OIT_EMISSION) && defined(_FLW_OIT_INSERT)
+    // TODO: no emission pass after the inserts; additive still inserts alpha-0 samples.
     _flw_mlabInsertPremul(color.rgb * color.a, 0., gl_FragCoord.z);
     #elif defined(_FLW_OIT_INSERT)
     _flw_mlabInsertPremul(color.rgb * color.a, color.a, gl_FragCoord.z);

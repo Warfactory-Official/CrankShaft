@@ -21,14 +21,20 @@ import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.model.Mesh;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.backend.BackendDebugFlags;
+import dev.engine_room.flywheel.backend.BackendUnavailableException;
+import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.compile.InstancingPrograms;
+import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
+import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
+import dev.engine_room.flywheel.backend.compile.component.InstanceAssemblerComponent;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.NativeOitReplay;
 import dev.engine_room.flywheel.backend.engine.embed.EmbeddedEnvironment;
 import dev.engine_room.flywheel.backend.engine.embed.Environment;
 import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
+import dev.engine_room.flywheel.backend.engine.indirect.GlInsertOitChain;
 import dev.engine_room.flywheel.backend.engine.indirect.OitPipelines;
 import dev.engine_room.flywheel.backend.engine.indirect.WaveletOitChain;
 import dev.engine_room.flywheel.backend.gl.GlCompat;
@@ -45,6 +51,7 @@ import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.*;
+import org.lwjgl.system.MemoryUtil;
 
 import java.util.*;
 
@@ -68,9 +75,13 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
     private final @Nullable InstancingDrawSelector drawSelector = GlCompat.USE_INSTANCING_SELECTOR
             ? new InstancingDrawSelector() : null;
     private final WaveletOitChain oitChain = new WaveletOitChain();
+    private final GlInsertOitChain insertChain = new GlInsertOitChain();
     protected final Matrix4f renderModelView = new Matrix4f();
     private boolean needSort = false;
     private boolean hasLineDraws;
+    // InstancedInstancer#MOVED_TEXELS_NAME while an instancer has no moved instances: reads past its end see none.
+    private @Nullable GpuBuffer noMoves;
+    private int noMovesTexture;
 
     public InstancedDrawManager(InstancingPrograms programs) {
         programs.acquire();
@@ -96,7 +107,9 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         submitOpaque();
     }
 
-    /** Frame uploads before any render pass. */
+    /**
+     * Frame uploads before any render pass.
+     */
     protected void prepare(LightStorage lightStorage, EnvironmentStorage environmentStorage,
                            Matrix4fc modelViewMatrix, Vec3i renderOrigin, boolean constantAmbientLight) {
         super.render(lightStorage, environmentStorage, modelViewMatrix, renderOrigin, constantAmbientLight);
@@ -107,17 +120,18 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             drawSelector.beginFrame();
         }
 
-        this.instancers.values()
-                       .removeIf(instancer -> {
-                           if (instancer.instanceCount() == 0) {
-                               instancer.delete();
-                               return true;
-                           } else {
-                               instancer.updateBuffer();
-                               instancer.resetTexelsReady();
-                               return false;
-                           }
-                       });
+        boolean history = keepsHistory();
+        instancers.values()
+                  .removeIf(instancer -> {
+                      if (instancer.instanceCount() == 0) {
+                          instancer.delete();
+                          return true;
+                      } else {
+                          instancer.resetTexelsReady(history);
+                          instancer.updateBuffer();
+                          return false;
+                      }
+                  });
 
         // Remove the draw calls for any instancers we deleted.
         needSort |= allDraws.removeIf(InstancedDraw::deleted);
@@ -169,11 +183,27 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         return OitTransparency.additive(draw.material());
     }
 
-    protected RenderPipeline pipelineFor(Material material, InstanceType<?> type, boolean embedded) {
+    protected @Nullable RenderPipeline pipelineFor(Material material, InstanceType<?> type, boolean embedded) {
         return InstancingPipeline.pipelineFor(material, type, embedded);
     }
 
-    protected RenderPipeline crumblingPipelineFor(Material crumblingMaterial, InstanceType<?> type) {
+    /**
+     * Whether instancers keep the previous frame's instances ({@link InstancedInstancer#historyTexels}); sampled
+     * once per frame in {@link #prepare}.
+     */
+    protected boolean keepsHistory() {
+        return false;
+    }
+
+    /**
+     * Whether {@code pipeline} declares {@link InstanceAssemblerComponent#HISTORY_BUFFER_NAME} (and embedded draws
+     * read {@code _FlwEmbed}'s previous pose).
+     */
+    protected boolean historyPipeline(RenderPipeline _) {
+        return false;
+    }
+
+    protected @Nullable RenderPipeline crumblingPipelineFor(Material crumblingMaterial, InstanceType<?> type) {
         return CrumblingPipelines.pipeline(crumblingMaterial, type, false);
     }
 
@@ -188,11 +218,11 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
 
     @Override
     public boolean renderNativeOit(LightStorage lightStorage, EnvironmentStorage environmentStorage,
-                                    NativeOitReplay replay) {
+                                   NativeOitReplay replay) {
         return renderOitFrame(lightStorage, environmentStorage, null, null, #if MC < 26.3 null, #endif null, replay);
     }
 
-    private boolean renderOitFrame(LightStorage lightStorage, EnvironmentStorage environmentStorage,
+    private boolean renderOitFrame(LightStorage _, EnvironmentStorage _,
                                    @Nullable ChunkSectionsToRender chunks, @Nullable BerTranslucentCapture ber,
                                    #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
                                    @Nullable SodiumTerrainOitReplay terrain, @Nullable NativeOitReplay nativeReplay) {
@@ -209,9 +239,23 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                         .prepareInstanceTexels();
             }
         };
-        return oitChain.render(renderModelView, meshPool.vertexBuffer(), meshPool.indexBuffer(),
-                !oitDraws.isEmpty() || !oitAdditiveDraws.isEmpty(), !oitAdditiveDraws.isEmpty(), prePass, chunks, ber,
-                #if MC < 26.3 fabulous, #endif terrain, nativeReplay, this::submitOitInstances);
+        boolean hasOit = !oitDraws.isEmpty() || !oitAdditiveDraws.isEmpty();
+        OitInsertMode insertMode = OitConfig.resolveInsertMode();
+        if (insertMode != null && (terrain == null || terrain.supportsInsert())
+                && (nativeReplay == null || nativeReplay.supportsInsert())) {
+            try {
+                return insertChain.render(renderModelView, meshPool.vertexBuffer(), meshPool.indexBuffer(), hasOit,
+                        !oitAdditiveDraws.isEmpty(), prePass, chunks, ber, #if MC < 26.3 fabulous, #endif terrain,
+                        insertMode, nativeReplay, this::submitOitInsertInstances);
+            } catch (ProgramAvailability.Failure failure) {
+                throw failure;
+            } catch (BackendUnavailableException failure) {
+                throw new ProgramAvailability.Failure(ProgramAvailability.insert(insertMode), failure);
+            }
+        }
+        return oitChain.render(renderModelView, meshPool.vertexBuffer(), meshPool.indexBuffer(), hasOit,
+                !oitAdditiveDraws.isEmpty(), prePass, chunks, ber, #if MC < 26.3 fabulous, #endif terrain,
+                nativeReplay, this::submitOitInstances);
     }
 
     protected void submitPass(String label, List<InstancedDraw> list, Matrix4fc modelView,
@@ -272,6 +316,9 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         Identifier lastTexture = null;
         GpuSampler lastSampler = null;
         Map<String, Uniform> uniforms = Map.of();
+        boolean history = false;
+        int historyUnit = -1;
+        int movedUnit = -1;
         for (var drawCall : list) {
             var mesh = drawCall.mesh();
             if (mesh.isInvalid()) {
@@ -288,12 +335,19 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             var environment = drawCall.groupKey.environment();
             boolean embedded = environment instanceof EmbeddedEnvironment;
             RenderPipeline pipeline = pipelineFor.pipeline(material, drawCall.groupKey.instanceType(), embedded);
+            if (pipeline == null) {
+                continue;
+            }
             GpuBufferSlice materialSlice = renderPassUniforms.material(MaterialEncoder.packProperties(material),
                     drawCall.tags());
+            if (pipeline != lastPipeline) {
+                history = historyPipeline(pipeline);
+            }
             GpuBufferSlice embedSlice = null;
             if (embedded) {
                 EmbeddedEnvironment env = (EmbeddedEnvironment) environment;
-                embedSlice = renderPassUniforms.embed(env.pose(), env.normal());
+                embedSlice = history ? renderPassUniforms.embed(env.pose(), env.normal(), env.posePrevious())
+                        : renderPassUniforms.embed(env.pose(), env.normal());
             }
 
             boolean prime = false;
@@ -313,6 +367,12 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             }
             if (prime) {
                 pass.setUniform("_flw_instances", texels.slice());
+                if (history) {
+                    pass.setUniform(InstanceAssemblerComponent.HISTORY_BUFFER_NAME,
+                            instancer.historyTexels().slice());
+                    GpuBuffer moved = instancer.movedTexels();
+                    pass.setUniform(InstancedInstancer.MOVED_TEXELS_NAME, (moved == null ? noMoves() : moved).slice());
+                }
                 pass.setUniform("_FlwInstanceDraw", materialSlice);
                 if (lineMaterial(material))
                     pass.setUniform("_FlwLineFrameUniforms", renderPassUniforms.lineFrameSlice());
@@ -321,8 +381,19 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                 }
                 pass.drawIndexed(0, 0, 0, 0, 0);
                 uniforms = RenderPipelineCompiler.uniforms(pipeline);
+                historyUnit = history ? ((Uniform.Utb) uniforms.get(InstanceAssemblerComponent.HISTORY_BUFFER_NAME))
+                                        .samplerIndex() : -1;
+                movedUnit = history ? ((Uniform.Utb) uniforms.get(InstancedInstancer.MOVED_TEXELS_NAME))
+                                      .samplerIndex() : -1;
             }
 
+            if (historyUnit >= 0) {
+                GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + historyUnit);
+                GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, instancer.historyTexture());
+                GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + movedUnit);
+                GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER,
+                        instancer.movedTexels() == null ? noMovesTexture() : instancer.movedTexture());
+            }
             GlStateManager._activeTexture(
                     GL13C.GL_TEXTURE0 + ((Uniform.Utb) uniforms.get("_flw_instances")).samplerIndex());
             GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, instancer.texelTexture());
@@ -335,12 +406,37 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         }
     }
 
+    private GpuBuffer noMoves() {
+        if (noMoves == null) {
+            var bytes = MemoryUtil.memCalloc(4, Integer.BYTES);
+            try {
+                noMoves = RenderSystem.getDevice()
+                                      .createBuffer(() -> "flywheel no moved instances",
+                                              GpuBuffer.USAGE_UNIFORM_TEXEL_BUFFER, bytes);
+            } finally {
+                MemoryUtil.memFree(bytes);
+            }
+            noMovesTexture = GlStateManager._genTexture();
+            GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, noMovesTexture);
+            GL31C.glTexBuffer(GL31C.GL_TEXTURE_BUFFER, GL30C.GL_R32UI, ((GlBuffer) noMoves).handle());
+        }
+        return noMoves;
+    }
+
+    private int noMovesTexture() {
+        noMoves();
+        return noMovesTexture;
+    }
+
     private void drawRunsPortable(RenderPass pass, List<InstancedDraw> list, PipelineSelector pipelineFor,
                                   @Nullable TextureManager textureManager, InstancingDrawSelector selector) {
         RenderPipeline lastPipeline = null;
         Identifier lastTexture = null;
         GpuSampler lastSampler = null;
         Map<String, Uniform> uniforms = Map.of();
+        boolean history = false;
+        int historyUnit = -1;
+        int movedUnit = -1;
         for (var drawCall : list) {
             var mesh = drawCall.mesh();
             if (mesh.isInvalid()) {
@@ -354,12 +450,19 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             var environment = drawCall.groupKey.environment();
             boolean embedded = environment instanceof EmbeddedEnvironment;
             RenderPipeline pipeline = pipelineFor.pipeline(material, drawCall.groupKey.instanceType(), embedded);
+            if (pipeline == null) {
+                continue;
+            }
             GpuBufferSlice materialSlice = renderPassUniforms.material(MaterialEncoder.packProperties(material),
                     drawCall.tags());
+            if (pipeline != lastPipeline) {
+                history = historyPipeline(pipeline);
+            }
             GpuBufferSlice embedSlice = null;
             if (embedded) {
                 EmbeddedEnvironment env = (EmbeddedEnvironment) environment;
-                embedSlice = renderPassUniforms.embed(env.pose(), env.normal());
+                embedSlice = history ? renderPassUniforms.embed(env.pose(), env.normal(), env.posePrevious())
+                        : renderPassUniforms.embed(env.pose(), env.normal());
             }
             boolean prime = false;
             if (pipeline != lastPipeline) {
@@ -380,6 +483,13 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                 GpuBufferSlice selectorSlice = selector.slice(0, instancer.batchStart(batch), mesh.baseVertex());
                 if (prime) {
                     pass.setUniform("_flw_instances", instancer.instanceTexels(batch).slice());
+                    if (history) {
+                        pass.setUniform(InstanceAssemblerComponent.HISTORY_BUFFER_NAME,
+                                instancer.historyTexels(batch).slice());
+                        GpuBuffer moved = instancer.movedTexels(batch);
+                        pass.setUniform(InstancedInstancer.MOVED_TEXELS_NAME,
+                                (moved == null ? noMoves() : moved).slice());
+                    }
                     pass.setUniform("_FlwInstanceDraw", materialSlice);
                     pass.setUniform(InstancingDrawSelector.NAME, selectorSlice);
                     if (lineMaterial(material)) {
@@ -390,7 +500,18 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                     }
                     pass.drawIndexed(0, 0, 0, 0, 0);
                     uniforms = RenderPipelineCompiler.uniforms(pipeline);
+                    historyUnit = history ? ((Uniform.Utb) uniforms.get(InstanceAssemblerComponent.HISTORY_BUFFER_NAME))
+                                            .samplerIndex() : -1;
+                    movedUnit = history ? ((Uniform.Utb) uniforms.get(InstancedInstancer.MOVED_TEXELS_NAME))
+                                          .samplerIndex() : -1;
                     prime = false;
+                }
+                if (historyUnit >= 0) {
+                    GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + historyUnit);
+                    GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER, instancer.historyTexture(batch));
+                    GlStateManager._activeTexture(GL13C.GL_TEXTURE0 + movedUnit);
+                    GL11C.glBindTexture(GL31C.GL_TEXTURE_BUFFER,
+                            instancer.movedTexels(batch) == null ? noMovesTexture() : instancer.movedTexture(batch));
                 }
                 GlStateManager._activeTexture(
                         GL13C.GL_TEXTURE0 + ((Uniform.Utb) uniforms.get("_flw_instances")).samplerIndex());
@@ -415,8 +536,16 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         }
 
         drawRuns(pass, additive ? oitAdditiveDraws : oitDraws,
-                (material, type, embedded) -> OitPipelines.producer(material, type, mode, false, embedded),
-                needsColor ? f.textureManager() : null);
+                (material, type, embedded) -> OitPipelines.producer(material, type, mode, embedded),
+                f.textureManager());
+    }
+
+    private void submitOitInsertInstances(RenderPass pass, OitInsertMode mode, OitFrame f, boolean additive) {
+        light.bindStorage();
+        pass.setUniform("_FlwRenderOrigin", renderPassUniforms.renderOriginSlice());
+        drawRuns(pass, additive ? oitAdditiveDraws : oitDraws,
+                (material, type, embedded) -> OitPipelines.instancedMlab(material, type, mode, embedded),
+                f.textureManager());
     }
 
     private void bindLight(RenderPass pass) {
@@ -448,6 +577,11 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         }
 
         oitChain.delete();
+        insertChain.delete();
+        if (noMoves != null) {
+            noMoves.close();
+            GlStateManager._deleteTexture(noMovesTexture);
+        }
 
         super.delete();
     }
@@ -484,20 +618,23 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         }
     }
 
-    /** New-draw guest tags; native = {@code null}. */
-    protected @Nullable DrawTags drawTags(Environment environment, Model model, Material material, Mesh mesh) {
+    /**
+     * New-draw guest tags; native = {@code null}.
+     */
+    protected @Nullable DrawTags drawTags(Environment _, Model _, Material _, Mesh _) {
         return null;
     }
 
+    /**
+     * Requests a new draw's pipelines ahead of its first frame.
+     */
     protected void warmUp(Material material, InstanceType<?> type) {
-        if (OitTransparency.additive(material)) {
-            OitPipelines.producer(material, type, OitMode.EVALUATE);
-        } else if (OitTransparency.orderIndependent(material)) {
-            OitPipelines.producer(material, type, OitMode.DEPTH_RANGE);
-            OitPipelines.producer(material, type, OitMode.GENERATE_COEFFICIENTS);
-            OitPipelines.producer(material, type, OitMode.EVALUATE);
+        if (OitTransparency.orderIndependent(material)) {
+            OitInsertMode mode = OitConfig.resolveInsertMode();
+            if (mode == null) OitPipelines.producer(material, type, OitMode.EVALUATE, false);
+            else OitPipelines.instancedMlab(material, type, mode, false);
         } else {
-            InstancingPipeline.pipelineFor(material, type);
+            InstancingPipeline.pipelineFor(material, type, false);
         }
     }
 
@@ -591,12 +728,25 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                                 continue;
                             }
                             CommonCrumbling.applyCrumblingProperties(crumblingMaterial, draw.material());
-                            pass.setRenderPipeline(crumblingPipelineFor(crumblingMaterial, instanceType));
+                            RenderPipeline pipeline = crumblingPipelineFor(crumblingMaterial, instanceType);
+                            if (pipeline == null) {
+                                continue;
+                            }
+                            pass.setRenderPipeline(pipeline);
 
                             AbstractTexture atlas = textureManager.getTexture(draw.material()
                                                                                   .texture());
                             pass.setUniform("Sampler0", atlas.getTextureView(), atlasSampler);
                             pass.setUniform("_flw_instances", texels.slice());
+                            if (historyPipeline(pipeline)) {
+                                GpuBuffer history = batched == null ? instancer.historyTexels()
+                                        : batched.historyTexels(batch);
+                                GpuBuffer moved = batched == null ? instancer.movedTexels()
+                                        : batched.movedTexels(batch);
+                                pass.setUniform(InstanceAssemblerComponent.HISTORY_BUFFER_NAME, history.slice());
+                                pass.setUniform(InstancedInstancer.MOVED_TEXELS_NAME,
+                                        (moved == null ? noMoves() : moved).slice());
+                            }
                             pass.setUniform("_FlwInstanceDraw",
                                     renderPassUniforms.material(MaterialEncoder.packProperties(crumblingMaterial)));
 
@@ -630,6 +780,9 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
 
     @FunctionalInterface
     public interface PipelineSelector {
-        RenderPipeline pipeline(Material material, InstanceType<?> type, boolean embedded);
+        /**
+         * Null skips the draw: not yet published.
+         */
+        @Nullable RenderPipeline pipeline(Material material, InstanceType<?> type, boolean embedded);
     }
 }

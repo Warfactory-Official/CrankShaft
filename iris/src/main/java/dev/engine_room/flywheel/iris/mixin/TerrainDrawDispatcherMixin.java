@@ -57,24 +57,24 @@ abstract class TerrainDrawDispatcherMixin {
     }
 
     @Inject(method = {"drawOpaqueSolid", "drawShadowTerrain"}, at = @At("HEAD"), require = 1)
-    private void flywheel$prepareGuestDraw(CallbackInfoReturnable<Boolean> cir) {
+    private void flywheel$prepareGuestDraw(CallbackInfoReturnable<Boolean> _) {
         GuestTerrainGate.packActive = GuestTerrainGate.enabled() && Iris.isPackInUseQuick();
     }
 
     @Inject(method = "prepareResidentTranslucent", at = @At("HEAD"), require = 1)
-    private void flywheel$prepareGuestTranslucent(CallbackInfo ci) {
+    private void flywheel$prepareGuestTranslucent(CallbackInfo _) {
         GuestTerrainGate.packActive = GuestTerrainGate.enabled() && Iris.isPackInUseQuick();
     }
 
     // Registry uploads can bind scatter SSBOs even when no terrain draw follows. Restore at the whole operation's
     // boundary, not a program's clear callback or a later instance draw that might never happen.
     @Inject(method = {"drawOpaqueSolid", "drawShadowTerrain"}, at = @At("RETURN"), require = 1)
-    private void flywheel$restoreAfterDraw(CallbackInfoReturnable<Boolean> cir) {
+    private void flywheel$restoreAfterDraw(CallbackInfoReturnable<Boolean> _) {
         flywheel$restorePackBuffers();
     }
 
     @Inject(method = "prepareResidentTranslucent", at = @At("RETURN"), require = 1)
-    private void flywheel$restoreAfterPreparation(CallbackInfo ci) {
+    private void flywheel$restoreAfterPreparation(CallbackInfo _) {
         flywheel$restorePackBuffers();
     }
 }

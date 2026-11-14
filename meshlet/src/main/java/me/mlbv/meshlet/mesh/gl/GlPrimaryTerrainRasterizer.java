@@ -15,6 +15,8 @@ import com.mojang.renderpearl.backend.opengl.GlSampler;
 import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainAtlasFilter;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainOverlayDraw;
+
 import dev.engine_room.flywheel.backend.gl.GlStateTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlas;
@@ -48,6 +50,7 @@ public final class GlPrimaryTerrainRasterizer {
     private int compactSectionsBuffer = 0;
     private int compactSectionsCapacityRegions = 0;
     private final GlGeometryPtrBuffer geometryPtrs = new GlGeometryPtrBuffer();
+    private final GlGeometryPtrBuffer receiverPtrs = new GlGeometryPtrBuffer();
     private final GlResidentAddressCache residentAddresses = new GlResidentAddressCache();
 
     private int sceneUbo = 0;
@@ -100,13 +103,14 @@ public final class GlPrimaryTerrainRasterizer {
         GpuTextureView lightmapView = mc.gameRenderer.lightmap();
 
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-        try (RenderPass pass = encoder.createRenderPass(() -> "meshlet:terrain/gl_opaque",
+        try (RenderPass _ = encoder.createRenderPass(() -> "meshlet:terrain/gl_opaque",
                 colorView, Optional.empty(), depthView, OptionalDouble.empty())) {
             ensureSamplers();
             GlMeshUtil.bindTexture(UNIT_ATLAS, atlasView, ((GlSampler) TerrainAtlasFilter.sampler()).getId());
             GlMeshUtil.bindTexture(UNIT_LIGHTMAP, lightmapView, lightmapSamplerObj);
             setupOpaqueState();
             drawRegions(d, passIndex, regionCount);
+            TerrainOverlayDraw.unbindGl();
             GL33C.glBindSampler(UNIT_ATLAS, 0);
             GL33C.glBindSampler(UNIT_LIGHTMAP, 0);
             GlStateManager._activeTexture(GL13C.GL_TEXTURE0);
@@ -162,6 +166,12 @@ public final class GlPrimaryTerrainRasterizer {
         // pass 0 = solid (early-Z, no discard), pass 1 = cutout (runtime cutoffId discard, late-Z) -- mirrors VK.
         int terrainProgram = pipelines.terrainProgram(passIndex != 0);
         GlStateTracker.useProgram(terrainProgram);
+        if (!TerrainOverlayDraw.isEmpty()) {
+            GlMeshUtil.uploadReceiverPointers(d.boundBatch.geometryBuffers, regionCount, receiverPtrs,
+                    residentAddresses);
+            receiverPtrs.bindBase(13);
+            TerrainOverlayDraw.bindGl(terrainProgram);
+        }
 
         GpuBufferSlice fog = RenderSystem.getShaderFog();
         if (fog != null) {
@@ -207,6 +217,7 @@ public final class GlPrimaryTerrainRasterizer {
             compactSectionsCapacityRegions = 0;
         }
         geometryPtrs.destroy();
+        receiverPtrs.destroy();
         if (sceneUbo != 0) {
             GL15C.glDeleteBuffers(sceneUbo);
             sceneUbo = 0;

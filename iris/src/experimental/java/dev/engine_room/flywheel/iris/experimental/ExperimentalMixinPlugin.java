@@ -10,12 +10,12 @@ import java.util.Set;
 
 public final class ExperimentalMixinPlugin implements IMixinConfigPlugin {
     @Override
-    public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+    public boolean shouldApplyMixin(String _, String _) {
         return IrisRuntime.EXPERIMENTAL;
     }
 
     @Override
-    public void onLoad(String mixinPackage) {
+    public void onLoad(String _) {
     }
 
     @Override
@@ -24,7 +24,7 @@ public final class ExperimentalMixinPlugin implements IMixinConfigPlugin {
     }
 
     @Override
-    public void acceptTargets(Set<String> myTargets, Set<String> otherTargets) {
+    public void acceptTargets(Set<String> _, Set<String> _) {
     }
 
     @Override
@@ -33,10 +33,10 @@ public final class ExperimentalMixinPlugin implements IMixinConfigPlugin {
     }
 
     @Override
-    public void preApply(String targetClassName, ClassNode targetClass, String mixinClassName, IMixinInfo mixinInfo) {
+    public void preApply(String _, ClassNode _, String _, IMixinInfo _) {
     }
 
     @Override
-    public void postApply(String targetClassName, ClassNode targetClass, String mixinClassName, IMixinInfo mixinInfo) {
+    public void postApply(String _, ClassNode _, String _, IMixinInfo _) {
     }
 }

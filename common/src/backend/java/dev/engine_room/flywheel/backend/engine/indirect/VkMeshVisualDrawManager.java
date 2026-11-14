@@ -50,10 +50,28 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         }
     }
 
-    private static void drawMeshTasksIndirect(VkCommandBuffer cmd, VkBuffer commands, MeshDrawRun run) {
-        EXTMeshShader.vkCmdDrawMeshTasksIndirectEXT(cmd, commands.vkBuffer(),
-                (long) run.start() * VkMeshVisualPipelines.COMMAND_STRIDE, run.end() - run.start(),
-                VkMeshVisualPipelines.COMMAND_STRIDE);
+    // The run's draws the selected pipeline generation and the frame's cull cover.
+    private void drawCovered(VkCommandBuffer cmd, VkMeshPipeline pipeline, MeshVisualInputs in, MeshDrawRun run,
+                             ProgramGeneration generation) {
+        ProgramGeneration coverage = generation.culledBy(cullTypes());
+        if (coverage.covers(run.required())) {
+            drawMeshTasksIndirect(cmd, pipeline, in, run.start(), run.end());
+            return;
+        }
+        int start = run.start();
+        for (int i = run.start(); i < run.end(); i++) {
+            if (coverage.covers(draw(i).required())) continue;
+            if (start < i) drawMeshTasksIndirect(cmd, pipeline, in, start, i);
+            start = i + 1;
+        }
+        if (start < run.end()) drawMeshTasksIndirect(cmd, pipeline, in, start, run.end());
+    }
+
+    private static void drawMeshTasksIndirect(VkCommandBuffer cmd, VkMeshPipeline pipeline, MeshVisualInputs in,
+                                              int start, int end) {
+        pushMeshVisualConstants(cmd, pipeline, in, start);
+        EXTMeshShader.vkCmdDrawMeshTasksIndirectEXT(cmd, in.commands().vkBuffer(),
+                (long) start * VkMeshVisualPipelines.COMMAND_STRIDE, end - start, VkMeshVisualPipelines.COMMAND_STRIDE);
     }
 
     private VkMeshVisualPipelines meshVisualPipelines() {
@@ -89,6 +107,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         MemoryUtil.memPutFloat(framePtr + 76L, FrameUniforms.partialTick());
         MemoryUtil.memPutFloat(framePtr + 80L, FrameUniforms.renderTicks());
         MemoryUtil.memPutFloat(framePtr + 84L, FrameUniforms.renderSeconds());
+        MemoryUtil.memPutInt(framePtr + 88L, FrameUniforms.gameMillis());
 
         int n = frameDrawCount;
         if (n == 0) {
@@ -171,8 +190,12 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
 
         for (MeshDrawRun multiDraw : meshMultiDraws) {
             Material material = multiDraw.material();
-            VkMeshPipeline pipeline = meshVisualPipelines().solidPipeline(multiDraw.type(), material,
-                    multiDraw.embedded(), COLOR_FORMAT, programs.depthFormat());
+            var selection = meshVisualPipelines().solidPipeline(multiDraw.type(), material, multiDraw.embedded(),
+                    COLOR_FORMAT, programs.depthFormat());
+            if (selection == null) {
+                continue;
+            }
+            VkMeshPipeline pipeline = selection.pipeline();
             if (pipeline != lastPipeline) {
                 bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
                 lastPipeline = pipeline;
@@ -189,9 +212,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
                   .uniform(19, lights)
                   .uniform(22, renderOriginSlice);
             writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
-            pushMeshVisualConstants(cmd, pipeline, in, multiDraw.start());
-
-            drawMeshTasksIndirect(cmd, in.commands(), multiDraw);
+            drawCovered(cmd, pipeline, in, multiDraw, selection.generation());
         }
     }
 
@@ -213,8 +234,12 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         VkMeshPipeline lastPipeline = null;
 
         for (MeshDrawRun multiDraw : draws) {
-            VkMeshPipeline pipeline = meshVisualPipelines().oitPipeline(multiDraw.type(), multiDraw.material(),
+            var selection = meshVisualPipelines().oitPipeline(multiDraw.type(), multiDraw.material(),
                     multiDraw.embedded(), mode, programs.depthFormat(), folded);
+            if (selection == null) {
+                continue;
+            }
+            VkMeshPipeline pipeline = selection.pipeline();
             if (pipeline != lastPipeline) {
                 bindGraphicsPipeline(cmd, oitPipeline(pipeline), pipeline.layout());
                 lastPipeline = pipeline;
@@ -234,9 +259,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
                 VkWaveletOitChain.writeOitReads(writer, f, mode, folded);
             }
             writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
-            pushMeshVisualConstants(cmd, pipeline, in, multiDraw.start());
-
-            drawMeshTasksIndirect(cmd, in.commands(), multiDraw);
+            drawCovered(cmd, pipeline, in, multiDraw, selection.generation());
         }
     }
 
@@ -262,8 +285,12 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         VkMeshPipeline lastPipeline = null;
 
         for (MeshDrawRun multiDraw : draws) {
-            VkMeshPipeline pipeline = meshVisualPipelines().mlabPipeline(multiDraw.type(), multiDraw.material(),
+            var selection = meshVisualPipelines().mlabPipeline(multiDraw.type(), multiDraw.material(),
                     multiDraw.embedded(), oitMode, programs.depthFormat());
+            if (selection == null) {
+                continue;
+            }
+            VkMeshPipeline pipeline = selection.pipeline();
             if (pipeline != lastPipeline) {
                 bindGraphicsPipeline(cmd, oitPipeline(pipeline), pipeline.layout());
                 lastPipeline = pipeline;
@@ -280,9 +307,7 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
             writer.uniform(18, f.fog()).uniform(19, f.lights()).uniform(22, f.renderOriginSlice());
             mlab.bind(writer);
             writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
-            pushMeshVisualConstants(cmd, pipeline, in, multiDraw.start());
-
-            drawMeshTasksIndirect(cmd, in.commands(), multiDraw);
+            drawCovered(cmd, pipeline, in, multiDraw, selection.generation());
         }
     }
 
@@ -300,6 +325,9 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         }
         VkMeshPipeline pipeline = meshVisualPipelines().crumblingPipeline(crumblingMaterial, instanceType, COLOR_FORMAT,
                 programs.depthFormat());
+        if (pipeline == null) {
+            return true;
+        }
         VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
 
         Material material = draw.material();

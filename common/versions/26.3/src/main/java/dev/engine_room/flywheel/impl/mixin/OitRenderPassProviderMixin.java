@@ -14,7 +14,7 @@ import java.util.function.Supplier;
 @Mixin(OitRenderPassProvider.class)
 abstract class OitRenderPassProviderMixin {
     @Inject(method = "createRenderPass", at = @At("HEAD"), cancellable = true)
-    private static void flywheel$useEngineAttachments(OitStage stage, Supplier<String> label,
+    private static void flywheel$useEngineAttachments(OitStage _, Supplier<String> label,
                                                      OitRenderPassProvider.Parameters parameters,
                                                      CallbackInfoReturnable<RenderPass> cir) {
         if (NativeOitRenderPassScope.active()) {

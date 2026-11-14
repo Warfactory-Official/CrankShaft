@@ -21,7 +21,7 @@ public final class EvokerFangsVisual extends EntityModelVisual<EvokerFangs, Evok
     }
 
     @Override
-    protected Identifier texture(EvokerFangsRenderState state) {
+    protected Identifier texture(EvokerFangsRenderState _) {
         return TEXTURE;
     }
 

@@ -1,0 +1,9 @@
+{
+  "client": [
+    "FarVoxyPipelineMixin",
+    "FarVoxyWaterMixin",
+    "NativeVoxyShaderPatchMixin",
+    "NativeVoxyUniformsMixin",
+    "VoxyShaderPatchMixin"
+  ]
+}

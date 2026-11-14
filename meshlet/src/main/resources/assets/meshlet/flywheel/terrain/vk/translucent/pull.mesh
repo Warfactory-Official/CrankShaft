@@ -18,7 +18,11 @@ layout(set = 0, binding = 2, std430) readonly buffer CachedVerts {
     CachedVert cachedVerts[];
 };
 layout(set = 0, binding = 3, std430) readonly buffer QuadFade {
+#ifdef _FLW_TERRAIN_RECEIVER_DATA
+    uvec2 quadData[];
+#else
     float quadFade[];
+#endif
 };
 layout(set = 0, binding = 4, std430) readonly buffer DrawCommand {
     uint groupCountX;
@@ -52,6 +56,11 @@ const uint QUADS_PER_MESH_WG = 16u;
 const uint TEXTURE_MAX_COORD = 1u << 15u;
 const uint TEXTURE_MAX_VALUE = TEXTURE_MAX_COORD - 1u;
 
+#ifdef _FLW_TERRAIN_OVERLAY
+layout(location=6) out vec3 _flw_terrainPosition[];
+layout(location=7) flat out uint _flw_terrainReceiver[];
+#endif
+
 void main() {
     uint wgQuadBase = gl_WorkGroupID.x * QUADS_PER_MESH_WG;
     uint total = drawQuadCount;
@@ -66,6 +75,10 @@ void main() {
         vec3 pos = vec3(cv.px, cv.py, cv.pz);
         vec4 viewPos = ModelViewMat * vec4(pos, 1.0);
         gl_MeshVerticesEXT[i].gl_Position = ProjMat * viewPos;
+#ifdef _FLW_TERRAIN_OVERLAY
+        _flw_terrainPosition[i]=pos;
+        _flw_terrainReceiver[i]=quadData[quad].y;
+#endif
         flw_oitViewZ[i] = viewPos.z;
         texCoord0[i] = vec2(uvec2(cv.uv, cv.uv >> 16u) & TEXTURE_MAX_VALUE) / float(TEXTURE_MAX_COORD);
 #ifdef _FLW_DEPTH_RANGE
@@ -74,7 +87,11 @@ void main() {
         vertexColor[i] = vec4(unpackHalf2x16(cv.colorRG), unpackHalf2x16(cv.colorBA));
         sphericalVertexDistance[i] = length(pos);
         cylindricalVertexDistance[i] = max(length(pos.xz), abs(pos.y));
+#ifdef _FLW_TERRAIN_RECEIVER_DATA
+        flw_chunkVisibility[i] = uintBitsToFloat(quadData[quad].x);
+#else
         flw_chunkVisibility[i] = quadFade[quad];
+#endif
 #endif
     }
 

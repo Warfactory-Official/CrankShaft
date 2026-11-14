@@ -4,7 +4,9 @@
   "package": "dev.engine_room.flywheel.impl.mixin.neoforge",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "LevelExtractorMixin"
+    "LevelExtractorMixin",
+    "SectionCompilerReceiverMixin",
+    "VulkanPipelineDestroyMixin"
   ],
   "injectors": {
     "defaultRequire": 1

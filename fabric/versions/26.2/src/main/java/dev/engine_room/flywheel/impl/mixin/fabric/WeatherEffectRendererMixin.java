@@ -28,7 +28,7 @@ abstract class WeatherEffectRendererMixin {
     @Inject(method = "render(Lnet/minecraft/world/phys/Vec3;Lnet/minecraft/client/renderer/state/level/WeatherRenderState;)V",
             at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;getDynamicUniforms()Lnet/minecraft/client/renderer/DynamicUniforms;"),
             cancellable = true)
-    private void flywheel$captureWeather(Vec3 cameraPos, WeatherRenderState renderState, CallbackInfo ci) {
+    private void flywheel$captureWeather(Vec3 _, WeatherRenderState renderState, CallbackInfo ci) {
         if (FabulousReroute.captureWeather(vertexBuffer, renderState.rainColumns.size(),
                 renderState.snowColumns.size())) {
             ci.cancel();

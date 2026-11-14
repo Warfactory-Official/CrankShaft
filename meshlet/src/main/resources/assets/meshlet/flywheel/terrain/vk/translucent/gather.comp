@@ -29,11 +29,20 @@ layout(set = 0, binding = 8, std430) readonly buffer MeshCommands {
 };
 layout(set = 0, binding = 12) uniform sampler2D Sampler2;
 
+#ifdef _FLW_TERRAIN_OVERLAY
+layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer ReceiverRef { uint count;uint ids[]; };
+layout(set = 0, binding = 42, std430) readonly buffer TerrainReceiverPointers { uint64_t receiverAddr[]; };
+#endif
+
 layout(set = 0, binding = 16, std430) writeonly buffer CachedVerts {
     CachedVert cachedVerts[];
 };
 layout(set = 0, binding = 17, std430) writeonly buffer QuadFade {
+#ifdef _FLW_TERRAIN_RECEIVER_DATA
+    uvec2 quadData[];
+#else
     float quadFade[];
+#endif
 };
 layout(set = 0, binding = 18, std430) buffer DrawCommand {
     uint groupCountX;
@@ -94,7 +103,16 @@ void main() {
             }
 
             uint outQuad = atomicAdd(drawQuadCount, 1u);
+            #ifdef _FLW_TERRAIN_RECEIVER_DATA
+            uint receiver = 0u;
+            if (receiverAddr[slot] != uint64_t(0)) {
+                ReceiverRef receivers = ReceiverRef(receiverAddr[slot]);
+                if (quadVertexBase < receivers.count)receiver = receivers.ids[quadVertexBase];
+            }
+            quadData[outQuad] = uvec2(floatBitsToUint(fade), receiver);
+            #else
             quadFade[outQuad] = fade;
+            #endif
             for (uint k = 0u; k < 4u; k++) {
                 cachedVerts[outQuad * 4u + k] = CachedVert(pos[k].x, pos[k].y, pos[k].z, uvw[k],
                         packHalf2x16(col[k].rg), packHalf2x16(col[k].ba));

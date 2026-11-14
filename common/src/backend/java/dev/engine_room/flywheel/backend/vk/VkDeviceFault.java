@@ -3,8 +3,12 @@ package dev.engine_room.flywheel.backend.vk;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorHeap;
 import org.lwjgl.system.MemoryStack;
+
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 public final class VkDeviceFault {
     private VkDeviceFault() {
@@ -22,8 +26,8 @@ public final class VkDeviceFault {
                 FlwBackend.LOGGER.error("[vk] vkGetDeviceFaultInfoEXT (count) failed: {}", result);
                 return;
             }
-            int addressCount = (int) Math.min(counts.addressInfoCount(), 64);
-            int vendorCount = (int) Math.min(counts.vendorInfoCount(), 64);
+            int addressCount = Math.min(counts.addressInfoCount(), 64);
+            int vendorCount = Math.min(counts.vendorInfoCount(), 64);
             long vendorBinarySize = counts.vendorBinarySize();
             // LWJGL types pAddressInfos/pVendorInfos as single-struct pointers and exposes the output pointers getter-only; point them at stack arrays via the member offsets.
             VkDeviceFaultAddressInfoEXT.Buffer addresses = VkDeviceFaultAddressInfoEXT.calloc(Math.max(1, addressCount),
@@ -86,7 +90,7 @@ public final class VkDeviceFault {
             FlwBackend.LOGGER.error("[vk] no vendor crash-dump blob (size={})", size);
             return;
         }
-        java.nio.ByteBuffer blob = MemoryUtil.memAlloc((int) size);
+        ByteBuffer blob = MemoryUtil.memAlloc((int) size);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkDeviceFaultCountsEXT counts = VkDeviceFaultCountsEXT.calloc(stack).sType$Default();
             counts.vendorBinarySize(size);
@@ -100,8 +104,8 @@ public final class VkDeviceFault {
             }
             byte[] bytes = new byte[(int) size];
             blob.get(bytes);
-            java.nio.file.Path out = java.nio.file.Path.of("device-fault-" + System.currentTimeMillis() + ".nv-gpudmp");
-            java.nio.file.Files.write(out, bytes);
+            Path out = Path.of("device-fault-" + System.currentTimeMillis() + ".nv-gpudmp");
+            Files.write(out, bytes);
             FlwBackend.LOGGER.error("[vk] vendor crash dump written: {} ({} bytes)", out.toAbsolutePath(), size);
         } catch (Throwable t) {
             FlwBackend.LOGGER.error("[vk] vendor crash-dump write failed", t);

@@ -259,7 +259,7 @@ public final class Distribute {
         }
 
         @Override
-        public final void onCompletion(CountedCompleter<?> caller) {
+        public final void onCompletion(CountedCompleter<?> _) {
             if (getCompleter() != null) {
                 return;
             }

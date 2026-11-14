@@ -36,6 +36,7 @@ public final class Uniforms {
         for (UniformBuffer buffer : ALL_BUFFERS) {
             buffer.delete();
         }
+        FrameUniforms.VIEW_BUFFER.delete();
     }
 
     public static void setUniformBlockBindings(GlProgram program) {

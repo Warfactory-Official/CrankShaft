@@ -29,9 +29,17 @@ import org.jspecify.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Solid: post-opaque seam; translucent: translucent seam. */
+/**
+ * Solid: post-opaque seam; translucent: translucent seam.
+ */
 public class GuestInstancedDrawManager extends InstancedDrawManager implements GuestDrawManager {
     private final List<InstancedDraw> plainScratch = new ArrayList<>();
+    private Vec3i frameOrigin = Vec3i.ZERO;
+    private boolean frameConstantAmbientLight;
+    private final List<InstancedDraw> forwardScratch = new ArrayList<>();
+    private final List<InstancedDraw> captureScratch = new ArrayList<>();
+    private final List<InstancedDraw> flattenScratch = new ArrayList<>();
+    private final List<InstancedDraw> translucentScratch = new ArrayList<>();
     private final List<InstancedDraw> orderIndependentScratch = new ArrayList<>();
     private final List<InstancedDraw> depthFillScratch = new ArrayList<>();
     private final List<InstancedDraw> blockScratch = new ArrayList<>();
@@ -41,6 +49,9 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
     private final List<InstancedDraw> eyesScratch = new ArrayList<>();
     private final List<InstancedDraw> translucentEntityScratch = new ArrayList<>();
     private final List<InstancedDraw> blendedEntityScratch = new ArrayList<>();
+    private final List<InstancedDraw> particleScratch = new ArrayList<>();
+    private final List<InstancedDraw> lateLightScratch = new ArrayList<>();
+    private final List<InstancedDraw> immediateAdditiveScratch = new ArrayList<>();
     private int drawKind;
     private boolean passEntities = true;
     private boolean passBlockEntities = true;
@@ -58,6 +69,8 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
     @Override
     public void prepareFrame(LightStorage lightStorage, EnvironmentStorage environmentStorage, Matrix4fc modelView,
                              Vec3i renderOrigin, boolean constantAmbientLight) {
+        frameOrigin = renderOrigin;
+        frameConstantAmbientLight = constantAmbientLight;
         prepare(lightStorage, environmentStorage, modelView, renderOrigin, constantAmbientLight);
     }
 
@@ -70,8 +83,8 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
     }
 
     @Override
-    public boolean drawShadow(IrisRenderingPipeline pipeline, Matrix4fc shadowModelView, Vec3i renderOrigin,
-                              Vec3 camera, boolean entities, boolean blockEntities) {
+    public boolean drawShadow(IrisRenderingPipeline _, Matrix4fc shadowModelView, Vec3i _,
+                              Vec3 _, boolean entities, boolean blockEntities) {
         GlCompat.pushDebugGroup("flywheel:iris/shadow");
         passEntities = entities;
         passBlockEntities = blockEntities;
@@ -92,17 +105,17 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         passEntities = entities;
         passBlockEntities = blockEntities;
         shadowPass = true;
-        submitTranslucent(pipeline, true, shadowModelView, this::shadowPipeline);
+        submitTranslucent(pipeline, true, shadowModelView, oitDraws, this::shadowPipeline);
         shadowPass = false;
         passEntities = passBlockEntities = true;
         GlCompat.popDebugGroup();
     }
 
     @Override
-    public boolean renderOit(LightStorage lightStorage, EnvironmentStorage environmentStorage,
-                             @Nullable ChunkSectionsToRender chunks, @Nullable BerTranslucentCapture ber,
-                             #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
-                             @Nullable SodiumTerrainOitReplay terrain) {
+    public boolean renderOit(LightStorage _, EnvironmentStorage _,
+                             @Nullable ChunkSectionsToRender _, @Nullable BerTranslucentCapture _,
+                             #if MC < 26.3 @Nullable FabulousCaptures _, #endif
+                             @Nullable SodiumTerrainOitReplay _) {
         if (IrisApi.getInstance()
                    .isRenderingShadowPass()) {
             return false;
@@ -110,10 +123,35 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         IrisRenderingPipeline pipeline = (IrisRenderingPipeline) Iris.getPipelineManager().getPipelineNullable();
         GlCompat.pushDebugGroup("flywheel:iris/translucent");
         try {
-            submitTranslucent(pipeline, false, renderModelView, this::translucentPipeline);
+            List<InstancedDraw> translucent = oitDraws;
+            flattenScratch.clear();
+            if (GuestPipelines.singleRecordParticles(pipeline)) {
+                translucent = translucentScratch;
+                translucent.clear();
+                for (InstancedDraw draw : oitDraws) {
+                    (GuestDrawManager.translucentParticle(drawTag(draw)) ? flattenScratch : translucent).add(draw);
+                }
+            }
+            if (GuestPipelines.deferredOitActive(pipeline)) {
+                // Routed draws take the pack's entity programs, which never capture: they reach the snapshot.
+                forwardScratch.clear();
+                captureScratch.clear();
+                for (InstancedDraw draw : translucent) {
+                    (GuestDrawManager.routed(drawTag(draw)) ? forwardScratch : captureScratch).add(draw);
+                }
+                submitPass("flywheel:iris/translucent_forward", forwardScratch, renderModelView,
+                        this::translucentPipeline);
+                submitParticleHandoff(pipeline);
+                CaptureSnapshot.take(pipeline);
+                translucent = captureScratch;
+            }
+            submitTranslucent(pipeline, false, renderModelView, translucent, this::translucentPipeline);
+            if (GuestPipelines.deferredOitActive(pipeline)) {
+                FarLayerMainGuest.draw("flywheel:iris/far_layers", null, renderModelView, frameOrigin,
+                        frameConstantAmbientLight);
+            }
             if (!GuestPipelines.deferredEmissive(pipeline)) {
-                submitPass("flywheel:iris/translucent_additive", oitAdditiveDraws, renderModelView,
-                        this::additivePipeline);
+                submitAdditive(pipeline);
             }
             submitDepthFill(pipeline);
             return false;
@@ -129,8 +167,11 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
             boolean oit = GuestPipelines.oitActive(pipeline, false);
             for (InstancedDraw draw : oitDraws) {
                 if (draw.material().transparency() != Transparency.GLINT && !draw.material()
-                         .writeMask()
-                         .depth() && !(oit && GuestDrawManager.orderIndependent(draw.material(), drawTag(draw)))) {
+                                                                                 .writeMask()
+                                                                                 .depth() && !(oit && GuestDrawManager.orderIndependent(
+                        draw.material(), drawTag(draw)))
+                        && !GuestDrawManager.depthless(draw.material(), drawTag(draw))
+                        && !GuestDrawManager.translucentParticle(drawTag(draw))) {
                     depthFillScratch.add(draw);
                 }
             }
@@ -144,48 +185,108 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
                 }
             }
         }
-        submitPass("flywheel:iris/depth_fill", depthFillScratch, renderModelView,
-                (material, type, embedded) -> GuestPipelines.instancingDepthFill(
-                        role(GuestDrawManager.emissive(material) ? PackRole.ADDITIVE : PackRole.TRANSLUCENT), material,
-                        type, embedded));
+        // Depth only where the colour pass draws.
+        submitPass("flywheel:iris/depth_fill", depthFillScratch, renderModelView, group(List.of(
+                        (material, type, embedded) -> GuestPipelines.instancingDepthFill(
+                                role(GuestDrawManager.emissive(material) ? PackRole.ADDITIVE : PackRole.TRANSLUCENT), material,
+                                type, embedded),
+                        (material, type, embedded) -> GuestDrawManager.emissive(material)
+                                ? additivePipeline(material, type, embedded) : translucentPipeline(material, type, embedded)),
+                0));
+    }
+
+    /**
+     * Pass {@code drawn} of passes drawing the same draws in one frame: a draw waits for every pass's pipeline.
+     */
+    private static PipelineSelector group(List<PipelineSelector> passes, int drawn) {
+        return (material, type, embedded) -> {
+            RenderPipeline pipeline = null;
+            for (int i = 0; i < passes.size(); i++) {
+                RenderPipeline member = passes.get(i).pipeline(material, type, embedded);
+                if (member == null) return null;
+                if (i == drawn) pipeline = member;
+            }
+            return pipeline;
+        };
+    }
+
+    @Override
+    public void drawLateLight() {
+        submitPass("flywheel:iris/light_capture", lateLightScratch, renderModelView,
+                (material, type, embedded) -> GuestPipelines.instancingLightCapture(role(PackRole.ADDITIVE),
+                        material, type, embedded));
+    }
+
+    private void submitAdditive(IrisRenderingPipeline pipeline) {
+        if (!GuestPipelines.lateLightCapture(pipeline)) {
+            submitPass("flywheel:iris/translucent_additive", oitAdditiveDraws, renderModelView,
+                    this::additivePipeline);
+            return;
+        }
+        lateLightScratch.clear();
+        immediateAdditiveScratch.clear();
+        for (var draw : oitAdditiveDraws)
+            (GuestDrawManager.lateLight(draw.material()) ? lateLightScratch : immediateAdditiveScratch).add(draw);
+        if (!lateLightScratch.isEmpty()) LateLightCapture.schedule(this);
+        submitPass("flywheel:iris/translucent_additive", immediateAdditiveScratch, renderModelView,
+                this::additivePipeline);
     }
 
     private void submitTranslucent(IrisRenderingPipeline pipeline, boolean shadow, Matrix4fc modelView,
-                                   PipelineSelector plainPipeline) {
+                                   List<InstancedDraw> draws, PipelineSelector plainPipeline) {
         String prefix = shadow ? "flywheel:iris/shadow_" : "flywheel:iris/";
-        if (oitDraws.isEmpty()) {
-            return;
-        }
+        // Deferred capture draws its far layers after this, at the capture seam.
+        boolean farLayers = !shadow && !GuestPipelines.deferredOitActive(pipeline) && FarLayerMainGuest.pending();
         if (!GuestPipelines.oitActive(pipeline, shadow)) {
-            submitPass(prefix + "translucent", oitDraws, modelView, plainPipeline);
+            submitPass(prefix + "translucent", draws, modelView, plainPipeline);
+            if (farLayers) FarLayerMainGuest.draw(prefix + "far_layers", null, modelView, frameOrigin,
+                    frameConstantAmbientLight);
+            if (!shadow) submitParticleHandoff(pipeline);
             return;
         }
         plainScratch.clear();
         orderIndependentScratch.clear();
-        for (InstancedDraw draw : oitDraws) {
+        for (InstancedDraw draw : draws) {
             (GuestDrawManager.orderIndependent(draw.material(), drawTag(draw)) ? orderIndependentScratch
                     : plainScratch).add(draw);
         }
-        if (!plainScratch.isEmpty()) {
-            submitPass(prefix + "translucent", plainScratch, modelView, plainPipeline);
-        }
-        if (orderIndependentScratch.isEmpty()) {
+        submitPass(prefix + "translucent", plainScratch, modelView, plainPipeline);
+        if (!shadow) submitParticleHandoff(pipeline);
+        if (orderIndependentScratch.isEmpty() && !farLayers) {
             return;
         }
         PackRole role = shadow ? PackRole.SHADOW : PackRole.TRANSLUCENT;
         boolean coefficients = GuestPipelines.prepareOit(pipeline, shadow);
-        submitPass(prefix + "oit_depth_range", orderIndependentScratch, modelView,
-                (material, type, embedded) -> GuestPipelines.instancingOit(role(role), OitPass.DEPTH_RANGE, material,
-                        type, embedded));
-        if (coefficients) {
-            submitPass(prefix + "oit_coefficients", orderIndependentScratch, modelView,
-                    (material, type, embedded) -> GuestPipelines.instancingOit(role(role), OitPass.COEFFICIENTS,
-                            material, type, embedded));
+        List<PipelineSelector> oit = new ArrayList<>(3);
+        for (OitPass pass : coefficients ? OitPass.values() : new OitPass[]{OitPass.DEPTH_RANGE, OitPass.EVALUATE}) {
+            oit.add((material, type, embedded) -> GuestPipelines.instancingOit(role(role), pass, material, type,
+                    embedded));
         }
-        submitPass(prefix + "oit_evaluate", orderIndependentScratch, modelView,
-                (material, type, embedded) -> GuestPipelines.instancingOit(role(role), OitPass.EVALUATE, material,
-                        type, embedded));
+        submitPass(prefix + "oit_depth_range", orderIndependentScratch, modelView, group(oit, 0));
+        if (farLayers) FarLayerMainGuest.draw(prefix + "far_layers_depth_range", OitPass.DEPTH_RANGE, modelView,
+                frameOrigin, frameConstantAmbientLight);
+        if (coefficients) {
+            submitPass(prefix + "oit_coefficients", orderIndependentScratch, modelView, group(oit, 1));
+            if (farLayers) FarLayerMainGuest.draw(prefix + "far_layers_coefficients", OitPass.COEFFICIENTS,
+                    modelView, frameOrigin, frameConstantAmbientLight);
+        }
+        submitPass(prefix + "oit_evaluate", orderIndependentScratch, modelView, group(oit, oit.size() - 1));
+        if (farLayers) FarLayerMainGuest.draw(prefix + "far_layers_evaluate", OitPass.EVALUATE, modelView,
+                frameOrigin, frameConstantAmbientLight);
         GuestOitComposite.draw(prefix + "oit_composite", shadow);
+    }
+
+    private void submitParticleHandoff(IrisRenderingPipeline pipeline) {
+        if (flattenScratch.isEmpty()) return;
+        GuestPipelines.prepareFlatten(pipeline);
+        List<PipelineSelector> flatten = List.of(
+                (material, type, embedded) -> GuestPipelines.instancing(PackRole.PARTICLES_FLATTEN, material, type,
+                        embedded),
+                (material, type, embedded) -> GuestPipelines.instancing(PackRole.PARTICLES_HANDOFF, material, type,
+                        embedded));
+        submitPass("flywheel:iris/particle_flatten", flattenScratch, renderModelView, group(flatten, 0));
+        submitPass("flywheel:iris/particle_handoff", flattenScratch, renderModelView, group(flatten, 1));
+        flattenScratch.clear();
     }
 
     @Override
@@ -203,10 +304,14 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         eyesScratch.clear();
         translucentEntityScratch.clear();
         blendedEntityScratch.clear();
+        particleScratch.clear();
         boolean dropBlobShadows = GuestEntityShadows.suppressed();
         for (InstancedDraw draw : list) {
-            if (shadowPass && GuestPipelines.nativeGlint() && draw.material().transparency() == Transparency.GLINT) continue;
-            if (shadowPass && GuestDrawManager.emissive(draw.material())) continue;
+            if (shadowPass && GuestPipelines.nativeGlint() && draw.material().transparency() == Transparency.GLINT)
+                continue;
+            if (shadowPass && (GuestDrawManager.emissive(draw.material())
+                    || GuestDrawManager.depthless(draw.material(), drawTag(draw))
+                    || GuestDrawManager.translucentParticle(drawTag(draw)))) continue;
             if (dropBlobShadows && GuestEntityShadows.isBlobShadow(draw.material())) {
                 continue;
             }
@@ -221,6 +326,10 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
             }
             if (routedKind == TaggedEnvironment.KIND_ENTITY_BLENDED) {
                 blendedEntityScratch.add(draw);
+                continue;
+            }
+            if (routedKind == TaggedEnvironment.KIND_ENTITY_PARTICLES_TRANSLUCENT) {
+                particleScratch.add(draw);
                 continue;
             }
             if (routedKind == TaggedEnvironment.KIND_BORROWED_BLOCK) {
@@ -247,6 +356,8 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
                     TaggedEnvironment.KIND_ENTITY_TRANSLUCENT, modelView, pipelineFor);
             submitKind(label + "_eyes", eyesScratch, TaggedEnvironment.KIND_ENTITY_EYES, modelView, pipelineFor);
             submitKind(label + "_blended_entities", blendedEntityScratch, TaggedEnvironment.KIND_ENTITY_BLENDED,
+                    modelView, pipelineFor);
+            submitKind(label + "_particles", particleScratch, TaggedEnvironment.KIND_ENTITY_PARTICLES_TRANSLUCENT,
                     modelView, pipelineFor);
         }
     }
@@ -293,12 +404,22 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
     }
 
     @Override
-    protected RenderPipeline pipelineFor(Material material, InstanceType<?> type, boolean embedded) {
+    protected @Nullable RenderPipeline pipelineFor(Material material, InstanceType<?> type, boolean embedded) {
         return GuestPipelines.instancing(role(PackRole.SOLID), material, type, embedded);
     }
 
     @Override
-    protected RenderPipeline crumblingPipelineFor(Material crumblingMaterial, InstanceType<?> type) {
+    protected boolean keepsHistory() {
+        return GuestPipelines.velocityDemanded();
+    }
+
+    @Override
+    protected boolean historyPipeline(RenderPipeline pipeline) {
+        return GuestPipelines.history(pipeline);
+    }
+
+    @Override
+    protected @Nullable RenderPipeline crumblingPipelineFor(Material crumblingMaterial, InstanceType<?> type) {
         return GuestPipelines.crumbling(crumblingMaterial, type, false);
     }
 
@@ -323,15 +444,16 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
         return true;
     }
 
-    private RenderPipeline additivePipeline(Material material, InstanceType<?> type, boolean embedded) {
+    private @Nullable RenderPipeline additivePipeline(Material material, InstanceType<?> type, boolean embedded) {
         return GuestPipelines.instancing(role(PackRole.ADDITIVE), material, type, embedded);
     }
 
-    private RenderPipeline translucentPipeline(Material material, InstanceType<?> type, boolean embedded) {
+    private @Nullable RenderPipeline translucentPipeline(Material material, InstanceType<?> type,
+                                                         boolean embedded) {
         return GuestPipelines.instancing(role(PackRole.TRANSLUCENT), material, type, embedded);
     }
 
-    private RenderPipeline shadowPipeline(Material material, InstanceType<?> type, boolean embedded) {
+    private @Nullable RenderPipeline shadowPipeline(Material material, InstanceType<?> type, boolean embedded) {
         return GuestPipelines.instancing(role(PackRole.SHADOW), material, type, embedded);
     }
 }

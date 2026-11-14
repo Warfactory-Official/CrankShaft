@@ -15,7 +15,7 @@ public interface TerrainDispatcher {
     /**
      * Returns false to leave shadow terrain with the pack's renderer.
      */
-    default boolean drawShadowTerrain(ChunkRenderMatrices matrices, RenderSectionManager manager) {
+    default boolean drawShadowTerrain(ChunkRenderMatrices _, RenderSectionManager _) {
         return false;
     }
 

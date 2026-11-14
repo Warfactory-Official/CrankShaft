@@ -79,7 +79,7 @@ public final class VkBuffer {
     /**
      * Host-coherent; no explicit flush.
      */
-    public void flush(long byteOffset, long byteSize) {
+    public void flush(long _, long _) {
     }
 
     public boolean ensureCapacity(long minBytes) {

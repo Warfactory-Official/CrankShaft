@@ -55,7 +55,7 @@ public final class OitDemoRegistration {
             CreativeModeTab.builder()
                            .title(Component.literal("Flywheel OIT Demo"))
                            .icon(() -> new ItemStack(STAINED_GLASS_ITEM.get()))
-                           .displayItems((params, output) -> {
+                           .displayItems((_, output) -> {
                                output.accept(GLASS_ITEM.get());
                                output.accept(GLASS_PANE_ITEM.get());
                                for (DyeColor color : DyeColor.values()) {

@@ -1,0 +1,572 @@
+diff --git a/composite.fsh b/composite.fsh
+--- a/composite.fsh
++++ b/composite.fsh
+@@ -69,2 +69,2 @@
+-   i.z=mix(i.z,.5,.8);
+-   i=i*.5f+.5f;
++   i.z=mix(i.z,.25,.8);
++   i.xy=i.xy*.5f+.5f;
+@@ -99,1 +99,1 @@
+-   float shadowStrength=shadow2DLod(shadowtex0,vec3(s.xy,s.z-depth),0).x;
++   float shadowStrength=shadow2DLod(shadowtex0,vec3(s.xy,s.z+depth),0).x;
+@@ -107,1 +107,1 @@
+-   float stainedGlassShadow=shadow2DLod(shadowtex0,vec3(s.xy-vec2(0.5,0.0),s.z-depth),0).x;
++   float stainedGlassShadow=shadow2DLod(shadowtex0,vec3(s.xy-vec2(0.5,0.0),s.z+depth),0).x;
+@@ -115,1 +115,1 @@
+-   float t=shadow2DLod(shadowtex0,vec3(s.xy-vec2(0.,.5),s.z+1e-06),2).x;
++   float t=shadow2DLod(shadowtex0,vec3(s.xy-vec2(0.,.5),s.z-1e-06),2).x;
+@@ -229,1 +229,1 @@
+-         if(depth==1.0){
++         if(depth==0.0){
+@@ -418,1 +418,1 @@
+-         d=step(.999999,d);
++         d=step(d,1e-6);
+@@ -420,1 +420,1 @@
+-         d*=step(.999999,getLodDepthSolid(DTY));
++         d*=step(getLodDepthSolid(DTY),1e-6);
+@@ -458,1 +458,1 @@
+-       bool x=y.depth<v.depth;
++       bool x=y.depth>v.depth;
+@@ -463,1 +463,1 @@
+-         x=x||(lodWaterDepth<lodSolidDepth&&y.depth==1.0);
++         x=x||(lodWaterDepth>lodSolidDepth&&y.depth==0.0);
+@@ -469,1 +469,1 @@
+-         if (y.depth==1.0&&lodWaterDepth<1.0) {
++         if (y.depth==0.0&&lodWaterDepth>0.0) {
+diff --git a/composite1.fsh b/composite1.fsh
+--- a/composite1.fsh
++++ b/composite1.fsh
+@@ -52,1 +52,1 @@
+-       bool c=f.depth<s.depth;
++       bool c=f.depth>s.depth;
+@@ -58,1 +58,1 @@
+-         c=c||(lodWaterDepth<lodSolidDepth&&f.depth==1.0);
++         c=c||(lodWaterDepth>lodSolidDepth&&f.depth==0.0);
+@@ -66,1 +66,1 @@
+-         if (f.depth==1.0&&lodWaterDepth<1.0) {
++         if (f.depth==0.0&&lodWaterDepth>0.0) {
+@@ -80,1 +80,1 @@
+-         if(solidDepth==1.0&&lodSolidDepth<1.0) {
++         if(solidDepth==0.0&&lodSolidDepth>0.0) {
+@@ -106,1 +106,1 @@
+-           bool isWater=refractionWaterDepth<refractionSolidDepth;
++           bool isWater=refractionWaterDepth>refractionSolidDepth;
+@@ -112,1 +112,1 @@
+-             isWater=isWater||(lodWaterRefractionDepth<lodSolidRefractionDepth);
++             isWater=isWater||(lodWaterRefractionDepth>lodSolidRefractionDepth);
+@@ -119,1 +119,1 @@
+-                 if(refractionWaterDepth==1.0&&lodWaterRefractionDepth<1.0) {
++                 if(refractionWaterDepth==0.0&&lodWaterRefractionDepth>0.0) {
+@@ -127,1 +127,1 @@
+-                 if(refractionSolidDepth==1.0&&lodSolidRefractionDepth<1.0) {
++                 if(refractionSolidDepth==0.0&&lodSolidRefractionDepth>0.0) {
+diff --git a/composite4.fsh b/composite4.fsh
+--- a/composite4.fsh
++++ b/composite4.fsh
+@@ -43,2 +43,2 @@
+-	sp.z = mix(sp.z, 0.5, 0.8);
+-	sp = sp * 0.5f + 0.5f;		//Transform from shadow space to shadow map coordinates
++	sp.z = mix(sp.z, 0.25, 0.8);
++	sp.xy = sp.xy * 0.5f + 0.5f;		//Transform from shadow space to shadow map coordinates
+@@ -67,1 +67,1 @@
+-   bool isWater=y.depth<v.depth;
++   bool isWater=y.depth>v.depth;
+@@ -71,1 +71,1 @@
+-     d.sky*=float(lodSolidDepth==1.0);
++     d.sky*=float(lodSolidDepth==0.0);
+@@ -73,1 +73,1 @@
+-     isWater=isWater||(lodWaterDepth<lodSolidDepth&&y.depth==1.0);
++     isWater=isWater||(lodWaterDepth>lodSolidDepth&&y.depth==0.0);
+@@ -80,1 +80,1 @@
+-     if (y.depth==1.0&&lodWaterDepth<1.0) {
++     if (y.depth==0.0&&lodWaterDepth>0.0) {
+@@ -95,1 +95,1 @@
+-   T*=step(v.depth,.999999);
++   T*=step(1e-6,v.depth);
+@@ -138,1 +138,1 @@
+-               K.z+=1e-06;
++               K.z-=1e-06;
+diff --git a/deferred.fsh b/deferred.fsh
+--- a/deferred.fsh
++++ b/deferred.fsh
+@@ -69,2 +69,2 @@
+-   i.z=mix(i.z,.5,.8);
+-   i=i*.5f+.5f;
++   i.z=mix(i.z,.25,.8);
++   i.xy=i.xy*.5f+.5f;
+@@ -97,1 +97,1 @@
+-   n.z-=depth;
++   n.z+=depth;
+@@ -388,1 +388,1 @@
+-         if (m.depth==1.0&&lodDepth<1.0) {
++         if (m.depth==0.0&&lodDepth>0.0) {
+diff --git a/deferred11.fsh b/deferred11.fsh
+--- a/deferred11.fsh
++++ b/deferred11.fsh
+@@ -79,1 +79,1 @@
+-   if(R==1.0){
++   if(R==0.0){
+@@ -112,1 +112,1 @@
+-       if(depth==1.0){
++       if(depth==0.0){
+@@ -140,1 +140,1 @@
+-   if(R < 0.999999)
++   if(R > 1e-6)
+diff --git a/deferred12.fsh b/deferred12.fsh
+--- a/deferred12.fsh
++++ b/deferred12.fsh
+@@ -198,1 +198,1 @@
+-	vec3 sn = normalize((shadowModelView * vec4(worldNormal.xyz, 0.0)).xyz) * vec3(1, 1, -1);
++	vec3 sn = normalize((shadowModelView * vec4(worldNormal.xyz, 0.0)).xyz) * vec3(1, 1, 0.5);
+@@ -209,2 +209,2 @@
+-	sp.z = mix(sp.z, 0.5, 0.8);
+-	sp = sp * 0.5f + 0.5f;		//Transform from shadow space to shadow map coordinates
++	sp.z = mix(sp.z, 0.25, 0.8);
++	sp.xy = sp.xy * 0.5f + 0.5f;		//Transform from shadow space to shadow map coordinates
+@@ -258,1 +258,1 @@
+-			avgDepth += pow(clamp(shadowProjPos.z - depthSample, 0.0, 0.025), 2.0);
++			avgDepth += pow(clamp(depthSample - shadowProjPos.z, 0.0, 0.025), 2.0);
+@@ -273,1 +273,1 @@
+-	float shadowPosZ = shadowProjPos.z - dfs;
++	float shadowPosZ = shadowProjPos.z + dfs;
+@@ -286,2 +286,2 @@
+-		shading += clamp(shadow2DLod(shadowtex0, vec3(shadowProjPos.st + coordOffset, shadowPosZ), 0).x + float(shadowPosZ > 1.0), 0.0, 1.0);
+-		stainedGlassShadow += clamp(shadow2DLod(shadowtex0, vec3(stainedGlassShadowProjPosTemp, shadowPosZ) + float(shadowPosZ > 1.0), 0).x, 0.0, 1.0);
++		shading += clamp(shadow2DLod(shadowtex0, vec3(shadowProjPos.st + coordOffset, shadowPosZ), 0).x + float(shadowPosZ < 0.0), 0.0, 1.0);
++		stainedGlassShadow += clamp(shadow2DLod(shadowtex0, vec3(stainedGlassShadowProjPosTemp, shadowPosZ) + vec3(1.0, 1.0, -1.0) * float(shadowPosZ < 0.0), 0).x, 0.0, 1.0);
+@@ -305,1 +305,1 @@
+-	float waterShadow = clamp(shadow2DLod(shadowtex0, vec3(shadowProjPos.st - vec2(0.0, 0.5), shadowProjPos.z - 0.0012 * diffthresh - noise.z * 0.0001), 0).x + float(shadowProjPos.z > 1.0), 0.0, 1.0);
++	float waterShadow = clamp(shadow2DLod(shadowtex0, vec3(shadowProjPos.st - vec2(0.0, 0.5), shadowProjPos.z + 0.0012 * diffthresh + noise.z * 0.0001), 0).x + float(shadowProjPos.z < 0.0), 0.0, 1.0);
+@@ -361,1 +361,1 @@
+-		if (depth == 1.0) {
++		if (depth == 0.0) {
+@@ -463,1 +463,1 @@
+-     if (v.depth==1.0&&lodDepth<1.0) {
++     if (v.depth==0.0&&lodDepth>0.0) {
+@@ -586,1 +586,1 @@
+-           if(texture2D(depthtex1,Texcoord).x<texture2D(depthtex2,Texcoord).x)
++           if(texture2D(depthtex1,Texcoord).x>texture2D(depthtex2,Texcoord).x)
+diff --git a/deferred2.fsh b/deferred2.fsh
+--- a/deferred2.fsh
++++ b/deferred2.fsh
+@@ -85,2 +85,2 @@
+-   f.z=mix(f.z,.5,.8);
+-   f=f*.5f+.5f;
++   f.z=mix(f.z,.25,.8);
++   f.xy=f.xy*.5f+.5f;
+@@ -115,1 +115,1 @@
+-   float shadowStrength=shadow2DLod(shadowtex0,vec3(t.xy,t.z-.0002),3).x;
++   float shadowStrength=shadow2DLod(shadowtex0,vec3(t.xy,t.z+.0002),3).x;
+@@ -122,1 +122,1 @@
+-   float m=shadow2DLod(shadowtex0,vec3(t.xy-vec2(.5,0.),t.z-.0002),3).x;
++   float m=shadow2DLod(shadowtex0,vec3(t.xy-vec2(.5,0.),t.z+.0002),3).x;
+@@ -181,4 +181,4 @@
+-   y=min(y,texture2D(depthtex1,v+ScreenTexel).x);
+-   y=min(y,texture2D(depthtex1,v+ScreenTexel*vec2(1.,-1.)).x);
+-   y=min(y,texture2D(depthtex1,v+ScreenTexel*vec2(-1.,1.)).x);
+-   y=min(y,texture2D(depthtex1,v-ScreenTexel).x);
++   y=max(y,texture2D(depthtex1,v+ScreenTexel).x);
++   y=max(y,texture2D(depthtex1,v+ScreenTexel*vec2(1.,-1.)).x);
++   y=max(y,texture2D(depthtex1,v+ScreenTexel*vec2(-1.,1.)).x);
++   y=max(y,texture2D(depthtex1,v-ScreenTexel).x);
+@@ -186,4 +186,4 @@
+-   lodDepth=min(lodDepth,getLodDepthSolidDeferred(v+ScreenTexel));
+-   lodDepth=min(lodDepth,getLodDepthSolidDeferred(v+ScreenTexel*vec2(1.,-1.)));
+-   lodDepth=min(lodDepth,getLodDepthSolidDeferred(v+ScreenTexel*vec2(-1.,1.)));
+-   lodDepth=min(lodDepth,getLodDepthSolidDeferred(v-ScreenTexel));
++   lodDepth=max(lodDepth,getLodDepthSolidDeferred(v+ScreenTexel));
++   lodDepth=max(lodDepth,getLodDepthSolidDeferred(v+ScreenTexel*vec2(1.,-1.)));
++   lodDepth=max(lodDepth,getLodDepthSolidDeferred(v+ScreenTexel*vec2(-1.,1.)));
++   lodDepth=max(lodDepth,getLodDepthSolidDeferred(v-ScreenTexel));
+@@ -314,1 +314,1 @@
+-   vec4 f=vec4(texcoord.xy*4.-1.,x*2.-1.,1.);
++   vec4 f=vec4(texcoord.xy*4.-1.,x,1.);
+@@ -316,2 +316,2 @@
+-   if(x>=1.0&&lodDepth<1.0){
+-     f.z=lodDepth*2.-1.;
++   if(x<=0.0&&lodDepth>0.0){
++     f.z=lodDepth;
+@@ -335,1 +335,1 @@
+-       vec4 n=gbufferPreviousProjectionInverse*vec4(w*4.-1.,texLod.w*2.-1.,1.);
++       vec4 n=gbufferPreviousProjectionInverse*vec4(w*4.-1.,texLod.w,1.);
+@@ -350,1 +350,1 @@
+-   if(y<.7)
++   if(y>.3)
+@@ -352,1 +352,1 @@
+-   vec4 m=vec4(texcoord.xy*4.-1.,y*2.-1.,1.);
++   vec4 m=vec4(texcoord.xy*4.-1.,y,1.);
+@@ -355,2 +355,2 @@
+-   if(y>=1.0&&lodDepth<1.0){
+-     m.z=lodDepth*2.-1.;
++   if(y<=0.0&&lodDepth>0.0){
++     m.z=lodDepth;
+@@ -368,1 +368,1 @@
+-   i=(m.xyz-w.xyz)*.5;
++   i=(m.xyz-w.xyz)*vec3(.5,.5,1.);
+@@ -374,1 +374,1 @@
+-   vec4 y=vec4(0.);
++   vec4 y=vec4(0.,0.,0.,1.);
+@@ -389,1 +389,1 @@
+-         if (depth==1.0&&lodDepth<1.0) {
++         if (depth==0.0&&lodDepth>0.0) {
+@@ -392,1 +392,1 @@
+-           depth=proj.x/proj.y*0.5+0.5;
++           depth=proj.x/proj.y;
+@@ -412,1 +412,1 @@
+-       k=max(k,mix(k,.9,saturate(-a.z*520.)));
++       k=max(k,mix(k,.9,saturate(a.z*520.)));
+diff --git a/lib/Common.inc b/lib/Common.inc
+--- a/lib/Common.inc
++++ b/lib/Common.inc
+@@ -67,1 +67,1 @@
+-	vec4 fragposition = gbufferProjectionInverse * vec4(tcoord.st * 4.0f - 1.0f, 2.0f * depth - 1.0f, 1.0f);
++	vec4 fragposition = gbufferProjectionInverse * vec4(tcoord.st * 4.0f - 1.0f, depth, 1.0f);
+@@ -75,1 +75,1 @@
+-	vec4 fragposition = gbufferProjectionInverse * vec4(coord.st * 2.0f - 1.0f, 2.0f * depth - 1.0f, 1.0f);
++	vec4 fragposition = gbufferProjectionInverse * vec4(coord.st * 2.0f - 1.0f, depth, 1.0f);
+@@ -90,3 +90,3 @@
+ {
+-	vec2 a = vec2(depth * 2.0 - 1.0, 1.0);
++	vec2 a = vec2(depth, 1.0);
+ 
+@@ -159,1 +159,1 @@
+-		vec4 fragposition = projInvLod() * vec4(tcoord.st * 4.0f - 1.0f, 2.0f * depth - 1.0f, 1.0f);
++		vec4 fragposition = projInvLod() * vec4(tcoord.st * 4.0f - 1.0f, depth, 1.0f);
+@@ -167,1 +167,1 @@
+-		vec4 fragposition = projInvLod() * vec4(coord.st * 2.0f - 1.0f, 2.0f * depth - 1.0f, 1.0f);
++		vec4 fragposition = projInvLod() * vec4(coord.st * 2.0f - 1.0f, depth, 1.0f);
+@@ -175,1 +175,1 @@
+-		vec2 a = vec2(depth * 2.0 - 1.0, 1.0);
++		vec2 a = vec2(depth, 1.0);
+diff --git a/lib/Materials.inc b/lib/Materials.inc
+--- a/lib/Materials.inc
++++ b/lib/Materials.inc
+@@ -57,1 +57,1 @@
+-	frnQIYJjVJ.sky = step(0.999999, textureLod(depthtex1, coord.st, 0.0).x);
++	frnQIYJjVJ.sky = step(textureLod(depthtex1, coord.st, 0.0).x, 1e-6);
+diff --git a/program/composite2.fsh.glsl b/program/composite2.fsh.glsl
+--- a/program/composite2.fsh.glsl
++++ b/program/composite2.fsh.glsl
+@@ -24,1 +24,1 @@
+-   bool c=f.depth<s.depth;
++   bool c=f.depth>s.depth;
+diff --git a/program/composite6.fsh.glsl b/program/composite6.fsh.glsl
+--- a/program/composite6.fsh.glsl
++++ b/program/composite6.fsh.glsl
+@@ -30,1 +30,1 @@
+-           if(c<y)
++           if(c>y)
+@@ -33,1 +33,1 @@
+-           else if(y==1.0){
++           else if(y==0.0){
+@@ -35,1 +35,1 @@
+-             if(lodSampleDepth<lodDepth){
++             if(lodSampleDepth>lodDepth){
+@@ -87,1 +87,1 @@
+-   vec4 f=vec4(v.xy*2.-1.,x*2.-1.,1.);
++   vec4 f=vec4(v.xy*2.-1.,x,1.);
+@@ -90,2 +90,2 @@
+-   if(x==1.0){
+-     f.z=lodDepth*2.0-1.0;
++   if(x==0.0){
++     f.z=lodDepth;
+@@ -124,1 +124,1 @@
+-   bool isWater=e<o;
++   bool isWater=e>o;
+@@ -129,1 +129,1 @@
+-   isWater=isWater||lodWaterDepth<getLodDepthSolid(v);
++   isWater=isWater||lodWaterDepth>getLodDepthSolid(v);
+@@ -136,1 +136,1 @@
+-   H*=step(.7,e);
++   H*=step(e,.3);
+@@ -138,2 +138,2 @@
+-   if(e==1.0){
+-      e=ExpToLinearDepthLod(lodWaterDepth);
++   if(e==0.0){
++      e=1.0-ExpToLinearDepthLod(lodWaterDepth);
+@@ -147,3 +147,3 @@
+-   if(a==1.0){
+-      a=ExpToLinearDepthLod(lodNearestDepth);
+-      h=-lodNearestDepth;
++   if(a==0.0){
++      a=1.0-ExpToLinearDepthLod(lodNearestDepth);
++      h=lodNearestDepth-1.;
+@@ -207,1 +207,1 @@
+-       vec4 U=vec4(R.xy*2.-1.,J*2.-1.,1.);
++       vec4 U=vec4(R.xy*2.-1.,J,1.);
+@@ -210,1 +210,1 @@
+-         U.z=-1.-2.*J;
++         U.z=J+1.;
+diff --git a/program/composite7.fsh.glsl b/program/composite7.fsh.glsl
+--- a/program/composite7.fsh.glsl
++++ b/program/composite7.fsh.glsl
+@@ -39,1 +39,1 @@
+-           if(z<y)
++           if(z>y)
+@@ -42,1 +42,1 @@
+-           else if(y==1.0){
++           else if(y==0.0){
+@@ -44,1 +44,1 @@
+-             if(lodSampleDepth<lodDepth){
++             if(lodSampleDepth>lodDepth){
+@@ -101,1 +101,1 @@
+-   vec4 m=vec4(v.xy*2.-1.,x*2.-1.,1.);
++   vec4 m=vec4(v.xy*2.-1.,x,1.);
+@@ -104,2 +104,2 @@
+-   if(x==1.0){
+-     m.z=lodDepth*2.0-1.0;
++   if(x==0.0){
++     m.z=lodDepth;
+@@ -144,1 +144,1 @@
+-   f=step(.7,f);
++   f=step(f,.3);
+diff --git a/program/deferred99.fsh.glsl b/program/deferred99.fsh.glsl
+--- a/program/deferred99.fsh.glsl
++++ b/program/deferred99.fsh.glsl
+@@ -12,1 +12,1 @@
+-    float overlay = float(texelFetch(depthtex1, texel, 0).r == 1.0 && trasnparent.w > 0.0);
++    float overlay = float(texelFetch(depthtex1, texel, 0).r == 0.0 && trasnparent.w > 0.0);
+diff --git a/program/dh_water.frag b/program/dh_water.frag
+--- a/program/dh_water.frag
++++ b/program/dh_water.frag
+@@ -141,1 +141,1 @@
+-	if (PixelOutOfScreenBounds(gl_FragCoord.st)||texture2D(depthtex1,gl_FragCoord.st*ScreenTexel).r<1.0) {
++	if (PixelOutOfScreenBounds(gl_FragCoord.st)||texture2D(depthtex1,gl_FragCoord.st*ScreenTexel).r>0.0) {
+diff --git a/program/final.fsh.glsl b/program/final.fsh.glsl
+--- a/program/final.fsh.glsl
++++ b/program/final.fsh.glsl
+@@ -109,2 +109,2 @@
+-	if(depth < 0.7) {
+-		depth += 0.45f;
++	if(depth > 0.3) {
++		depth -= 0.45f;
+@@ -112,1 +112,1 @@
+-	float dofblur = (depth - texture2D(depthtex0, vec2(0.25)).x) * BIAS * DOF_STRENGTH;
++	float dofblur = (texture2D(depthtex0, vec2(0.25)).x - depth) * BIAS * DOF_STRENGTH;
+diff --git a/program/gbuffers_entities.vsh.glsl b/program/gbuffers_entities.vsh.glsl
+--- a/program/gbuffers_entities.vsh.glsl
++++ b/program/gbuffers_entities.vsh.glsl
+@@ -45,1 +45,1 @@
+-	gl_Position.z -= 2e-6;
++	gl_Position.z += 1e-6;
+diff --git a/program/gbuffers_spidereyes.vsh.glsl b/program/gbuffers_spidereyes.vsh.glsl
+--- a/program/gbuffers_spidereyes.vsh.glsl
++++ b/program/gbuffers_spidereyes.vsh.glsl
+@@ -34,1 +34,1 @@
+-	gl_Position.z -= 1e-5;
++	gl_Position.z += 5e-6;
+diff --git a/program/gbuffers_terrain.fsh.glsl b/program/gbuffers_terrain.fsh.glsl
+--- a/program/gbuffers_terrain.fsh.glsl
++++ b/program/gbuffers_terrain.fsh.glsl
+@@ -194,1 +194,0 @@
+-		projPos = projPos * 0.5 + 0.5;
+diff --git a/program/gbuffers_water.vsh.glsl b/program/gbuffers_water.vsh.glsl
+--- a/program/gbuffers_water.vsh.glsl
++++ b/program/gbuffers_water.vsh.glsl
+@@ -83,1 +83,1 @@
+-	gl_Position.z -= 0.0001;
++	gl_Position.z += 0.00005;
+diff --git a/program/noSkyVariant/deferred.fsh.glsl b/program/noSkyVariant/deferred.fsh.glsl
+--- a/program/noSkyVariant/deferred.fsh.glsl
++++ b/program/noSkyVariant/deferred.fsh.glsl
+@@ -280,1 +280,1 @@
+-         if (m.depth==1.0&&lodDepth<1.0) {
++         if (m.depth==0.0&&lodDepth>0.0) {
+diff --git a/program/noSkyVariant/deferred12.fsh.glsl b/program/noSkyVariant/deferred12.fsh.glsl
+--- a/program/noSkyVariant/deferred12.fsh.glsl
++++ b/program/noSkyVariant/deferred12.fsh.glsl
+@@ -111,1 +111,1 @@
+-     if (v.depth==1.0&&lodDepth<1.0) {
++     if (v.depth==0.0&&lodDepth>0.0) {
+@@ -188,1 +188,1 @@
+-       if(texture2D(depthtex1,Texcoord).x<texture2D(depthtex2,Texcoord).x)
++       if(texture2D(depthtex1,Texcoord).x>texture2D(depthtex2,Texcoord).x)
+diff --git a/program/noSkyVariant/deferred2.fsh.glsl b/program/noSkyVariant/deferred2.fsh.glsl
+--- a/program/noSkyVariant/deferred2.fsh.glsl
++++ b/program/noSkyVariant/deferred2.fsh.glsl
+@@ -119,1 +119,1 @@
+-   if(f.x<y)
++   if(f.x>y)
+@@ -121,1 +121,1 @@
+-   if(f.y<y)
++   if(f.y>y)
+@@ -123,1 +123,1 @@
+-   if(f.z<y)
++   if(f.z>y)
+@@ -125,1 +125,1 @@
+-   if(f.w<y)
++   if(f.w>y)
+@@ -232,1 +232,1 @@
+-   vec4 f=gbufferProjectionInverse*vec4(texcoord.xy*4.-1.,x*2.-1.,1.);
++   vec4 f=gbufferProjectionInverse*vec4(texcoord.xy*4.-1.,x,1.);
+@@ -244,1 +244,1 @@
+-       vec4 n=gbufferPreviousProjectionInverse*vec4(w*4.-1.,texLod.w*2.-1.,1.);
++       vec4 n=gbufferPreviousProjectionInverse*vec4(w*4.-1.,texLod.w,1.);
+@@ -260,1 +260,1 @@
+-   if(y<.7)
++   if(y>.3)
+@@ -262,1 +262,1 @@
+-   vec4 m=vec4(texcoord.xy*4.-1.,y*2.-1.,1.),r=gbufferProjectionInverse*m;
++   vec4 m=vec4(texcoord.xy*4.-1.,y,1.),r=gbufferProjectionInverse*m;
+@@ -268,1 +268,1 @@
+-   i=(m.xyz-w.xyz)*.5;
++   i=(m.xyz-w.xyz)*vec3(.5,.5,1.);
+@@ -274,1 +274,1 @@
+-   vec4 y=vec4(0.);
++   vec4 y=vec4(0.,0.,0.,1.);
+@@ -300,1 +300,1 @@
+-       k=max(k,mix(k,.9,saturate(-a.z*520.)));
++       k=max(k,mix(k,.9,saturate(a.z*520.)));
+diff --git a/program/shadow.gsh.glsl b/program/shadow.gsh.glsl
+--- a/program/shadow.gsh.glsl
++++ b/program/shadow.gsh.glsl
+@@ -77,1 +77,1 @@
+-			gl_Position.z = depth;
++			gl_Position.z = 0.5 - 0.5 * depth;
+diff --git a/program/shadow.vsh.glsl b/program/shadow.vsh.glsl
+--- a/program/shadow.vsh.glsl
++++ b/program/shadow.vsh.glsl
+@@ -190,1 +190,1 @@
+-        gl_Position.z=mix(gl_Position.z,.5,.8);
++        gl_Position.z=mix(gl_Position.z,.25,.8);
+diff --git a/program/template/PathTraceDenoiser.glsl b/program/template/PathTraceDenoiser.glsl
+--- a/program/template/PathTraceDenoiser.glsl
++++ b/program/template/PathTraceDenoiser.glsl
+@@ -43,1 +43,1 @@
+-   if(R==1.0){
++   if(R==0.0){
+@@ -75,1 +75,1 @@
+-       if(depth==1.0){
++       if(depth==0.0){
+diff --git a/world-1/composite.fsh b/world-1/composite.fsh
+--- a/world-1/composite.fsh
++++ b/world-1/composite.fsh
+@@ -176,1 +176,1 @@
+-         if(depth==1.0){
++         if(depth==0.0){
+@@ -351,1 +351,1 @@
+-         d=step(.999999,d);
++         d=step(d,1e-6);
+@@ -353,1 +353,1 @@
+-         d*=step(.999999,getLodDepthSolid(DTY));
++         d*=step(getLodDepthSolid(DTY),1e-6);
+@@ -391,1 +391,1 @@
+-       bool x=y.depth<v.depth;
++       bool x=y.depth>v.depth;
+@@ -396,1 +396,1 @@
+-         x=x||(lodWaterDepth<lodSolidDepth&&y.depth==1.0);
++         x=x||(lodWaterDepth>lodSolidDepth&&y.depth==0.0);
+@@ -402,1 +402,1 @@
+-         if (y.depth==1.0&&lodWaterDepth<1.0) {
++         if (y.depth==0.0&&lodWaterDepth>0.0) {
+diff --git a/world-1/composite1.fsh b/world-1/composite1.fsh
+--- a/world-1/composite1.fsh
++++ b/world-1/composite1.fsh
+@@ -52,1 +52,1 @@
+-       bool c=f.depth<s.depth;
++       bool c=f.depth>s.depth;
+@@ -58,1 +58,1 @@
+-         c=c||(lodWaterDepth<lodSolidDepth&&f.depth==1.0);
++         c=c||(lodWaterDepth>lodSolidDepth&&f.depth==0.0);
+@@ -66,1 +66,1 @@
+-         if (f.depth==1.0&&lodWaterDepth<1.0) {
++         if (f.depth==0.0&&lodWaterDepth>0.0) {
+@@ -80,1 +80,1 @@
+-         if(solidDepth==1.0&&lodSolidDepth<1.0) {
++         if(solidDepth==0.0&&lodSolidDepth>0.0) {
+@@ -108,1 +108,1 @@
+-           bool isWater=refractionWaterDepth<refractionSolidDepth;
++           bool isWater=refractionWaterDepth>refractionSolidDepth;
+@@ -114,1 +114,1 @@
+-             isWater=isWater||(lodWaterRefractionDepth<lodSolidRefractionDepth);
++             isWater=isWater||(lodWaterRefractionDepth>lodSolidRefractionDepth);
+@@ -121,1 +121,1 @@
+-                 if(refractionWaterDepth==1.0&&lodWaterRefractionDepth<1.0) {
++                 if(refractionWaterDepth==0.0&&lodWaterRefractionDepth>0.0) {
+@@ -129,1 +129,1 @@
+-                 if(refractionSolidDepth==1.0&&lodSolidRefractionDepth<1.0) {
++                 if(refractionSolidDepth==0.0&&lodSolidRefractionDepth>0.0) {
+diff --git a/world-1/composite4.fsh b/world-1/composite4.fsh
+--- a/world-1/composite4.fsh
++++ b/world-1/composite4.fsh
+@@ -44,1 +44,1 @@
+-   bool isWater=y.depth<v.depth;
++   bool isWater=y.depth>v.depth;
+@@ -48,1 +48,1 @@
+-     d.sky*=float(lodSolidDepth==1.0);
++     d.sky*=float(lodSolidDepth==0.0);
+@@ -50,1 +50,1 @@
+-     isWater=isWater||(lodWaterDepth<lodSolidDepth&&y.depth==1.0);
++     isWater=isWater||(lodWaterDepth>lodSolidDepth&&y.depth==0.0);
+@@ -57,1 +57,1 @@
+-     if (y.depth==1.0&&lodWaterDepth<1.0) {
++     if (y.depth==0.0&&lodWaterDepth>0.0) {
+@@ -72,1 +72,1 @@
+-   T*=step(v.depth,.999999);
++   T*=step(1e-6,v.depth);
+diff --git a/world1/composite.fsh b/world1/composite.fsh
+--- a/world1/composite.fsh
++++ b/world1/composite.fsh
+@@ -176,1 +176,1 @@
+-         if(depth==1.0){
++         if(depth==0.0){
+@@ -351,1 +351,1 @@
+-         d=step(.999999,d);
++         d=step(d,1e-6);
+@@ -353,1 +353,1 @@
+-         d*=step(.999999,getLodDepthSolid(DTY));
++         d*=step(getLodDepthSolid(DTY),1e-6);
+@@ -391,1 +391,1 @@
+-       bool x=y.depth<v.depth;
++       bool x=y.depth>v.depth;
+@@ -396,1 +396,1 @@
+-         x=x||(lodWaterDepth<lodSolidDepth&&y.depth==1.0);
++         x=x||(lodWaterDepth>lodSolidDepth&&y.depth==0.0);
+@@ -402,1 +402,1 @@
+-         if (y.depth==1.0&&lodWaterDepth<1.0) {
++         if (y.depth==0.0&&lodWaterDepth>0.0) {
+diff --git a/world1/composite1.fsh b/world1/composite1.fsh
+--- a/world1/composite1.fsh
++++ b/world1/composite1.fsh
+@@ -52,1 +52,1 @@
+-       bool c=f.depth<s.depth;
++       bool c=f.depth>s.depth;
+@@ -58,1 +58,1 @@
+-         c=c||(lodWaterDepth<lodSolidDepth&&f.depth==1.0);
++         c=c||(lodWaterDepth>lodSolidDepth&&f.depth==0.0);
+@@ -66,1 +66,1 @@
+-         if (f.depth==1.0&&lodWaterDepth<1.0) {
++         if (f.depth==0.0&&lodWaterDepth>0.0) {
+@@ -80,1 +80,1 @@
+-         if(solidDepth==1.0&&lodSolidDepth<1.0) {
++         if(solidDepth==0.0&&lodSolidDepth>0.0) {
+@@ -108,1 +108,1 @@
+-           bool isWater=refractionWaterDepth<refractionSolidDepth;
++           bool isWater=refractionWaterDepth>refractionSolidDepth;
+@@ -114,1 +114,1 @@
+-             isWater=isWater||(lodWaterRefractionDepth<lodSolidRefractionDepth);
++             isWater=isWater||(lodWaterRefractionDepth>lodSolidRefractionDepth);
+@@ -121,1 +121,1 @@
+-                 if(refractionWaterDepth==1.0&&lodWaterRefractionDepth<1.0) {
++                 if(refractionWaterDepth==0.0&&lodWaterRefractionDepth>0.0) {
+@@ -129,1 +129,1 @@
+-                 if(refractionSolidDepth==1.0&&lodSolidRefractionDepth<1.0) {
++                 if(refractionSolidDepth==0.0&&lodSolidRefractionDepth>0.0) {
+diff --git a/world1/composite4.fsh b/world1/composite4.fsh
+--- a/world1/composite4.fsh
++++ b/world1/composite4.fsh
+@@ -44,1 +44,1 @@
+-   bool isWater=y.depth<v.depth;
++   bool isWater=y.depth>v.depth;
+@@ -48,1 +48,1 @@
+-     d.sky*=float(lodSolidDepth==1.0);
++     d.sky*=float(lodSolidDepth==0.0);
+@@ -50,1 +50,1 @@
+-     isWater=isWater||(lodWaterDepth<lodSolidDepth&&y.depth==1.0);
++     isWater=isWater||(lodWaterDepth>lodSolidDepth&&y.depth==0.0);
+@@ -57,1 +57,1 @@
+-     if (y.depth==1.0&&lodWaterDepth<1.0) {
++     if (y.depth==0.0&&lodWaterDepth>0.0) {
+@@ -72,1 +72,1 @@
+-   T*=step(v.depth,.999999);
++   T*=step(1e-6,v.depth);

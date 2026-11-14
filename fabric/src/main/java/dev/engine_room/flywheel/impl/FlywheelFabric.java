@@ -32,14 +32,14 @@ import java.util.Map;
 public final class FlywheelFabric implements ClientModInitializer {
     private static void registerF3DebugEntry() {
         Identifier debugId = Identifier.fromNamespaceAndPath(Flywheel.ID, "debug_info");
-        DebugScreenEntries.register(debugId, (displayer, serverOrClientLevel, clientChunk, serverChunk) -> {
+        DebugScreenEntries.register(debugId, (displayer, _, _, _) -> {
             List<String> lines = new ArrayList<>();
             FlwDebugInfo.addDebugInfo(Minecraft.getInstance(), lines);
             displayer.addToGroup(debugId, lines);
         });
         Map<DebugScreenProfile, Map<Identifier, DebugScreenEntryStatus>> rebuilt = new HashMap<>();
         DebugScreenEntries.PROFILES.forEach((profile, statuses) -> rebuilt.put(profile, new HashMap<>(statuses)));
-        rebuilt.computeIfAbsent(DebugScreenProfile.DEFAULT, profile -> new HashMap<>())
+        rebuilt.computeIfAbsent(DebugScreenProfile.DEFAULT, _ -> new HashMap<>())
                .put(debugId, DebugScreenEntryStatus.IN_OVERLAY);
         DebugScreenEntries.PROFILES = rebuilt;
     }

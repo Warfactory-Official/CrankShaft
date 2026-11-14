@@ -1,0 +1,16 @@
+diff --git a/program/gbuffers_terrain.glsl b/program/gbuffers_terrain.glsl
+--- a/program/gbuffers_terrain.glsl
++++ b/program/gbuffers_terrain.glsl
+@@ -466,2 +466,3 @@
+-    #ifdef DH_BLENDING
++    // The blend hands vanilla terrain over to its LoD; instances have none.
++    #if defined DH_BLENDING && !defined GBUFFERS_COLORWHEEL
+         float fog = max(length(playerPos.xz), abs(playerPos.y)) / far;
+diff --git a/program/gbuffers_water.glsl b/program/gbuffers_water.glsl
+--- a/program/gbuffers_water.glsl
++++ b/program/gbuffers_water.glsl
+@@ -393,2 +393,3 @@
+-    #ifdef DH_BLENDING
++    // The blend hands vanilla water over to its LoD; instances have none.
++    #if defined DH_BLENDING && !defined GBUFFERS_COLORWHEEL_TRANSLUCENT
+         float fog = max(length(playerPos.xz), abs(playerPos.y)) / far;

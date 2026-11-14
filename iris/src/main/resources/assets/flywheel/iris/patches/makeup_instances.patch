@@ -1,0 +1,9 @@
+diff --git a/common/water_blocks_fragment.glsl b/common/water_blocks_fragment.glsl
+--- a/common/water_blocks_fragment.glsl
++++ b/common/water_blocks_fragment.glsl
+@@ -307,3 +307,4 @@
+     // Avoid render in DH transition
+-    #ifdef DISTANT_HORIZONS
++    // The transition hands vanilla water over to its LoD; instances have none.
++    #if defined DISTANT_HORIZONS && !defined CRANKSHAFT_CLRWL_TRANSLUCENT
+         float t = far - dhNearPlane;

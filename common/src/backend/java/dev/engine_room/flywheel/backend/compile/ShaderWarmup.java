@@ -7,6 +7,7 @@ import dev.engine_room.flywheel.api.material.CutoutShader;
 import dev.engine_room.flywheel.api.material.FogShader;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.backend.BackendConfig;
+import net.minecraft.client.Minecraft;
 import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.SodiumClassLoadCheck;
@@ -17,6 +18,7 @@ import dev.engine_room.flywheel.backend.engine.OitTransparency;
 import dev.engine_room.flywheel.backend.engine.indirect.IndirectPipeline;
 import dev.engine_room.flywheel.backend.engine.indirect.InstanceTypeIds;
 import dev.engine_room.flywheel.backend.engine.indirect.MeshVisualDrawManager;
+import dev.engine_room.flywheel.backend.engine.indirect.OitFramebuffer;
 import dev.engine_room.flywheel.backend.engine.indirect.OitPipelines;
 #if MC < 26.3
 import dev.engine_room.flywheel.backend.engine.indirect.FabulousOitPipelines;
@@ -41,11 +43,19 @@ import org.lwjgl.vulkan.VK10;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Consumer;
 
-/** Render-thread warmup after resource apply, downstream model initialization and device-cache clear. */
+/**
+ * Render-thread warmup after resource apply, downstream model initialization and device-cache clear.
+ */
 public final class ShaderWarmup {
+    private static volatile boolean initialized;
+    private static Consumer<Runnable> recovery;
+    private static final boolean[] UNEMBEDDED = {false};
+    private static final boolean[] EMBEDDED_VARIANTS = {false, true};
     private static final List<WarmHook> HOOKS = new ArrayList<>();
     private static final List<WarmHook> VK_HOOKS = new ArrayList<>();
     #if MC >= 26.3
@@ -65,28 +75,38 @@ public final class ShaderWarmup {
     private ShaderWarmup() {
     }
 
-    /** Backend-init registration; render-thread hook after common warmup. */
+    /**
+     * Backend-init registration; render-thread hook after common warmup, retaining reload setup in on-demand mode.
+     */
     public static void register(Runnable hook) {
         HOOKS.add(new WarmHook(null, hook));
     }
 
-    /** {@link #register(Runnable)}; skipped after feature rejection. */
+    /**
+     * {@link #register(Runnable)}; skipped after feature rejection.
+     */
     public static void register(ProgramAvailability.Feature feature, Runnable hook) {
         HOOKS.add(new WarmHook(feature, hook));
     }
 
-    /** Backend-init registration; worker-owned pipeline caches; jobs/cleanup joined before rendering resumes. */
+    /**
+     * Backend-init registration; worker-owned pipeline caches; jobs/cleanup joined before rendering resumes.
+     */
     public static void registerVk(Runnable hook) {
         VK_HOOKS.add(new WarmHook(null, hook));
     }
 
-    /** {@link #registerVk(Runnable)}; feature rejection published after workers join. */
+    /**
+     * {@link #registerVk(Runnable)}; feature rejection published after workers join.
+     */
     public static void registerVk(ProgramAvailability.Feature feature, Runnable hook) {
         VK_HOOKS.add(new WarmHook(feature, hook));
     }
 
     #if MC >= 26.3
-    /** Client-init registration, pre-resource-load; declares device resources in the render-thread loading batch. */
+    /**
+     * Client-init registration, pre-resource-load; declares device resources in the render-thread loading batch.
+     */
     public static void registerNativeResources(Runnable declarations) {
         NATIVE_RESOURCES.add(declarations);
     }
@@ -103,7 +123,29 @@ public final class ShaderWarmup {
         }
     }
 
+    /**
+     * Client initialization installs the loading and configuration failure policy.
+     */
+    public static void registerRecovery(Consumer<Runnable> handler) {
+        recovery = handler;
+    }
+
+    /**
+     * Configuration publication and selected-family preparation complete together on the render thread.
+     */
+    public static void configure(Runnable changes) {
+        if (initialized && !RenderSystem.isOnRenderThread()) {
+            Minecraft.getInstance().schedule(() -> configure(changes));
+            return;
+        }
+        changes.run();
+        if (initialized && BackendManager.isBackendOn() && !ShadersModHelper.isShaderPackInUse()) {
+            recovery.accept(ShaderWarmup::warm);
+        }
+    }
+
     public static void warm() {
+        initialized = true;
         long start = System.nanoTime();
         #if MC < 26.3
         MojImportPreprocessor.clearImportContents();
@@ -111,6 +153,18 @@ public final class ShaderWarmup {
         int sourceHits = GeneratedSourceCache.hits;
         int sourceMisses = GeneratedSourceCache.misses;
         seedRegistrations();
+        if (BackendConfig.INSTANCE.shaderCompilation() == ShaderCompilationMode.ON_DEMAND) {
+            #if MC >= 26.3
+            RenderPipelineCompiler.warm(ShaderWarmup::warmNativeResources);
+            #endif
+            // Pack hooks also reset resource ownership; hooks honor the mode before speculative compilation.
+            for (WarmHook hook : HOOKS) hook.run();
+            #if MC >= 26.3
+            NativeOitWarmup.loadingComplete();
+            #endif
+            FlwPrograms.LOGGER.info("Shader warm-up mode: on_demand");
+            return;
+        }
         if (!BackendManager.isBackendOn()) {
             #if MC >= 26.3
             RenderPipelineCompiler.warm(ShaderWarmup::warmNativeResources);
@@ -119,7 +173,7 @@ public final class ShaderWarmup {
             return;
         }
         if (VkContext.isVulkanHost()) {
-            warmVk();
+            VkAsyncBuilds.warm(ShaderWarmup::warmVk);
         } else if (!ShadersModHelper.isShaderPackInUse()) {
             if (IndirectPrograms.allLoaded()) RenderPipelineCompiler.warm(ShaderWarmup::warmGl);
             else if (BackendManager.currentBackend() == Backends.INSTANCING)
@@ -130,12 +184,15 @@ public final class ShaderWarmup {
         #if MC >= 26.3
         NativeOitWarmup.loadingComplete();
         #endif
-        FlwPrograms.LOGGER.info("pipeline warm-up took {}ms ({} types, {} material variants, {} cached / {} generated sources)",
+        FlwPrograms.LOGGER.info(
+                "pipeline warm-up took {}ms ({} types, {} material variants, {} cached / {} generated sources)",
                 (System.nanoTime() - start) / 1_000_000, InstanceTypeIds.count(), warmMaterials().size(),
                 GeneratedSourceCache.hits - sourceHits, GeneratedSourceCache.misses - sourceMisses);
     }
 
-    /** Render thread; precedes generation-keyed compilation. */
+    /**
+     * Render thread; precedes generation-keyed compilation.
+     */
     public static void seedRegistrations() {
         for (InstanceType<?> type : WARM_TYPES) {
             InstanceTypeIds.id(type);
@@ -156,7 +213,9 @@ public final class ShaderWarmup {
     }
 
     #if MC >= 26.3
-    /** Material declarations for native pass preparation at loading/configuration boundaries; render thread only. */
+    /**
+     * Material declarations for native pass preparation at loading/configuration boundaries; render thread only.
+     */
     public static List<Material> nativeWarmMaterials() {
         return warmMaterials();
     }
@@ -175,9 +234,14 @@ public final class ShaderWarmup {
         #if MC >= 26.3
         if (portableCoverage) warmNativeResources();
         #endif
+        List<OitInsertMode> insertModes = insertModes();
         if (portableCoverage) {
-            warmWaveletFullscreen();
-            warmWaveletReplays(SodiumClassLoadCheck.PRESENT);
+            if (insertModes.isEmpty()) {
+                warmWaveletFullscreen();
+                warmWaveletReplays(SodiumClassLoadCheck.PRESENT);
+            } else {
+                warmInsertReplays(insertModes, SodiumClassLoadCheck.PRESENT);
+            }
             for (InstanceType<?> type : ShaderWarmupRegistry.types()) {
                 CrumblingPipelines.pipeline(Materials.CRUMBLING, type, false);
             }
@@ -189,11 +253,14 @@ public final class ShaderWarmup {
         for (InstanceType<?> type : ShaderWarmupRegistry.types()) {
             for (Material material : materials) {
                 for (boolean embedded : new boolean[]{false, true}) {
-                    InstancingPipeline.pipelineFor(material, type, embedded);
                     if (OitTransparency.orderIndependent(material)) {
-                        for (OitMode mode : OitMode.values()) {
-                            if (mode != OitMode.OFF) OitPipelines.producer(material, type, mode, false, embedded);
+                        if (insertModes.isEmpty()) OitPipelines.producer(material, type, OitMode.EVALUATE, embedded);
+                        for (OitInsertMode mode : insertModes) {
+                            RenderPipelineCompiler.feature(ProgramAvailability.insert(mode),
+                                    () -> OitPipelines.instancedMlab(material, type, mode, embedded));
                         }
+                    } else {
+                        InstancingPipeline.pipelineFor(material, type, embedded);
                     }
                 }
             }
@@ -219,6 +286,7 @@ public final class ShaderWarmup {
         OitPipelines.composite(true);
         OitPipelines.emission();
         OitPipelines.oitDepth();
+        if (OitFramebuffer.SPLIT_INSTANCE_BOUNDS) OitPipelines.boundsMerge();
     }
 
     private static void warmWaveletReplays(boolean sodium) {
@@ -243,21 +311,17 @@ public final class ShaderWarmup {
         }
     }
 
-    private static void warmGl() {
-        #if MC >= 26.3
-        warmNativeResources();
-        #endif
-        boolean sodium = SodiumClassLoadCheck.PRESENT;
-        List<OitInsertMode> insertModes = Arrays.stream(OitInsertMode.values())
-                .filter(OitConfig::supportsInsertMode).toList();
-        warmWaveletFullscreen();
-        for (OitInsertMode mode : insertModes) {
-            RenderPipelineCompiler.feature(ProgramAvailability.insert(mode), OitPipelines::mlabNearestDepth);
-        }
-        warmWaveletReplays(sodium);
+    private static List<OitInsertMode> insertModes() {
+        OitInsertMode mode = OitConfig.resolveInsertMode();
+        return mode == null ? List.of() : List.of(mode);
+    }
+
+    private static void warmInsertReplays(List<OitInsertMode> insertModes, boolean sodium) {
         for (OitInsertMode mode : insertModes) {
             RenderPipelineCompiler.feature(ProgramAvailability.insert(mode), () -> {
-                OitPipelines.mlabResolve(mode);
+                OitPipelines.mlabNearestDepth();
+                OitPipelines.mlabResolve(mode, false);
+                OitPipelines.mlabResolve(mode, true);
                 OitPipelines.chunkMlab(mode);
                 #if MC >= 26.3
                 OitPipelines.chunkMlab(mode, true);
@@ -267,10 +331,31 @@ public final class ShaderWarmup {
                 FabulousOitPipelines.weatherMlab(mode);
                 #endif
                 if (sodium) {
-                    OitPipelines.chunkSodiumMlab(mode, false);
-                    OitPipelines.chunkSodiumMlab(mode, true);
+                    OitPipelines.chunkSodiumMlab(mode);
+                    if (GlCompat.SUPPORTS_TERRAIN) {
+                        OitPipelines.chunkSodiumMlab(mode, false);
+                        OitPipelines.chunkSodiumMlab(mode, true);
+                    }
                 }
             });
+        }
+    }
+
+    private static boolean[] embeddedVariants(Material material) {
+        return RenderPassShaders.readsEmbedded(material) ? EMBEDDED_VARIANTS : UNEMBEDDED;
+    }
+
+    private static void warmGl() {
+        #if MC >= 26.3
+        warmNativeResources();
+        #endif
+        boolean sodium = SodiumClassLoadCheck.PRESENT;
+        List<OitInsertMode> insertModes = insertModes();
+        if (insertModes.isEmpty()) {
+            warmWaveletFullscreen();
+            warmWaveletReplays(sodium);
+        } else {
+            warmInsertReplays(insertModes, sodium);
         }
         if (sodium && GlCompat.SUPPORTS_TERRAIN) {
             RenderPipelineCompiler.feature(ProgramAvailability.Feature.OPAQUE_TERRAIN, () -> {
@@ -287,23 +372,19 @@ public final class ShaderWarmup {
             return;
         }
         IndirectPrograms programs = IndirectPrograms.get();
-        programs.getCullingProgram();
-        programs.getCullingPass2Program();
-        programs.getCullingFrustumProgram();
+        programs.warmCulling();
+        programs.getOrderProgram();
         List<Material> materials = warmMaterials();
         for (Material material : materials) {
-            for (boolean embedded : new boolean[]{false, true}) {
-                IndirectPipeline.uberPipelineFor(material, embedded);
+            for (boolean embedded : embeddedVariants(material)) {
                 if (OitTransparency.orderIndependent(material)) {
-                    for (OitMode mode : OitMode.values()) {
-                        if (mode != OitMode.OFF) {
-                            OitPipelines.uberProducer(material, mode, embedded);
-                        }
-                    }
+                    if (insertModes.isEmpty()) OitPipelines.uberProducer(material, OitMode.EVALUATE, embedded);
                     for (OitInsertMode mode : insertModes) {
                         RenderPipelineCompiler.feature(ProgramAvailability.insert(mode),
                                 () -> OitPipelines.uberMlab(material, mode, embedded));
                     }
+                } else {
+                    IndirectPipeline.uberPipelineFor(material, embedded);
                 }
             }
         }
@@ -312,7 +393,7 @@ public final class ShaderWarmup {
         }
         if (GlCompat.SUPPORTS_TERRAIN_MESH
                 && Backends.GL_MESH_SHADER_ID.equals(Backend.REGISTRY.getIdOrThrow(BackendManager.currentBackend()))) {
-            MeshVisualDrawManager.warmUp(MESH_VISUAL_TYPES, STANDARD_TYPES, materials);
+            MeshVisualDrawManager.warmUp(MESH_VISUAL_TYPES, STANDARD_TYPES, materials, insertModes.isEmpty());
         }
         #if MC >= 26.3
         NativeOitWarmup.declareSelected();
@@ -323,11 +404,11 @@ public final class ShaderWarmup {
         VkPrograms programs = VkPrograms.get();
         if (programs == null) return;
         boolean localRead = programs.localRead();
-        List<OitInsertMode> insertModes = Arrays.stream(OitInsertMode.values())
-                .filter(OitConfig::supportsInsertMode).toList();
+        List<OitInsertMode> insertModes = insertModes();
         LightSmoothness smoothness = BackendConfig.INSTANCE.lightSmoothness();
         List<Material> materials = warmMaterials();
-        materials.forEach(RenderPassShaders::readsEmbedded);
+        Map<Material, boolean[]> embeddings = new IdentityHashMap<>();
+        for (Material material : materials) embeddings.put(material, embeddedVariants(material));
         VkOitPipelines oit = programs.oit();
         VkUberPipelines uber = programs.uber();
         List<Runnable> jobs = new ArrayList<>();
@@ -336,9 +417,9 @@ public final class ShaderWarmup {
                 programs.scatterPipeline();
             }
             if (programs.instanceRoute() == VkPrograms.InstanceRoute.INDIRECT) {
-                programs.cullPipeline();
-                programs.cullPass2Pipeline();
+                programs.cullPipelines();
                 programs.applyPipeline();
+                programs.orderPipeline();
             }
             if (programs.hiZRoute() != VkPrograms.HiZRoute.NONE) {
                 programs.downsampleFirstPipeline();
@@ -348,22 +429,28 @@ public final class ShaderWarmup {
         #if MC >= 26.3
         RenderPipelineCompiler.warm(() -> {
             warmNativeResources();
-            if (!localRead) warmVkReplays();
+            if (insertModes.isEmpty() && !localRead) warmVkReplays();
         });
         #else
-        if (!localRead) {
+        if (insertModes.isEmpty() && !localRead) {
             warmVkReplays();
         }
         #endif
         jobs.add(() -> {
-            oit.compositePipeline(false);
-            oit.compositePipeline(true);
-            oit.emissionPipeline();
-            oit.oitDepthPipeline();
+            if (insertModes.isEmpty()) {
+                oit.compositePipeline(false);
+                oit.compositePipeline(true);
+                oit.emissionPipeline();
+                oit.oitDepthPipeline();
+                if (OitFramebuffer.SPLIT_INSTANCE_BOUNDS) {
+                    oit.boundsMergePipeline(false);
+                    if (localRead) oit.boundsMergePipeline(true);
+                }
+            }
             for (OitInsertMode mode : insertModes) {
                 oit.mlabNearestDepthPipeline(mode);
             }
-            if (localRead) {
+            if (insertModes.isEmpty() && localRead) {
                 ProgramAvailability.run(ProgramAvailability.Feature.LOCAL_READ, () -> {
                     for (OitMode mode : OitMode.values()) {
                         if (mode == OitMode.OFF) continue;
@@ -413,19 +500,24 @@ public final class ShaderWarmup {
         });
         jobs.add(() -> {
             for (Material material : materials) {
-                for (boolean embedded : new boolean[]{false, true}) {
+                if (OitTransparency.orderIndependent(material)) continue;
+                for (boolean embedded : embeddings.get(material)) {
                     uber.drawPipeline(material, embedded, smoothness, VK10.VK_FORMAT_R8G8B8A8_UNORM,
                             programs.depthFormat());
                 }
             }
         });
-        jobs.add(() -> {
+        if (insertModes.isEmpty()) jobs.add(() -> {
             for (Material material : materials) {
                 if (!OitTransparency.orderIndependent(material)) continue;
-                for (boolean embedded : new boolean[]{false, true}) {
+                for (boolean embedded : embeddings.get(material)) {
                     for (OitMode mode : OitMode.values()) {
                         if (mode == OitMode.OFF) continue;
                         if (localRead) {
+                            // Split instance bounds precede the folded passes in a separate floating-point target.
+                            if (mode == OitMode.DEPTH_RANGE && OitFramebuffer.SPLIT_INSTANCE_BOUNDS) {
+                                uber.oitProducerPipeline(material, embedded, smoothness, mode, false);
+                            }
                             ProgramAvailability.run(ProgramAvailability.Feature.LOCAL_READ,
                                     () -> uber.oitProducerPipeline(material, embedded, smoothness, mode, true));
                         } else uber.oitProducerPipeline(material, embedded, smoothness, mode, false);
@@ -436,7 +528,7 @@ public final class ShaderWarmup {
         jobs.add(() -> {
             for (Material material : materials) {
                 if (!OitTransparency.orderIndependent(material)) continue;
-                for (boolean embedded : new boolean[]{false, true}) {
+                for (boolean embedded : embeddings.get(material)) {
                     for (OitInsertMode mode : insertModes) {
                         ProgramAvailability.run(ProgramAvailability.insert(mode),
                                 () -> uber.mlabProducerPipeline(mode, material, embedded, smoothness));
@@ -452,36 +544,44 @@ public final class ShaderWarmup {
         });
         if (VkCaps.MESH_SHADER_NEGOTIATED && ProgramAvailability.allows(ProgramAvailability.Feature.MESH)
                 && Backends.VK_MESH_SHADER_ID.equals(Backend.REGISTRY.getIdOrThrow(
-                        BackendManager.currentBackend()))) jobs.add(() -> ProgramAvailability.run(
+                BackendManager.currentBackend()))) jobs.add(() -> ProgramAvailability.run(
                 ProgramAvailability.Feature.MESH, () -> {
-            VkMeshVisualPipelines mesh = programs.meshVisual();
-            mesh.builderPipeline();
-            for (InstanceType<?> type : STANDARD_TYPES) {
-                mesh.crumblingPipeline(Materials.CRUMBLING, type, VK10.VK_FORMAT_R8G8B8A8_UNORM,
-                        programs.depthFormat());
-            }
-            for (InstanceType<?> type : MESH_VISUAL_TYPES) {
-                for (Material material : materials) {
-                    if (!OitTransparency.orderIndependent(material)) {
-                        mesh.solidPipeline(type, material, false, VK10.VK_FORMAT_R8G8B8A8_UNORM,
+                    VkMeshVisualPipelines mesh = programs.meshVisual();
+                    mesh.builderPipeline();
+                    for (InstanceType<?> type : STANDARD_TYPES) {
+                        mesh.crumblingPipeline(Materials.CRUMBLING, type, VK10.VK_FORMAT_R8G8B8A8_UNORM,
                                 programs.depthFormat());
-                    } else {
-                        for (OitMode mode : OitMode.values()) {
-                            if (mode == OitMode.OFF) continue;
-                            if (localRead) {
-                                ProgramAvailability.run(ProgramAvailability.Feature.LOCAL_READ,
-                                        () -> mesh.oitPipeline(type, material, false, mode,
-                                                programs.depthFormat(), true));
-                            } else mesh.oitPipeline(type, material, false, mode, programs.depthFormat(), false);
-                        }
-                        for (OitInsertMode mode : insertModes) {
-                            ProgramAvailability.run(ProgramAvailability.insert(mode),
-                                    () -> mesh.mlabPipeline(type, material, false, mode, programs.depthFormat()));
+                    }
+                    for (InstanceType<?> type : MESH_VISUAL_TYPES) {
+                        for (Material material : materials) {
+                            if (!OitTransparency.orderIndependent(material)) {
+                                mesh.solidPipeline(type, material, false, VK10.VK_FORMAT_R8G8B8A8_UNORM,
+                                        programs.depthFormat());
+                            } else {
+                                if (insertModes.isEmpty()) {
+                                    for (OitMode mode : OitMode.values()) {
+                                        if (mode == OitMode.OFF) continue;
+                                        if (localRead) {
+                                            if (mode == OitMode.DEPTH_RANGE && OitFramebuffer.SPLIT_INSTANCE_BOUNDS) {
+                                                mesh.oitPipeline(type, material, false, mode, programs.depthFormat(),
+                                                        false);
+                                            }
+                                            ProgramAvailability.run(ProgramAvailability.Feature.LOCAL_READ,
+                                                    () -> mesh.oitPipeline(type, material, false, mode,
+                                                            programs.depthFormat(), true));
+                                        } else mesh.oitPipeline(type, material, false, mode, programs.depthFormat(),
+                                                false);
+                                    }
+                                }
+                                for (OitInsertMode mode : insertModes) {
+                                    ProgramAvailability.run(ProgramAvailability.insert(mode),
+                                            () -> mesh.mlabPipeline(type, material, false, mode,
+                                                    programs.depthFormat()));
+                                }
+                            }
                         }
                     }
-                }
-            }
-        }));
+                }));
         for (WarmHook hook : VK_HOOKS) jobs.add(hook::run);
         VkCompilationTasks.run(jobs);
         #if MC >= 26.3
@@ -513,8 +613,10 @@ public final class ShaderWarmup {
                 else terrain.translucentProducerPipeline(mode, localRead);
             }
         };
-        if (localRead) ProgramAvailability.run(ProgramAvailability.Feature.LOCAL_READ, wavelet);
-        else wavelet.run();
+        if (insertModes.isEmpty()) {
+            if (localRead) ProgramAvailability.run(ProgramAvailability.Feature.LOCAL_READ, wavelet);
+            else wavelet.run();
+        }
         for (OitInsertMode mode : insertModes) {
             ProgramAvailability.run(ProgramAvailability.insert(mode), () -> {
                 if (classic) terrain.classicTranslucentMlabPipeline(mode);

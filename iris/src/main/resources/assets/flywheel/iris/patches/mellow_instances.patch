@@ -1,0 +1,19 @@
+diff --git a/program/clrwl_gbuffers.fsh b/program/clrwl_gbuffers.fsh
+--- a/program/clrwl_gbuffers.fsh
++++ b/program/clrwl_gbuffers.fsh
+@@ -1629,6 +1629,2 @@
+     float Dither = dither(gl_FragCoord.xy);
+-    #if (defined DISTANT_HORIZONS) && (!defined VOXY)
+-        if (transition_to_dh(PlayerPos, false, Dither)) {
+-            discard;
+-        }
+-    #endif
++    // No DH transition: instances have no LoD to hand over to.
+diff --git a/program/gbuffers_water.fsh b/program/gbuffers_water.fsh
+--- a/program/gbuffers_water.fsh
++++ b/program/gbuffers_water.fsh
+@@ -1999,2 +1999,3 @@
+ 	float Dither = dither(gl_FragCoord.xy);
+-	#if (defined DISTANT_HORIZONS) && (!defined VOXY)
++	// The cut hands vanilla water over to its LoD; instances have none.
++	#if (defined DISTANT_HORIZONS) && (!defined VOXY) && (!defined CRANKSHAFT_CLRWL_TRANSLUCENT)

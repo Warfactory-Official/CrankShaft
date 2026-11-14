@@ -18,6 +18,7 @@ import com.mojang.renderpearl.backend.opengl.VertexArray;
 import com.mojang.renderpearl.frontend.FrontendGpuDevice;
 import com.mojang.renderpearl.frontend.FrontendRenderPipeline;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
+import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
 import dev.engine_room.flywheel.backend.engine.indirect.VkNativeOitPass;
 import dev.engine_room.flywheel.backend.vk.VkContext;
@@ -28,9 +29,11 @@ import org.jspecify.annotations.Nullable;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL31C;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 
 import java.util.*;
+import java.util.function.Consumer;
 
 /**
  * Registers generated pipelines with Renderpearl's pass frontend. Native OIT storage/input descriptors
@@ -41,6 +44,8 @@ public final class RenderPipelineCompiler {
     private static final Map<RenderPipeline, FrontendRenderPipeline> PIPELINES = new IdentityHashMap<>();
     private static final Map<RenderPipeline, AssembledShaderSource> SOURCES = new IdentityHashMap<>();
     private static final Map<RenderPipeline, Map<String, Uniform>> UNIFORMS = new IdentityHashMap<>();
+    private static final Map<RenderPipeline, GlAsyncCompiler.Pending> PENDING = new IdentityHashMap<>();
+    private static final List<RenderPipeline> RELEASED = new ArrayList<>();
     private static final NativeResourceSource NATIVE_DEPTH_SOURCE = new NativeResourceSource(true);
     private static final NativeResourceSource NATIVE_COLOR_SOURCE = new NativeResourceSource(false);
 
@@ -55,13 +60,16 @@ public final class RenderPipelineCompiler {
         RenderSystem.assertOnRenderThread();
         FrontendRenderPipeline cached = PIPELINES.get(pipeline);
         if (cached == null || cached.isClosed()) {
+            cancelPending(pipeline);
             warm(() -> precompile(pipeline, source));
             cached = Objects.requireNonNull(PIPELINES.get(pipeline));
         }
         return cached;
     }
 
-    /** Declares inside {@link #warm}; synchronous otherwise. */
+    /**
+     * Declares inside {@link #warm}; synchronous otherwise.
+     */
     public static void precompile(RenderPipeline pipeline, AssembledShaderSource source) {
         if (collecting != null) {
             collecting.putIfAbsent(pipeline, source);
@@ -69,21 +77,113 @@ public final class RenderPipelineCompiler {
         } else compile(pipeline, source);
     }
 
-    /** Resource-backed declaration in the current loading batch, with the owning pass's depth attachment contract. */
-    public static void precompileNative(RenderPipeline pipeline, boolean depthAttachment) {
-        precompile(pipeline, depthAttachment ? NATIVE_DEPTH_SOURCE : NATIVE_COLOR_SOURCE);
+    /**
+     * Draw-time compilation: GL with parallel compilation builds in the background and {@link #poll} publishes; Vulkan
+     * hosts and GL without it compile now. Declares like {@link #precompile} inside {@link #warm}. A failure throws
+     * from the compiling call or the publishing poll, attributed to {@code owner} when non-null.
+     */
+    public static void request(RenderPipeline pipeline, AssembledShaderSource source,
+                               ProgramAvailability.@Nullable Feature owner) {
+        if (collecting != null) {
+            if (owner == null) precompile(pipeline, source);
+            else feature(owner, () -> precompile(pipeline, source));
+            return;
+        }
+        RenderSystem.assertOnRenderThread();
+        if (ready(pipeline) || PENDING.containsKey(pipeline)) return;
+        if (VkContext.isVulkanHost() || !GlAsyncCompiler.available()) {
+            if (owner == null) compile(pipeline, source);
+            else ProgramAvailability.run(owner, () -> compile(pipeline, source));
+            return;
+        }
+        requireSupportedPipeline(pipeline);
+        int stageCount = pipeline.getShaders().size();
+        int[] types = new int[stageCount];
+        String[] sources = new String[stageCount];
+        String[] labels = new String[stageCount];
+        int index = 0;
+        for (var shader : pipeline.getShaders().entrySet()) {
+            String label = shader.getValue().toString();
+            types[index] = shader.getKey() == ShaderType.VERTEX ? GL20C.GL_VERTEX_SHADER : GL20C.GL_FRAGMENT_SHADER;
+            sources[index] = NativeShaderPreprocessor.preprocess(Objects.requireNonNull(
+                            source.getShader(shader.getValue(), shader.getKey()), "Missing shader source: " + label),
+                    label, shader.getKey(), pipeline.getShaderDefines());
+            labels[index++] = label;
+        }
+        String[] attributes = attributes(pipeline);
+        GlNativeProgramPool.Key key = nativeKey(pipeline, types, sources, attributes, owner);
+        if (key == null) {
+            PENDING.put(pipeline, GlAsyncCompiler.submit(pipeline.getLocation().toString(), types, sources, labels,
+                    attributes, owner, null, handle -> {
+                        PENDING.remove(pipeline);
+                        publish(pipeline, source, handle);
+                    }, () -> PENDING.remove(pipeline)));
+        } else {
+            PENDING.put(pipeline, GlNativeProgramRequests.request(key,
+                    (callback, failure) -> GlAsyncCompiler.submit(pipeline.getLocation().toString(), types, sources,
+                            labels,
+                            attributes, owner, null, callback, failure),
+                    entry -> {
+                        PENDING.remove(pipeline);
+                        publish(pipeline, source, entry);
+                    }, () -> PENDING.remove(pipeline)));
+        }
     }
 
-    private record NativeResourceSource(boolean depthAttachment) implements AssembledShaderSource {
-        @Override
-        public String getShader(Identifier id, ShaderType type) {
-            Compilation compilation = new Compilation();
-            compilation.version(ShaderAssembly.glslVersion());
-            if (type == ShaderType.VERTEX) compilation.define("gl_VertexIndex", "gl_VertexID");
-            compilation.appendComponent(
-                    new ShaderAssembly.RawSource(id.toString(), NativeOitProducers.readShader(id, type)));
-            return compilation.assembledSource();
+    public static boolean ready(RenderPipeline pipeline) {
+        FrontendRenderPipeline compiled = PIPELINES.get(pipeline);
+        return compiled != null && !compiled.isClosed();
+    }
+
+    /**
+     * Building in the background or declared in the running {@link #warm}.
+     */
+    public static boolean pending(RenderPipeline pipeline) {
+        return PENDING.containsKey(pipeline) || collecting != null && collecting.containsKey(pipeline);
+    }
+
+    /**
+     * A superseded pipeline: cancelled while building, otherwise destroyed at the next {@link #poll}.
+     */
+    public static void release(RenderPipeline pipeline) {
+        if (!cancelPending(pipeline)) RELEASED.add(pipeline);
+    }
+
+    /**
+     * Render thread, at a frame boundary outside any pass: destroys released pipelines and publishes completed
+     * background compilations.
+     */
+    public static void poll() {
+        RenderSystem.assertOnRenderThread();
+        if (!RELEASED.isEmpty()) {
+            for (RenderPipeline pipeline : RELEASED) {
+                FrontendRenderPipeline compiled = PIPELINES.remove(pipeline);
+                SOURCES.remove(pipeline);
+                UNIFORMS.remove(pipeline);
+                if (compiled == null) continue;
+                if (RenderSystem.currentPipelineCache != null) {
+                    RenderSystem.currentPipelineCache.cache.remove(pipeline, compiled);
+                }
+                if (!compiled.isClosed()) compiled.close();
+            }
+            RELEASED.clear();
         }
+        GlNativeProgramRequests.poll();
+        GlAsyncCompiler.poll();
+    }
+
+    private static boolean cancelPending(RenderPipeline pipeline) {
+        GlAsyncCompiler.Pending pending = PENDING.remove(pipeline);
+        if (pending == null) return false;
+        pending.cancel();
+        return true;
+    }
+
+    /**
+     * Resource-backed declaration in the current loading batch, with the owning pass's depth attachment contract.
+     */
+    public static void precompileNative(RenderPipeline pipeline, boolean depthAttachment) {
+        precompile(pipeline, depthAttachment ? NATIVE_DEPTH_SOURCE : NATIVE_COLOR_SOURCE);
     }
 
     public static void feature(ProgramAvailability.Feature owner, Runnable declarations) {
@@ -105,7 +205,9 @@ public final class RenderPipelineCompiler {
         }
     }
 
-    /** Render thread; declarations complete before validation/publication. */
+    /**
+     * Render thread; declarations complete before validation/publication.
+     */
     public static void warm(Runnable declarations) {
         RenderSystem.assertOnRenderThread();
         Map<RenderPipeline, AssembledShaderSource> requests = new LinkedHashMap<>();
@@ -122,36 +224,66 @@ public final class RenderPipelineCompiler {
             warmVulkan(requests, features);
             return;
         }
-        int uncached = 0;
-        for (RenderPipeline pipeline : requests.keySet()) {
-            FrontendRenderPipeline cached = PIPELINES.get(pipeline);
-            if (cached == null || cached.isClosed()) uncached++;
-        }
         try (GlCompilationBatch batch = new GlCompilationBatch()) {
-            batch.splash(uncached);
+            batch.splash(0);
+            Map<GlNativeProgramPool.Key, List<Consumer<GlNativeProgramPool.Entry>>> grouped =
+                    new LinkedHashMap<>();
+            List<Runnable> pooled = new ArrayList<>();
+            int sharedRequests = 0;
             for (var request : requests.entrySet()) {
                 RenderPipeline pipeline = request.getKey();
                 FrontendRenderPipeline cached = PIPELINES.get(pipeline);
                 if (cached != null && !cached.isClosed()) {
                     continue;
                 }
+                cancelPending(pipeline);
                 requireSupportedPipeline(pipeline);
                 int[] stages = new int[pipeline.getShaders().size()];
+                int[] types = new int[stages.length];
+                String[] sources = new String[stages.length];
                 int index = 0;
                 for (var shader : pipeline.getShaders().entrySet()) {
                     String stage =
                             Objects.requireNonNull(request.getValue().getShader(shader.getValue(), shader.getKey()),
-                            "Missing shader source: " + shader.getValue());
-                    stages[index++] = batch.sharedShader(shader.getKey() == ShaderType.VERTEX
-                                    ? GL20C.GL_VERTEX_SHADER : GL20C.GL_FRAGMENT_SHADER,
-                            NativeShaderPreprocessor.preprocess(stage, shader.getValue().toString(),
-                                    shader.getKey(), pipeline.getShaderDefines()), shader.getValue().toString());
+                                    "Missing shader source: " + shader.getValue());
+                    types[index] = shader.getKey() == ShaderType.VERTEX
+                            ? GL20C.GL_VERTEX_SHADER : GL20C.GL_FRAGMENT_SHADER;
+                    sources[index] = NativeShaderPreprocessor.preprocess(stage, shader.getValue().toString(),
+                            shader.getKey(), pipeline.getShaderDefines());
+                    stages[index] = batch.sharedShader(types[index], sources[index], shader.getValue().toString());
+                    index++;
                 }
-                batch.link(pipeline.getLocation().toString(), stages, attributes(pipeline),
-                        handle -> publish(pipeline, request.getValue(), handle));
+                String[] attributes = attributes(pipeline);
+                GlNativeProgramPool.Key key = nativeKey(pipeline, types, sources, attributes, features.get(pipeline));
+                if (key == null) {
+                    batch.link(pipeline.getLocation().toString(), stages, attributes,
+                            handle -> publish(pipeline, request.getValue(), handle));
+                    continue;
+                }
+                sharedRequests++;
+                var group = grouped.get(key);
+                if (group == null) {
+                    group = new ArrayList<>();
+                    grouped.put(key, group);
+                    var members = group;
+                    if (GlNativeProgramPool.contains(key)) {
+                        pooled.add(() -> members.forEach(member ->
+                                member.accept(Objects.requireNonNull(GlNativeProgramPool.acquire(key)))));
+                    } else {
+                        batch.link(pipeline.getLocation().toString(), stages, attributes, handle -> {
+                            GlNativeProgramPool.Entry entry = GlNativeProgramPool.adopt(key, handle);
+                            for (int i = 0; i < members.size(); i++) {
+                                if (i != 0) entry = Objects.requireNonNull(GlNativeProgramPool.acquire(key));
+                                members.get(i).accept(entry);
+                            }
+                        });
+                    }
+                }
+                group.add(entry -> publish(pipeline, request.getValue(), entry));
             }
-            batch.finish(() -> {
-            });
+            FlwBackend.LOGGER.info("native GL program sharing: {} requests, {} distinct keys",
+                    sharedRequests, grouped.size());
+            batch.finish(() -> pooled.forEach(Runnable::run));
         } catch (GlCompilationBatch.Failure failure) {
             ProgramAvailability.Feature owner = null;
             for (RenderPipeline pipeline : requests.keySet()) {
@@ -180,8 +312,8 @@ public final class RenderPipelineCompiler {
                                 Objects.requireNonNull(request.getValue().getShader(id, stage)),
                                 id.toString(), stage, pipeline.getShaderDefines()),
                         stage == ShaderType.VERTEX ? VkShaderTransform.Stage.VERTEX : VkShaderTransform.Stage.FRAGMENT);
-                int depthFormat = request.getValue() instanceof NativeResourceSource nativeSource
-                        && !nativeSource.depthAttachment() ? VK12.VK_FORMAT_UNDEFINED : VkContext.mainDepthFormat();
+                int depthFormat = request.getValue() instanceof NativeResourceSource(boolean depthAttachment)
+                        && !depthAttachment ? VK10.VK_FORMAT_UNDEFINED : VkContext.mainDepthFormat();
                 var compatibility = new VkNativePipelineCompiler.Compatibility(0, 0, depthFormat,
                         pipeline.getColorTargetStates());
                 var compiled = compiler.compile(pipeline, source, Map.of(), compatibility);
@@ -207,10 +339,6 @@ public final class RenderPipelineCompiler {
         }
     }
 
-    private record PendingVulkanPipeline(RenderPipeline pipeline, AssembledShaderSource source,
-                                          VkNativeFrontendCompiler.CompiledPipeline compiled) {
-    }
-
     private static String[] attributes(RenderPipeline pipeline) {
         List<String> names = new ArrayList<>();
         String previous = null;
@@ -225,8 +353,46 @@ public final class RenderPipelineCompiler {
         return names.toArray(String[]::new);
     }
 
+    private static GlNativeProgramPool.@Nullable Key nativeKey(RenderPipeline pipeline, int[] types, String[] sources,
+                                                               String[] attributes,
+                                                               ProgramAvailability.@Nullable Feature owner) {
+        if (pipeline instanceof GlPipelineProgram) return null;
+        return GlNativeProgramPool.key(types, sources, attributes,
+                BindGroupLayout.flattenUniforms(pipeline.getBindGroupLayouts()), List.of(), owner);
+    }
+
+    private static final class ProgramLease extends GlProgram {
+        private final GlNativeProgramPool.Entry entry;
+        private boolean closed;
+
+        private ProgramLease(GlNativeProgramPool.Entry entry, String label) {
+            super(entry.handle(), label);
+            this.entry = entry;
+        }
+
+        @Override
+        public void close() {
+            if (closed) return;
+            closed = true;
+            uniforms.forEach(uniform -> {
+                if (uniform != null) uniform.close();
+            });
+            entry.release();
+        }
+    }
+
+    private static void publish(RenderPipeline pipeline, AssembledShaderSource source,
+                                GlNativeProgramPool.Entry entry) {
+        publish(pipeline, source, new ProgramLease(entry, pipeline.getLocation().toString()));
+    }
+
     private static void publish(RenderPipeline pipeline, AssembledShaderSource source, int handle) {
-        GlProgram program = NativeOitPipelines.createProgram(pipeline, handle);
+        GlProgram program = pipeline instanceof GlPipelineProgram custom ? custom.createGlProgram(handle)
+                : new GlProgram(handle, pipeline.getLocation().toString());
+        publish(pipeline, source, program);
+    }
+
+    private static void publish(RenderPipeline pipeline, AssembledShaderSource source, GlProgram program) {
         List<BindGroupLayout.UniformDescription> descriptions =
                 BindGroupLayout.flattenUniforms(pipeline.getBindGroupLayouts());
         Object2IntOpenHashMap<String> indices = new Object2IntOpenHashMap<>();
@@ -234,7 +400,7 @@ public final class RenderPipelineCompiler {
         BackendRenderPipeline.CreateInfo createInfo = createInfo(pipeline, program, descriptions);
         GlDevice device = (GlDevice) ((FrontendGpuDevice) RenderSystem.getDevice()).backend;
         VertexArray vertexArray = VertexArray.createSource(GL.getCapabilities(), new HashSet<>())
-                .apply(program, createInfo);
+                                             .apply(program, createInfo);
         GlRenderPipeline backend = new GlRenderPipeline(device, createInfo, program, vertexArray);
         FrontendRenderPipeline compiled = new FrontendRenderPipeline(pipeline.getLocation().toString(), backend,
                 pipeline.getVertexFormatBindings(), indices, descriptions, createInfo.colorTargetStates(),
@@ -256,21 +422,25 @@ public final class RenderPipelineCompiler {
         return Objects.requireNonNull(UNIFORMS.get(pipeline), "Native pipeline has not been compiled: " + pipeline);
     }
 
-    /** Registers a guest-owned program without transferring its destruction to the native cache. */
+    /**
+     * Registers a guest-owned program without transferring its destruction to the native cache.
+     */
     public static FrontendRenderPipeline register(RenderPipeline pipeline, GlProgram program,
-                                                   Map<String, Uniform> namedUniforms) {
+                                                  Map<String, Uniform> namedUniforms) {
         return register(pipeline, program, namedUniforms, pipeline.getDepthStencilState());
     }
 
     public static FrontendRenderPipeline register(RenderPipeline pipeline, GlProgram program,
-                                                   Map<String, Uniform> namedUniforms, DepthStencilState nativeDepth) {
+                                                  Map<String, Uniform> namedUniforms, DepthStencilState nativeDepth) {
         return register(pipeline, program, namedUniforms, nativeDepth, null);
     }
 
-    /** Guest-owned programs can expose different attribute names in the same vertex-format order. */
+    /**
+     * Guest-owned programs can expose different attribute names in the same vertex-format order.
+     */
     public static FrontendRenderPipeline register(RenderPipeline pipeline, GlProgram program,
-                                                   Map<String, Uniform> namedUniforms, DepthStencilState nativeDepth,
-                                                   @Nullable String[] attributeNames) {
+                                                  Map<String, Uniform> namedUniforms, DepthStencilState nativeDepth,
+                                                  @Nullable String[] attributeNames) {
         requireSupportedPipeline(pipeline);
         var descriptions = BindGroupLayout.flattenUniforms(pipeline.getBindGroupLayouts());
         Object2IntOpenHashMap<String> indices = new Object2IntOpenHashMap<>();
@@ -290,7 +460,9 @@ public final class RenderPipelineCompiler {
         UNIFORMS.remove(pipeline);
     }
 
-    /** State variants own their VAO; their guest program is destroyed once by its program set. */
+    /**
+     * State variants own their VAO; their guest program is destroyed once by its program set.
+     */
     public static void releaseGuestPipeline(FrontendRenderPipeline pipeline) {
         ((GlRenderPipeline) pipeline.backendRenderPipeline()).vertexArray().close();
     }
@@ -300,6 +472,11 @@ public final class RenderPipelineCompiler {
     }
 
     public static void reset() {
+        // Worker builds may target the native passes reset below.
+        VkAsyncBuilds.join();
+        PENDING.values().forEach(GlAsyncCompiler.Pending::cancel);
+        PENDING.clear();
+        RELEASED.clear();
         PIPELINES.values().forEach(FrontendRenderPipeline::close);
         PIPELINES.keySet().forEach(UNIFORMS::remove);
         PIPELINES.clear();
@@ -311,15 +488,15 @@ public final class RenderPipelineCompiler {
     }
 
     private static void requireSupportedPipeline(RenderPipeline pipeline) {
-        if (pipeline.pushConstantSize() != 0 && !NativeOitPipelines.supportsPushConstants(pipeline)) {
+        if (pipeline.pushConstantSize() != 0 && !(pipeline instanceof GlPipelineProgram custom && custom.supportsGlPushConstants())) {
             throw new UnsupportedOperationException("Native GL engine pipelines do not support push constants: "
                     + pipeline);
         }
     }
 
     private static Map<String, Uniform> setupUniforms(GlProgram program,
-                                                     List<BindGroupLayout.UniformDescription> descriptions,
-                                                     Object2IntOpenHashMap<String> indices) {
+                                                      List<BindGroupLayout.UniformDescription> descriptions,
+                                                      Object2IntOpenHashMap<String> indices) {
         Map<String, Uniform> byName = new HashMap<>();
         GlStateManager._glUseProgram(program.getProgramId());
         int nextUbo = program.pushConstant() == null ? 0 : 1;
@@ -351,20 +528,20 @@ public final class RenderPipelineCompiler {
     }
 
     private static BackendRenderPipeline.CreateInfo createInfo(RenderPipeline pipeline, GlProgram program,
-                                                                List<BindGroupLayout.UniformDescription> uniforms) {
+                                                               List<BindGroupLayout.UniformDescription> uniforms) {
         return createInfo(pipeline, program, uniforms, pipeline.getDepthStencilState());
     }
 
     private static BackendRenderPipeline.CreateInfo createInfo(RenderPipeline pipeline, GlProgram program,
-                                                                List<BindGroupLayout.UniformDescription> uniforms,
-                                                                DepthStencilState nativeDepth) {
+                                                               List<BindGroupLayout.UniformDescription> uniforms,
+                                                               DepthStencilState nativeDepth) {
         return createInfo(pipeline, program, uniforms, nativeDepth, null);
     }
 
     private static BackendRenderPipeline.CreateInfo createInfo(RenderPipeline pipeline, GlProgram program,
-                                                                List<BindGroupLayout.UniformDescription> uniforms,
-                                                                DepthStencilState nativeDepth,
-                                                                @Nullable String[] attributeNames) {
+                                                               List<BindGroupLayout.UniformDescription> uniforms,
+                                                               DepthStencilState nativeDepth,
+                                                               @Nullable String[] attributeNames) {
         List<BackendRenderPipeline.CreateInfo.VertexBuffer> buffers = new ArrayList<>();
         List<BackendRenderPipeline.CreateInfo.AttribBinding> attributes = new ArrayList<>();
         List<VertexFormat> formats = pipeline.getVertexFormatBindings();
@@ -394,6 +571,22 @@ public final class RenderPipelineCompiler {
         return new BackendRenderPipeline.CreateInfo(pipeline.getLocation().toString(), List.of(), buffers, attributes,
                 uniforms, pipeline.pushConstantSize(), nativeDepth, pipeline.getPolygonMode(),
                 pipeline.isCull(), pipeline.getColorTargetStates(), pipeline.getPrimitiveTopology());
+    }
+
+    private record NativeResourceSource(boolean depthAttachment) implements AssembledShaderSource {
+        @Override
+        public String getShader(Identifier id, ShaderType type) {
+            Compilation compilation = new Compilation();
+            compilation.version(ShaderAssembly.glslVersion());
+            if (type == ShaderType.VERTEX) compilation.define("gl_VertexIndex", "gl_VertexID");
+            compilation.appendComponent(
+                    new ShaderAssembly.RawSource(id.toString(), NativeOitProducers.readShader(id, type)));
+            return compilation.assembledSource();
+        }
+    }
+
+    private record PendingVulkanPipeline(RenderPipeline pipeline, AssembledShaderSource source,
+                                         VkNativeFrontendCompiler.CompiledPipeline compiled) {
     }
 
 }

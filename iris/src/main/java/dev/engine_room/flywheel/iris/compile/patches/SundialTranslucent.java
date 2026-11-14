@@ -22,14 +22,14 @@ public final class SundialTranslucent {
         var fragmentParser = GuestShaders.versionedTransformer();
         boolean[] discarded = {false};
         fragmentParser.setTransformation(
-                (tree, root) -> discarded[0] = ASTPrinter.printSimple(tree.getOneMainDefinitionBody())
+                (tree, _) -> discarded[0] = ASTPrinter.printSimple(tree.getOneMainDefinitionBody())
                                                          .replaceAll("\\s+", "").equals("{discard;}"));
         fragmentParser.transform(fragment);
         // Sundial removes shadow classification in dimensions whose shadow fragment unconditionally discards.
         if (discarded[0]) return vertex;
         var parser = GuestShaders.versionedTransformer();
         int[] changed = {0};
-        parser.setTransformation((tree, root) -> {
+        parser.setTransformation((_, root) -> {
             for (var member : root.nodeIndex.getStream(DeclarationMember.class).toList()) {
                 if (!member.getName().getName().equals("isTransparent")) continue;
                 if (!(member.getInitializer() instanceof ExpressionInitializer initializer)
@@ -52,7 +52,7 @@ public final class SundialTranslucent {
     public static String adapt(String vertex, String fragment) {
         var parser = GuestShaders.versionedTransformer();
         String[] remap = {null};
-        parser.setTransformation((tree, root) -> {
+        parser.setTransformation((_, root) -> {
             for (var identifier : root.identifierIndex.getStream("gl_MultiTexCoord1").toList()) {
                 if (identifier.getParent() instanceof ReferenceExpression reference) {
                     // Colorwheel light coordinates are texel-centred; restore the pack's native input units.

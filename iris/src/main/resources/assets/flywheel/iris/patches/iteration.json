@@ -17,8 +17,18 @@
       "contains": [
         "/Lib/Programs/Gbuffers/Entities_FS.glsl"
       ]
+    },
+    {
+      "path": "Lib/Programs/Gbuffers/Water_FS.glsl",
+      "contains": [],
+      "excludes": [
+        "SR_IRIS_EXT_VELOCITY"
+      ]
     }
   ],
+  "resources": {
+    "/flywheel/iteration_display.glsl": "iteration_display.glsl"
+  },
   "files": [],
   "wrappers": [],
   "blends": [
@@ -32,6 +42,7 @@
   "deferredTranslucent": true,
   "patches": [
     "iteration_contract.patch",
+    "iteration_targets.patch",
     "iteration_light.patch"
   ],
   "programs": [
@@ -163,6 +174,7 @@
         "shaders.properties"
       ],
       "fingerprints": [
+        "cab98a385a13ab275d364bf9105e14f0b8efde4253497cc2c1eecd85eae6f9cb",
         "dfb8416b8af5ec7b647e38436f47ce5919308a5fbe23654f50d2584d5c03e8a8"
       ]
     }

@@ -24,6 +24,7 @@ layout(std430, binding = _FLW_MATRIX_BUFFER_BINDING) restrict readonly buffer Ma
 };
 
 layout(binding = 10) uniform sampler2D _flw_depthPyramid;
+#include "flywheel:internal/indirect/scene_occlusion.glsl"
 
 // Disgustingly vectorized sphere frustum intersection taking advantage of ahead of time packing.
 // Only uses 6 fmas and some boolean ops.
@@ -62,19 +63,18 @@ bool projectSphere(vec3 c, float r, float znear, float P00, float P11, out vec4 
     return true;
 }
 
-#if defined(_FLW_CULL_VIS_OUT) || defined(_FLW_CULL_PASS2)
-layout(std430, binding = 6) restrict buffer _FlwVisWordsBuffer {
+// Port: per page slot: pass-1 visible bits, pass-1 frustum bits, this pass's visible bits of an ordered model.
+layout(std430, binding = _FLW_VIS_WORDS_BUFFER_BINDING) restrict buffer _FlwVisWordsBuffer {
     uint _flw_visWords[];
 };
-#endif
-#ifdef _FLW_CULL_VIS_OUT
 shared uint _flw_visWord;
+#ifdef _FLW_CULL_VIS_OUT
 shared uint _flw_frustumWord;
 #endif
 
 // Farthest occluder over the min-reduced pyramid; no pixel center covered -> returns 2.0, caller culls.
 float _flw_hizOccluder(vec4 aabb) {
-    vec2 viewSize = vec2(_flw_cullData.viewWidth, _flw_cullData.viewHeight);
+    vec2 viewSize = _flw_occlusionSize();
     vec4 uv = clamp(vec4(min(aabb.xy, aabb.zw), max(aabb.xy, aabb.zw)), 0.0, 1.0);
     ivec4 rect = ivec4(uv * viewSize.xyxy + vec4(0.5, 0.5, -0.5, -0.5));
     if (any(lessThan(rect.zw, rect.xy))) {
@@ -85,7 +85,7 @@ float _flw_hizOccluder(vec4 aabb) {
     ivec2 extent = rect.zw - rect.xy;
     int level = max(findMSB(max(extent.x, extent.y)), 0);
     level += any(greaterThan((rect.zw >> level) - (rect.xy >> level), ivec2(1))) ? 1 : 0;
-    level = min(level, _flw_cullData.pyramidLevels);
+    level = min(level, _flw_occlusionLevels());
 
     ivec4 bounds = rect >> level;
 
@@ -99,7 +99,7 @@ float _flw_hizOccluder(vec4 aabb) {
 
 bool _flw_isVisible(uint objectUint, uint modelIndex, uint typeId, out bool frustumVisible) {
     uint matrixIndexRaw = _flw_models[modelIndex].matrixIndex;
-    uint matrixIndex = matrixIndexRaw & 0x7FFFFFFFu;
+    uint matrixIndex = matrixIndexRaw & _FLW_MODEL_MATRIX_MASK;
     BoundingSphere sphere = _flw_models[modelIndex].boundingSphere;
 
     vec3 center;
@@ -120,18 +120,19 @@ bool _flw_isVisible(uint objectUint, uint modelIndex, uint typeId, out bool frus
     frustumVisible = isVisible;
 
 #ifndef _FLW_CULL_FRUSTUM_ONLY
-    if (isVisible && (matrixIndexRaw & 0x80000000u) == 0u) {
+    if (isVisible && (matrixIndexRaw & _FLW_MODEL_NO_OCCLUSION) == 0u && _flw_occlusionActive()) {
         transformBoundingSphere(flw_view, center, radius);
 
         vec4 aabb;
-        if (projectSphere(center, radius, _flw_cullData.znear, _flw_cullData.P00, _flw_cullData.P11, aabb))
+        vec2 lens = _flw_occlusionLens();
+        if (projectSphere(center, radius, _flw_cullData.znear, lens.x, lens.y, aabb))
         {
             // 26.2: reversed-Z, min-reduced pyramid -- occluder = MIN sample, nearest-point depth = -znear/z, test flips to >=.
-            float depth = _flw_hizOccluder(aabb);
+            float depth = _flw_hizOccluder(_flw_occlusionBounds(aabb));
 
-            float depthSphere = -_flw_cullData.znear / (center.z + radius);
+            float depthSphere = _flw_occlusionSphereDepth(center, radius);
 
-            isVisible = isVisible && depthSphere >= depth;
+            isVisible = isVisible && depthSphere + _flw_occlusionTolerance(depthSphere) >= depth;
         }
     }
 #endif
@@ -159,31 +160,35 @@ void main() {
 
     uint objectUint = baseUint + gl_LocalInvocationID.x * (typeInfo >> 16u);
 
+    // Uniform per workgroup; a free slot carries no valid bits.
+    bool ordered = pageValidity != 0u && (_flw_models[modelIndex].matrixIndex & _FLW_MODEL_ORDERED) != 0u;
 #ifdef _FLW_CULL_VIS_OUT
+    bool wordsOut = true;
+#else
+    bool wordsOut = ordered;
+#endif
+
 #if defined(_FLW_HAS_SUBGROUP) && _FLW_SUBGROUP_SIZE == 32
     // 32-wide subgroup = workgroup: ballot verifies the lane mapping; else shared-memory fallback (uniform flow).
     bool _flw_wgIsSubgroup = subgroupBallot(gl_SubgroupInvocationID == gl_LocalInvocationID.x).x == 0xFFFFFFFFu;
-    if (!_flw_wgIsSubgroup) {
+#else
+    bool _flw_wgIsSubgroup = false;
+#endif
+    if (wordsOut && !_flw_wgIsSubgroup) {
         if (gl_LocalInvocationID.x == 0u) {
             _flw_visWord = 0u;
+#ifdef _FLW_CULL_VIS_OUT
             _flw_frustumWord = 0u;
+#endif
         }
         barrier();
     }
-#else
-    if (gl_LocalInvocationID.x == 0u) {
-        _flw_visWord = 0u;
-        _flw_frustumWord = 0u;
-    }
-    barrier();
-#endif
-#endif
 
     bool frustumVisible = false;
     bool visible = ((1u << gl_LocalInvocationID.x) & pageValidity) != 0
 #ifdef _FLW_CULL_PASS2
-            && ((_flw_visWords[gl_WorkGroupID.x * 2u] >> gl_LocalInvocationID.x) & 1u) == 0u
-            && ((_flw_visWords[gl_WorkGroupID.x * 2u + 1u] >> gl_LocalInvocationID.x) & 1u) == 1u
+            && ((_flw_visWords[gl_WorkGroupID.x * 3u] >> gl_LocalInvocationID.x) & 1u) == 0u
+            && ((_flw_visWords[gl_WorkGroupID.x * 3u + 1u] >> gl_LocalInvocationID.x) & 1u) == 1u
 #endif
             && _flw_isVisible(objectUint, modelIndex, typeInfo & 0xFFFFu, frustumVisible);
 
@@ -191,41 +196,47 @@ void main() {
     uvec4 ballot = subgroupBallot(visible);
 #endif
 
+    if (wordsOut) {
+        uint visWord = 0u;
 #ifdef _FLW_CULL_VIS_OUT
+        uint frustumWord = 0u;
+#endif
 #if defined(_FLW_HAS_SUBGROUP) && _FLW_SUBGROUP_SIZE == 32
-    if (_flw_wgIsSubgroup) {
-        uvec4 frustumBallot = subgroupBallot(frustumVisible);
-        if (subgroupElect()) {
-            _flw_visWords[gl_WorkGroupID.x * 2u] = ballot.x;
-            _flw_visWords[gl_WorkGroupID.x * 2u + 1u] = frustumBallot.x;
+        if (_flw_wgIsSubgroup) {
+            visWord = ballot.x;
+#ifdef _FLW_CULL_VIS_OUT
+            frustumWord = subgroupBallot(frustumVisible).x;
+#endif
         }
-    } else {
-        if (visible) {
-            atomicOr(_flw_visWord, 1u << gl_LocalInvocationID.x);
+#endif
+        if (!_flw_wgIsSubgroup) {
+            if (visible) {
+                atomicOr(_flw_visWord, 1u << gl_LocalInvocationID.x);
+            }
+#ifdef _FLW_CULL_VIS_OUT
+            if (frustumVisible) {
+                atomicOr(_flw_frustumWord, 1u << gl_LocalInvocationID.x);
+            }
+#endif
+            barrier();
+            visWord = _flw_visWord;
+#ifdef _FLW_CULL_VIS_OUT
+            frustumWord = _flw_frustumWord;
+#endif
         }
-        if (frustumVisible) {
-            atomicOr(_flw_frustumWord, 1u << gl_LocalInvocationID.x);
-        }
-        barrier();
         if (gl_LocalInvocationID.x == 0u) {
-            _flw_visWords[gl_WorkGroupID.x * 2u] = _flw_visWord;
-            _flw_visWords[gl_WorkGroupID.x * 2u + 1u] = _flw_frustumWord;
+#ifdef _FLW_CULL_VIS_OUT
+            _flw_visWords[gl_WorkGroupID.x * 3u] = visWord;
+            _flw_visWords[gl_WorkGroupID.x * 3u + 1u] = frustumWord;
+#endif
+            if (ordered) {
+                _flw_visWords[gl_WorkGroupID.x * 3u + 2u] = visWord;
+            }
         }
     }
-#else
-    if (visible) {
-        atomicOr(_flw_visWord, 1u << gl_LocalInvocationID.x);
+    if (ordered) {
+        return;
     }
-    if (frustumVisible) {
-        atomicOr(_flw_frustumWord, 1u << gl_LocalInvocationID.x);
-    }
-    barrier();
-    if (gl_LocalInvocationID.x == 0u) {
-        _flw_visWords[gl_WorkGroupID.x * 2u] = _flw_visWord;
-        _flw_visWords[gl_WorkGroupID.x * 2u + 1u] = _flw_frustumWord;
-    }
-#endif
-#endif
 
 #ifdef _FLW_HAS_SUBGROUP
     uint count = subgroupBallotBitCount(ballot);

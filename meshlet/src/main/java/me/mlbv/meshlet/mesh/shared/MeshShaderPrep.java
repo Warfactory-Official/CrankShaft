@@ -16,15 +16,9 @@ public final class MeshShaderPrep {
         if (Boolean.getBoolean("meshlet.debug")) {
             ctx.define("DEBUG");
         }
-        if (Boolean.parseBoolean(System.getProperty("meshlet.renderFog", "true"))) {
-            ctx.define("RENDER_FOG");
-        }
-        if (Boolean.parseBoolean(System.getProperty("meshlet.cullDegenerateTriangles", "true"))) {
-            ctx.define("CULL_DEGENERATE_TRIANGLES");
-        }
-        if (!Boolean.getBoolean("meshlet.customTranslucencySort")) {
-            ctx.define("TRANSLUCENCY_SORTING_SODIUM");
-        }
-        ctx.define("MAX_MESHLET_QUADS", String.valueOf(Integer.getInteger("meshlet.maxMeshletQuads", 16)));
+        ctx.define("RENDER_FOG");
+        ctx.define("CULL_DEGENERATE_TRIANGLES");
+        ctx.define("TRANSLUCENCY_SORTING_SODIUM");
+        ctx.define("MAX_MESHLET_QUADS", "16");
     }
 }

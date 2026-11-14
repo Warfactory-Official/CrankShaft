@@ -1,0 +1,8 @@
+diff --git a/program/gbuffers_water.glsl b/program/gbuffers_water.glsl
+--- a/program/gbuffers_water.glsl
++++ b/program/gbuffers_water.glsl
+@@ -343,2 +343,3 @@
+-		#if defined DISTANT_HORIZONS && !defined VOXY
++		// The cut hands vanilla water over to its LoD; instances have none.
++		#if defined DISTANT_HORIZONS && !defined VOXY && !defined CRANKSHAFT_CLRWL_TRANSLUCENT
+ 		float minDist = (dither - 0.75) * 16.0 + far;

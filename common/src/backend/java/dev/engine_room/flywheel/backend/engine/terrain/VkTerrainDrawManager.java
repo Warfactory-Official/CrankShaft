@@ -41,6 +41,7 @@ import org.joml.Matrix4f;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkBufferDeviceAddressInfo;
 import org.lwjgl.vulkan.VkCommandBuffer;
@@ -57,10 +58,10 @@ import java.util.OptionalDouble;
 public final class VkTerrainDrawManager implements TerrainDispatcher {
     static final int REGION_SIZE = 256;
     static final int MAX_VISIBLE_REGIONS = 4096;
-    private static final int COLOR_FORMAT = VK12.VK_FORMAT_R8G8B8A8_UNORM;
-    private static final int STORAGE = VK12.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    private static final int INDIRECT = VK12.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-    private static final int UNIFORM = VK12.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    private static final int COLOR_FORMAT = VK10.VK_FORMAT_R8G8B8A8_UNORM;
+    private static final int STORAGE = VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    private static final int INDIRECT = VK10.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    private static final int UNIFORM = VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
     private static final int PASS_SOLID = 0;
     private static final int PASS_CUTOUT = 1;
     private static final int PASS_COUNT = 2;
@@ -70,6 +71,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     private static final int REGION_INPUT_STRIDE = TerrainRegionInput.STRIDE;
     private static final long CMD_BYTES_PER_REGION = ((long) MAX_COMMANDS_PER_REGION + MAX_TEMPORAL_COMMANDS_PER_REGION) * COMMAND_STRIDE;
     private static final long REGION_GEO_STRIDE = 8;
+    private static final long REGION_RECEIVER_STRIDE = 16;
     private static final long DRAW_DATA_STRIDE = 32;
     private static final int PHASE_1 = 1;
     private static final int PHASE_2 = 2;
@@ -92,8 +94,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     private final VkTerrainResidentBuffers residentBuffers;
     private final Long2LongOpenHashMap geoAddrCache = new Long2LongOpenHashMap();
     private final VkTerrainTranslucent translucent;
-    @Nullable
-    private VkTerrainClassicDrawManager classicTranslucent;
     private final VisibleRegionBatch solidBatch = new VisibleRegionBatch(PASS_SOLID);
     private final VisibleRegionBatch cutoutBatch = new VisibleRegionBatch(PASS_CUTOUT);
     private final CullBuffers[][] cull;
@@ -106,6 +106,9 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
     public int boundParity;
     public int boundPhase = PHASE_1;
     int frameParity;
+    @Nullable
+    private VkTerrainClassicDrawManager classicTranslucent;
+    private boolean opaqueReceiverData;
     private int residentParity;
     private boolean metadataSyncedThisFrame;
 
@@ -249,7 +252,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
 
     @Override
     public boolean drawOpaqueSolid(ChunkRenderMatrices matrices, RenderSectionManager manager,
-                                   @Nullable Collection<RenderRegion> selfEnum) {
+                                   @Nullable Collection<RenderRegion> _) {
         VkPrograms programs = VkPrograms.get();
         if (programs == null) {
             return false;
@@ -268,6 +271,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
             return false;
         }
 
+        opaqueReceiverData = !TerrainOverlayDraw.isEmpty();
         geoAddrCache.clear();
         registry.flushPendingUploads();
         collect(manager);
@@ -284,6 +288,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         } else {
             translucent.rampFadesOnly();
         }
+        int parity = prepareView(matrices, mc);
         if (solidBatch.count == 0 && cutoutBatch.count == 0) {
             return true;
         }
@@ -296,8 +301,6 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         }
 
         hiz.pyramid.resize(mc.gameRenderer.mainRenderTarget().width, mc.gameRenderer.mainRenderTarget().height);
-        int parity = (frameParity ^= 1);
-        hiz.writeFrame(matrices, mc, parity);
         syncResidentMetadata();
         GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         long pyramidSampler = ((VulkanGpuSampler) nearest).vkSampler();
@@ -431,7 +434,9 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         int slot = phaseSlot(phase);
         CullBuffers b = cull[pass][parity];
         packRegionInput(visible, b);
-        packRegionGeo(visible, b);
+        if (buildMdi) {
+            packRegionGeo(visible, b, opaqueReceiverData);
+        }
         long rcPtr = b.regionCountUbo[slot].mappedAddress();
         MemoryUtil.memPutInt(rcPtr, n);
         MemoryUtil.memPutInt(rcPtr + 4L, phase);
@@ -444,8 +449,8 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         long pyramidView = hiz.pyramid.sampledView();
 
         VkContext.pushLabel(cmd, "flywheel:vk/terrain/cull/" + (pass == PASS_SOLID ? "solid" : "cutout"));
-        VkComputePipeline cull = programs.terrain().cullPipeline();
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, cull.handle());
+        VkComputePipeline cull = programs.terrain().cullPipeline(buildMdi && opaqueReceiverData);
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, cull.handle());
         writer.storage(0, b.regionInput)
               .storage(1, registry.sectionDataVkBuffer(pass), 0L, registry.sectionDataByteCapacity(pass))
               .storage(2, b.regionVis)
@@ -457,12 +462,12 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
               .storage(11, registry.presentMaskVkBuffer(pass), 0L, registry.presentMaskByteCapacity(pass));
         bindHizAndCount(b, parity, slot);
         writer.sampler(10, pyramidView, pyramidSampler);
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_COMPUTE, cull.layout());
-        VK12.vkCmdDispatch(cmd, n, 1, 1);
-        VkCmd.memoryBarrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK12.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK12.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK12.VK_ACCESS_SHADER_WRITE_BIT,
-                VK12.VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK12.VK_ACCESS_SHADER_READ_BIT);
+        writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_COMPUTE, cull.layout());
+        VK10.vkCmdDispatch(cmd, n, 1, 1);
+        VkCmd.memoryBarrier(cmd, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK10.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK10.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK10.VK_ACCESS_SHADER_WRITE_BIT,
+                VK10.VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK10.VK_ACCESS_SHADER_READ_BIT);
         VkContext.popLabel(cmd);
     }
 
@@ -471,12 +476,25 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
               .uniform(9, b.regionCountUbo[slot]);
     }
 
-    private void packRegionGeo(VisibleRegionBatch visible, CullBuffers b) {
+    private void packRegionGeo(VisibleRegionBatch visible, CullBuffers b, boolean receiverData) {
+        var stride = receiverData ? REGION_RECEIVER_STRIDE : REGION_GEO_STRIDE;
+        if (b.receiverData != receiverData) {
+            var previous = b.regionGeo;
+            b.regionGeo = new VkBuffer(STORAGE, MAX_VISIBLE_REGIONS * stride);
+            previous.delete();
+            b.receiverData = receiverData;
+        }
         long ptr = b.regionGeo.mappedAddress();
         for (int i = 0; i < visible.count; i++) {
             GpuBuffer geo = visible.geometryBuffers[i];
             long addr = geo == null || geo.isClosed() ? 0L : geoDeviceAddress(((VulkanGpuBuffer) geo).vkBuffer());
-            MemoryUtil.memPutLong(ptr + (long) i * REGION_GEO_STRIDE, addr);
+            MemoryUtil.memPutLong(ptr + i * stride, addr);
+            if (receiverData) {
+                var receivers = TerrainReceiverBuffers.find(geo);
+                var receiverAddress = receivers == null ? 0L : geoDeviceAddress(
+                        ((VulkanGpuBuffer) receivers).vkBuffer());
+                MemoryUtil.memPutLong(ptr + i * stride + 8, receiverAddress);
+            }
         }
     }
 
@@ -636,10 +654,12 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
             return;
         }
         CullBuffers b = cull[pass][commandParity];
-        VkGraphicsPipeline pipeline = f.programs().terrain()
-                                       .drawPipeline(pass == PASS_CUTOUT, COLOR_FORMAT);
-        VK12.vkCmdBindPipeline(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
-        VK12.vkCmdBindIndexBuffer(cmd, f.indexVk(), 0L, VK12.VK_INDEX_TYPE_UINT32);
+        var overlays = TerrainOverlayDraw.sources();
+        VkGraphicsPipeline pipeline = overlays.isEmpty() ? f.programs().terrain()
+                                                            .drawPipeline(pass == PASS_CUTOUT, COLOR_FORMAT)
+                : f.programs().terrain().overlayPipeline(pass == PASS_CUTOUT, COLOR_FORMAT, overlays);
+        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+        VK10.vkCmdBindIndexBuffer(cmd, f.indexVk(), 0L, VK10.VK_INDEX_TYPE_UINT32);
 
         writer.storage(1, registry.translucentVisVkBuffer(), 0L, registry.translucentVisByteSize())
               .storage(2, b.drawData)
@@ -649,7 +669,8 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
               .uniform(18, f.fog())
               .uniform(20, f.globals())
               .uniform(21, chunkSectionUbo[frameParity]);
-        writer.flush(cmd, VK12.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
+        TerrainOverlayDraw.bind(writer);
+        writer.flush(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout());
 
         int maxCmds = n * MAX_COMMANDS_PER_REGION;
         long cmdOffset = temporal ? (long) maxCmds * COMMAND_STRIDE : 0L;
@@ -682,6 +703,12 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
                 count, VkCaps.MAX_DRAW_INDIRECT_COUNT);
     }
 
+    private int prepareView(ChunkRenderMatrices matrices, Minecraft mc) {
+        frameParity ^= 1;
+        hiz.writeFrame(matrices, mc, frameParity);
+        return frameParity;
+    }
+
     @Override
     public void prepareResidentTranslucent(ChunkRenderMatrices matrices, RenderSectionManager manager) {
         if (classicTranslucent != null) {
@@ -691,7 +718,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         geoAddrCache.clear();
         registry.flushPendingUploads();
         translucent.capture(matrices, manager);
-        hiz.writeTranslucentFrame(matrices, Minecraft.getInstance());
+        prepareView(matrices, Minecraft.getInstance());
     }
 
     @Override
@@ -702,6 +729,7 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         }
         geoAddrCache.clear();
         translucent.capture(matrices, manager);
+        prepareView(matrices, Minecraft.getInstance());
     }
 
     @Override
@@ -745,9 +773,10 @@ public final class VkTerrainDrawManager implements TerrainDispatcher {
         final VkBuffer regionVis;
         final VkBuffer command;
         final VkBuffer count;
-        final VkBuffer regionGeo;
         final VkBuffer drawData;
         final VkBuffer[] regionCountUbo;
+        VkBuffer regionGeo;
+        boolean receiverData;
 
         CullBuffers() {
             VkBuffer[] built = new VkBuffer[8];

@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.backend;
 
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
+import dev.engine_room.flywheel.backend.compile.ShaderCompilationMode;
 
 public interface BackendConfig {
     BackendConfig INSTANCE = FlwBackend.config();
@@ -11,6 +12,8 @@ public interface BackendConfig {
      * @return The current light smoothness setting.
      */
     LightSmoothness lightSmoothness();
+
+    ShaderCompilationMode shaderCompilation();
 
     /**
      * How much chunk terrain flywheel takes over. See {@link TerrainMode#ownsOpaque()} /

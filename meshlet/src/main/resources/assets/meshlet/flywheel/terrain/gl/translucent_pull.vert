@@ -13,7 +13,11 @@ layout(std430, binding = 10) restrict readonly buffer CachedVerts {
     CachedVert cachedVerts[];
 };
 layout(std430, binding = 11) restrict readonly buffer QuadFade {
+#ifdef _FLW_TERRAIN_RECEIVER_DATA
+    uvec2 quadData[];
+#else
     float quadFade[];
+#endif
 };
 
 layout(location = 1) out PerVertex {
@@ -21,6 +25,11 @@ layout(location = 1) out PerVertex {
     vec4 misc;
     vec2 fog;
 } v_out;
+
+#ifdef _FLW_TERRAIN_OVERLAY
+layout(location = 6) out vec3 _flw_terrainPosition;
+layout(location = 7) flat out uint _flw_terrainReceiver;
+#endif
 
 void main() {
     uint vid = uint(gl_VertexID);
@@ -32,9 +41,18 @@ void main() {
     vec3 pos = vec3(v.px, v.py, v.pz);
     vec4 clip = viewProjection * vec4(pos, 1.0);
     gl_Position = clip;
+    #ifdef _FLW_TERRAIN_OVERLAY
+    _flw_terrainPosition = pos;
+    _flw_terrainReceiver = quadData[quad].y;
+    #endif
 
     v_out.color = vec4(unpackHalf2x16(v.colorRG), unpackHalf2x16(v.colorBA));
     vec2 uv = vec2(uvec2(v.uv, v.uv >> 16u) & 0x7FFFu) / 32768.0;
-    v_out.misc = vec4(uv, -clip.w, quadFade[quad]);
+    #ifdef _FLW_TERRAIN_RECEIVER_DATA
+    float fade = uintBitsToFloat(quadData[quad].x);
+    #else
+    float fade = quadFade[quad];
+    #endif
+    v_out.misc = vec4(uv, -clip.w, fade);
     v_out.fog = vec2(length(pos), max(length(pos.xz), abs(pos.y)));
 }

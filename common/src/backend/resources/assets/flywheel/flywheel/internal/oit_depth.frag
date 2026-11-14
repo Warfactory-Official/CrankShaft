@@ -11,5 +11,9 @@ void main() {
         discard;
     }
     frag = vec4(0.);
+    #ifdef _FLW_DEPTH_BOUNDS_RG
+    gl_FragDepth = _flw_nearestDeviceDepth(texelFetch(_flw_depthRange, ivec2(gl_FragCoord.xy), 0).r);
+    #else
     gl_FragDepth = texelFetch(_flw_depthRange, ivec2(gl_FragCoord.xy), 0).b;
+    #endif
 }

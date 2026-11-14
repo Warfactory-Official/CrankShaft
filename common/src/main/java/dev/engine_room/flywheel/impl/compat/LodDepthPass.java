@@ -18,13 +18,16 @@ import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
+import dev.engine_room.flywheel.backend.engine.OitInstanceCoverage;
+import dev.engine_room.flywheel.backend.gl.GlCompat;
+import dev.engine_room.flywheel.backend.gl.GlGpuTimer;
+import dev.engine_room.flywheel.compat.backend.BindGroupOps;
 import dev.engine_room.flywheel.compat.backend.RenderPassOps;
 import dev.engine_room.flywheel.compat.backend.UniformData;
 import dev.engine_room.flywheel.compat.backend.UniformStorage;
 import dev.engine_room.flywheel.compat.backend.UniformStorageOps;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.client.Minecraft;
-import net.minecraft.util.Mth;
 import org.joml.Matrix4fc;
 import org.jspecify.annotations.Nullable;
 
@@ -42,35 +45,52 @@ import java.util.Optional;
  */
 final class LodDepthPass {
     private static final RenderPipeline DEPTH = RenderPipeline.builder()
-            .withLocation(ResourceUtil.rl("pipeline/lod_depth"))
-            .withVertexShader("core/screenquad")
-            .withFragmentShader(ResourceUtil.rl("core/lod_depth"))
-            .withBindGroupLayout(BindGroupLayout.builder()
-                    .withImageSampler("LodDepthSampler")
-                    .withUniform("LodDepth", UniformType.UNIFORM_BUFFER)
-                    .build())
-            .withDepthStencilState(new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, true, 0.0f, 0.0f))
-            .withColorTargetState(new ColorTargetState(Optional.empty(), GpuFormat.RGBA8_UNORM,
-                    ColorTargetState.WRITE_NONE))
-            .withCull(false)
-            .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-            .build();
+                                                              .withLocation(ResourceUtil.rl("pipeline/lod_depth"))
+                                                              .withVertexShader("core/screenquad")
+                                                              .withFragmentShader(ResourceUtil.rl("core/lod_depth"))
+                                                              .withBindGroupLayout(BindGroupLayout.builder()
+                                                                                                  .withImageSampler(
+                                                                                                          "LodDepthSampler")
+                                                                                                  .withUniform(
+                                                                                                          "LodDepth",
+                                                                                                          UniformType.UNIFORM_BUFFER)
+                                                                                                  .build())
+                                                              .withDepthStencilState(new DepthStencilState(
+                                                                      CompareOp.GREATER_THAN_OR_EQUAL, true, 0.0f,
+                                                                      0.0f))
+                                                              .withColorTargetState(
+                                                                      new ColorTargetState(Optional.empty(),
+                                                                              GpuFormat.RGBA8_UNORM,
+                                                                              ColorTargetState.WRITE_NONE))
+                                                              .withCull(false)
+                                                              .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                                                              .build();
     private static final RenderPipeline MASK = RenderPipeline.builder()
-            .withLocation(ResourceUtil.rl("pipeline/lod_fade_mask"))
-            .withVertexShader("core/screenquad")
-            .withFragmentShader(ResourceUtil.rl("core/lod_fade_mask"))
-            .withBindGroupLayout(BindGroupLayout.builder()
-                    .withImageSampler("DepthSampler")
-                    .withImageSampler("TerrainSampler")
-                    .withImageSampler("BeforeTranslucentSampler")
-                    .withImageSampler("AfterTranslucentSampler")
-                    .withUniform("LodFadeMask", UniformType.UNIFORM_BUFFER)
-                    .build())
-            .withColorTargetState(new ColorTargetState(Optional.empty(), GpuFormat.R32_FLOAT,
-                    ColorTargetState.WRITE_ALL))
-            .withCull(false)
-            .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-            .build();
+                                                             .withLocation(ResourceUtil.rl("pipeline/lod_fade_mask"))
+                                                             .withVertexShader("core/screenquad")
+                                                             .withFragmentShader(ResourceUtil.rl("core/lod_fade_mask"))
+                                                             .withBindGroupLayout(BindGroupLayout.builder()
+                                                                                                 .withImageSampler(
+                                                                                                         "DepthSampler")
+                                                                                                 .withImageSampler(
+                                                                                                         "TerrainSampler")
+                                                                                                 .withImageSampler(
+                                                                                                         "BeforeTranslucentSampler")
+                                                                                                 .withImageSampler(
+                                                                                                         "AfterTranslucentSampler")
+                                                                                                 .withImageSampler(
+                                                                                                         "InstanceSampler")
+                                                                                                 .withUniform(
+                                                                                                         "LodFadeMask",
+                                                                                                         UniformType.UNIFORM_BUFFER)
+                                                                                                 .build())
+                                                             .withColorTargetState(
+                                                                     new ColorTargetState(Optional.empty(),
+                                                                             GpuFormat.R32_FLOAT,
+                                                                             ColorTargetState.WRITE_ALL))
+                                                             .withCull(false)
+                                                             .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                                                             .build();
     private static final UniformStorage<DepthUniform> DEPTH_UNIFORMS = UniformStorageOps.create(
             "flywheel:lod_depth", DepthUniform.SIZE, 1);
     // One per fade (opaque, transparent): each runs at most once a frame.
@@ -137,14 +157,15 @@ final class LodDepthPass {
         RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         DEPTH_UNIFORMS.endFrame();
         DepthUniform data = new DepthUniform(lodInverseViewProjection, viewProjection,
-                lodFarDepth, lodZeroToOne, zeroToOne(), vanillaRadius());
+                lodFarDepth, lodZeroToOne, zeroToOne(), LodCompat.vanillaRadius());
         GpuBufferSlice uniform = DEPTH_UNIFORMS.writeUniform(data);
-        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                RenderPassOps.builder(() -> "flywheel:lod_depth")
-                             .withColorAttachment(main.getColorTextureView())
-                             .withDepthAttachment(main.getDepthTextureView())
-                             .withRenderArea(new RenderPass.RenderArea(0, 0, main.width, main.height))
-                             .build())) {
+        var encoder = RenderSystem.getDevice().createCommandEncoder();
+        var descriptor = RenderPassOps.builder(() -> "flywheel:lod_depth")
+                                      .withColorAttachment(main.getColorTextureView())
+                                      .withDepthAttachment(main.getDepthTextureView())
+                                      .withRenderArea(new RenderPass.RenderArea(0, 0, main.width, main.height))
+                                      .build();
+        try (RenderPass pass = encoder.createRenderPass(descriptor)) {
             pass.setRenderPipeline(DEPTH);
             pass.setUniform("LodDepthSampler", lodDepth,
                     RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
@@ -180,8 +201,11 @@ final class LodDepthPass {
                     main.height, 1, 1);
             terrainViews[stage] = RenderSystem.getDevice().createTextureView(target);
         }
+        boolean timed = GlGpuTimer.isEnabled();
+        if (timed) GlCompat.pushDebugGroup("lod/terrain_depth");
         RenderSystem.getDevice().createCommandEncoder().copyTextureToTexture(depth, target, 0, 0, 0, 0, 0, main.width,
                 main.height);
+        if (timed) GlCompat.popDebugGroup();
         opaqueCaptured |= stage == 0;
         translucentCaptured |= stage == 2;
     }
@@ -189,8 +213,15 @@ final class LodDepthPass {
     /**
      * Rebuilds the fade's view of the main depth; {@link #fadeMask()} holds it until the next call.
      */
-    static void prepareFadeMask(boolean transparent, Matrix4fc inverseViewProjection) {
+    static void prepareFadeMask(boolean transparent, Matrix4fc inverseViewProjection, Matrix4fc inverseProjection) {
         fadeSeen = true;
+        // After the OIT seam the fade composites over its instances, which never write depth: without their own
+        // depth the mask takes the terrain behind them for the front surface and the fade paints over them.
+        boolean afterSeam = OitInstanceCoverage.seamRan();
+        if (afterSeam) {
+            OitInstanceCoverage.want();
+        }
+        GpuTextureView instances = afterSeam ? OitInstanceCoverage.view() : null;
         RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         if (mask == null || mask.getWidth(0) != main.width || mask.getHeight(0) != main.height) {
             if (mask != null) {
@@ -204,13 +235,17 @@ final class LodDepthPass {
         }
         var uniforms = transparent ? TRANSPARENT_MASK_UNIFORMS : OPAQUE_MASK_UNIFORMS;
         uniforms.endFrame();
-        MaskUniform data = new MaskUniform(inverseViewProjection, zeroToOne(), vanillaRadius(), opaqueCaptured);
+        MaskUniform data = new MaskUniform(inverseViewProjection, inverseProjection, zeroToOne(),
+                LodCompat.vanillaRadius(), opaqueCaptured, instances != null);
         GpuBufferSlice uniform = uniforms.writeUniform(data);
-        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                RenderPassOps.builder(() -> "flywheel:lod_fade_mask")
-                             .withColorAttachment(maskView)
-                             .withRenderArea(new RenderPass.RenderArea(0, 0, main.width, main.height))
-                             .build())) {
+        boolean timed = GlGpuTimer.isEnabled();
+        if (timed) GlCompat.pushDebugGroup("lod/fade_mask");
+        var encoder = RenderSystem.getDevice().createCommandEncoder();
+        var descriptor = RenderPassOps.builder(() -> "flywheel:lod_fade_mask")
+                                      .withColorAttachment(maskView)
+                                      .withRenderArea(new RenderPass.RenderArea(0, 0, main.width, main.height))
+                                      .build();
+        try (RenderPass pass = encoder.createRenderPass(descriptor)) {
             pass.setRenderPipeline(MASK);
             var sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
             pass.setUniform("DepthSampler", main.getDepthTextureView(), sampler);
@@ -218,8 +253,11 @@ final class LodDepthPass {
             pass.setUniform("TerrainSampler", opaque, sampler);
             pass.setUniform("BeforeTranslucentSampler", translucentCaptured ? terrainViews[1] : opaque, sampler);
             pass.setUniform("AfterTranslucentSampler", translucentCaptured ? terrainViews[2] : opaque, sampler);
+            pass.setUniform("InstanceSampler", instances != null ? instances : main.getDepthTextureView(), sampler);
             pass.setUniform("LodFadeMask", uniform);
             pass.draw(3, 1, 0, 0);
+        } finally {
+            if (timed) GlCompat.popDebugGroup();
         }
     }
 
@@ -229,11 +267,6 @@ final class LodDepthPass {
 
     private static boolean zeroToOne() {
         return RenderSystem.getDevice().getDeviceInfo().isZZeroToOne();
-    }
-
-    // >= horizontal extent of every vanilla and Sodium section
-    private static float vanillaRadius() {
-        return (Minecraft.getInstance().options.getEffectiveRenderDistance() + 2 * Mth.SQRT_OF_TWO) * 16;
     }
 
     private record DepthUniform(Matrix4fc lodInverseViewProjection, Matrix4fc viewProjection, float lodFarDepth,
@@ -258,11 +291,14 @@ final class LodDepthPass {
         }
     }
 
-    private record MaskUniform(Matrix4fc inverseViewProjection, boolean zeroToOne, float vanillaRadius,
-                               boolean terrainCaptured) implements UniformData {
+    private record MaskUniform(Matrix4fc inverseViewProjection, Matrix4fc inverseProjection, boolean zeroToOne,
+                               float vanillaRadius, boolean terrainCaptured, boolean instancesCovered)
+            implements UniformData {
         static final int SIZE = new Std140SizeCalculator().putMat4f()
+                                                          .putMat4f()
                                                           .putInt()
                                                           .putFloat()
+                                                          .putInt()
                                                           .putInt()
                                                           .get();
 
@@ -270,9 +306,11 @@ final class LodDepthPass {
         public void write(ByteBuffer buffer) {
             Std140Builder.intoBuffer(buffer)
                          .putMat4f(inverseViewProjection)
+                         .putMat4f(inverseProjection)
                          .putInt(zeroToOne ? 1 : 0)
                          .putFloat(vanillaRadius)
-                         .putInt(terrainCaptured ? 1 : 0);
+                         .putInt(terrainCaptured ? 1 : 0)
+                         .putInt(instancesCovered ? 1 : 0);
         }
     }
 }

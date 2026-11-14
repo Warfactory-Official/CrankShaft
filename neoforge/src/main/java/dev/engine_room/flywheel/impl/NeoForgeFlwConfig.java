@@ -6,6 +6,7 @@ import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.TerrainMode;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
+import dev.engine_room.flywheel.backend.compile.ShaderCompilationMode;
 import net.minecraft.IdentifierException;
 import net.minecraft.resources.Identifier;
 import net.neoforged.fml.ModContainer;
@@ -19,11 +20,13 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
 
     public final ClientConfig client;
     private final ModConfigSpec clientSpec;
+    private boolean batching;
+    private boolean pendingSave;
 
     private NeoForgeFlwConfig() {
         Pair<ClientConfig, ModConfigSpec> clientPair = new ModConfigSpec.Builder().configure(ClientConfig::new);
-        this.client = clientPair.getLeft();
-        this.clientSpec = clientPair.getRight();
+        client = clientPair.getLeft();
+        clientSpec = clientPair.getRight();
         OitConfig.setSaver(this::saveOit);
     }
 
@@ -34,7 +37,7 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
         Identifier backendId;
         try {
             backendId = Identifier.parse(value);
-        } catch (IdentifierException e) {
+        } catch (IdentifierException _) {
             FlwImpl.CONFIG_LOGGER.warn("'backend' value '{}' is not a valid resource location", value);
             return null;
         }
@@ -57,10 +60,17 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
     }
 
     @Override
+    public String backendString() {
+        var value = client.backend.get();
+        return value.equalsIgnoreCase(DEFAULT_BACKEND_STR) ? DEFAULT_BACKEND_STR : value;
+    }
+
+    @Override
     public boolean limitUpdates() {
         return client.limitUpdates.get();
     }
 
+    @Override
     public int workerThreads() {
         return client.workerThreads.get();
     }
@@ -95,48 +105,95 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
     }
 
     @Override
+    public ShaderCompilationMode shaderCompilation() {
+        return client.shaderCompilation.get();
+    }
+
+    @Override
     public TerrainMode terrainMode() {
         return TerrainModeGate.effective(client.terrainMode.get());
     }
 
+    @Override
     public void setBackendString(String value) {
         client.backend.set(value);
-        clientSpec.save();
+        save();
     }
 
+    @Override
     public void setLimitUpdates(boolean v) {
         client.limitUpdates.set(v);
-        clientSpec.save();
+        save();
     }
 
+    @Override
+    public void setWorkerThreads(int value) {
+        client.workerThreads.set(value);
+        save();
+    }
+
+    @Override
+    public void setUseCommonPool(boolean value) {
+        client.useCommonPool.set(value);
+        save();
+    }
+
+    @Override
+    public void setConcurrentExtraction(boolean value) {
+        client.concurrentExtraction.set(value);
+        save();
+    }
+
+    @Override
     public void setLightSmoothness(LightSmoothness v) {
         client.lightSmoothness.set(v);
-        clientSpec.save();
+        save();
     }
 
+    @Override
     public void setTerrainMode(TerrainMode v) {
         client.terrainMode.set(v);
-        clientSpec.save();
+        save();
     }
 
     public void saveOit() {
         client.oitPath.set(OitConfig.path());
+        client.shaderpackOit.set(OitConfig.shaderpackMode());
         client.oitLayersKbuffer.set(OitConfig.rawLayers(OitConfig.Path.KBUFFER));
         client.oitLayersMlab.set(OitConfig.rawLayers(OitConfig.Path.MLAB));
         client.oitLayersAbuffer.set(OitConfig.rawLayers(OitConfig.Path.ABUFFER));
         #if MC < 26.3
         client.oitExactWeather.set(OitConfig.exactFabulous());
         #endif
-        clientSpec.save();
+        save();
     }
 
     public void syncOitToRuntime() {
         OitConfig.loadState(client.oitPath.get(), client.oitLayersKbuffer.get(), client.oitLayersMlab.get(),
-                client.oitLayersAbuffer.get() #if MC < 26.3 , client.oitExactWeather.get() #endif);
+                client.oitLayersAbuffer.get(), client.shaderpackOit.get()
+                #if MC < 26.3 , client.oitExactWeather.get() #endif);
     }
 
     public void registerSpecs(ModContainer context) {
         context.registerConfig(ModConfig.Type.CLIENT, clientSpec);
+    }
+
+    private void save() {
+        if (batching) pendingSave = true;
+        else clientSpec.save();
+    }
+
+    @Override
+    public void beginBatch() {
+        batching = true;
+    }
+
+    @Override
+    public void endBatch(boolean persist) {
+        batching = false;
+        var save = pendingSave && persist;
+        pendingSave = false;
+        if (save) save();
     }
 
     public static final class ClientConfig {
@@ -146,8 +203,10 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
         public final ModConfigSpec.BooleanValue useCommonPool;
         public final ModConfigSpec.BooleanValue concurrentExtraction;
         public final ModConfigSpec.EnumValue<LightSmoothness> lightSmoothness;
+        public final ModConfigSpec.EnumValue<ShaderCompilationMode> shaderCompilation;
         public final ModConfigSpec.EnumValue<TerrainMode> terrainMode;
         public final ModConfigSpec.EnumValue<OitConfig.Path> oitPath;
+        public final ModConfigSpec.EnumValue<OitConfig.ShaderpackMode> shaderpackOit;
         public final ModConfigSpec.IntValue oitLayersKbuffer;
         public final ModConfigSpec.IntValue oitLayersMlab;
         public final ModConfigSpec.IntValue oitLayersAbuffer;
@@ -190,6 +249,12 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
                                              "How smooth Flywheel's shader-based lighting should be. May have a large performance impact.")
                                      .defineEnum("lightSmoothness", LightSmoothness.SMOOTH);
 
+            shaderCompilation = builder.comment(
+                                               "Shader compilation timing. PRECOMPILE: warm shader variants while loading. "
+                                                       + "ON_DEMAND: compile shaders as needed, reducing startup memory use at the cost "
+                                                       + "of possible pauses when new visuals appear. Restart the game after changing this.")
+                                       .defineEnum("shader_compilation", ShaderCompilationMode.PRECOMPILE);
+
             terrainMode = builder.comment("How much chunk terrain Flywheel takes over. OFF: vanilla/Sodium draws "
                                          + "everything. TRANSLUCENT_OIT: composite only the translucent layer through Flywheel's "
                                          + "order-independent transparency so translucent instances sort against translucent terrain "
@@ -205,6 +270,11 @@ public final class NeoForgeFlwConfig implements FlwConfig, BackendConfig {
                                      + "KBUFFER/MLAB/ABUFFER: single-geometry-pass insert strategies (MLAB/ABUFFER require "
                                      + "fragment-shader interlock / atomics; fall back to wavelet otherwise).")
                              .defineEnum("oitPath", OitConfig.Path.AUTO);
+
+            shaderpackOit = builder.comment("Transparency for supported active shaderpacks. FORWARD: faster wavelet "
+                                           + "composition with approximate lighting. REPLAY: native shaderpack lighting "
+                                           + "for each transparent layer, at higher GPU cost.")
+                                   .defineEnum("shaderpackOit", OitConfig.ShaderpackMode.DEFERRED);
 
             builder.comment("Translucent-layer budget per insert path (0 = the mode's preset: k-buffer 4, MLAB 8, "
                     + "A-buffer 16). For k-buffer/MLAB the sample count; for the A-buffer the resolve's nearest-N cap.");

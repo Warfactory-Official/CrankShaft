@@ -15,13 +15,13 @@ public abstract class AbstractVisual implements Visual {
 
     protected boolean deleted = false;
 
-    public AbstractVisual(VisualizationContext ctx, Level level, float partialTick) {
+    public AbstractVisual(VisualizationContext ctx, Level level, float _) {
         this.visualizationContext = ctx;
         this.level = level;
     }
 
     @Override
-    public void update(float partialTick) {
+    public void update(float _) {
     }
 
     protected abstract void _delete();

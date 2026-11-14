@@ -1,16 +1,20 @@
 package dev.engine_room.flywheel.iris.mixin;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.primitives.Ints;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import dev.engine_room.flywheel.iris.compile.ForwardOit;
+import dev.engine_room.flywheel.iris.compile.GuestPipelines;
+import dev.engine_room.flywheel.iris.engine.DeferredCaptureFrame;
+import dev.engine_room.flywheel.iris.engine.DeferredOitPool;
+import dev.engine_room.flywheel.iris.engine.FarFrontDepth;
 import net.irisshaders.iris.mixinterface.CustomPass;
-import dev.engine_room.flywheel.iris.engine.DeferredOitRenderer;
 import net.irisshaders.iris.pipeline.CompositeRenderer;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
 import net.irisshaders.iris.targets.RenderTargets;
-import net.irisshaders.iris.uniforms.custom.CustomUniforms;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -21,7 +25,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(CompositeRenderer.class)
-abstract class CompositeRendererMixin {
+abstract class CompositeRendererMixin implements DeferredCaptureFrame {
     @Shadow
     @Final
     private ImmutableList<?> passes;
@@ -30,14 +34,33 @@ abstract class CompositeRendererMixin {
     private RenderTargets renderTargets;
     @Shadow
     @Final
-    private CustomUniforms customUniforms;
-    @Shadow
-    @Final
     private WorldRenderingPipeline pipeline;
     @Unique
-    private @Nullable DeferredOitRenderer flywheel$deferred;
+    private @Nullable DeferredOitPool flywheel$pool;
     @Unique
     private boolean flywheel$checked;
+    @Unique
+    private boolean flywheel$captures;
+    @Unique
+    private ForwardOit flywheel$forward;
+    @Unique
+    private CustomPass flywheel$forwardLast;
+
+    // Only the composite phase that consumes the capture receives the capture boundary, and owns its pool.
+    @Override
+    public void flywheel$beginDeferredCapture() {
+        if (!flywheel$captures) {
+            flywheel$captures = true;
+            var iris = (IrisRenderingPipeline) pipeline;
+            var resolver = ((IrisRenderingPipelineAccessor) iris).flywheel$resolver();
+            var profile = ((ProgramFallbackResolverAccessor) resolver).flywheel$programs().flywheel$deferredOit();
+            if (profile != null) flywheel$pool = new DeferredOitPool(profile.pool(), renderTargets,
+                    ((ShaderStorageBufferHolderAccessor) ((IrisRenderingPipelineAccessor) iris)
+                            .flywheel$shaderStorageBuffers()).flywheel$buffers());
+        }
+        if (flywheel$pool != null) flywheel$pool.beginCaptureFrame();
+        FarFrontDepth.begin(renderTargets);
+    }
 
     // Pass selection precedes attached computes as well as graphics; Program.use alone misses compute-only passes.
     @WrapOperation(method = "renderAll", at = @At(value = "INVOKE",
@@ -50,41 +73,47 @@ abstract class CompositeRendererMixin {
             if (pipeline instanceof IrisRenderingPipeline iris) {
                 var resolver = ((IrisRenderingPipelineAccessor) iris).flywheel$resolver();
                 var programs = ((ProgramFallbackResolverAccessor) resolver).flywheel$programs();
-                if (programs.flywheel$deferredOit() != null) {
-                    var plan = programs.flywheel$deferredOit().replayPlan(iris, passes);
-                    if (plan != null) {
-                        var holder = ((IrisRenderingPipelineAccessor) iris).flywheel$shaderStorageBuffers();
-                        flywheel$deferred = DeferredOitRenderer.create(plan, passes, renderTargets, customUniforms,
-                                ((ShaderStorageBufferHolderAccessor) holder).flywheel$buffers(),
-                                iris.allowConcurrentCompute());
-                    }
+                flywheel$forward = programs.flywheel$forwardOit();
+                if (flywheel$forward != null) {
+                    int end = flywheel$forward.boundary(passes.stream().map(pass ->
+                            ((CompositePassAccessor) pass).flywheel$name()).toList());
+                    if (end >= 0) flywheel$forwardLast = (CustomPass) passes.get(end);
                 }
             }
         }
-        if (flywheel$deferred != null) flywheel$deferred.before(current);
+        if (flywheel$forward != null && flywheel$forward.consume(((CompositePassAccessor) current).flywheel$name())) {
+            flywheel$resolveForward(current, false);
+        }
         return entry;
     }
 
     @WrapMethod(method = "renderAll")
-    private void flywheel$finishCompositeReplay(Operation<Void> original) {
+    private void flywheel$finishComposite(Operation<Void> original) {
         boolean completed = false;
         try {
             original.call();
+            if (flywheel$forwardLast != null && flywheel$forward.consume(ForwardOit.END))
+                flywheel$resolveForward(flywheel$forwardLast, true);
             completed = true;
         } finally {
-            if (flywheel$deferred != null) flywheel$deferred.finish(completed);
+            if (flywheel$pool != null) flywheel$pool.finishFrame(completed);
+            if (flywheel$forwardLast != null) flywheel$forward.finish();
         }
     }
 
-    @WrapOperation(method = "renderAll", at = @At(value = "INVOKE",
-            target = "Lnet/irisshaders/iris/uniforms/custom/CustomUniforms;push(Ljava/lang/Object;)V"))
-    private void flywheel$bindReplayResources(CustomUniforms uniforms, Object program, Operation<Void> original) {
-        original.call(uniforms, program);
-        if (flywheel$deferred != null) flywheel$deferred.bindNativeResources(program);
+    @Unique
+    private void flywheel$resolveForward(CustomPass pass, boolean after) {
+        var current = (CompositePassAccessor) pass;
+        int target = flywheel$forward.target();
+        var color = renderTargets.get(target);
+        int slot = after ? Ints.indexOf(current.flywheel$drawBuffers(), target) : -1;
+        int texture = slot >= 0 ? current.flywheel$framebuffer().getColorAttachment(slot)
+                : current.flywheel$readAlt().contains(target) ? color.getAltTexture() : color.getMainTexture();
+        GuestPipelines.resolveForwardOit((IrisRenderingPipeline) pipeline, texture);
     }
 
     @Inject(method = "destroy", at = @At("HEAD"))
-    private void flywheel$closeDeferred(CallbackInfo ci) {
-        if (flywheel$deferred != null) flywheel$deferred.close();
+    private void flywheel$closeDeferred(CallbackInfo _) {
+        if (flywheel$pool != null) flywheel$pool.close();
     }
 }

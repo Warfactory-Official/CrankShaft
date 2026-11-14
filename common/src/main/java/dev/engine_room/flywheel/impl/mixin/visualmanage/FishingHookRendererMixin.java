@@ -3,7 +3,6 @@ package dev.engine_room.flywheel.impl.mixin.visualmanage;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.vertex.PoseStack;
-import dev.engine_room.flywheel.impl.visualization.PrimarySkipState;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.entity.FishingHookRenderer;
 import net.minecraft.client.renderer.entity.state.FishingHookRenderState;
@@ -21,7 +20,7 @@ abstract class FishingHookRendererMixin {
                                               RenderType renderType,
                                               SubmitNodeCollector.CustomGeometryRenderer geometry,
                                               Operation<Void> original, FishingHookRenderState state) {
-        if (!((PrimarySkipState) state).flywheel$skipPrimary()) {
+        if (!state.flywheel$skipPrimary()) {
             original.call(collector, poseStack, renderType, geometry);
         }
     }

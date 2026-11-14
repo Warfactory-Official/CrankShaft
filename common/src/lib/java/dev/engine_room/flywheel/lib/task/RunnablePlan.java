@@ -20,12 +20,12 @@ public record RunnablePlan<C>(RunnableWithContext<C> runnable)
     }
 
     @Override
-    public void executeDirect(TaskExecutor executor, C context) {
+    public void executeDirect(TaskExecutor _, C context) {
         runnable.run(context);
     }
 
     @Override
-    public void execute(TaskExecutor taskExecutor, C context, Runnable onCompletion) {
+    public void execute(TaskExecutor _, C context, Runnable onCompletion) {
         runnable.run(context);
         onCompletion.run();
     }

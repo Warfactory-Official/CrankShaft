@@ -18,7 +18,7 @@ public final class TerrainModeGate {
                 FlwImpl.CONFIG_LOGGER.error(
                         "terrain={} requires Sodium (opaque takeover reads Sodium's live geometry arena); "
                                 + "Sodium is absent -- falling back to {}.",
-                        requested.token(), fallback.token());
+                        requested.getSerializedName(), fallback.getSerializedName());
             }
             return fallback;
         }

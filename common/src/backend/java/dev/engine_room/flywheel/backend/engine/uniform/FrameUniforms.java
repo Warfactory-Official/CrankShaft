@@ -1,5 +1,6 @@
 package dev.engine_room.flywheel.backend.engine.uniform;
 
+import dev.engine_room.flywheel.api.backend.GameClock;
 import dev.engine_room.flywheel.api.backend.RenderContext;
 import dev.engine_room.flywheel.api.visualization.VisualizationManager;
 import dev.engine_room.flywheel.backend.engine.indirect.DepthPyramid;
@@ -13,9 +14,13 @@ import org.joml.*;
 import org.joml.Math;
 import org.lwjgl.system.MemoryUtil;
 
+import java.util.function.DoubleSupplier;
+import java.util.function.LongSupplier;
+
 public final class FrameUniforms extends UniformWriter {
     private static final int SIZE = 96 + 64 * 9 + 16 * 5 + 8 * 2 + 8 + 4 * 21;
     static final UniformBuffer BUFFER = new UniformBuffer(Uniforms.FRAME_INDEX, SIZE);
+    static final UniformBuffer VIEW_BUFFER = new UniformBuffer(Uniforms.FRAME_INDEX, SIZE);
 
     private static final float Z_NEAR = 0.05f;
 
@@ -43,8 +48,26 @@ public final class FrameUniforms extends UniformWriter {
     private static float partialTick;
     private static float renderTicks;
     private static float renderSeconds;
+    private static int gameMillis;
+    private static DoubleSupplier renderScale = () -> 1;
 
     private FrameUniforms() {
+    }
+
+    /**
+     * Installs the fraction of each main-target axis the world is rendered into, anchored at the lower-left: a pack
+     * implementing Super Resolution's interface squeezes its gbuffer clip space so. Main-view HiZ maps into that rect.
+     * Installed once by the {@code :iris} module; read on the render thread; 1 otherwise.
+     */
+    public static void setRenderScale(DoubleSupplier scale) {
+        renderScale = scale;
+    }
+
+    /**
+     * A main-target extent as the world is rendered into it ({@link #setRenderScale}).
+     */
+    public static int renderExtent(int targetExtent) {
+        return (int) ((float) renderScale.getAsDouble() * targetExtent);
     }
 
     public static Matrix4fc view() {
@@ -98,12 +121,45 @@ public final class FrameUniforms extends UniformWriter {
         return renderSeconds;
     }
 
+    /**
+     * {@link GameClock}'s low 32 bits for this frame ({@code flw_gameMillis}).
+     */
+    public static int gameMillis() {
+        return gameMillis;
+    }
+
     public static void bind() {
         BUFFER.bind();
     }
 
+    /**
+     * Binds this frame's block seen through {@code projection}, previous = current, until {@link #bind}; the main
+     * block keeps its state. Render thread.
+     */
+    public static void bindView(RenderContext context, Matrix4fc projection) {
+        Vec3i renderOrigin = VisualizationManager.getOrThrow(context.level()).renderOrigin();
+        Camera camera = context.camera();
+        Vec3 cameraPos = camera.position();
+        Vector3f pos = new Vector3f((float) (cameraPos.x - renderOrigin.getX()),
+                (float) (cameraPos.y - renderOrigin.getY()), (float) (cameraPos.z - renderOrigin.getZ()));
+        Matrix4f view = new Matrix4f(context.modelView()).translate(-pos.x, -pos.y, -pos.z);
+        Matrix4f proj = new Matrix4f(projection);
+        Matrix4f viewProjection = new Matrix4f(proj).mul(view);
+        Vector3f look = new Vector3f(camera.forwardVector());
+        Vector2f rot = new Vector2f(camera.xRot(), camera.yRot());
+        long ptr = VIEW_BUFFER.ptr();
+        writePackedFrustumPlanes(ptr, viewProjection);
+        writeBody(ptr + 96, context, renderOrigin, view, proj, viewProjection, pos, look, rot, view, proj,
+                viewProjection, pos, look, rot);
+        VIEW_BUFFER.markDirty();
+        VIEW_BUFFER.bind();
+    }
+
     public static void update(RenderContext context) {
         partialTick = context.partialTick();
+        LongSupplier clock = GameClock.installed();
+        gameMillis = (int) (clock != null ? clock.getAsLong()
+                : context.level().getGameTime() * 50L + (long) (partialTick * 50F));
         long ptr = BUFFER.ptr();
         setPrev();
 
@@ -134,15 +190,43 @@ public final class FrameUniforms extends UniformWriter {
             frustumCapture = false;
         }
 
-        ptr += 96;
+        renderTicks = ticks + partialTick;
+        renderSeconds = renderTicks / 20.0f;
+        writeBody(ptr + 96, context, renderOrigin, VIEW, PROJECTION, VIEW_PROJECTION, CAMERA_POS, CAMERA_LOOK,
+                CAMERA_ROT, VIEW_PREV, PROJECTION_PREV, VIEW_PROJECTION_PREV, CAMERA_POS_PREV, CAMERA_LOOK_PREV,
+                CAMERA_ROT_PREV);
 
-        ptr = writeCullData(ptr);
+        firstWrite = false;
+        BUFFER.markDirty();
+    }
 
-        ptr = writeMatrices(ptr);
+    private static void writeBody(long ptr, RenderContext context, Vec3i renderOrigin, Matrix4f view,
+                                  Matrix4f projection, Matrix4f viewProjection, Vector3f cameraPos,
+                                  Vector3f cameraLook, Vector2f cameraRot, Matrix4f viewPrev, Matrix4f projectionPrev,
+                                  Matrix4f viewProjectionPrev, Vector3f cameraPosPrev, Vector3f cameraLookPrev,
+                                  Vector2f cameraRotPrev) {
+        float depthFar = projection.m32() / projection.m22();
+
+        ptr = writeCullData(ptr, projection, depthFar);
+
+        ptr = writeMat4(ptr, view);
+        ptr = writeMat4(ptr, view.invert(VIEW_INVERSE));
+        ptr = writeMat4(ptr, viewPrev);
+        ptr = writeMat4(ptr, projection);
+        ptr = writeMat4(ptr, projection.invert(PROJECTION_INVERSE));
+        ptr = writeMat4(ptr, projectionPrev);
+        ptr = writeMat4(ptr, viewProjection);
+        ptr = writeMat4(ptr, viewProjection.invert(VIEW_PROJECTION_INVERSE));
+        ptr = writeMat4(ptr, viewProjectionPrev);
 
         ptr = writeRenderOrigin(ptr, renderOrigin);
 
-        ptr = writeCamera(ptr);
+        ptr = writeVec3(ptr, cameraPos);
+        ptr = writeVec3(ptr, cameraPosPrev);
+        ptr = writeVec3(ptr, cameraLook);
+        ptr = writeVec3(ptr, cameraLookPrev);
+        ptr = writeVec2(ptr, cameraRot.x, cameraRot.y);
+        ptr = writeVec2(ptr, cameraRotPrev.x, cameraRotPrev.y);
 
         var window = Minecraft.getInstance().getWindow();
         // Port: viewport = the world target (see writeCullData); line width stays window-based, as vanilla's.
@@ -150,18 +234,15 @@ public final class FrameUniforms extends UniformWriter {
         ptr = writeVec2(ptr, target.width, target.height);
         ptr = writeFloat(ptr, (float) target.width / (float) target.height);
         ptr = writeFloat(ptr, Math.max(2.5F, (float) window.getWidth() / 1920.0F * 2.5F));
-        ptr = writeFloat(ptr, getDepthFar());
+        ptr = writeFloat(ptr, depthFar);
 
         ptr = writeTime(ptr, context);
 
-        ptr = writeCameraIn(ptr, camera);
+        ptr = writeCameraIn(ptr, context.camera());
 
         ptr = writeInt(ptr, debugMode.ordinal());
 
-        ptr = writeFloat(ptr, 0.07f);
-
-        firstWrite = false;
-        BUFFER.markDirty();
+        writeFloat(ptr, 0.07f);
     }
 
     private static long writeRenderOrigin(long ptr, Vec3i renderOrigin) {
@@ -178,33 +259,10 @@ public final class FrameUniforms extends UniformWriter {
         CAMERA_ROT_PREV.set(CAMERA_ROT);
     }
 
-    private static long writeMatrices(long ptr) {
-        ptr = writeMat4(ptr, VIEW);
-        ptr = writeMat4(ptr, VIEW.invert(VIEW_INVERSE));
-        ptr = writeMat4(ptr, VIEW_PREV);
-        ptr = writeMat4(ptr, PROJECTION);
-        ptr = writeMat4(ptr, PROJECTION.invert(PROJECTION_INVERSE));
-        ptr = writeMat4(ptr, PROJECTION_PREV);
-        ptr = writeMat4(ptr, VIEW_PROJECTION);
-        ptr = writeMat4(ptr, VIEW_PROJECTION.invert(VIEW_PROJECTION_INVERSE));
-        ptr = writeMat4(ptr, VIEW_PROJECTION_PREV);
-        return ptr;
-    }
-
-    private static long writeCamera(long ptr) {
-        ptr = writeVec3(ptr, CAMERA_POS.x, CAMERA_POS.y, CAMERA_POS.z);
-        ptr = writeVec3(ptr, CAMERA_POS_PREV.x, CAMERA_POS_PREV.y, CAMERA_POS_PREV.z);
-        ptr = writeVec3(ptr, CAMERA_LOOK.x, CAMERA_LOOK.y, CAMERA_LOOK.z);
-        ptr = writeVec3(ptr, CAMERA_LOOK_PREV.x, CAMERA_LOOK_PREV.y, CAMERA_LOOK_PREV.z);
-        ptr = writeVec2(ptr, CAMERA_ROT.x, CAMERA_ROT.y);
-        ptr = writeVec2(ptr, CAMERA_ROT_PREV.x, CAMERA_ROT_PREV.y);
-        return ptr;
-    }
-
     private static long writeTime(long ptr, RenderContext context) {
         float partialTick = context.partialTick();
-        renderTicks = ticks + partialTick;
-        renderSeconds = renderTicks / 20.0f;
+        float renderTicks = ticks + partialTick;
+        float renderSeconds = renderTicks / 20.0f;
         long utilMillis = System.nanoTime() / 1000000L;
         float systemSeconds = (float) ((double) utilMillis / 1000.0);
         int systemMillis = (int) (utilMillis % Integer.MAX_VALUE);
@@ -231,21 +289,19 @@ public final class FrameUniforms extends UniformWriter {
         return writeInFluidAndBlock(ptr, level, blockPos, cameraPos);
     }
 
-    private static long writeCullData(long ptr) {
-        // Port: the pyramid's target, not the window: a mod may render the world at another scale.
+    private static long writeCullData(long ptr, Matrix4f projection, float depthFar) {
+        // Port: the pyramid's target, not the window: a mod may render the world at another scale, or into part of it.
         var target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
 
-        int viewWidth = target.width;
-        int viewHeight = target.height;
-        int pyramidDepth = DepthPyramid.getImageMipLevels(DepthPyramid.mip0Size(viewWidth),
-                DepthPyramid.mip0Size(viewHeight));
+        int pyramidDepth = DepthPyramid.getImageMipLevels(DepthPyramid.mip0Size(target.width),
+                DepthPyramid.mip0Size(target.height));
 
         ptr = writeFloat(ptr, Z_NEAR); // zNear
-        ptr = writeFloat(ptr, getDepthFar()); // zFar
-        ptr = writeFloat(ptr, PROJECTION.m00()); // P00
-        ptr = writeFloat(ptr, PROJECTION.m11()); // P11
-        ptr = writeFloat(ptr, viewWidth);
-        ptr = writeFloat(ptr, viewHeight);
+        ptr = writeFloat(ptr, depthFar); // zFar
+        ptr = writeFloat(ptr, projection.m00()); // P00
+        ptr = writeFloat(ptr, projection.m11()); // P11
+        ptr = writeFloat(ptr, renderExtent(target.width));
+        ptr = writeFloat(ptr, renderExtent(target.height));
         ptr = writeInt(ptr, pyramidDepth - 1); // pyramidLevels
         ptr = writeInt(ptr, 0); // useMin
 

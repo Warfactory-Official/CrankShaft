@@ -8,7 +8,7 @@ public interface VisualElement<T, C> {
 
     interface Unit<T> extends VisualElement<T, Object> {
         @Override
-        default Visual create(VisualizationContext ctx, T entity, float partialTick, Object config) {
+        default Visual create(VisualizationContext ctx, T entity, float partialTick, Object _) {
             return create(ctx, entity, partialTick);
         }
 

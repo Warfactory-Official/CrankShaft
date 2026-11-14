@@ -35,27 +35,27 @@ public class BlockOitDemoGlass extends BaseEntityBlock {
     }
 
     @Override
-    protected RenderShape getRenderShape(BlockState state) {
+    protected RenderShape getRenderShape(BlockState _) {
         return RenderShape.INVISIBLE;
     }
 
     @Override
-    protected float getShadeBrightness(BlockState state, BlockGetter level, BlockPos pos) {
+    protected float getShadeBrightness(BlockState _, BlockGetter _, BlockPos _) {
         return 1.0f;
     }
 
     @Override
-    protected VoxelShape getVisualShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
+    protected VoxelShape getVisualShape(BlockState _, BlockGetter _, BlockPos _, CollisionContext _) {
         return Shapes.empty();
     }
 
     @Override
-    protected int getLightDampening(BlockState state) {
+    protected int getLightDampening(BlockState _) {
         return 0;
     }
 
     @Override
-    protected boolean propagatesSkylightDown(BlockState state) {
+    protected boolean propagatesSkylightDown(BlockState _) {
         return true;
     }
 }

@@ -37,6 +37,7 @@ public final class ExperimentalBackends {
 
     static {
         GuestTerrainGate.setShadowPass(ShadowRenderingState::areShadowsCurrentlyBeingRendered);
+        GuestTerrainGate.setPackInUse(Iris::isPackInUseQuick);
         GuestTerrainGate.setShadowResolution(() -> ShadowRenderer.RESOLUTION);
     }
 

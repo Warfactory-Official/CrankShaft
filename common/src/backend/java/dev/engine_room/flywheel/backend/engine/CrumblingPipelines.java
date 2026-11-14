@@ -15,6 +15,9 @@ import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.InternalVertex;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
+import dev.engine_room.flywheel.backend.compile.PipelineVersions;
+import dev.engine_room.flywheel.backend.compile.ProgramGeneration;
+import dev.engine_room.flywheel.backend.compile.ProgramVersions;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.engine.instancing.InstancingDrawSelector;
@@ -24,6 +27,7 @@ import dev.engine_room.flywheel.compat.backend.PipelineShaderSource;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
+import org.jspecify.annotations.Nullable;
 
 import java.util.HashMap;
 import java.util.Locale;
@@ -53,26 +57,29 @@ public final class CrumblingPipelines {
             yield RenderPassShaders.crumblingFragment(fk.indirect(), fk.smoothness(), fk.debug());
         }
     };
-    private static final Map<Key, RenderPipeline> CACHE = new HashMap<>();
+    private static final Map<Key, ProgramVersions<RenderPipeline>> PIPELINES = new HashMap<>();
 
     private CrumblingPipelines() {
     }
 
-    public static RenderPipeline pipeline(Material crumblingMaterial, InstanceType<?> instanceType, boolean indirect) {
-        return pipeline(crumblingMaterial, instanceType, indirect, FrameUniforms.debugMode());
+    /**
+     * Null until published; requests it.
+     */
+    public static @Nullable RenderPipeline pipeline(Material crumblingMaterial, InstanceType<?> instanceType,
+                                                    boolean indirect) {
+        Key key = new Key(instanceType, indirect, BackendConfig.INSTANCE.lightSmoothness(), FrameUniforms.debugMode(),
+                crumblingMaterial.depthTest(), crumblingMaterial.backfaceCulling());
+        return PIPELINES.computeIfAbsent(key, _ -> new ProgramVersions<>(PipelineVersions.PIPELINE))
+                        .select(ProgramGeneration.NONE, key, CrumblingPipelines::request);
     }
 
-    public static RenderPipeline pipeline(Material crumblingMaterial, InstanceType<?> instanceType, boolean indirect,
-                                           DebugMode debug) {
-        LightSmoothness smoothness = BackendConfig.INSTANCE.lightSmoothness();
-        Identifier vertexId = vertexId(instanceType, indirect, debug != DebugMode.OFF);
-        TYPE_BY_VERTEX_ID.putIfAbsent(vertexId, instanceType);
-        FRAGMENT_KEY.putIfAbsent(fragmentId(indirect, smoothness, debug), new FragmentKey(indirect, smoothness, debug));
-
-        Key key = new Key(instanceType, indirect, smoothness, debug, crumblingMaterial.depthTest(),
-                crumblingMaterial.backfaceCulling());
-        RenderPipeline pipeline = CACHE.computeIfAbsent(key, CrumblingPipelines::build);
-        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
+    private static RenderPipeline request(Key key) {
+        TYPE_BY_VERTEX_ID.putIfAbsent(vertexId(key.instanceType(), key.indirect(), key.debug() != DebugMode.OFF),
+                key.instanceType());
+        FRAGMENT_KEY.putIfAbsent(fragmentId(key.indirect(), key.smoothness(), key.debug()),
+                new FragmentKey(key.indirect(), key.smoothness(), key.debug()));
+        RenderPipeline pipeline = build(key);
+        RenderPipelineCompiler.request(pipeline, SHADER_SOURCE, null);
         return pipeline;
     }
 

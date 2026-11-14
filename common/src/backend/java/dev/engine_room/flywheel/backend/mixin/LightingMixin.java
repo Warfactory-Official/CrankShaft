@@ -14,7 +14,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class LightingMixin {
     @Inject(method = "updateBuffer", at = @At("HEAD"), require = 1)
     private void flywheel$onUpdateLevelLight(Lighting.Entry entry, Vector3fc light0, Vector3fc light1,
-                                             CallbackInfo ci) {
+                                             CallbackInfo _) {
         if (entry == Lighting.Entry.LEVEL) {
             LevelUniforms.LIGHT0_DIRECTION.set(light0);
             LevelUniforms.LIGHT1_DIRECTION.set(light1);

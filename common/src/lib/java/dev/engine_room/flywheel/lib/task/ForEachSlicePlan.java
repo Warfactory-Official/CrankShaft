@@ -45,7 +45,7 @@ public record ForEachSlicePlan<T, C>(SupplierWithContext<C, List<T>> listSupplie
     }
 
     @Override
-    public void executeDirect(TaskExecutor executor, C context) {
+    public void executeDirect(TaskExecutor _, C context) {
         action.accept(listSupplier.get(context), context);
     }
 

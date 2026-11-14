@@ -1,6 +1,8 @@
 package dev.engine_room.flywheel.iris.engine;
 
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
+import dev.engine_room.flywheel.backend.compile.ProgramGeneration;
+import dev.engine_room.flywheel.backend.compile.ProgramVersions;
 import dev.engine_room.flywheel.backend.compile.component.UberCullComponent;
 import dev.engine_room.flywheel.backend.compile.core.CompilationHarness;
 import dev.engine_room.flywheel.backend.compile.core.Compile;
@@ -33,7 +35,7 @@ import java.util.List;
 /**
  * GPU replica of Iris's shadow frustum ({@link ShadowRenderer#FRUSTUM}) for the indirect guest's pass-2 cull.
  */
-final class GuestShadowCull {
+public final class GuestShadowCull {
     private static final int BINDING = 13;
     private static final int MAX_PLANES = 13;
     // std140 _FlwShadowCull: vec4[13], vec3 + int, float, float.
@@ -67,6 +69,20 @@ final class GuestShadowCull {
                                                                                  })
                                                                                  .harness("iris_shadow_cull",
                                                                                          FlwPrograms.SOURCES);
+    private final ProgramVersions<InstanceTypeIds.Snapshot> versions = new ProgramVersions<>(
+            new ProgramVersions.Tracker<>() {
+                @Override
+                public ProgramVersions.State state(InstanceTypeIds.Snapshot snapshot) {
+                    return programs.ready(snapshot) ? ProgramVersions.State.PUBLISHED
+                            : programs.pending(snapshot) ? ProgramVersions.State.PENDING
+                            : ProgramVersions.State.ABSENT;
+                }
+
+                @Override
+                public void release(InstanceTypeIds.Snapshot snapshot) {
+                    programs.release(snapshot);
+                }
+            });
     private final GlBuffer uniform = new GlBuffer(GlBufferUsage.DYNAMIC_DRAW);
     private final MemoryBlock block = MemoryBlock.calloc(SIZE, 1);
 
@@ -75,12 +91,32 @@ final class GuestShadowCull {
     }
 
     /**
-     * Uploads this frame's frustum and returns the cull program, or {@code null} when Iris culls everything.
+     * Uploads this frame's frustum and returns the newest instance type snapshot whose cull program is linked
+     * ({@link #program}), or {@code null} before the first or when Iris culls everything.
      */
-    @Nullable GlProgram prepare(Vec3i renderOrigin, Vec3 camera) {
+    InstanceTypeIds.@Nullable Snapshot prepare(Vec3i renderOrigin, Vec3 camera) {
+        if (!bindFrustum(renderOrigin, camera)) return null;
+        InstanceTypeIds.Snapshot current = InstanceTypeIds.snapshot();
+        return versions.select(new ProgramGeneration(current.types().size(), 0, 0), current, snapshot -> {
+            programs.request(snapshot);
+            return snapshot;
+        });
+    }
+
+    /**
+     * Supplies the same Iris light-frustum predicates to another GPU caster-compaction pass. Render thread.
+     */
+    public boolean bindFrustum(Vec3i renderOrigin, Vec3 camera) {
+        return bindFrustum(renderOrigin, camera, 0);
+    }
+
+    /**
+     * Retained casters supply the distance box Iris may omit when vanilla's loaded range already bounds it.
+     */
+    public boolean bindFrustum(Vec3i renderOrigin, Vec3 camera, double retainedDistance) {
         Frustum frustum = ShadowRenderer.FRUSTUM;
         if (frustum instanceof CullEverythingFrustum) {
-            return null;
+            return false;
         }
 
         long ptr = block.ptr();
@@ -105,6 +141,7 @@ final class GuestShadowCull {
         } else if (frustum instanceof BoxCullingFrustum box) {
             distance = maxDistance(((ShadowFrustumAccessors.Box) box).flywheel$boxCuller());
         }
+        if (distance == 0) distance = retainedDistance;
 
         long tail = ptr + 16L * MAX_PLANES;
         MemoryUtil.memPutFloat(tail, (float) (renderOrigin.getX() - camera.x));
@@ -116,10 +153,14 @@ final class GuestShadowCull {
         uniform.upload(block);
         GL30C.glBindBufferBase(GL31C.GL_UNIFORM_BUFFER, BINDING, uniform.handle());
 
-        return programs.get(InstanceTypeIds.snapshot());
+        return true;
     }
 
-    void delete() {
+    GlProgram program(InstanceTypeIds.Snapshot snapshot) {
+        return programs.get(snapshot);
+    }
+
+    public void delete() {
         programs.delete();
         uniform.delete();
         block.free();

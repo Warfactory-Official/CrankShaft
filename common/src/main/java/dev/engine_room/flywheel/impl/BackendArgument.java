@@ -40,7 +40,7 @@ public class BackendArgument implements ArgumentType<Backend> {
     }
 
     @Override
-    public <S> CompletableFuture<Suggestions> listSuggestions(CommandContext<S> context, SuggestionsBuilder builder) {
+    public <S> CompletableFuture<Suggestions> listSuggestions(CommandContext<S> _, SuggestionsBuilder builder) {
         String input = builder.getRemaining().toLowerCase(Locale.ROOT);
         for (Identifier id : Backend.REGISTRY.getAllIds()) {
             String idStr = id.toString();

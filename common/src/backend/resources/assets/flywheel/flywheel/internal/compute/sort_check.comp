@@ -1,0 +1,25 @@
+layout(local_size_x = 128) in;
+
+layout(std430, binding = 0) readonly buffer FlwSortSourceKeys {
+    uvec4 flw_sourceKeys[];
+};
+
+layout(std430, binding = 2) buffer FlwSortControl {
+    uint flw_sortControl[];
+};
+
+void main() {
+    uint count = flw_sortControl[0];
+    uint index = gl_GlobalInvocationID.x;
+    if (index == 0u || index >= count) {
+        return;
+    }
+
+    uvec4 previousKey = flw_sourceKeys[index - 1u];
+    uvec4 currentKey = flw_sourceKeys[index];
+    bool highInverted = previousKey.y > currentKey.y;
+    bool lowInverted = previousKey.y == currentKey.y && previousKey.x > currentKey.x;
+    if (highInverted || lowInverted) {
+        atomicOr(flw_sortControl[2], 1u);
+    }
+}

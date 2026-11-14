@@ -49,12 +49,14 @@ abstract class LevelRendererSolidPassMixin {
         }
         flywheel$solidPass = pass;
         try {
+            DistantHorizonsCompat.solidTerrainPhase(true);
             original.call(renderer, chunks, frame, pass);
             if (manager != null) {
                 flywheel$solidPass = LevelRenderPassScope.afterSolid(flywheel$solidPass, manager,
                         RenderContextImpl.captureCurrent(renderer, minecraft.level, RenderSystem.getModelViewStack()));
             }
         } finally {
+            DistantHorizonsCompat.solidTerrainPhase(false);
             callerPass.set(flywheel$solidPass);
             flywheel$solidPass = null;
         }
@@ -83,9 +85,9 @@ abstract class LevelRendererSolidPassMixin {
                     target = "Lnet/minecraft/client/renderer/chunk/ChunkSectionsToRender;renderGroup(Lnet/minecraft/client/renderer/chunk/ChunkSectionLayerGroup;Lcom/mojang/renderpearl/api/commands/RenderPass;Lcom/mojang/renderpearl/api/textures/GpuSampler;Lcom/mojang/renderpearl/api/textures/GpuTextureView;Z)V"),
             require = 1)
     private void flywheel$prepareSodiumTerrain(ChunkSectionsToRender chunks, ChunkSectionLayerGroup group,
-                                         RenderPass pass, GpuSampler sampler, GpuTextureView atlas,
-                                         boolean wireframe, Operation<Void> original,
-                                         @Local(argsOnly = true) LocalRef<RenderPass> methodPass) {
+                                               RenderPass pass, GpuSampler sampler, GpuTextureView atlas,
+                                               boolean wireframe, Operation<Void> original,
+                                               @Local(argsOnly = true) LocalRef<RenderPass> methodPass) {
         VisualizationManagerImpl manager = VisualizationManagerImpl.get(Minecraft.getInstance().level);
         if (!SodiumCompat.ACTIVE || manager == null) {
             original.call(chunks, group, pass, sampler, atlas, wireframe);

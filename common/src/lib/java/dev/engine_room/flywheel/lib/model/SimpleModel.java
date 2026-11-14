@@ -12,7 +12,12 @@ public class SimpleModel implements Model {
 
     public SimpleModel(List<ConfiguredMesh> meshes) {
         this.meshes = List.copyOf(meshes);
-        this.boundingSphere = encloseAll(this.meshes);
+        boundingSphere = encloseAll(this.meshes);
+    }
+
+    public SimpleModel(List<ConfiguredMesh> meshes, Vector4fc boundingSphere) {
+        this.meshes = List.copyOf(meshes);
+        this.boundingSphere = boundingSphere;
     }
 
     private static Vector4fc encloseAll(List<ConfiguredMesh> meshes) {

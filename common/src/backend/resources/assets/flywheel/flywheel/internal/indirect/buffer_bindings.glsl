@@ -10,3 +10,8 @@
 #define _FLW_LIGHT_SECTIONS_BUFFER_BINDING 6
 
 #define _FLW_MATRIX_BUFFER_BINDING 7
+
+// Port: ordered compaction (order.glsl); the apply and draw after it rebind these slots.
+#define _FLW_ORDERED_MODEL_BUFFER_BINDING 1
+#define _FLW_ORDERED_PAGE_BUFFER_BINDING 4
+#define _FLW_VIS_WORDS_BUFFER_BINDING 6

@@ -72,11 +72,7 @@ public class DepthPyramid {
     }
 
     public void regenerate(int depthBufferTextureId, int framebufferWidth, int framebufferHeight) {
-        int width = mip0Size(framebufferWidth);
-        int height = mip0Size(framebufferHeight);
-        int mipLevels = getImageMipLevels(width, height);
-
-        createPyramidMips(mipLevels, width, height);
+        prepare(framebufferWidth, framebufferHeight);
 
         GL42.glMemoryBarrier(GL42.GL_FRAMEBUFFER_BARRIER_BIT);
 
@@ -87,7 +83,27 @@ public class DepthPyramid {
         downsampleFirstProgram.bind();
 
         GL42.glBindImageTexture(1, pyramidTextureId, 0, false, 0, GL15.GL_WRITE_ONLY, GL30.GL_R32F);
-        GL43.glDispatchCompute(Mth.positiveCeilDiv(width << 1, 64), Mth.positiveCeilDiv(height << 1, 64), 1);
+        GL43.glDispatchCompute(Mth.positiveCeilDiv(lastWidth << 1, 64), Mth.positiveCeilDiv(lastHeight << 1, 64), 1);
+
+        reduce();
+    }
+
+    /**
+     * Allocates the mip chain for a full-resolution source. External producers fill mip 0 before {@link #reduce()}. Render thread.
+     */
+    public void prepare(int framebufferWidth, int framebufferHeight) {
+        int width = mip0Size(framebufferWidth);
+        int height = mip0Size(framebufferHeight);
+        createPyramidMips(getImageMipLevels(width, height), width, height);
+    }
+
+    /**
+     * Reduces a prepared mip 0 and makes the completed pyramid visible to texture reads. Render thread.
+     */
+    public void reduce() {
+        int width = lastWidth;
+        int height = lastHeight;
+        int mipLevels = getImageMipLevels(width, height);
 
         var downsampleSecondProgram = programs.getDownsampleSecondProgram();
         downsampleSecondProgram.bind();

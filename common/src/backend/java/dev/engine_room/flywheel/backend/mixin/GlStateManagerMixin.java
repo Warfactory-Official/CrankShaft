@@ -12,23 +12,23 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(GlStateManager.class)
 abstract class GlStateManagerMixin {
     @Inject(method = "_glBindBuffer(II)V", at = @At("RETURN"), require = 1)
-    private static void flywheel$onBindBuffer(int target, int buffer, CallbackInfo ci) {
+    private static void flywheel$onBindBuffer(int target, int buffer, CallbackInfo _) {
         GlStateTracker._setBuffer(target, buffer);
     }
 
     @Inject(method = "_glBindVertexArray(I)V", at = @At("RETURN"), require = 1)
-    private static void flywheel$onBindVertexArray(int array, CallbackInfo ci) {
+    private static void flywheel$onBindVertexArray(int array, CallbackInfo _) {
         GlStateTracker._setVertexArray(array);
     }
 
     @Inject(method = "_glUseProgram(I)V", at = @At("RETURN"), require = 1)
-    private static void flywheel$onUseProgram(int program, CallbackInfo ci) {
+    private static void flywheel$onUseProgram(int program, CallbackInfo _) {
         GlStateTracker._setProgram(program);
         GlStateTracker.invalidateEncoderProgramCache();
     }
 
     @Inject(method = "_glDeleteBuffers(I)V", at = @At("RETURN"), require = 1)
-    private static void flywheel$onDeleteBuffers(int buffer, CallbackInfo ci) {
+    private static void flywheel$onDeleteBuffers(int buffer, CallbackInfo _) {
         GlStateTracker._onBufferDeleted(buffer);
     }
 }

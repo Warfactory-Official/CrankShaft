@@ -1,0 +1,54 @@
+layout(local_size_x = 128) in;
+
+layout(std430, binding = 0) readonly buffer FlwSortSourceKeys {
+    uvec4 flw_sourceKeys[];
+};
+
+layout(std430, binding = 2) readonly buffer FlwSortControl {
+    uint flw_sortControl[];
+};
+
+layout(std430, binding = 3) writeonly buffer FlwSortHistogram {
+    uint flw_sortHistogram[];
+};
+
+uniform uint flw_digit;
+
+shared uint flw_groupHistogram[16];
+
+void main() {
+    uint count = flw_sortControl[0];
+    if (flw_sortControl[2] == 0u) {
+        return;
+    }
+
+    uint group = gl_WorkGroupID.x;
+    uint groupStart = group * 128u;
+    if (groupStart >= count) {
+        return;
+    }
+
+    uint lane = gl_LocalInvocationID.x;
+    if (lane < 16u) {
+        flw_groupHistogram[lane] = 0u;
+    }
+    barrier();
+
+    uint index = groupStart + lane;
+    if (index < count) {
+        uvec4 key = flw_sourceKeys[index];
+        uint keyWord = key.x;
+        uint wordDigit = flw_digit;
+        if (flw_digit >= 8u) {
+            keyWord = key.y;
+            wordDigit = flw_digit - 8u;
+        }
+        uint digit = (keyWord >> (wordDigit * 4u)) & 15u;
+        atomicAdd(flw_groupHistogram[digit], 1u);
+    }
+    barrier();
+
+    if (lane < 16u) {
+        flw_sortHistogram[group * 16u + lane] = flw_groupHistogram[lane];
+    }
+}

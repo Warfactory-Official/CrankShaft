@@ -15,6 +15,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
@@ -26,10 +27,10 @@ final class VkTerrainHiZ {
     private boolean freshThisFrame;
 
     VkTerrainHiZ() {
-        VkBuffer ubo0 = new VkBuffer(VK12.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, UBO_BYTES);
+        VkBuffer ubo0 = new VkBuffer(VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, UBO_BYTES);
         VkBuffer ubo1;
         try {
-            ubo1 = new VkBuffer(VK12.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, UBO_BYTES);
+            ubo1 = new VkBuffer(VK10.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, UBO_BYTES);
         } catch (Throwable t) {
             ubo0.delete();
             throw t;
@@ -42,6 +43,7 @@ final class VkTerrainHiZ {
     }
 
     void writeFrame(ChunkRenderMatrices matrices, Minecraft mc, int parity) {
+        freshThisFrame = false;
         Vec3 camPos = mc.gameRenderer.mainCamera().position();
         int cbx = Mth.floor(camPos.x);
         int cby = Mth.floor(camPos.y);
@@ -57,12 +59,6 @@ final class VkTerrainHiZ {
         MemoryUtil.memPutInt(ptr + 84L, cby);
         MemoryUtil.memPutInt(ptr + 88L, cbz);
         MemoryUtil.memPutInt(ptr + 92L, t.height);
-    }
-
-    void writeTranslucentFrame(ChunkRenderMatrices matrices, Minecraft mc) {
-        writeFrame(matrices, mc, 0);
-        writeFrame(matrices, mc, 1);
-        freshThisFrame = false;
     }
 
     void markFresh() {

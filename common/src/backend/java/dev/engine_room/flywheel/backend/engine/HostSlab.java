@@ -41,7 +41,7 @@ public final class HostSlab implements Slab {
     }
 
     @Override
-    public void flushRange(long byteOffset, long byteSize) {
+    public void flushRange(long _, long _) {
     }
 
     private long capacityBytes() {

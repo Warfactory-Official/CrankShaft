@@ -8,6 +8,7 @@ struct _FlwGuestModel {
     mat4 embed;
     vec4 bounds;
     uvec4 offsets;
+    // instances, draws, ordered (visible instances keep instance order), first visibility word if ordered
     uvec4 counts;
 };
 
@@ -25,11 +26,12 @@ layout(std430, binding = 2) buffer _FlwGuestCommands {
 
 layout(std430) readonly buffer _FlwGuestDrawIndices { uint _flw_guestDrawIndices[]; };
 
-void main() {
-    uint index = gl_GlobalInvocationID.x;
-    _FlwGuestModel model = _flw_guestModels[gl_WorkGroupID.y];
-    if (index >= model.counts.x) return;
-    uint instanceOffset = model.offsets.x + index * model.offsets.w;
+// Visible bits per 32 instances of the ordered models, for guest_order.comp.
+layout(std430) writeonly buffer _FlwGuestOrderWords { uint _flw_guestOrderWords[]; };
+
+shared uint _flw_orderWords[2];
+
+bool _flw_guestVisible(_FlwGuestModel model, uint instanceOffset) {
     FlwInstance instance = _flw_unpackInstance(instanceOffset);
     vec3 center = model.bounds.xyz;
     float radius = model.bounds.w;
@@ -42,8 +44,28 @@ void main() {
     vec3 rows = column0 + column1 + column2;
     radius *= sqrt(columnNorm * max(rows.x, max(rows.y, rows.z)));
     for (int plane = 0; plane < 6; plane++) {
-        if (dot(_flw_guestPlanes[plane], vec4(center, 1.0)) < -radius) return;
+        if (dot(_flw_guestPlanes[plane], vec4(center, 1.0)) < -radius) return false;
     }
+    return true;
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    _FlwGuestModel model = _flw_guestModels[gl_WorkGroupID.y];
+    if (gl_WorkGroupID.x * 64u >= model.counts.x) return;
+    uint instanceOffset = model.offsets.x + index * model.offsets.w;
+    bool visible = index < model.counts.x && _flw_guestVisible(model, instanceOffset);
+    if (model.counts.z != 0u) {
+        uint lane = gl_LocalInvocationID.x;
+        if (lane < 2u) _flw_orderWords[lane] = 0u;
+        barrier();
+        if (visible) atomicOr(_flw_orderWords[lane >> 5u], 1u << (lane & 31u));
+        barrier();
+        uint word = gl_WorkGroupID.x * 2u + lane;
+        if (lane < 2u && word * 32u < model.counts.x) _flw_guestOrderWords[model.counts.w + word] = _flw_orderWords[lane];
+        return;
+    }
+    if (!visible) return;
     uint commandBase = _flw_guestDrawIndices[model.offsets.z] * 12u;
     uint outputIndex = atomicAdd(_flw_guestCommands[commandBase + 1u], 1u);
     _flw_visibleInstances[model.offsets.y + outputIndex] = instanceOffset;

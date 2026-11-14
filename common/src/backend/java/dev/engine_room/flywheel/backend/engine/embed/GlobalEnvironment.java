@@ -15,7 +15,7 @@ public class GlobalEnvironment implements Environment {
     }
 
     @Override
-    public void setupDraw(GlProgram drawProgram) {
+    public void setupDraw(GlProgram _) {
     }
 
     @Override

@@ -43,6 +43,7 @@ public final class MaterialRenderState {
         // Everything in the comparator should be here.
         return lhs.blur() == rhs.blur()
                 && lhs.mipmap() == rhs.mipmap()
+                && lhs.useTextureSampler() == rhs.useTextureSampler()
                 && lhs.backfaceCulling() == rhs.backfaceCulling()
                 && lhs.polygonOffset() == rhs.polygonOffset()
                 && lhs.depthTest() == rhs.depthTest()
@@ -121,6 +122,10 @@ public final class MaterialRenderState {
         if (cmp != 0) {
             return cmp;
         }
+        cmp = Boolean.compare(lhs.useTextureSampler(), rhs.useTextureSampler());
+        if (cmp != 0) {
+            return cmp;
+        }
         cmp = Boolean.compare(lhs.backfaceCulling(), rhs.backfaceCulling());
         if (cmp != 0) {
             return cmp;
@@ -138,7 +143,7 @@ public final class MaterialRenderState {
     }
 
     /**
-     * {@link #materialEquals} minus texture/blur/mipmap: true iff two materials select the same draw pipeline.
+     * {@link #materialEquals} minus texture/blur/mipmap/useTextureSampler: true iff two materials select the same draw pipeline.
      */
     public static boolean pipelineEquals(Material lhs, Material rhs) {
         if (lhs == rhs) {

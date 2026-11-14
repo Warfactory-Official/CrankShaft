@@ -1,0 +1,65 @@
+layout(local_size_x = 128) in;
+
+layout(std430, binding = 0) readonly buffer FlwSortSourceKeys {
+    uvec4 flw_sourceKeys[];
+};
+
+layout(std430, binding = 1) writeonly buffer FlwSortTargetKeys {
+    uvec4 flw_targetKeys[];
+};
+
+layout(std430, binding = 2) readonly buffer FlwSortControl {
+    uint flw_sortControl[];
+};
+
+layout(std430, binding = 4) readonly buffer FlwSortPrefix {
+    uint flw_sortPrefix[];
+};
+
+uniform uint flw_digit;
+
+shared uint flw_groupDigits[128];
+
+void main() {
+    uint count = flw_sortControl[0];
+    if (flw_sortControl[2] == 0u) {
+        return;
+    }
+
+    uint group = gl_WorkGroupID.x;
+    uint groupStart = group * 128u;
+    if (groupStart >= count) {
+        return;
+    }
+
+    uint lane = gl_LocalInvocationID.x;
+    uint index = groupStart + lane;
+    uint digit = 16u;
+    uvec4 key = uvec4(0u);
+    if (index < count) {
+        key = flw_sourceKeys[index];
+        uint keyWord = key.x;
+        uint wordDigit = flw_digit;
+        if (flw_digit >= 8u) {
+            keyWord = key.y;
+            wordDigit = flw_digit - 8u;
+        }
+        digit = (keyWord >> (wordDigit * 4u)) & 15u;
+    }
+    flw_groupDigits[lane] = digit;
+    barrier();
+
+    if (index >= count) {
+        return;
+    }
+
+    uint rank = 0u;
+    for (uint previousLane = 0u; previousLane < lane; ++previousLane) {
+        if (flw_groupDigits[previousLane] == digit) {
+            ++rank;
+        }
+    }
+
+    uint destination = flw_sortPrefix[group * 16u + digit] + rank;
+    flw_targetKeys[destination] = key;
+}

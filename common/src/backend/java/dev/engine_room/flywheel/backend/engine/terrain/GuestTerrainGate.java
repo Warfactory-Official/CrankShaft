@@ -11,34 +11,14 @@ import java.util.function.BooleanSupplier;
 import java.util.function.IntSupplier;
 
 /**
- * Opt-in for drawing terrain while a shaderpack guest owns the frame. Off by default: engaging it moves every Iris
- * baseline, since terrain stops being Iris's own draw.
+ * Terrain ownership while a shaderpack guest owns the frame, following the configured terrain mode.
  */
 public final class GuestTerrainGate {
     public static final int REGION_TIME_BINDING = 9;
-    private static final boolean MESH_PROPERTY = Boolean.getBoolean("crankshaft.iris.mesh");
-    private static final boolean SHADOW_OFF = Boolean.getBoolean("crankshaft.iris.terrainShadow.off");
     /**
-     * Startup-only: trade additional per-quad storage for cached current-depth recovery on the mesh guest.
+     * The mesh guest uses raster recovery rather than cached per-quad depth records.
      */
-    public static final boolean CACHE_RECOVERY = MESH_PROPERTY && Boolean.getBoolean(
-            "crankshaft.iris.mesh.cacheRecovery");
-    /**
-     * Iris re-enters Sodium's terrain draw for its shadow pass, which needs the pack's shadow programs and its own
-     * frustum. Installed by the {@code :iris} module; always false without it.
-     */
-    private static BooleanSupplier shadowPass = () -> false;
-    /**
-     * Shadow-map edge length. The cull's sub-pixel rejection is resolution-dependent, so the camera view's size
-     * would drop small casters the shadow map does resolve.
-     */
-    private static IntSupplier shadowResolution = () -> 0;
-    /**
-     * Sodium's live per-frame terrain uniforms, republished by the seam that cancels Sodium's own draw. A pack's
-     * Sodium-patched terrain program reads both; the slice is ring-allocated, so it is only valid for this frame.
-     */
-    private static @Nullable GpuBufferSlice globals;
-    private static @Nullable GpuBuffer sectionTimeInfo;
+    public static final boolean CACHE_RECOVERY = false;
     /**
      * Set with the mesh draw strategy by the guest engine on the render thread, cleared on deletion. The terrain
      * dispatcher still builds its canonical commands; the mesh guest consumes them without CPU geometry repacking.
@@ -61,6 +41,30 @@ public final class GuestTerrainGate {
      */
     public static int cameraIntX, cameraIntY, cameraIntZ;
     public static float cameraFracX, cameraFracY, cameraFracZ;
+    /**
+     * Iris re-enters Sodium's terrain draw for its shadow pass, which needs the pack's shadow programs and its own
+     * frustum. Installed by the {@code :iris} module; always false without it.
+     */
+    private static BooleanSupplier shadowPass = () -> false;
+    /**
+     * Installed by the {@code :iris} module: a pack's own program replaces every native Sodium terrain draw.
+     */
+    private static BooleanSupplier packInUse = () -> false;
+    /**
+     * Shadow-map edge length. The cull's sub-pixel rejection is resolution-dependent, so the camera view's size
+     * would drop small casters the shadow map does resolve.
+     */
+    private static IntSupplier shadowResolution = () -> 0;
+    /**
+     * Installed by the {@code :iris} module: the pack's shadow pass takes reversed depth natively.
+     */
+    private static BooleanSupplier shadowReversed = () -> false;
+    /**
+     * Sodium's live per-frame terrain uniforms, republished by the seam that cancels Sodium's own draw. A pack's
+     * Sodium-patched terrain program reads both; the slice is ring-allocated, so it is only valid for this frame.
+     */
+    private static @Nullable GpuBufferSlice globals;
+    private static @Nullable GpuBuffer sectionTimeInfo;
 
     private GuestTerrainGate() {
     }
@@ -71,18 +75,26 @@ public final class GuestTerrainGate {
     }
 
     public static boolean meshEnabled() {
-        return enabled() && MESH_PROPERTY;
+        return enabled();
     }
 
     /**
-     * Independently disable shadow takeover while keeping the main terrain guest.
+     * Shadow takeover follows terrain ownership.
      */
     public static boolean shadowEnabled() {
-        return enabled() && !SHADOW_OFF;
+        return enabled();
     }
 
     public static void setShadowPass(BooleanSupplier predicate) {
         shadowPass = predicate;
+    }
+
+    public static void setPackInUse(BooleanSupplier predicate) {
+        packInUse = predicate;
+    }
+
+    public static boolean packInUse() {
+        return packInUse.getAsBoolean();
     }
 
     public static void setShadowResolution(IntSupplier resolution) {
@@ -93,12 +105,24 @@ public final class GuestTerrainGate {
         return shadowResolution.getAsInt();
     }
 
+    public static void setShadowReversed(BooleanSupplier predicate) {
+        shadowReversed = predicate;
+    }
+
+    public static boolean shadowReversed() {
+        return shadowReversed.getAsBoolean();
+    }
+
     public static boolean ownsTerrain() {
         return enabled() && !shadowPass.getAsBoolean();
     }
 
     public static boolean ownsShadowTerrain() {
         return shadowEnabled() && shadowPass.getAsBoolean();
+    }
+
+    public static boolean renderingShadow() {
+        return shadowPass.getAsBoolean();
     }
 
     public static void setSodiumUniforms(GpuBufferSlice globals, GpuBuffer sectionTimeInfo) {

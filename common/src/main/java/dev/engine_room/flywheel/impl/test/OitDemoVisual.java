@@ -78,7 +78,7 @@ public final class OitDemoVisual extends AbstractBlockEntityVisual<TileEntityOit
     }
 
     @Override
-    public void beginFrame(DynamicVisual.Context ctx) {
+    public void beginFrame(DynamicVisual.Context _) {
         int newMask = computeCullMask();
         if (newMask == cullMask) {
             return;
@@ -107,7 +107,7 @@ public final class OitDemoVisual extends AbstractBlockEntityVisual<TileEntityOit
     }
 
     @Override
-    public void updateLight(float partialTick) {
+    public void updateLight(float _) {
         packedLight = computePackedLight();
         instance.light(packedLight);
         instance.setChanged();

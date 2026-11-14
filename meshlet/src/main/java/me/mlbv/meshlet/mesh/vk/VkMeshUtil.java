@@ -3,8 +3,10 @@
 package me.mlbv.meshlet.mesh.vk;
 
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
+
 import com.mojang.renderpearl.backend.vulkan.VulkanGpuBuffer;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDrawDispatcher.VisibleRegionBatch;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainReceiverBuffers;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import org.lwjgl.system.MemoryStack;
@@ -24,6 +26,14 @@ final class VkMeshUtil {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkBufferDeviceAddressInfo info = VkBufferDeviceAddressInfo.calloc(stack).sType$Default().buffer(vkBuffer);
             return VK12.vkGetBufferDeviceAddress(VkContext.vkDevice(), info);
+        }
+    }
+
+    static void writeReceiverAddrTable(long ptr, VisibleRegionBatch batch, int n) {
+        for (int slot = 0; slot < n; slot++) {
+            var receivers = TerrainReceiverBuffers.find(batch.geometryBuffers[slot]);
+            long address = receivers == null ? 0L : deviceAddress(((VulkanGpuBuffer) receivers).vkBuffer());
+            MemoryUtil.memPutLong(ptr + (long) slot * GEO_ENTRY_BYTES, address);
         }
     }
 
@@ -48,12 +58,12 @@ final class VkMeshUtil {
             VkMemoryBarrier.Buffer b = VkMemoryBarrier.calloc(1, stack)
                                                       .sType$Default()
                                                       .srcAccessMask(
-                                                              VK12.VK_ACCESS_SHADER_WRITE_BIT | VK12.VK_ACCESS_TRANSFER_WRITE_BIT)
+                                                              VK10.VK_ACCESS_SHADER_WRITE_BIT | VK10.VK_ACCESS_TRANSFER_WRITE_BIT)
                                                       .dstAccessMask(
-                                                              VK12.VK_ACCESS_SHADER_READ_BIT | VK12.VK_ACCESS_SHADER_WRITE_BIT);
-            VK12.vkCmdPipelineBarrier(cmd,
-                    VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK12.VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, b, null, null);
+                                                              VK10.VK_ACCESS_SHADER_READ_BIT | VK10.VK_ACCESS_SHADER_WRITE_BIT);
+            VK10.vkCmdPipelineBarrier(cmd,
+                    VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK10.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, b, null, null);
         }
     }
 
@@ -61,11 +71,11 @@ final class VkMeshUtil {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkMemoryBarrier.Buffer b = VkMemoryBarrier.calloc(1, stack)
                                                       .sType$Default()
-                                                      .srcAccessMask(VK12.VK_ACCESS_SHADER_WRITE_BIT)
+                                                      .srcAccessMask(VK10.VK_ACCESS_SHADER_WRITE_BIT)
                                                       .dstAccessMask(
-                                                              VK12.VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK12.VK_ACCESS_SHADER_READ_BIT);
-            VK12.vkCmdPipelineBarrier(cmd, VK12.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                    VK12.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT
+                                                              VK10.VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK10.VK_ACCESS_SHADER_READ_BIT);
+            VK10.vkCmdPipelineBarrier(cmd, VK10.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK10.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT
                             | EXTMeshShader.VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT
                             | EXTMeshShader.VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT,
                     0, b, null, null);

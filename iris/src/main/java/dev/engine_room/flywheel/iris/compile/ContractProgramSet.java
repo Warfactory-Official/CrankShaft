@@ -35,7 +35,14 @@ public interface ContractProgramSet {
     @Nullable DeferredOitProfile flywheel$deferredOit();
 
     /**
+     * Startup-selected forward variants and late resolve state for this dimension, owned by its pipeline.
+     */
+    @Nullable ForwardOit flywheel$forwardOit();
+
+    /**
      * Returns a validated adapter stage only after the whole dimension's plan has been accepted.
      */
     @Nullable String flywheel$patchedFragment(String program);
+
+    @Nullable LightDemandSources flywheel$lightDemand();
 }

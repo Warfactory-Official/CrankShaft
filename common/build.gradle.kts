@@ -72,7 +72,6 @@ dependencies {
     compileOnly("maven.modrinth:entitytexturefeatures:${etfVersion}") { isTransitive = false }
     compileOnly("maven.modrinth:entity-model-features:${emfVersion}") { isTransitive = false }
     compileOnly("maven.modrinth:polytone:${polytoneCompileVersion}") { isTransitive = false }
-    compileOnly("maven.modrinth:vitrail-shaders:${vitrailVersion}") { isTransitive = false }
     // Jar-in-jar'd libraries their APIs expose: Polytone's content managers -> codecui; LambDynamicLights -> its
     // behavior API, SpruceUI and Yumi supertypes.
     compileOnly(files(provider { nestedJars("maven.modrinth:polytone:${polytoneCompileVersion}", "codecui") }))

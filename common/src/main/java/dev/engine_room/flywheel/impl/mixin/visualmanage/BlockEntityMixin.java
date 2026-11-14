@@ -17,7 +17,7 @@ abstract class BlockEntityMixin {
     protected Level level;
 
     @Inject(method = "setRemoved()V", at = @At("TAIL"), require = 1)
-    private void flywheel$removeVisual(CallbackInfo ci) {
+    private void flywheel$removeVisual(CallbackInfo _) {
         VisualizationManager manager = VisualizationManager.get(level);
         if (manager == null) {
             return;

@@ -20,8 +20,8 @@ final class FabricDisplayBlockCapture extends DisplayBlockCapture {
 
     @Override
     public void submitBlockModel(PoseStack poseStack, Function<ChunkSectionLayer, RenderType> renderTypeFunction,
-                                 boolean translucent, List<BlockStateModelPart> parts, @Nullable Mesh mesh,
-                                 int[] tintLayers, int lightCoords, int overlayCoords, int outlineColor) {
+                                 boolean _, List<BlockStateModelPart> parts, @Nullable Mesh mesh,
+                                 int[] tintLayers, int _, int _, int _) {
         meshes.add(new MeshSubmit(poseStack.last().copy(), renderTypeFunction.apply(ChunkSectionLayer.SOLID),
                 List.copyOf(parts), mesh, tintLayers.clone()));
     }

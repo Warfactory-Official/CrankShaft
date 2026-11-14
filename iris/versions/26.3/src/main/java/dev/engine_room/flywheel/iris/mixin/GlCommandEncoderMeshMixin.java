@@ -11,11 +11,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(targets = "com.mojang.renderpearl.backend.opengl.GlCommandEncoder")
 abstract class GlCommandEncoderMeshMixin {
-    @Inject(method = "setupDraw", at = @At("TAIL"), require = 1)
-    private void flywheel$fontAlbedo(GlRenderPass pass, CallbackInfo ci) {
-        if (pass.pipeline.program() instanceof GuestProgram program) program.setupAlbedo(pass.uniforms);
-    }
-
     // Renderpearl and Iris have installed the pass state before the mesh draw replaces the ordinary primitive draw.
     @Inject(method = "executeDraw",
             at = @At(value = "INVOKE",
@@ -23,8 +18,8 @@ abstract class GlCommandEncoderMeshMixin {
                     shift = At.Shift.AFTER),
             cancellable = true,
             require = 1)
-    private void flywheel$drawMesh(GlRenderPass pass, int baseVertex, int firstIndex, int drawCount,
-                                   @Nullable IndexType indexType, int instanceCount, int firstInstance,
+    private void flywheel$drawMesh(GlRenderPass pass, int _, int _, int _,
+                                   @Nullable IndexType _, int _, int _,
                                    CallbackInfo ci) {
         if (pass.pipeline.program() instanceof GuestProgram program && program.meshQuads() != 0) {
             program.drawMeshCommands();

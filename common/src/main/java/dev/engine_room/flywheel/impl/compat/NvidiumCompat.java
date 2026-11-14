@@ -4,7 +4,6 @@ import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.TerrainMode;
 import dev.engine_room.flywheel.backend.engine.terrain.TerrainDispatchers;
 import dev.engine_room.flywheel.impl.BackendManagerImpl;
-import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 
 /**
@@ -24,8 +23,4 @@ public final class NvidiumCompat {
         return id.getNamespace().equals("nvidium");
     }
 
-    public static Component terrainOwnedTooltip() {
-        return Component.translatable("flywheel.compat.nvidium.terrain_owned",
-                BackendConfig.INSTANCE.terrainMode().token());
-    }
 }

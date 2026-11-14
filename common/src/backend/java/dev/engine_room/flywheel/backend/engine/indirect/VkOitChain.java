@@ -30,15 +30,15 @@ abstract class VkOitChain {
     final OitFramebuffer framebuffer;
     #if MC >= 26.3
     private final RenderPass.UniformUploader chunkSectionCapture = new RenderPass.UniformUploader() {
-        @Override public void setUniform(String name, GpuBufferSlice slice) {
+        @Override public void setUniform(String _, GpuBufferSlice slice) {
             capturedChunkSection = slice;
         }
-        @Override public void pushConstants(ByteBuffer data) {
+        @Override public void pushConstants(ByteBuffer _) {
             throw new UnsupportedOperationException("Vanilla chunk draw uploaded unexpected push constants");
         }
     };
     #else
-    private final RenderPass.UniformUploader chunkSectionCapture = (name, slice) -> capturedChunkSection = slice;
+    private final RenderPass.UniformUploader chunkSectionCapture = (_, slice) -> capturedChunkSection = slice;
     #endif
     private GpuBufferSlice capturedChunkSection;
 

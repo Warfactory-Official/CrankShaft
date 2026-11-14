@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.backend.compile;
 
 import com.google.common.collect.ImmutableList;
+import dev.engine_room.flywheel.api.instance.GpuSimulation;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.compile.component.UberCullComponent;
 import dev.engine_room.flywheel.backend.compile.core.CompilationHarness;
@@ -24,6 +25,7 @@ public class IndirectPrograms extends AtomicReferenceCounted {
     private static final Identifier CULL_SHADER_API_IMPL = ResourceUtil.rl("internal/indirect/cull_api_impl.glsl");
     private static final Identifier CULL_SHADER_MAIN = ResourceUtil.rl("internal/indirect/cull.glsl");
     private static final Identifier APPLY_SHADER_MAIN = ResourceUtil.rl("internal/indirect/apply.glsl");
+    private static final Identifier ORDER_SHADER_MAIN = ResourceUtil.rl("internal/indirect/order.glsl");
     private static final Identifier SCATTER_SHADER_MAIN = ResourceUtil.rl("internal/indirect/scatter.glsl");
     private static final Identifier DOWNSAMPLE_FIRST = ResourceUtil.rl("internal/indirect/downsample_first.glsl");
     private static final Identifier DOWNSAMPLE_SECOND = ResourceUtil.rl("internal/indirect/downsample_second.glsl");
@@ -40,6 +42,7 @@ public class IndirectPrograms extends AtomicReferenceCounted {
 
     private static final Compile<InstanceTypeIds.Snapshot> CULL = new Compile<>();
     private static final Compile<Identifier> UTIL = new Compile<>();
+    private static final Compile<GpuProgramKey> GPU = new Compile<>();
 
     private static final List<String> EXTENSIONS = getExtensions(GlCompat.MAX_GLSL_VERSION);
     private static final List<String> COMPUTE_EXTENSIONS = getComputeExtensions(GlCompat.MAX_GLSL_VERSION);
@@ -51,15 +54,35 @@ public class IndirectPrograms extends AtomicReferenceCounted {
     private final CompilationHarness<InstanceTypeIds.Snapshot> cullingPass2;
     private final CompilationHarness<InstanceTypeIds.Snapshot> cullingFrustum;
     private final CompilationHarness<Identifier> utils;
+    private final CompilationHarness<GpuProgramKey> gpu;
+    private final ProgramVersions<InstanceTypeIds.Snapshot> cull = new ProgramVersions<>(
+            new ProgramVersions.Tracker<>() {
+                @Override
+                public ProgramVersions.State state(InstanceTypeIds.Snapshot snapshot) {
+                    boolean ready = true;
+                    for (var harness : cullHarnesses()) {
+                        if (harness.ready(snapshot)) continue;
+                        if (!harness.pending(snapshot)) return ProgramVersions.State.ABSENT;
+                        ready = false;
+                    }
+                    return ready ? ProgramVersions.State.PUBLISHED : ProgramVersions.State.PENDING;
+                }
+
+                @Override
+                public void release(InstanceTypeIds.Snapshot snapshot) {
+                    for (var harness : cullHarnesses()) harness.release(snapshot);
+                }
+            });
 
     private IndirectPrograms(CompilationHarness<InstanceTypeIds.Snapshot> culling,
                              CompilationHarness<InstanceTypeIds.Snapshot> cullingPass2,
                              CompilationHarness<InstanceTypeIds.Snapshot> cullingFrustum,
-                             CompilationHarness<Identifier> utils) {
+                             CompilationHarness<Identifier> utils, CompilationHarness<GpuProgramKey> gpu) {
         this.culling = culling;
         this.cullingPass2 = cullingPass2;
         this.cullingFrustum = cullingFrustum;
         this.utils = utils;
+        this.gpu = gpu;
     }
 
     private static List<String> getExtensions(GlslVersion glslVersion) {
@@ -103,9 +126,10 @@ public class IndirectPrograms extends AtomicReferenceCounted {
             var cullingPass2Compiler = createCullingCompiler(sources, "_FLW_CULL_PASS2", "_pass2");
             var cullingFrustumCompiler = createCullingCompiler(sources, "_FLW_CULL_FRUSTUM_ONLY", "_frustum");
             var utilCompiler = createUtilCompiler(sources);
+            var gpuCompiler = createGpuCompiler(sources);
 
             IndirectPrograms newInstance = new IndirectPrograms(cullingCompiler, cullingPass2Compiler,
-                    cullingFrustumCompiler, utilCompiler);
+                    cullingFrustumCompiler, utilCompiler, gpuCompiler);
 
             setInstance(newInstance);
             FlwBackend.LOGGER.info("[indirect] reload complete: allLoaded={} | IndirectPrograms.CL={} id={}",
@@ -124,7 +148,7 @@ public class IndirectPrograms extends AtomicReferenceCounted {
                              .nameMapper(snapshot -> "culling/uber" + snapshot.types().size() + suffix)
                              .requireExtensions(COMPUTE_EXTENSIONS)
                              .define("_FLW_SUBGROUP_SIZE", GlCompat.SUBGROUP_SIZE)
-                             .onCompile(($, ctx) -> {
+                             .onCompile((_, ctx) -> {
                                  ctx.define(variant);
                                  if (GlCompat.CAPABILITIES.GL_KHR_shader_subgroup) {
                                      ctx.define("_FLW_HAS_SUBGROUP");
@@ -135,7 +159,7 @@ public class IndirectPrograms extends AtomicReferenceCounted {
                              .withResource(CULL_SHADER_API_IMPL)
                              .with((snapshot, loader) -> new UberCullComponent(snapshot.types(), loader))
                              .withResource(CULL_SHADER_MAIN))
-                   .postLink((key, program) -> Uniforms.setUniformBlockBindings(program))
+                   .postLink((_, program) -> Uniforms.setUniformBlockBindings(program))
                    .harness("culling" + suffix, sources);
     }
 
@@ -150,6 +174,11 @@ public class IndirectPrograms extends AtomicReferenceCounted {
                              .requireExtensions(COMPUTE_EXTENSIONS)
                              .define("_FLW_SUBGROUP_SIZE", GlCompat.SUBGROUP_SIZE)
                              .onCompile((id, ctx) -> {
+                                 if (id.equals(ORDER_SHADER_MAIN) && GlCompat.CAPABILITIES.GL_KHR_shader_subgroup) {
+                                     ctx.define("_FLW_HAS_SUBGROUP");
+                                     ctx.requireExtension("GL_KHR_shader_subgroup_basic");
+                                     ctx.requireExtension("GL_KHR_shader_subgroup_ballot");
+                                 }
                                  if (!TERRAIN_CULL_UTILS.contains(id)) {
                                      return;
                                  }
@@ -162,6 +191,26 @@ public class IndirectPrograms extends AtomicReferenceCounted {
                              })
                              .withResource(s -> s))
                    .harness("utilities", sources);
+    }
+
+    private static CompilationHarness<GpuProgramKey> createGpuCompiler(ShaderSources sources) {
+        return GPU.program()
+                  .link(GPU.shader(GlCompat.MAX_GLSL_VERSION, ShaderType.COMPUTE)
+                           .nameMapper(key -> "populations/" + ResourceUtil.toDebugFileNameNoExtension(key.shader())
+                                   + "_" + Integer.toHexString(key.defines().hashCode()))
+                           .requireExtensions(COMPUTE_EXTENSIONS)
+                           .define("_FLW_SUBGROUP_SIZE", GlCompat.SUBGROUP_SIZE)
+                           .onCompile((key, compilation) -> {
+                               for (String define : key.defines()) compilation.define(define);
+                               if (key.doublePrecision() && GlCompat.MAX_GLSL_VERSION.compareTo(GlslVersion.V400) < 0) {
+                                   compilation.requireExtension("GL_ARB_gpu_shader_fp64");
+                               }
+                           })
+                           .withResource(GpuProgramKey::shader))
+                  .harness("populations", sources);
+    }
+
+    private record GpuProgramKey(Identifier shader, boolean doublePrecision, List<String> defines) {
     }
 
     static void setInstance(@Nullable IndirectPrograms newInstance) {
@@ -187,20 +236,58 @@ public class IndirectPrograms extends AtomicReferenceCounted {
         setInstance(null);
     }
 
-    public GlProgram getCullingProgram() {
-        return culling.get(InstanceTypeIds.snapshot());
+    /**
+     * Warm-up: the current snapshot's cull programs, compiled now.
+     */
+    public void warmCulling() {
+        InstanceTypeIds.Snapshot snapshot = InstanceTypeIds.snapshot();
+        for (var harness : cullHarnesses()) harness.get(snapshot);
     }
 
-    public GlProgram getCullingPass2Program() {
-        return cullingPass2.get(InstanceTypeIds.snapshot());
+    /**
+     * The newest snapshot whose cull programs (pass 1, pass 2, frustum-only) are all published, null before the
+     * first; requests the current snapshot's. Instances of later types get arbitrary visibility.
+     */
+    public InstanceTypeIds.@Nullable Snapshot cullSnapshot() {
+        InstanceTypeIds.Snapshot current = InstanceTypeIds.snapshot();
+        return cull.select(new ProgramGeneration(current.types().size(), 0, 0), current, this::requestCulling);
     }
 
-    public GlProgram getCullingFrustumProgram() {
-        return cullingFrustum.get(InstanceTypeIds.snapshot());
+    private InstanceTypeIds.Snapshot requestCulling(InstanceTypeIds.Snapshot snapshot) {
+        for (var harness : cullHarnesses()) harness.request(snapshot);
+        return snapshot;
+    }
+
+    private List<CompilationHarness<InstanceTypeIds.Snapshot>> cullHarnesses() {
+        return List.of(culling, cullingPass2, cullingFrustum);
+    }
+
+    public GlProgram getCullingProgram(InstanceTypeIds.Snapshot snapshot) {
+        return culling.get(snapshot);
+    }
+
+    public GlProgram getCullingPass2Program(InstanceTypeIds.Snapshot snapshot) {
+        return cullingPass2.get(snapshot);
+    }
+
+    public GlProgram getCullingFrustumProgram(InstanceTypeIds.Snapshot snapshot) {
+        return cullingFrustum.get(snapshot);
     }
 
     public GlProgram getApplyProgram() {
         return utils.get(APPLY_SHADER_MAIN);
+    }
+
+    public GlProgram getComputeProgram(Identifier shader) {
+        return utils.get(shader);
+    }
+
+    public GlProgram getSimulationProgram(Identifier shader, GpuSimulation simulation) {
+        return gpu.get(new GpuProgramKey(shader, simulation.doublePrecision(), simulation.defines()));
+    }
+
+    public GlProgram getOrderProgram() {
+        return utils.get(ORDER_SHADER_MAIN);
     }
 
     public GlProgram getScatterProgram() {
@@ -233,5 +320,6 @@ public class IndirectPrograms extends AtomicReferenceCounted {
         cullingPass2.delete();
         cullingFrustum.delete();
         utils.delete();
+        gpu.delete();
     }
 }

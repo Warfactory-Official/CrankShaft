@@ -53,13 +53,13 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
         extends AbstractEntityVisual<T> implements SimpleDynamicVisual {
     // Layer bakes follow resource reloads: each map rides one RendererReloadCache entry.
     private static final RendererReloadCache<Boolean, Map<ModelLayerLocation, EntityModel<?>>> SHARED_MODELS =
-            new RendererReloadCache<>($ -> new ConcurrentHashMap<>());
+            new RendererReloadCache<>(_ -> new ConcurrentHashMap<>());
     // Materials MUST be shared per texture -- SimpleMaterial has no equals/hashCode, so a per-visual instance would cache-miss ModelTrees.of every entity (re-baking geometry + a fresh instancer per entity).
     private static final Map<Identifier, Material> MATERIALS = new ConcurrentHashMap<>();
     private static final RendererReloadCache<Boolean, Map<ModelLayerLocation, float[]>> LAYER_REST_POSES =
-            new RendererReloadCache<>($ -> new ConcurrentHashMap<>());
+            new RendererReloadCache<>(_ -> new ConcurrentHashMap<>());
     private static final RendererReloadCache<Boolean, Map<ModelLayerLocation, Rigs>> RIGS =
-            new RendererReloadCache<>($ -> new ConcurrentHashMap<>());
+            new RendererReloadCache<>(_ -> new ConcurrentHashMap<>());
     protected final EntityRenderer<T, S> renderer;
     protected final S state;
     private final EntityModel<S>[] models;
@@ -281,11 +281,11 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
      */
     protected abstract void setupRootPose(PoseStack pose, S state);
 
-    protected int modelVariant(S state) {
+    protected int modelVariant(S _) {
         return 0;
     }
 
-    protected int bodyColor(S state) {
+    protected int bodyColor(S _) {
         return -1;
     }
 
@@ -293,7 +293,7 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
         return materialFor(texture);
     }
 
-    protected int overlay(S state) {
+    protected int overlay(S _) {
         return OverlayTexture.NO_OVERLAY;
     }
 
@@ -302,15 +302,15 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
     }
 
     @Nullable
-    protected Object captureExtra(S state, EntityModel<S> model, Matrix4fc local) {
+    protected Object captureExtra(S _, EntityModel<S> _, Matrix4fc _) {
         return null;
     }
 
-    protected void applyExtra(@Nullable Object extra, int variant, float[] transforms, boolean[] draw,
-                              Matrix4f root, int light, int overlay) {
+    protected void applyExtra(@Nullable Object _, int _, float[] _, boolean[] _,
+                              Matrix4f _, int _, int _) {
     }
 
-    protected void onBodyCreated(int variant, InstanceTree[] nodesInOrder) {
+    protected void onBodyCreated(int _, InstanceTree[] _) {
     }
 
     protected void hideExtra() {
@@ -324,7 +324,7 @@ public abstract class EntityModelVisual<T extends Entity, S extends EntityRender
     }
 
     @Nullable
-    protected Material foilMaterial(S state) {
+    protected Material foilMaterial(S _) {
         return null;
     }
 

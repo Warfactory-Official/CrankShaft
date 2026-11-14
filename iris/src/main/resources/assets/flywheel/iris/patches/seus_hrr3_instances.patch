@@ -1,0 +1,20 @@
+diff --git a/gbuffers_water.vsh b/gbuffers_water.vsh
+--- a/gbuffers_water.vsh
++++ b/gbuffers_water.vsh
+@@ -70,4 +70,8 @@
+ 	if (mc_Entity.x == 165)
+ 	{
+ 		isSlime = 1.0;
+ 	}
++	#ifdef CRANKSHAFT_CLRWL_TRANSLUCENT
++	// Untagged guests would composite as clear glass: shade them as the pack's stained glass.
++	if (isWater + isIce + isStainedGlass + isSlime < 0.5) isStainedGlass = 1.0;
++	#endif
+diff --git a/gbuffers_water.fsh b/gbuffers_water.fsh
+--- a/gbuffers_water.fsh
++++ b/gbuffers_water.fsh
+@@ -367,1 +367,4 @@
+ 	vec4 tex = texture2D(texture, texcoord.st);
++	#ifdef CRANKSHAFT_CLRWL_TRANSLUCENT
++	tex *= color;
++	#endif

@@ -23,6 +23,9 @@
   "files": [],
   "wrappers": [],
   "blends": [],
+  "patches": [
+    "makeup_instances.patch"
+  ],
   "properties": "",
   "forwardOit": {
     "programs": [

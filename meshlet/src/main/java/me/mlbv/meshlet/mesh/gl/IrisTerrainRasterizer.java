@@ -11,7 +11,9 @@ import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import dev.engine_room.flywheel.backend.Samplers;
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
+import dev.engine_room.flywheel.backend.compile.TerrainOverlayPipelines;
 import dev.engine_room.flywheel.backend.engine.terrain.*;
+import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
 import dev.engine_room.flywheel.backend.gl.GlStateTracker;
 import dev.engine_room.flywheel.backend.gl.buffer.GlBuffer;
 import dev.engine_room.flywheel.backend.gl.buffer.GlBufferType;
@@ -40,7 +42,6 @@ import java.util.OptionalDouble;
 #endif
 
 final class IrisTerrainRasterizer {
-    private static final boolean CULL = !Boolean.getBoolean("crankshaft.iris.mesh.cullOff");
     private static final int SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV = 0x10;
     private static final int OPAQUE_COMMANDS = ModelQuadFacing.COUNT * RenderRegion.REGION_SIZE;
     private static final int TRANSLUCENT_COMMANDS = RenderRegion.REGION_SIZE;
@@ -49,11 +50,13 @@ final class IrisTerrainRasterizer {
     private final GlResidentBuffer geometryPointers = new GlResidentBuffer();
     private final GlResidentBuffer runBuffer = new GlResidentBuffer();
     private final GlResidentBuffer compactedCommands = new GlResidentBuffer();
+    private final GlResidentBuffer receiverPointers = new GlResidentBuffer();
     private final GlBuffer sceneBuffer = new GlBuffer(GlBufferUsage.STREAM_DRAW);
-    private final MemoryBlock scene = MemoryBlock.malloc(64);
+    private final MemoryBlock scene = MemoryBlock.malloc(72);
     private final int maxTaskCount = GL11C.glGetInteger(NVMeshShader.GL_MAX_DRAW_MESH_TASKS_COUNT_NV);
     private MemoryBlock geometry = MemoryBlock.malloc(8);
     private MemoryBlock runMemory = MemoryBlock.malloc(16);
+    private MemoryBlock receivers = MemoryBlock.malloc(8);
     private int[] runs = new int[4];
     private int runCount;
     private int converter;
@@ -71,9 +74,9 @@ final class IrisTerrainRasterizer {
         int maxIndices = oit ? dispatcher.translucentRegionBatch.maxIndexCount : dispatcher.boundBatch.maxIndexCount;
         if (count == 0 || maxIndices == 0) return;
         boolean shadow = GuestTerrainGate.ownsShadowTerrain();
-        RenderPipeline pipeline = oit ? TerrainPipelines.translucentOit(passIndex - 2)
+        RenderPipeline pipeline = oit ? TerrainOverlayPipelines.guestOitPipeline(passIndex - 2)
                 : shadow ? TerrainPipelines.shadow(passIndex == 1)
-                : passIndex == 0 ? TerrainPipelines.solid() : TerrainPipelines.cutout();
+                : TerrainOverlayPipelines.terrainPipeline(passIndex == 1);
         GuestProgram program = GuestPipelines.program(pipeline);
         if (!oit && !shadow) {
             if (dispatcher.boundPhase == 2 && !program.meshTaskRecovery()) return;
@@ -89,7 +92,8 @@ final class IrisTerrainRasterizer {
         GlResidentBuffer counts = oit ? dispatcher.translucentCommandCount : dispatcher.regionCommandCounts[passIndex];
         boolean compact = GuestTerrainGate.CACHE_RECOVERY && !shadow && !oit && dispatcher.boundPhase == 2 && program.meshCompactSafe();
         if (compact) compactedCommands.ensureCapacity(commands.capacity());
-        uploadRuns(buffers, count, oit, !shadow && !oit && program.meshTaskRecovery());
+        boolean overlays = !TerrainOverlayDraw.isEmpty();
+        uploadRuns(buffers, count, oit, !shadow && !oit && program.meshTaskRecovery(), overlays);
         long address = scene.ptr();
         MemoryUtil.memPutLong(address, input.deviceAddress());
         MemoryUtil.memPutLong(address + 8, commands.deviceAddress());
@@ -97,7 +101,7 @@ final class IrisTerrainRasterizer {
         MemoryUtil.memPutLong(address + 24, geometryPointers.deviceAddress());
         MemoryUtil.memPutLong(address + 32, runBuffer.deviceAddress());
         GuestTerrainGate.meshDepthTexture = dispatcher.guestTaskPyramid(oit);
-        int cull = shadow || !CULL ? 0
+        int cull = shadow ? 0
                 : 1 | (pipeline.isCull() ? 2 : 0) | (GuestTerrainGate.meshDepthTexture != 0 ? 4 : 0);
         var target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         if (GuestTerrainGate.CACHE_RECOVERY && (target.width > 131072 || target.height > 131072)) {
@@ -105,11 +109,13 @@ final class IrisTerrainRasterizer {
         }
         MemoryUtil.memPutInt(address + 40, cull);
         MemoryUtil.memPutInt(address + 44, shadow || oit ? 0 : dispatcher.boundPhase);
-        MemoryUtil.memPutInt(address + 48, target.width);
-        MemoryUtil.memPutInt(address + 52, target.height);
+        MemoryUtil.memPutInt(address + 48, FrameUniforms.renderExtent(target.width));
+        MemoryUtil.memPutInt(address + 52, FrameUniforms.renderExtent(target.height));
         MemoryUtil.memPutLong(address + 56, compact ? compactedCommands.deviceAddress() : 0);
-        sceneBuffer.upload(scene);
-        GL30C.glBindBufferRange(GL31C.GL_UNIFORM_BUFFER, 7, sceneBuffer.handle(), 0, 64);
+        int sceneBytes = overlays ? 72 : 64;
+        if (overlays) MemoryUtil.memPutLong(address + 64, receiverPointers.deviceAddress());
+        sceneBuffer.upload(address, sceneBytes);
+        GL30C.glBindBufferRange(GL31C.GL_UNIFORM_BUFFER, 7, sceneBuffer.handle(), 0, sceneBytes);
         // Convert once for wavelet depth-range or for the independent single-pass deferred capture.
         if (!oit || passIndex == 2 || passIndex == 5) {
             ensureConverter();
@@ -143,8 +149,8 @@ final class IrisTerrainRasterizer {
                     GL42C.glMemoryBarrier(GL42C.GL_COMMAND_BARRIER_BIT | SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV);
                     commands = compactedCommands;
                     MemoryUtil.memPutLong(address + 8, commands.deviceAddress());
-                    sceneBuffer.upload(scene);
-                    GL30C.glBindBufferRange(GL31C.GL_UNIFORM_BUFFER, 7, sceneBuffer.handle(), 0, 64);
+                    sceneBuffer.upload(address, sceneBytes);
+                    GL30C.glBindBufferRange(GL31C.GL_UNIFORM_BUFFER, 7, sceneBuffer.handle(), 0, sceneBytes);
                 }
             }
         }
@@ -175,7 +181,8 @@ final class IrisTerrainRasterizer {
         }
     }
 
-    private void uploadRuns(GpuBuffer[] buffers, int count, boolean translucent, boolean historyNeeded) {
+    private void uploadRuns(GpuBuffer[] buffers, int count, boolean translucent, boolean historyNeeded,
+                            boolean overlays) {
         long geometryBytes = (long) count * 16;
         if (geometryBytes > geometry.size()) geometry = geometry.realloc(geometryBytes);
         geometryPointers.ensureCapacity(geometryBytes);
@@ -196,6 +203,7 @@ final class IrisTerrainRasterizer {
             }
             MemoryUtil.memPutLong(entry + 8, historyAddress);
         }
+        if (overlays) uploadReceivers(buffers, count);
         addresses.finishFill();
         for (var iterator = visibility.reference2ObjectEntrySet().fastIterator(); iterator.hasNext(); ) {
             var entry = iterator.next();
@@ -236,6 +244,17 @@ final class IrisTerrainRasterizer {
         runBuffer.uploadSpan(0, runMemory.ptr(), runBytes);
     }
 
+    private void uploadReceivers(GpuBuffer[] buffers, int count) {
+        long bytes = (long) count * Long.BYTES;
+        if (bytes > receivers.size()) receivers = receivers.realloc(bytes);
+        for (int slot = 0; slot < count; slot++) {
+            MemoryUtil.memPutLong(receivers.ptr() + (long) slot * Long.BYTES,
+                    addresses.address(TerrainReceiverBuffers.find(buffers[slot])));
+        }
+        receiverPointers.ensureCapacity(bytes);
+        receiverPointers.uploadSpan(0, receivers.ptr(), bytes);
+    }
+
     private void addRun(int firstCommand, int capacity, int countWord) {
         int offset = runCount++ * 4;
         runs[offset] = firstCommand;
@@ -267,6 +286,8 @@ final class IrisTerrainRasterizer {
         if (recovery != 0) GL20C.glDeleteProgram(recovery);
         if (compactor != 0) GL20C.glDeleteProgram(compactor);
         compactedCommands.delete();
+        receiverPointers.delete();
+        receivers.free();
         geometryPointers.delete();
         runBuffer.delete();
         sceneBuffer.delete();

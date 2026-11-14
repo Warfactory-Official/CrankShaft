@@ -53,7 +53,7 @@ public final class FlwDebugInfo {
         addBackendDebugInfo(manager, out);
         addVisualizationManagerDebugInfo(manager, out);
 
-        return Component.literal(out.toString());
+        return Component.translatable("command.flywheel.debug.info", out.toString());
     }
 
     private static void addBackendDebugInfo(@Nullable VisualizationManagerImpl manager, StringBuilder out) {
@@ -201,7 +201,7 @@ public final class FlwDebugInfo {
         // Port: getVersionStr() intentionally omitted; report the mod id instead.
         appendLine(out, "Flywheel: ").append(Flywheel.ID);
         appendLine(out, "Backend: ").append(BackendManagerImpl.getBackendString());
-        appendLine(out, "Terrain: ").append(BackendConfig.INSTANCE.terrainMode().token());
+        appendLine(out, "Terrain: ").append(BackendConfig.INSTANCE.terrainMode().getSerializedName());
         appendLine(out, "Update limiting: ").append(FlwConfig.INSTANCE.limitUpdates() ? "on" : "off");
     }
 
@@ -238,7 +238,7 @@ public final class FlwDebugInfo {
         systemInfo.add("");
         systemInfo.add("Flywheel: " + Flywheel.ID);
         systemInfo.add("Backend: " + BackendManagerImpl.getBackendString());
-        systemInfo.add("Terrain: " + BackendConfig.INSTANCE.terrainMode().token());
+        systemInfo.add("Terrain: " + BackendConfig.INSTANCE.terrainMode().getSerializedName());
         systemInfo.add("Update limiting: " + (FlwConfig.INSTANCE.limitUpdates() ? "on" : "off"));
 
         VisualizationManager manager = VisualizationManager.get(minecraft.level);

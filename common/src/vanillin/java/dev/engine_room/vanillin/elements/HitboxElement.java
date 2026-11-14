@@ -100,7 +100,7 @@ public final class HitboxElement implements Visual, SimpleDynamicVisual {
     }
 
     @Override
-    public void update(float partialTick) {
+    public void update(float _) {
 
     }
 

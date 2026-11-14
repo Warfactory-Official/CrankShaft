@@ -12,7 +12,6 @@ public enum CompatMod {
     LAMBDYNLIGHTS("lambdynlights"),
     POLYTONE("polytone"),
     SODIUM("sodium"),
-    VITRAIL("vitrail"),
     VOXY("voxy");
 
     public final String id;

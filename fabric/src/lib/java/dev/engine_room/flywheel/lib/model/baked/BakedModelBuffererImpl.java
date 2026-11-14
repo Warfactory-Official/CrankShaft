@@ -8,7 +8,6 @@ import net.fabricmc.fabric.api.client.renderer.v1.mesh.MutableQuadView;
 import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadEmitter;
 import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadView;
 import net.fabricmc.fabric.api.client.renderer.v1.render.AltModelBlockRenderer;
-import net.fabricmc.fabric.impl.client.renderer.LayerRenderStateExtension;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.renderer.block.BlockModelLighter;
@@ -86,7 +85,7 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
             #else
             List<BakedQuad> quads = layer.prepareQuadList();
             #endif
-            MeshView mesh = ((LayerRenderStateExtension) layer).fabric_getMutableMesh();
+            MeshView mesh = layer.fabric_getMutableMesh();
             if (quads.isEmpty() && (mesh == null || mesh.size() == 0)) {
                 continue;
             }
@@ -118,7 +117,7 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
                 ItemMeshKey key = ItemMeshKey.of(quad.materialInfo().itemRenderType(), foil);
                 #endif
                 if (key == null) return null;
-                emitters.computeIfAbsent(key, $ -> new ItemMeshEmitter())
+                emitters.computeIfAbsent(key, _ -> new ItemMeshEmitter())
                         .accept(pose, quad, tint);
             }
             if (mesh != null && mesh.size() > 0) {
@@ -143,7 +142,7 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
                             supported = false;
                             return;
                         }
-                        emitters.computeIfAbsent(key, $ -> new ItemMeshEmitter())
+                        emitters.computeIfAbsent(key, _ -> new ItemMeshEmitter())
                                 .accept(pose, quad, tint);
                     }
                 };
@@ -210,7 +209,7 @@ public class BakedModelBuffererImpl implements BakedModelBufferer {
         EnumMap<ChunkSectionLayer, FabricMeshEmitter> emitters = new EnumMap<>(ChunkSectionLayer.class);
         Consumer<MutableQuadView> consumer = quad ->
                 emitters.computeIfAbsent(forceOpaque ? ChunkSectionLayer.SOLID : quad.chunkLayer(),
-                        $ -> new FabricMeshEmitter()).accept(quad);
+                        _ -> new FabricMeshEmitter()).accept(quad);
         QuadEmitter quadEmitter = rendererApi.quadEmitter(consumer);
         AltModelBlockRenderer renderer = rendererApi.altModelBlockRenderer(minecraft.options.ambientOcclusion().get(),
                 false, minecraft.getBlockColors());

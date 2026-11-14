@@ -2,6 +2,7 @@ package dev.engine_room.flywheel.lib.model;
 
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.lib.model.part.ModelTree;
+import dev.engine_room.flywheel.lib.util.ShaderWarmupRegistry;
 import org.joml.Vector4fc;
 
 import java.util.HashMap;
@@ -15,6 +16,15 @@ import java.util.Map;
  * @see PackIdentity.Effect for the common lists
  */
 public record PackTaggedModel(Model delegate, List<PackIdentity> identities) implements Model {
+    public PackTaggedModel {
+        if (identities.stream().anyMatch(identity -> identity instanceof PackIdentity.OfProgram(String program, var _)
+                && program.equals("particles_translucent"))) {
+            for (ConfiguredMesh mesh : delegate.meshes()) {
+                ShaderWarmupRegistry.registerParticlesTranslucent(mesh.material());
+            }
+        }
+    }
+
     /**
      * {@code tree} with every node's model tagged.
      */

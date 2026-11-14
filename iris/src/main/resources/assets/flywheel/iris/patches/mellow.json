@@ -1,0 +1,28 @@
+{
+  "schema": 2,
+  "name": "Mellow",
+  "testedVersions": [
+    "Mellow v3.4.1a"
+  ],
+  "matches": [
+    {
+      "path": "shaders.properties",
+      "contains": [
+        "/img/luts/mellow.png"
+      ]
+    },
+    {
+      "path": "program/clrwl_gbuffers.fsh",
+      "contains": [
+        "transition_to_dh"
+      ]
+    }
+  ],
+  "files": [],
+  "wrappers": [],
+  "blends": [],
+  "patches": [
+    "mellow_instances.patch"
+  ],
+  "properties": ""
+}

@@ -19,6 +19,10 @@ public abstract class BaseInstancer<I extends Instance> extends AbstractInstance
 
     protected final AtomicBitSet changed = new AtomicBitSet();
     protected final AtomicBitSet deleted = new AtomicBitSet();
+    /**
+     * The lowest index whose occupant is new since the subclass last consumed it.
+     */
+    protected int freshFrom = Integer.MAX_VALUE;
 
     protected final long instanceStride;
     // Set on worker threads at allocation time, cleared on the render thread after migration.
@@ -31,7 +35,7 @@ public abstract class BaseInstancer<I extends Instance> extends AbstractInstance
 
     protected BaseInstancer(InstancerKey<I> key, Recreate<I> recreate) {
         super(key, recreate);
-        this.instanceStride = MoreMath.align16(type.layout().byteSize());
+        instanceStride = MoreMath.align16(type.layout().byteSize());
     }
 
     @Override
@@ -143,6 +147,7 @@ public abstract class BaseInstancer<I extends Instance> extends AbstractInstance
 
         synchronized (lock) {
             addLocked(instance, handle, 0);
+            trackFaces(instance);
             return instance;
         }
     }
@@ -156,7 +161,7 @@ public abstract class BaseInstancer<I extends Instance> extends AbstractInstance
     }
 
     @Override
-    public void stealInstance(@Nullable I instance) {
+    protected void moveInstance(@Nullable I instance) {
         if (instance == null) {
             return;
         }
@@ -219,6 +224,7 @@ public abstract class BaseInstancer<I extends Instance> extends AbstractInstance
         instances.add(instance);
         handles.add(handle);
         handle.index = index;
+        freshFrom = Math.min(freshFrom, index);
         setIndexChanged(index);
     }
 

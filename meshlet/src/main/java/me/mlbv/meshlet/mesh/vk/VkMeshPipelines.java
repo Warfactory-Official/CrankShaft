@@ -9,6 +9,10 @@ import dev.engine_room.flywheel.backend.OitConfig;
 import dev.engine_room.flywheel.backend.TerrainMode;
 import dev.engine_room.flywheel.backend.compile.*;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
+import dev.engine_room.flywheel.backend.engine.terrain.TerrainOverlayDraw;
+
+import java.util.HashMap;
+import java.util.Map;
 #if MC >= 26.3
 import dev.engine_room.flywheel.backend.engine.indirect.VkNativeOitPass;
 #endif
@@ -24,6 +28,7 @@ import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.util.shaderc.Shaderc;
 import org.lwjgl.vulkan.EXTMeshShader;
+import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkDevice;
 
@@ -40,9 +45,11 @@ import java.util.function.Consumer;
  */
 public final class VkMeshPipelines {
     #if MC >= 26.3
-    /** Render-thread loading/configuration hook for this live owner's selected terrain producers and prerequisites. */
+    /**
+     * Render-thread loading/configuration hook for this live owner's selected terrain producers and prerequisites.
+     */
     public void warmNative(VkNativeOitPass pass,
-                            @Nullable OitInsertMode insert) {
+                           @Nullable OitInsertMode insert) {
         VkPrograms programs = VkPrograms.get();
         TerrainMode terrain = BackendConfig.INSTANCE.terrainMode();
         // Per-world PSO caches are distinct from the module's temporary loading warmup owner.
@@ -70,13 +77,12 @@ public final class VkMeshPipelines {
         }
     }
     #endif
-    private static final int FMT_RGBA32F = VK12.VK_FORMAT_R32G32B32A32_SFLOAT;
-    private static final int FMT_RGBA16F = VK12.VK_FORMAT_R16G16B16A16_SFLOAT;
+    private static final int FMT_RGBA16F = VK10.VK_FORMAT_R16G16B16A16_SFLOAT;
 
     private static final int TASK = EXTMeshShader.VK_SHADER_STAGE_TASK_BIT_EXT;
     private static final int MESH = EXTMeshShader.VK_SHADER_STAGE_MESH_BIT_EXT;
-    private static final int FRAG = VK12.VK_SHADER_STAGE_FRAGMENT_BIT;
-    private static final int COMP = VK12.VK_SHADER_STAGE_COMPUTE_BIT;
+    private static final int FRAG = VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
+    private static final int COMP = VK10.VK_SHADER_STAGE_COMPUTE_BIT;
     private static final int SSBO = VkDescriptorLayout.TYPE_STORAGE_BUFFER;
     private static final int UBO = VkDescriptorLayout.TYPE_UNIFORM_BUFFER;
     private static final int SAMPLER = VkDescriptorLayout.TYPE_COMBINED_IMAGE_SAMPLER;
@@ -109,12 +115,24 @@ public final class VkMeshPipelines {
             new Binding(5, UBO, COMP), new Binding(10, SAMPLER, COMP));
     private final int depthFormat = Objects.requireNonNull(VkPrograms.get()).depthFormat();
     private final VkMeshPipeline[][] drawPipelines = new VkMeshPipeline[2][2];
+    private final Map<OverlayKey, VkMeshPipeline> overlayPipelines = new HashMap<>();
+    private List<Identifier> activeOpaqueSources = List.of();
+    private final VkMeshPipeline[] activeOpaqueDraw = new VkMeshPipeline[2];
     private final VkMeshPipeline[][] translucentDraw = new VkMeshPipeline[2][OitMode.values().length];
     private final VkMeshPipeline[][] translucentDrawFolded = new VkMeshPipeline[2][OitMode.values().length];
     private final VkMeshPipeline[][] translucentMlab = new VkMeshPipeline[2][OitInsertMode.values().length];
+    private final Map<TranslucentKey, VkMeshPipeline> translucentOverlays = new HashMap<>();
+    private boolean activeOpaqueLinear;
+    private int activeOpaqueColorFormat;
     private VkComputePipeline emitPipeline;
     private VkComputePipeline translucentEmit;
     private VkComputePipeline translucentGather;
+    private VkComputePipeline translucentGatherOverlay;
+    private List<Identifier> activeTranslucentSources = List.of();
+    private boolean activeTranslucentReceiverData;
+    private final VkMeshPipeline[][] activeTranslucentDraw = new VkMeshPipeline[2][OitMode.values().length];
+    private final VkMeshPipeline[][] activeTranslucentDrawFolded = new VkMeshPipeline[2][OitMode.values().length];
+    private final VkMeshPipeline[][] activeTranslucentMlab = new VkMeshPipeline[2][OitInsertMode.values().length];
 
     private static List<Binding> translucentPullDrawBindings(boolean localRead) {
         int oitRead = localRead ? VkDescriptorLayout.TYPE_INPUT_ATTACHMENT : SAMPLER;
@@ -155,7 +173,8 @@ public final class VkMeshPipelines {
         if (localRead) {
             extra = extra.andThen(VkPrograms.LOCAL_READ);
         }
-        String glsl = RenderPassShaders.assembleChunkOitFragment(mode, linear, extra);
+        String glsl = RenderPassShaders.assembleChunkOitFragment(mode, linear, extra,
+                TerrainOverlayDraw.sources());
         String fsVk = VkShaderTransform.toVulkan(glsl, VkShaderTransform.Stage.FRAGMENT);
         return VkShaderCompiler.compileModule("translucent_oit_" + mode.name, fsVk, VkShaderCompiler.KIND_FRAGMENT);
     }
@@ -164,7 +183,7 @@ public final class VkMeshPipelines {
         VkDevice device = VkContext.vkDevice();
         for (long module : modules) {
             if (module != 0L) {
-                VK12.vkDestroyShaderModule(device, module, null);
+                VK10.vkDestroyShaderModule(device, module, null);
             }
         }
     }
@@ -174,49 +193,24 @@ public final class VkMeshPipelines {
     }
 
     private static String assembleVk(String path) {
-        return assembleVk(path, ctx -> {
+        return assembleVk(path, _ -> {
         });
     }
 
     private static String assembleVk(String path, Consumer<Compilation> extraDefines) {
         return ShaderAssembly.assemble(ctx -> {
             MeshShaderPrep.applyGlobalDefines(ctx);
+            ctx.requireExtension("GL_EXT_buffer_reference_uvec2");
+            if (path.startsWith("terrain/vk/translucent/") && !TerrainOverlayDraw.isEmpty()) {
+                ctx.define("_FLW_TERRAIN_OVERLAY");
+                ctx.define("_FLW_TERRAIN_RECEIVER_DATA");
+            }
             extraDefines.accept(ctx);
         }, List.of(FlwPrograms.SOURCES.get(meshletId(path))));
     }
 
     private static Identifier meshletId(String path) {
         return Identifier.fromNamespaceAndPath("meshlet", path);
-    }
-
-    public void warmUp() {
-        VkPrograms programs = Objects.requireNonNull(VkPrograms.get());
-        if (programs.usesGpuTerrain()) {
-            drawPipeline(false, VK12.VK_FORMAT_R8G8B8A8_UNORM);
-            drawPipeline(true, VK12.VK_FORMAT_R8G8B8A8_UNORM);
-            emitPipeline();
-        }
-        if (!programs.usesGpuTranslucentTerrain()) {
-            return;
-        }
-        translucentEmitPipeline();
-        translucentGatherPipeline();
-        for (OitMode mode : OitMode.values()) {
-            if (mode == OitMode.OFF) {
-                continue;
-            }
-            translucentDrawPipeline(mode, false);
-            if (programs.localRead()) {
-                warmOptional(ProgramAvailability.Feature.LOCAL_READ,
-                        () -> translucentDrawPipeline(mode, true));
-            }
-        }
-        for (OitInsertMode mode : OitInsertMode.values()) {
-            if (OitConfig.supportsInsertMode(mode)) {
-                warmOptional(ProgramAvailability.insert(mode),
-                        () -> translucentMlabPipeline(mode));
-            }
-        }
     }
 
     private static void warmOptional(ProgramAvailability.Feature feature, Runnable factory) {
@@ -229,7 +223,73 @@ public final class VkMeshPipelines {
         }
     }
 
+    private static long compileTranslucentPull(boolean depthRange, boolean receiverData) {
+        var source = assembleVk("terrain/vk/translucent/pull.mesh", ctx -> {
+            if (depthRange) ctx.define("_FLW_DEPTH_RANGE");
+            if (receiverData) ctx.define("_FLW_TERRAIN_RECEIVER_DATA");
+        });
+        var name = "terrain/vk/translucent/pull" + (depthRange ? "_depth_range" : "")
+                + (receiverData ? "_receivers" : "");
+        return VkShaderCompiler.compileModule(name, source, Shaderc.shaderc_mesh_shader);
+    }
+
+    private static void clearCache(VkMeshPipeline[][] cache) {
+        for (var byLinear : cache) Arrays.fill(byLinear, null);
+    }
+
+    private static List<Binding> translucentOverlayBindings(List<Binding> base, List<Identifier> sources) {
+        if (sources.isEmpty()) return base;
+        var result = new ArrayList<>(base);
+        TerrainOverlayPipelines.vulkanLayouts(result, sources, MESH);
+        return result;
+    }
+
+    public void warmUp() {
+        VkPrograms programs = Objects.requireNonNull(VkPrograms.get());
+        var terrain = BackendConfig.INSTANCE.terrainMode();
+        if (terrain.ownsOpaque() && programs.usesGpuTerrain()) {
+            drawPipeline(false, VK10.VK_FORMAT_R8G8B8A8_UNORM);
+            drawPipeline(true, VK10.VK_FORMAT_R8G8B8A8_UNORM);
+            emitPipeline();
+        }
+        if (!terrain.compositesTranslucent() || !programs.usesGpuTranslucentTerrain()) {
+            return;
+        }
+        translucentEmitPipeline();
+        translucentGatherPipeline();
+        OitInsertMode insert = OitConfig.resolveInsertMode();
+        if (insert != null) {
+            warmOptional(ProgramAvailability.insert(insert), () -> translucentMlabPipeline(insert));
+        } else {
+            for (OitMode mode : OitMode.values()) {
+                if (mode == OitMode.OFF) continue;
+                translucentDrawPipeline(mode, false);
+                if (programs.localRead()) {
+                    warmOptional(ProgramAvailability.Feature.LOCAL_READ,
+                            () -> translucentDrawPipeline(mode, true));
+                }
+            }
+        }
+    }
+
     public VkMeshPipeline drawPipeline(boolean cutout, int colorFormat) {
+        var sources = TerrainOverlayDraw.sources();
+        if (!sources.isEmpty()) {
+            var linear = TerrainAtlasFilter.linear();
+            if (activeOpaqueLinear != linear || activeOpaqueColorFormat != colorFormat
+                    || !activeOpaqueSources.equals(sources)) {
+                activeOpaqueSources = sources;
+                activeOpaqueLinear = linear;
+                activeOpaqueColorFormat = colorFormat;
+                Arrays.fill(activeOpaqueDraw, null);
+            }
+            var index = cutout ? 1 : 0;
+            if (activeOpaqueDraw[index] == null) {
+                activeOpaqueDraw[index] = overlayPipelines.computeIfAbsent(
+                        new OverlayKey(cutout, linear, colorFormat, sources), this::buildOverlay);
+            }
+            return activeOpaqueDraw[index];
+        }
         int idx = cutout ? 1 : 0;
         int lin = TerrainAtlasFilter.linear() ? 1 : 0;
         if (drawPipelines[idx][lin] == null) {
@@ -256,6 +316,35 @@ public final class VkMeshPipelines {
         return drawPipelines[idx][lin];
     }
 
+    private VkMeshPipeline buildOverlay(OverlayKey key) {
+        long task = 0, mesh = 0, frag = 0;
+        VkDescriptorLayout layout = null;
+        try {
+            task = compileModule("terrain/vk/task.task", Shaderc.shaderc_task_shader);
+            mesh = VkShaderCompiler.compileModule("terrain/vk/mesh_overlay",
+                    assembleVk("terrain/vk/mesh.mesh", ctx -> ctx.define("_FLW_TERRAIN_OVERLAY")),
+                    Shaderc.shaderc_mesh_shader);
+            var source = TerrainPipelines.assembleOverlay(key.cutout, key.linear, key.sources, ctx -> {
+                ctx.requireExtension("GL_EXT_mesh_shader");
+                ctx.define("_FLW_MESH_PER_PRIMITIVE");
+            });
+            frag = VkShaderCompiler.compileModule("terrain/mesh_overlay",
+                    VkShaderTransform.toVulkan(source, VkShaderTransform.Stage.FRAGMENT),
+                    VkShaderCompiler.KIND_FRAGMENT);
+            var bindings = new ArrayList<>(DRAW_BINDINGS);
+            bindings.add(new Binding(TerrainOverlayPipelines.RECEIVER_BINDING, SSBO, MESH));
+            TerrainOverlayPipelines.vulkanLayouts(bindings, key.sources, MESH);
+            layout = new VkDescriptorLayout(bindings, 0, 0);
+            var opaque = new Blend(false, 0, 0, 0, 0, 0, 0, VkGraphicsPipeline.COLOR_WRITE_RGBA);
+            return new VkMeshPipeline(layout, task, mesh, frag, new int[]{key.colorFormat}, new Blend[]{opaque}, true,
+                    depthFormat);
+        } catch (Throwable failure) {
+            if (layout != null) layout.delete();
+            destroyModules(task, mesh, frag);
+            throw failure;
+        }
+    }
+
     public VkComputePipeline emitPipeline() {
         if (emitPipeline == null) {
             long module = 0;
@@ -276,28 +365,47 @@ public final class VkMeshPipelines {
     }
 
     public VkMeshPipeline translucentDrawPipeline(OitMode mode, boolean localRead) {
-        int lin = TerrainAtlasFilter.linear() ? 1 : 0;
-        VkMeshPipeline[] cache = localRead ? translucentDrawFolded[lin] : translucentDraw[lin];
-        VkMeshPipeline p = cache[mode.ordinal()];
+        return translucentDrawPipeline(mode, localRead, !TerrainOverlayDraw.isEmpty());
+    }
+
+    /**
+     * The gathered payload keeps its shape through this frame even if its last overlay is removed.
+     */
+    public VkMeshPipeline translucentDrawPipeline(OitMode mode, boolean localRead, boolean receiverData) {
+        var lin = TerrainAtlasFilter.linear() ? 1 : 0;
+        var sources = TerrainOverlayDraw.sources();
+        var variant = receiverData || !sources.isEmpty();
+        var cache = localRead ? translucentDrawFolded[lin] : translucentDraw[lin];
+        if (variant) {
+            selectTranslucentSources(sources, receiverData);
+            cache = localRead ? activeTranslucentDrawFolded[lin] : activeTranslucentDraw[lin];
+        }
+        var p = cache[mode.ordinal()];
+        if (p != null) return p;
+        var key = variant ? new TranslucentKey(lin == 1, mode, null, localRead, receiverData, sources) : null;
+        if (variant) {
+            p = translucentOverlays.get(key);
+            if (p != null) {
+                cache[mode.ordinal()] = p;
+                return p;
+            }
+        }
         if (p == null) {
             long mesh = 0;
             long frag = 0;
             VkDescriptorLayout layout = null;
             try {
-                mesh = mode == OitMode.DEPTH_RANGE
-                        ? VkShaderCompiler.compileModule("terrain/vk/translucent/pull_depth_range",
-                        assembleVk("terrain/vk/translucent/pull.mesh", ctx -> ctx.define("_FLW_DEPTH_RANGE")),
-                        Shaderc.shaderc_mesh_shader)
-                        : compileModule("terrain/vk/translucent/pull.mesh", Shaderc.shaderc_mesh_shader);
+                mesh = compileTranslucentPull(mode == OitMode.DEPTH_RANGE, receiverData);
                 frag = compileProducerFrag(mode, localRead, lin == 1);
                 if (localRead) {
-                    layout = new VkDescriptorLayout(translucentPullDrawBindings(true), 0, 0);
+                    layout = new VkDescriptorLayout(
+                            translucentOverlayBindings(translucentPullDrawBindings(true), sources), 0, 0);
                     p = new VkMeshPipeline(layout, 0, mesh, frag,
                             VkOitPipelines.FOLDED_FORMATS, VkOitPipelines.foldedBlends(mode), false, depthFormat,
                             VkOitPipelines.foldedLocations(mode), VkOitPipelines.FOLDED_INPUT_INDICES);
                 } else {
                     int[] colorFormats = switch (mode) {
-                        case DEPTH_RANGE -> new int[]{FMT_RGBA32F};
+                        case DEPTH_RANGE -> new int[]{VkOitPipelines.FMT_BOUNDS};
                         case GENERATE_COEFFICIENTS -> new int[]{FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F, FMT_RGBA16F};
                         case EVALUATE -> new int[]{FMT_RGBA16F};
                         default -> throw new IllegalArgumentException("OitMode.OFF is not a producer mode");
@@ -305,11 +413,13 @@ public final class VkMeshPipelines {
                     Blend[] blends = new Blend[colorFormats.length];
                     Arrays.fill(blends,
                             mode == OitMode.DEPTH_RANGE ? VkGraphicsPipeline.max() : VkGraphicsPipeline.additive());
-                    layout = new VkDescriptorLayout(translucentPullDrawBindings(false), 0, 0);
+                    layout = new VkDescriptorLayout(
+                            translucentOverlayBindings(translucentPullDrawBindings(false), sources), 0, 0);
                     p = new VkMeshPipeline(layout, 0, mesh, frag,
                             colorFormats, blends, false, depthFormat);
                 }
                 cache[mode.ordinal()] = p;
+                if (variant) translucentOverlays.put(key, p);
             } catch (Throwable t) {
                 if (layout != null) {
                     layout.delete();
@@ -322,22 +432,48 @@ public final class VkMeshPipelines {
     }
 
     public VkMeshPipeline translucentMlabPipeline(OitInsertMode oitMode) {
-        int lin = TerrainAtlasFilter.linear() ? 1 : 0;
-        VkMeshPipeline p = translucentMlab[lin][oitMode.ordinal()];
+        return translucentMlabPipeline(oitMode, !TerrainOverlayDraw.isEmpty());
+    }
+
+    /**
+     * Uses the current gather's receiver layout; overlay shading follows the surviving registrations.
+     */
+    public VkMeshPipeline translucentMlabPipeline(OitInsertMode oitMode, boolean receiverData) {
+        var lin = TerrainAtlasFilter.linear() ? 1 : 0;
+        var sources = TerrainOverlayDraw.sources();
+        var variant = receiverData || !sources.isEmpty();
+        var cache = translucentMlab[lin];
+        if (variant) {
+            selectTranslucentSources(sources, receiverData);
+            cache = activeTranslucentMlab[lin];
+        }
+        var p = cache[oitMode.ordinal()];
+        if (p != null) return p;
+        var key = variant ? new TranslucentKey(lin == 1, OitMode.OFF, oitMode, false, receiverData, sources) : null;
+        if (variant) {
+            p = translucentOverlays.get(key);
+            if (p != null) {
+                cache[oitMode.ordinal()] = p;
+                return p;
+            }
+        }
         if (p == null) {
             long mesh = 0;
             long frag = 0;
             VkDescriptorLayout layout = null;
             try {
-                mesh = compileModule("terrain/vk/translucent/pull.mesh", Shaderc.shaderc_mesh_shader);
-                String glsl = RenderPassShaders.assembleChunkMlabFragment(oitMode, lin == 1);
+                mesh = compileTranslucentPull(false, receiverData);
+                String glsl = RenderPassShaders.assembleChunkMlabFragment(oitMode, lin == 1, ShaderAssembly.NO_EXTRA,
+                        sources);
                 frag = VkShaderCompiler.compileModule("translucent_mlab_" + oitMode,
                         VkShaderTransform.toVulkan(glsl, VkShaderTransform.Stage.FRAGMENT),
                         VkShaderCompiler.KIND_FRAGMENT);
-                layout = new VkDescriptorLayout(translucentPullMlabBindings(oitMode), 0, 0);
+                layout = new VkDescriptorLayout(
+                        translucentOverlayBindings(translucentPullMlabBindings(oitMode), sources), 0, 0);
                 p = new VkMeshPipeline(layout, 0, mesh, frag,
                         new int[0], new VkGraphicsPipeline.Blend[0], false, depthFormat);
-                translucentMlab[lin][oitMode.ordinal()] = p;
+                cache[oitMode.ordinal()] = p;
+                if (variant) translucentOverlays.put(key, p);
             } catch (Throwable t) {
                 if (layout != null) {
                     layout.delete();
@@ -347,6 +483,15 @@ public final class VkMeshPipelines {
             }
         }
         return p;
+    }
+
+    private void selectTranslucentSources(List<Identifier> sources, boolean receiverData) {
+        if (activeTranslucentReceiverData == receiverData && activeTranslucentSources.equals(sources)) return;
+        activeTranslucentSources = sources;
+        activeTranslucentReceiverData = receiverData;
+        clearCache(activeTranslucentDraw);
+        clearCache(activeTranslucentDrawFolded);
+        clearCache(activeTranslucentMlab);
     }
 
     public VkComputePipeline translucentEmitPipeline() {
@@ -369,13 +514,19 @@ public final class VkMeshPipelines {
     }
 
     public VkComputePipeline translucentGatherPipeline() {
-        if (translucentGather == null) {
+        boolean overlay = !TerrainOverlayDraw.isEmpty();
+        var pipeline = overlay ? translucentGatherOverlay : translucentGather;
+        if (pipeline == null) {
             long module = 0;
             VkDescriptorLayout layout = null;
             try {
                 module = compileModule("terrain/vk/translucent/gather.comp", Shaderc.shaderc_compute_shader);
-                layout = new VkDescriptorLayout(TRANSLUCENT_GATHER_BINDINGS, 0, 0);
-                translucentGather = new VkComputePipeline(layout, module);
+                var bindings = new ArrayList<>(TRANSLUCENT_GATHER_BINDINGS);
+                if (overlay) bindings.add(new Binding(TerrainOverlayPipelines.RECEIVER_BINDING, SSBO, COMP));
+                layout = new VkDescriptorLayout(bindings, 0, 0);
+                pipeline = new VkComputePipeline(layout, module);
+                if (overlay) translucentGatherOverlay = pipeline;
+                else translucentGather = pipeline;
             } catch (Throwable t) {
                 if (layout != null) {
                     layout.delete();
@@ -384,10 +535,25 @@ public final class VkMeshPipelines {
                 throw t;
             }
         }
-        return translucentGather;
+        return pipeline;
     }
 
     public void destroy() {
+        Arrays.fill(activeOpaqueDraw, null);
+        activeOpaqueSources = List.of();
+        activeTranslucentSources = List.of();
+        activeTranslucentReceiverData = false;
+        clearCache(activeTranslucentDraw);
+        clearCache(activeTranslucentDrawFolded);
+        clearCache(activeTranslucentMlab);
+        for (var pipeline : translucentOverlays.values()) pipeline.delete();
+        translucentOverlays.clear();
+        if (translucentGatherOverlay != null) {
+            translucentGatherOverlay.delete();
+            translucentGatherOverlay = null;
+        }
+        overlayPipelines.values().forEach(VkMeshPipeline::delete);
+        overlayPipelines.clear();
         for (VkMeshPipeline[] byLinear : drawPipelines) {
             for (int i = 0; i < byLinear.length; i++) {
                 if (byLinear[i] != null) {
@@ -428,5 +594,12 @@ public final class VkMeshPipelines {
             translucentGather.delete();
             translucentGather = null;
         }
+    }
+
+    private record OverlayKey(boolean cutout, boolean linear, int colorFormat, List<Identifier> sources) {
+    }
+
+    private record TranslucentKey(boolean linear, OitMode mode, @Nullable OitInsertMode insert, boolean localRead,
+                                  boolean receiverData, List<Identifier> sources) {
     }
 }

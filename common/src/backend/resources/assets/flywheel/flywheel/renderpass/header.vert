@@ -8,11 +8,19 @@
 #define flw_view ModelViewMat
 
 // Names + order match InternalVertex.VERTEX_FORMAT; UV1 is in the format for byte-layout alignment but unused.
+#ifdef _FLW_FAR_RAW_OIT
+layout(location=0) in vec3 Position;
+layout(location=1) in vec4 Color;
+layout(location=2) in vec2 UV0;
+layout(location=4) in uvec2 UV2;
+layout(location=5) in vec3 Normal;
+#else
 in vec3 Position;
 in vec4 Color;
 in vec2 UV0;
 in uvec2 UV2; // light (RG16_UINT)
 in vec3 Normal;
+#endif
 
 out vec4 flw_vertexPos;
 out vec3 flw_vertexNormal;
@@ -44,6 +52,7 @@ layout(std140) uniform _FlwInstanceDraw {
     float flw_partialTick;
     float flw_renderTicks;
     float flw_renderSeconds;
+    uint flw_gameMillis;
 };
 
 out vec2 _flw_clipData;

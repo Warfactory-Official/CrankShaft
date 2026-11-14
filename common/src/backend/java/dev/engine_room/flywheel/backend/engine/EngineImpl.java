@@ -3,6 +3,8 @@ package dev.engine_room.flywheel.backend.engine;
 import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.api.backend.Engine;
 import dev.engine_room.flywheel.api.backend.RenderContext;
+import dev.engine_room.flywheel.api.instance.GpuPopulation;
+import dev.engine_room.flywheel.api.instance.GpuSimulation;
 import dev.engine_room.flywheel.api.instance.Instance;
 import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.instance.Instancer;
@@ -17,6 +19,7 @@ import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.GpuTimer;
 import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
+import dev.engine_room.flywheel.backend.compile.VkAsyncBuilds;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.embed.*;
 import dev.engine_room.flywheel.backend.engine.uniform.Uniforms;
@@ -45,6 +48,7 @@ public class EngineImpl implements Engine {
     private final int sqrMaxOriginDistance;
     private final EnvironmentStorage environmentStorage;
     private final LightStorage lightStorage;
+    private final FaceCulling faceCulling;
     private final boolean constantAmbientLight;
 
     private BlockPos renderOrigin = BlockPos.ZERO;
@@ -55,6 +59,8 @@ public class EngineImpl implements Engine {
         sqrMaxOriginDistance = maxOriginDistance * maxOriginDistance;
         environmentStorage = new EnvironmentStorage();
         lightStorage = new LightStorage(level);
+        faceCulling = new FaceCulling(drawManager, level);
+        drawManager.faceCulling(faceCulling);
         constantAmbientLight = level.dimensionType()
                                     .cardinalLightType() == CardinalLighting.Type.NETHER;
     }
@@ -91,6 +97,7 @@ public class EngineImpl implements Engine {
         FlwBackend.LOGGER.info("Attempting render origin change: {} -> {} (camera drift {} blocks)",
                 oldOrigin, newOrigin, (int) Math.sqrt(distanceSqr));
         renderOrigin = newOrigin;
+        faceCulling.clear();
         drawManager.onRenderOriginChanged();
         FlwBackend.LOGGER.debug("Render origin snap: {} -> {} (camera drift {} blocks); recreating all visuals",
                 oldOrigin, renderOrigin, Integer.toString((int) Math.sqrt(distanceSqr)));
@@ -103,17 +110,31 @@ public class EngineImpl implements Engine {
     }
 
     @Override
-    public void onLightUpdate(long sectionPos, LightLayer layer) {
+    public void onLightUpdate(long sectionPos, LightLayer _) {
         lightStorage.onLightUpdate(sectionPos);
+    }
+
+    @Override
+    public void onBlockChanged(BlockPos pos) {
+        faceCulling.invalidate(pos.getX() >> 4, pos.getZ() >> 4);
+    }
+
+    @Override
+    public void onChunkChanged(int chunkX, int chunkZ) {
+        faceCulling.invalidate(chunkX, chunkZ);
     }
 
     @Override
     public void render(RenderContext context) {
         // 26.2: raw restore desynchronizes Mojang RHI caches.
         try {
+            RenderPipelineCompiler.poll();
+            VkAsyncBuilds.poll();
+            OitInstanceCoverage.beginFrame();
             Uniforms.update(context);
             GpuTimer.beginFrame();
             environmentStorage.flush();
+            faceCulling.flush(context.modelView(), renderOrigin);
             drawManager.render(lightStorage, environmentStorage, renderOriginModelView(context), renderOrigin,
                     constantAmbientLight);
         } catch (BackendUnavailableException e) {
@@ -135,10 +156,11 @@ public class EngineImpl implements Engine {
         renderOit(context, null, null, #if MC < 26.3 null, #endif null);
     }
 
-    public boolean renderOit(RenderContext context, @Nullable ChunkSectionsToRender chunks,
+    public boolean renderOit(RenderContext _, @Nullable ChunkSectionsToRender chunks,
                              @Nullable BerTranslucentCapture ber,
                              #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
                              @Nullable SodiumTerrainOitReplay terrain) {
+        OitInstanceCoverage.seam();
         try {
             return drawManager.renderOit(lightStorage, environmentStorage, chunks, ber,
                     #if MC < 26.3 fabulous, #endif terrain);
@@ -149,11 +171,12 @@ public class EngineImpl implements Engine {
     }
 
     public boolean renderNativeOit(NativeOitReplay replay) {
+        OitInstanceCoverage.seam();
         return drawManager.renderNativeOit(lightStorage, environmentStorage, replay);
     }
 
     @Override
-    public void renderCrumbling(RenderContext context, List<CrumblingBlock> crumblingBlocks) {
+    public void renderCrumbling(RenderContext _, List<CrumblingBlock> crumblingBlocks) {
         try {
             drawManager.renderCrumbling(crumblingBlocks);
         } catch (BackendUnavailableException e) {
@@ -163,6 +186,7 @@ public class EngineImpl implements Engine {
 
     @Override
     public void delete() {
+        faceCulling.clear();
         drawManager.delete();
         lightStorage.delete();
         environmentStorage.delete();
@@ -195,6 +219,15 @@ public class EngineImpl implements Engine {
         return drawManager.getInstancer(environment, type, model, bias);
     }
 
+    public boolean supportsGpuSimulation() {
+        return drawManager.supportsGpuSimulation();
+    }
+
+    public GpuPopulation gpuPopulation(Environment environment, Object identity, InstanceType<?> type, Model model,
+                                       GpuSimulation simulation, int capacity, int bias) {
+        return drawManager.getGpuPopulation(environment, identity, type, model, simulation, capacity, bias);
+    }
+
     public EnvironmentStorage environmentStorage() {
         return environmentStorage;
     }
@@ -210,11 +243,11 @@ public class EngineImpl implements Engine {
     /**
      * Guest tag; {@code 0} = shared context. Visual-creation worker threads.
      */
-    public int drawTag(BlockEntity blockEntity) {
+    public int drawTag(BlockEntity _) {
         return 0;
     }
 
-    public int drawTag(Entity entity) {
+    public int drawTag(Entity _) {
         return 0;
     }
 

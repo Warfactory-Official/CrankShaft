@@ -14,6 +14,9 @@ import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.InternalVertex;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
+import dev.engine_room.flywheel.backend.compile.PipelineVersions;
+import dev.engine_room.flywheel.backend.compile.ProgramGeneration;
+import dev.engine_room.flywheel.backend.compile.ProgramVersions;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
@@ -25,6 +28,7 @@ import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
+import org.jspecify.annotations.Nullable;
 
 import java.util.HashMap;
 import java.util.Locale;
@@ -51,41 +55,35 @@ public final class InstancingPipeline {
                     fa.debug(), fa.embedded() ? RenderPassShaders.EMBEDDED : ShaderAssembly.NO_EXTRA);
         }
     };
-    private static final Map<PipelineKey, RenderPipeline> CACHE = new HashMap<>();
+    private static final Map<PipelineKey, ProgramVersions<RenderPipeline>> PIPELINES = new HashMap<>();
 
     private InstancingPipeline() {
     }
 
-    public static RenderPipeline pipelineFor(Material material, InstanceType<?> instanceType) {
-        return pipelineFor(material, instanceType, false);
+    /**
+     * Null until published; requests it.
+     */
+    public static @Nullable RenderPipeline pipelineFor(Material material, InstanceType<?> instanceType,
+                                                       boolean embedded) {
+        PipelineKey key = new PipelineKey(instanceType, material.light(), material.shaders(),
+                BackendConfig.INSTANCE.lightSmoothness(), material.cutout(), material.fog(), FrameUniforms.debugMode(),
+                material.transparency(), material.depthTest(), material.writeMask().depth(),
+                material.writeMask().color(), material.backfaceCulling(), material.polygonOffset(), embedded,
+                embedded && RenderPassShaders.readsEmbedded(material));
+        return PIPELINES.computeIfAbsent(key, _ -> new ProgramVersions<>(PipelineVersions.PIPELINE))
+                        .select(ProgramGeneration.NONE, key, InstancingPipeline::request);
     }
 
-    public static RenderPipeline pipelineFor(Material material, InstanceType<?> instanceType, boolean embedded) {
-        return pipelineFor(material, instanceType, embedded, FrameUniforms.debugMode());
-    }
-
-    public static RenderPipeline pipelineFor(Material material, InstanceType<?> instanceType, boolean embedded,
-                                              DebugMode debug) {
-        MaterialShaders shaders = material.shaders();
-        LightShader light = material.light();
-        CutoutShader cutout = material.cutout();
-        FogShader fog = material.fog();
-        LightSmoothness smoothness = BackendConfig.INSTANCE.lightSmoothness();
-
-        boolean embeddedFragment = embedded && RenderPassShaders.readsEmbedded(material);
-
-        Identifier vId = vertexId(instanceType, embedded, shaders, debug != DebugMode.OFF);
-        VERTEX_ASSEMBLY.putIfAbsent(vId, new VertexAssembly(instanceType, shaders, debug != DebugMode.OFF));
-        Identifier fId = fragmentId(light, shaders, smoothness, cutout, fog, debug, embeddedFragment);
-        FRAGMENT_ASSEMBLY.putIfAbsent(fId,
-                new FragmentAssembly(light, shaders, smoothness, cutout, fog, debug, embeddedFragment));
-
-        PipelineKey key = new PipelineKey(instanceType, light, shaders, smoothness, cutout, fog, debug,
-                material.transparency(), material.depthTest(),
-                material.writeMask().depth(), material.writeMask().color(),
-                material.backfaceCulling(), material.polygonOffset(), embedded, embeddedFragment);
-        RenderPipeline pipeline = CACHE.computeIfAbsent(key, InstancingPipeline::build);
-        RenderPipelineCompiler.precompile(pipeline, SHADER_SOURCE);
+    private static RenderPipeline request(PipelineKey key) {
+        boolean debug = key.debug() != DebugMode.OFF;
+        VERTEX_ASSEMBLY.putIfAbsent(vertexId(key.instanceType(), key.embedded(), key.materialShaders(), debug),
+                new VertexAssembly(key.instanceType(), key.materialShaders(), debug));
+        FRAGMENT_ASSEMBLY.putIfAbsent(fragmentId(key.light(), key.materialShaders(), key.smoothness(), key.cutout(),
+                        key.fog(), key.debug(), key.embeddedFragment()),
+                new FragmentAssembly(key.light(), key.materialShaders(), key.smoothness(), key.cutout(), key.fog(),
+                        key.debug(), key.embeddedFragment()));
+        RenderPipeline pipeline = build(key);
+        RenderPipelineCompiler.request(pipeline, SHADER_SOURCE, null);
         return pipeline;
     }
 
@@ -148,13 +146,15 @@ public final class InstancingPipeline {
         }
 
         RenderPipeline.Builder builder = RenderPipeline.builder(RenderPipelines.MATRICES_FOG_LIGHT_DIR_SNIPPET)
-                .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
-                .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
-                .withDepthStencilState(new DepthStencilState(depthTest.compareOp, depthWrite,
-                        polygonOffset ? MaterialRenderState.polygonOffsetSlope(transparency, depthTest) : 0.0f,
-                        polygonOffset ? MaterialRenderState.POLYGON_OFFSET_UNITS : 0.0f))
-                .withCull(cull)
-                .withBindGroupLayout(bindGroup.build());
+                                                       .withVertexBinding(0, InternalVertex.VERTEX_FORMAT)
+                                                       .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                                                       .withDepthStencilState(
+                                                               new DepthStencilState(depthTest.compareOp, depthWrite,
+                                                                       polygonOffset ? MaterialRenderState.polygonOffsetSlope(
+                                                                               transparency, depthTest) : 0.0f,
+                                                                       polygonOffset ? MaterialRenderState.POLYGON_OFFSET_UNITS : 0.0f))
+                                                       .withCull(cull)
+                                                       .withBindGroupLayout(bindGroup.build());
 
         ColorTargetState colorTarget = colorTarget(transparency, colorWrite);
         if (colorTarget != null) {

@@ -41,6 +41,8 @@ dependencies {
 
     compileOnly("net.caffeinemc:sodium-fabric:${sodiumVersion}")
     compileOnly("maven.modrinth:iris:${irisVersion}-fabric")
+    compileOnly("maven.modrinth:voxy:${voxyCompileVersion}")
+    compileOnly("maven.modrinth:distanthorizons:${distantHorizonsVersion}") { isTransitive = false }
     compileOnly("io.github.douira:glsl-transformer:${glslTransformerVersion}")
     compileOnly("org.antlr:antlr4-runtime:${antlrRuntimeVersion}")
 

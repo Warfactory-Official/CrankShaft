@@ -50,7 +50,7 @@ public final class PartialModelEventHandler {
         }
 
         @Override
-        public CompletableFuture<Void> reload(SharedState sharedState, Executor backgroundExecutor,
+        public CompletableFuture<Void> reload(SharedState _, Executor _,
                                               PreparationBarrier preparationBarrier, Executor gameExecutor) {
             // No async prepare -- partials only fetch already-baked models on the game thread after MODELS applies.
             return preparationBarrier.wait(Unit.INSTANCE)
