@@ -13,6 +13,7 @@ import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.compile.NativeOitWarmup;
 #endif
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
+import dev.engine_room.flywheel.backend.engine.indirect.MeshVisualDrawManager;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.impl.visualization.VisualizationManagerImpl;
 import dev.engine_room.flywheel.impl.compat.DistantHorizonsCompat;
@@ -112,7 +113,7 @@ public final class BackendManagerImpl {
                 } else {
                     ProgramAvailability.reject(failure.feature(), failure);
                     ShaderWarmup.retry(failure.feature());
-                    reselect();
+                    select();
                 }
             } catch (BackendUnavailableException failure) {
                 if (Boolean.getBoolean("crankshaft.shader.strict")) throw failure;
@@ -128,12 +129,20 @@ public final class BackendManagerImpl {
         BackendRecovery.reject(backend, failure);
         if (VkContext.isVulkanHost()) VkPrograms.kill();
         else if (backend == Backends.INSTANCING) InstancingPrograms.kill();
-        else if (backend == Backends.INDIRECT
-                || Backends.GL_MESH_SHADER_ID.equals(Backend.REGISTRY.getIdOrThrow(backend))) IndirectPrograms.kill();
-        reselect();
+        else if (backend == Backends.INDIRECT || glMesh(backend)) IndirectPrograms.kill();
+        select();
     }
 
     public static void reselect() {
+        Backend previous = backend;
+        select();
+        engage(previous);
+    }
+
+    /**
+     * Re-selection inside a warm-up, which prepares the new selection itself.
+     */
+    public static void select() {
         chooseBackend();
         VisualizationManagerImpl.resetAll();
         #if MC >= 26.3
@@ -142,14 +151,33 @@ public final class BackendManagerImpl {
     }
 
     public static void onReloadLevelRenderer(Level level) {
+        Backend previous = backend;
         chooseBackend();
         VisualizationManagerImpl.reset(level);
         #if MC >= 26.3
         NativeOitWarmup.configurationChanged();
         #endif
+        engage(previous);
+    }
+
+    // Resource loading warms the backend it selects; a backend selected later draws programs no warm-up prepared,
+    // which a reload under another selection may also have dropped.
+    private static void engage(Backend previous) {
+        if (backend != previous) ShaderWarmup.engaged();
     }
 
     private static void chooseBackend() {
+        Backend previous = backend;
+        pickBackend();
+        // The mesh tier's programs outlive its engines; nothing else draws them.
+        if (glMesh(previous) && !glMesh(backend)) MeshVisualDrawManager.reset();
+    }
+
+    private static boolean glMesh(Backend candidate) {
+        return Backends.GL_MESH_SHADER_ID.equals(Backend.REGISTRY.getIdOrThrow(candidate));
+    }
+
+    private static void pickBackend() {
         boolean wasOff = backend == OFF_BACKEND;
         Backend preferred = FlwConfig.INSTANCE.backend();
 

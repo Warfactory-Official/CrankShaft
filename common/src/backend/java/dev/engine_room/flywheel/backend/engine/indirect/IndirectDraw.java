@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.backend.compile.ProgramGeneration;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
+import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.BindlessSlots;
 import dev.engine_room.flywheel.backend.engine.DrawTags;
@@ -14,6 +15,8 @@ import dev.engine_room.flywheel.backend.gl.GlCompat;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
+
+import java.util.List;
 
 public class IndirectDraw {
     private final IndirectInstancer<?> instancer;
@@ -48,6 +51,16 @@ public class IndirectDraw {
         int typeId = InstanceTypeIds.id(instancer.type);
         this.packedTexIndices = texSlot | (typeId << 16);
         this.required = ProgramGeneration.required(typeId, packedFogAndCutout & 0xFFFF, packedFogAndCutout >>> 16);
+    }
+
+    /**
+     * {@link ShaderWarmup#skipped} for {@code draws} from {@code start} to {@code end}, exclusive.
+     */
+    static void skipped(List<IndirectDraw> draws, int start, int end) {
+        for (int i = start; i < end; i++) {
+            IndirectDraw draw = draws.get(i);
+            ShaderWarmup.skipped(draw.material(), draw.instanceType());
+        }
     }
 
     /**

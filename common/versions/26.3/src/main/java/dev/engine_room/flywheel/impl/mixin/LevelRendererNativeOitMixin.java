@@ -10,6 +10,7 @@ import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.engine_room.flywheel.backend.compile.NativeOitScope;
 import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
+import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.engine.NativeOitReplay;
 import dev.engine_room.flywheel.backend.engine.OitFrame;
 import dev.engine_room.flywheel.backend.engine.SodiumTerrainOitReplay;
@@ -97,7 +98,8 @@ abstract class LevelRendererNativeOitMixin implements NativeOitReplay {
                                       FeatureRenderDispatcher.PreparedFrame frame, CallbackInfo ci) {
         LodCompat.captureTerrainDepth(1);
         VisualizationManagerImpl manager = VisualizationManagerImpl.get(Minecraft.getInstance().level);
-        if (manager == null) {
+        // While ShaderWarmup.pending, frames composite natively until the warm-up returns the engine's programs.
+        if (manager == null || ShaderWarmup.pending()) {
             return;
         }
         if (flywheel$level != null) {

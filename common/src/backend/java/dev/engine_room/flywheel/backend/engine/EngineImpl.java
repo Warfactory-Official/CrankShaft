@@ -19,6 +19,7 @@ import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.GpuTimer;
 import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
+import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.compile.VkAsyncBuilds;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.embed.*;
@@ -126,6 +127,8 @@ public class EngineImpl implements Engine {
 
     @Override
     public void render(RenderContext context) {
+        // Released or unwarmed programs (ShaderWarmup.pending): the reload overlay's or a fallback's frames draw none.
+        if (ShaderWarmup.pending()) return;
         // 26.2: raw restore desynchronizes Mojang RHI caches.
         try {
             RenderPipelineCompiler.poll();
@@ -160,6 +163,7 @@ public class EngineImpl implements Engine {
                              @Nullable BerTranslucentCapture ber,
                              #if MC < 26.3 @Nullable FabulousCaptures fabulous, #endif
                              @Nullable SodiumTerrainOitReplay terrain) {
+        if (ShaderWarmup.pending()) return false;
         OitInstanceCoverage.seam();
         try {
             return drawManager.renderOit(lightStorage, environmentStorage, chunks, ber,
@@ -177,6 +181,7 @@ public class EngineImpl implements Engine {
 
     @Override
     public void renderCrumbling(RenderContext _, List<CrumblingBlock> crumblingBlocks) {
+        if (ShaderWarmup.pending()) return;
         try {
             drawManager.renderCrumbling(crumblingBlocks);
         } catch (BackendUnavailableException e) {
@@ -211,7 +216,7 @@ public class EngineImpl implements Engine {
     }
 
     private void triggerFallback() {
-        drawManager.triggerFallback();
+        ShaderWarmup.fallingBack(drawManager::triggerFallback);
     }
 
     public <I extends Instance> Instancer<I> instancer(Environment environment, InstanceType<I> type, Model model,

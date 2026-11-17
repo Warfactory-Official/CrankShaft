@@ -17,7 +17,7 @@ import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.vk.VkCmd;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline;
-import dev.engine_room.flywheel.backend.vk.shader.VkMeshPipeline;
+import dev.engine_room.flywheel.backend.vk.shader.VkMaterialPipeline;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
@@ -157,14 +157,15 @@ public final class VkNativeOitPass {
     /**
      * Explicitly used by OIT bind sites; ordinary pipeline handles and classic paths remain direct.
      */
-    public static long enginePipeline(VkGraphicsPipeline pipeline) {
-        return active == null ? pipeline.handle()
-                : pipeline.subpassHandle(active.nodes.get(active.subpass).engineCompatibility);
+    public static long enginePipeline(VkMaterialPipeline pipeline) {
+        return enginePipeline(pipeline, null);
     }
 
-    public static long enginePipeline(VkMeshPipeline pipeline) {
-        return active == null ? pipeline.handle()
-                : pipeline.subpassHandle(active.nodes.get(active.subpass).engineCompatibility);
+    /**
+     * {@code depth}: a material pipeline's baked depth state.
+     */
+    public static long enginePipeline(VkMaterialPipeline pipeline, VkGraphicsPipeline.@Nullable DepthState depth) {
+        return pipeline.variant(active == null ? null : active.nodes.get(active.subpass).engineCompatibility, depth);
     }
 
     private static void check(int result, String operation) {

@@ -80,9 +80,7 @@ public final class GlProgramBuild {
             return build;
         }
         try (GlCompilationBatch batch = new GlCompilationBatch()) {
-            int[] stages = new int[types.length];
-            for (int i = 0; i < types.length; i++) stages[i] = batch.shader(types[i], sources[i], stageLabels[i]);
-            batch.link(label, stages, attributes, publish);
+            link(batch, label, types, sources, stageLabels, attributes, publish);
             batch.finish(() -> {
             });
         } catch (GlCompilationBatch.Failure failure) {
@@ -90,6 +88,26 @@ public final class GlProgramBuild {
             throw new ProgramAvailability.Failure(owner, failure);
         }
         return build;
+    }
+
+    /**
+     * Links in {@code batch}, which publishes the build, {@code setup} first, when it finishes.
+     */
+    public static GlProgramBuild link(GlCompilationBatch batch, String label, int[] types, String[] sources,
+                                      String[] stageLabels, IntConsumer setup) {
+        GlProgramBuild build = new GlProgramBuild();
+        link(batch, label, types, sources, stageLabels, NO_ATTRIBUTES, program -> {
+            setup.accept(program);
+            build.handle = program;
+        });
+        return build;
+    }
+
+    private static void link(GlCompilationBatch batch, String label, int[] types, String[] sources,
+                             String[] stageLabels, String[] attributes, IntConsumer publish) {
+        int[] stages = new int[types.length];
+        for (int i = 0; i < types.length; i++) stages[i] = batch.shader(types[i], sources[i], stageLabels[i]);
+        batch.link(label, stages, attributes, publish);
     }
 
     /**

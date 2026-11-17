@@ -8,69 +8,41 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 
 import java.nio.ByteBuffer;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.Map;
 
-public final class VkMeshPipeline {
+public final class VkMeshPipeline implements VkMaterialPipeline {
     private final VkDescriptorLayout layout;
     private final long taskModule;
     private final long meshModule;
     private final long fragModule;
     private final long pipeline;
     private final VkGraphicsPipeline.Config config;
-    private final Map<VkGraphicsPipeline.Subpass, Long> subpassPipelines = new IdentityHashMap<>();
+    // As VkGraphicsPipeline's.
+    private final Map<VkGraphicsPipeline.@Nullable Subpass, Map<VkGraphicsPipeline.@Nullable DepthState, Long>>
+            variants = new IdentityHashMap<>();
 
     public VkMeshPipeline(VkDescriptorLayout layout, long taskModule, long meshModule, long fragModule,
                           int[] colorFormats, VkGraphicsPipeline.Blend[] blends, boolean depthWrite, int depthFormat) {
-        this(layout, taskModule, meshModule, fragModule, colorFormats, blends, depthWrite, depthFormat, null, null,
-                0.0F, 0.0F);
+        this(layout, taskModule, meshModule, fragModule, colorFormats, blends, depthWrite, depthFormat, null, null);
     }
 
     public VkMeshPipeline(VkDescriptorLayout layout, long taskModule, long meshModule, long fragModule,
                           int[] colorFormats, VkGraphicsPipeline.Blend[] blends, boolean depthWrite, int depthFormat,
                           int @Nullable [] attachmentLocations, int @Nullable [] inputAttachmentIndices) {
-        this(layout, taskModule, meshModule, fragModule, colorFormats, blends, depthWrite, depthFormat,
-                attachmentLocations, inputAttachmentIndices, 0.0F, 0.0F);
+        this(layout, taskModule, meshModule, fragModule, new VkGraphicsPipeline.Config(colorFormats, blends, true,
+                depthWrite, VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VkGraphicsPipeline.Vertex.NONE,
+                VK12.VK_CULL_MODE_BACK_BIT, depthFormat, 0.0F, 0.0F, attachmentLocations, inputAttachmentIndices));
     }
 
     public VkMeshPipeline(VkDescriptorLayout layout, long taskModule, long meshModule, long fragModule,
                           VkGraphicsPipeline.Config config) {
-        this(layout, taskModule, meshModule, fragModule, config.colorFormats(), config.blends(), config.depthWrite(),
-                config.depthCompareOp(), config.cullMode(), config.depthFormat(), config.attachmentLocations(),
-                config.inputAttachmentIndices(), config.depthBiasConstant(), config.depthBiasSlope());
-    }
-
-    // Material-keyed producers (no depth write): depth test, cull and polygon offset from the material.
-    public VkMeshPipeline(VkDescriptorLayout layout, long taskModule, long meshModule, long fragModule,
-                          int[] colorFormats, VkGraphicsPipeline.Blend[] blends, int depthCompareOp, int cullMode,
-                          int depthFormat, int @Nullable [] attachmentLocations,
-                          int @Nullable [] inputAttachmentIndices,
-                          float depthBiasConstant, float depthBiasSlope) {
-        this(layout, taskModule, meshModule, fragModule, colorFormats, blends, false, depthCompareOp, cullMode,
-                depthFormat, attachmentLocations, inputAttachmentIndices, depthBiasConstant, depthBiasSlope);
-    }
-
-    public VkMeshPipeline(VkDescriptorLayout layout, long taskModule, long meshModule, long fragModule,
-                          int[] colorFormats, VkGraphicsPipeline.Blend[] blends, boolean depthWrite, int depthFormat,
-                          int @Nullable [] attachmentLocations, int @Nullable [] inputAttachmentIndices,
-                          float depthBiasConstant, float depthBiasSlope) {
-        this(layout, taskModule, meshModule, fragModule, colorFormats, blends, depthWrite,
-                VK12.VK_COMPARE_OP_GREATER_OR_EQUAL, VK12.VK_CULL_MODE_BACK_BIT, depthFormat,
-                attachmentLocations, inputAttachmentIndices, depthBiasConstant, depthBiasSlope);
-    }
-
-    private VkMeshPipeline(VkDescriptorLayout layout, long taskModule, long meshModule, long fragModule,
-                           int[] colorFormats, VkGraphicsPipeline.Blend[] blends, boolean depthWrite,
-                           int depthCompareOp, int cullMode, int depthFormat,
-                           int @Nullable [] attachmentLocations, int @Nullable [] inputAttachmentIndices,
-                           float depthBiasConstant, float depthBiasSlope) {
         this.layout = layout;
         this.taskModule = taskModule;
         this.meshModule = meshModule;
         this.fragModule = fragModule;
-        config = new VkGraphicsPipeline.Config(colorFormats, blends, true, depthWrite, depthCompareOp,
-                VkGraphicsPipeline.Vertex.NONE, cullMode, depthFormat, depthBiasConstant, depthBiasSlope,
-                attachmentLocations, inputAttachmentIndices);
+        this.config = config;
         pipeline = createPipeline(layout, taskModule, meshModule, fragModule, config, 0L, 0);
     }
 
@@ -109,15 +81,27 @@ public final class VkMeshPipeline {
 
     /** Render thread; variants borrow this owner's modules and layout until the common deferred destruction. */
     public long subpassHandle(VkGraphicsPipeline.Subpass subpass) {
-        Long handle = subpassPipelines.get(subpass);
+        return variant(subpass, null);
+    }
+
+    @Override
+    public long variant(VkGraphicsPipeline.@Nullable Subpass subpass,
+                        VkGraphicsPipeline.@Nullable DepthState depth) {
+        if (subpass == null && depth == null) return pipeline;
+        Map<VkGraphicsPipeline.@Nullable DepthState, Long> byDepth = variants.get(subpass);
+        if (byDepth == null) variants.put(subpass, byDepth = new HashMap<>());
+        Long handle = byDepth.get(depth);
         if (handle == null) {
-            handle = createPipeline(layout, taskModule, meshModule, fragModule, subpass.config(config),
-                    subpass.renderPass(), subpass.index());
-            subpassPipelines.put(subpass, handle);
+            VkGraphicsPipeline.Config variant = subpass == null ? config : subpass.config(config);
+            handle = createPipeline(layout, taskModule, meshModule, fragModule,
+                    depth == null ? variant : variant.baked(depth), subpass == null ? 0L : subpass.renderPass(),
+                    subpass == null ? 0 : subpass.index());
+            byDepth.put(depth, handle);
         }
         return handle;
     }
 
+    @Override
     public VkDescriptorLayout layout() {
         return layout;
     }
@@ -127,8 +111,9 @@ public final class VkMeshPipeline {
         long task = taskModule;
         long mesh = meshModule;
         long frag = fragModule;
-        long[] variants = subpassPipelines.values().stream().mapToLong(Long::longValue).toArray();
-        subpassPipelines.clear();
+        long[] variants = this.variants.values().stream().flatMap(byDepth -> byDepth.values().stream())
+                                       .mapToLong(Long::longValue).toArray();
+        this.variants.clear();
         VkContext.deferDestroy(() -> {
             for (long variant : variants) VK12.vkDestroyPipeline(VkContext.vkDevice(), variant, null);
             VK12.vkDestroyPipeline(VkContext.vkDevice(), p, null);

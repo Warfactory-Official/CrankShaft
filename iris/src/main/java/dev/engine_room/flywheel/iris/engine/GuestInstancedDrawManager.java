@@ -424,13 +424,13 @@ public class GuestInstancedDrawManager extends InstancedDrawManager implements G
     }
 
     @Override
-    protected void warmUp(Material material, InstanceType<?> type) {
+    protected void warmUp(Material material, InstanceType<?> type, boolean embedded) {
         if (GuestDrawManager.emissive(material)) {
-            additivePipeline(material, type, false);
+            additivePipeline(material, type, embedded);
         } else if (GuestDrawManager.drawnInTranslucentPass(material, 0)) {
-            translucentPipeline(material, type, false);
+            translucentPipeline(material, type, embedded);
         } else {
-            pipelineFor(material, type, false);
+            pipelineFor(material, type, embedded);
         }
     }
 

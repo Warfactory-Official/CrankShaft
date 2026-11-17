@@ -1,8 +1,5 @@
 package dev.engine_room.vanillin.elements;
 
-import dev.engine_room.flywheel.api.material.Material;
-import dev.engine_room.flywheel.api.material.Transparency;
-import dev.engine_room.flywheel.api.material.WriteMask;
 import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.api.vertex.MutableVertexList;
 import dev.engine_room.flywheel.api.visual.DynamicVisual;
@@ -10,7 +7,7 @@ import dev.engine_room.flywheel.api.visualization.VisualizationContext;
 import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.instance.ShadowInstance;
-import dev.engine_room.flywheel.lib.material.SimpleMaterial;
+import dev.engine_room.flywheel.lib.material.Materials;
 import dev.engine_room.flywheel.lib.model.QuadMesh;
 import dev.engine_room.flywheel.lib.model.SingleMeshModel;
 import dev.engine_room.flywheel.lib.util.OverlayTexture;
@@ -22,7 +19,6 @@ import net.minecraft.client.renderer.Lightmap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.BlockPos.MutableBlockPos;
 import net.minecraft.core.Direction.Axis;
-import net.minecraft.resources.Identifier;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
@@ -44,16 +40,7 @@ import org.jspecify.annotations.Nullable;
  * The shadow will be cast on blocks at most {@code min(radius, 2 * strength)} blocks below the entity.</p>
  */
 public final class ShadowElement extends AbstractVisual implements SimpleDynamicVisual {
-    private static final Identifier SHADOW_TEXTURE = Identifier.withDefaultNamespace("textures/misc/shadow.png");
-    private static final Material SHADOW_MATERIAL = SimpleMaterial.builder()
-                                                                  .texture(SHADOW_TEXTURE)
-                                                                  .mipmap(false)
-                                                                  .polygonOffset(
-                                                                          true) // vanilla shadows use "view offset" but this seems to work fine
-                                                                  .transparency(Transparency.TRANSLUCENT)
-                                                                  .writeMask(WriteMask.COLOR)
-                                                                  .build();
-    private static final Model SHADOW_MODEL = new SingleMeshModel(ShadowMesh.INSTANCE, SHADOW_MATERIAL);
+    private static final Model SHADOW_MODEL = new SingleMeshModel(ShadowMesh.INSTANCE, Materials.SHADOW);
 
     private final Entity entity;
     private final BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();

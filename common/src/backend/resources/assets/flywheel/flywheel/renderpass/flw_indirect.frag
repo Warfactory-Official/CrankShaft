@@ -53,9 +53,6 @@ uniform uint _flw_farIrisMeshPrimitiveCount;
 void _flw_farCaptureIris(vec4 albedo, vec3 normal, vec4 tangent, vec2 light, float diffuse, float unlit,
                          uvec4 material, vec3 world);
 #endif
-#ifdef _FLW_FAR_LAYER_CAPTURE
-#include "flywheel:internal/far/layer_capture.glsl"
-#endif
 #if defined(_FLW_FAR_BAKE) || defined(_FLW_FAR_SURFACE)
 in vec3 _flw_farPosition;
 flat in uvec2 _flw_farMaterialKey;

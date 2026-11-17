@@ -28,6 +28,7 @@ import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
+import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.compile.component.InstanceAssemblerComponent;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.NativeOitReplay;
@@ -62,6 +63,8 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                                                                                .thenComparing(InstancedDraw::material,
                                                                                        MaterialRenderState.COMPARATOR);
     private final List<InstancedDraw> allDraws = new ArrayList<>();
+    // A crumbling frame's pipelines, selected outside its pass.
+    private final Map<InstancedDraw, @Nullable RenderPipeline> crumblingPipelines = new IdentityHashMap<>();
     protected final List<InstancedDraw> draws = new ArrayList<>();
     protected final List<InstancedDraw> oitDraws = new ArrayList<>();
     protected final List<InstancedDraw> oitAdditiveDraws = new ArrayList<>();
@@ -184,7 +187,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
     }
 
     protected @Nullable RenderPipeline pipelineFor(Material material, InstanceType<?> type, boolean embedded) {
-        return InstancingPipeline.pipelineFor(material, type, embedded);
+        return InstancingPipeline.pipelineFor(material, type, embedded, false);
     }
 
     /**
@@ -203,6 +206,9 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         return false;
     }
 
+    /**
+     * Outside any render pass.
+     */
     protected @Nullable RenderPipeline crumblingPipelineFor(Material crumblingMaterial, InstanceType<?> type) {
         return CrumblingPipelines.pipeline(crumblingMaterial, type, false);
     }
@@ -336,6 +342,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             boolean embedded = environment instanceof EmbeddedEnvironment;
             RenderPipeline pipeline = pipelineFor.pipeline(material, drawCall.groupKey.instanceType(), embedded);
             if (pipeline == null) {
+                ShaderWarmup.skipped(material, drawCall.groupKey.instanceType());
                 continue;
             }
             GpuBufferSlice materialSlice = renderPassUniforms.material(MaterialEncoder.packProperties(material),
@@ -451,6 +458,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             boolean embedded = environment instanceof EmbeddedEnvironment;
             RenderPipeline pipeline = pipelineFor.pipeline(material, drawCall.groupKey.instanceType(), embedded);
             if (pipeline == null) {
+                ShaderWarmup.skipped(material, drawCall.groupKey.instanceType());
                 continue;
             }
             GpuBufferSlice materialSlice = renderPassUniforms.material(MaterialEncoder.packProperties(material),
@@ -536,7 +544,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         }
 
         drawRuns(pass, additive ? oitAdditiveDraws : oitDraws,
-                (material, type, embedded) -> OitPipelines.producer(material, type, mode, embedded),
+                (material, type, embedded) -> OitPipelines.producer(material, type, mode, embedded, false),
                 f.textureManager());
     }
 
@@ -544,7 +552,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         light.bindStorage();
         pass.setUniform("_FlwRenderOrigin", renderPassUniforms.renderOriginSlice());
         drawRuns(pass, additive ? oitAdditiveDraws : oitDraws,
-                (material, type, embedded) -> OitPipelines.instancedMlab(material, type, mode, embedded),
+                (material, type, embedded) -> OitPipelines.instancedMlab(material, type, mode, embedded, false),
                 f.textureManager());
     }
 
@@ -614,7 +622,7 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             allDraws.add(instancedDraw);
             needSort = true;
             instancer.addDrawCall(instancedDraw);
-            warmUp(entry.material(), key.type());
+            warmUp(entry.material(), key.type(), key.environment() instanceof EmbeddedEnvironment);
         }
     }
 
@@ -626,15 +634,15 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
     }
 
     /**
-     * Requests a new draw's pipelines ahead of its first frame.
+     * Requests a new draw's pipelines ahead of its first frame, outside any render pass.
      */
-    protected void warmUp(Material material, InstanceType<?> type) {
+    protected void warmUp(Material material, InstanceType<?> type, boolean embedded) {
         if (OitTransparency.orderIndependent(material)) {
             OitInsertMode mode = OitConfig.resolveInsertMode();
-            if (mode == null) OitPipelines.producer(material, type, OitMode.EVALUATE, false);
-            else OitPipelines.instancedMlab(material, type, mode, false);
+            if (mode == null) OitPipelines.producer(material, type, OitMode.EVALUATE, embedded, true);
+            else OitPipelines.instancedMlab(material, type, mode, embedded, true);
         } else {
-            InstancingPipeline.pipelineFor(material, type, false);
+            InstancingPipeline.pipelineFor(material, type, embedded, true);
         }
     }
 
@@ -661,11 +669,19 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
             return;
         }
 
-        for (var byProgress : byType.values()) {
-            for (var progressEntry : byProgress.int2ObjectEntrySet()) {
-                for (var pair : progressEntry.getValue()) {
+        var crumblingMaterial = SimpleMaterial.builder();
+        crumblingPipelines.clear();
+        for (var groupEntry : byType.entrySet()) {
+            for (var pairs : groupEntry.getValue().values()) {
+                for (var pair : pairs) {
                     pair.getFirst()
                         .prepareInstanceTexels();
+                    for (InstancedDraw draw : pair.getFirst().draws()) {
+                        if (crumblingPipelines.containsKey(draw)) continue;
+                        CommonCrumbling.applyCrumblingProperties(crumblingMaterial, draw.material());
+                        crumblingPipelines.put(draw,
+                                crumblingPipelineFor(crumblingMaterial, groupEntry.getKey().instanceType()));
+                    }
                 }
             }
         }
@@ -685,8 +701,6 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
         GpuTextureView overlayView = mc.gameRenderer.overlayTexture()
                                                     .getTextureView();
         GpuTextureView lightmapView = mc.gameRenderer.lightmap();
-
-        var crumblingMaterial = SimpleMaterial.builder();
 
         GlCompat.pushDebugGroup("flywheel:gl/crumbling");
         try (RenderPass pass = encoder.createRenderPass(() -> "flywheel:instanced/crumbling",
@@ -728,8 +742,9 @@ public class InstancedDrawManager extends DrawManager<InstancedInstancer<?>> {
                                 continue;
                             }
                             CommonCrumbling.applyCrumblingProperties(crumblingMaterial, draw.material());
-                            RenderPipeline pipeline = crumblingPipelineFor(crumblingMaterial, instanceType);
+                            RenderPipeline pipeline = crumblingPipelines.get(draw);
                             if (pipeline == null) {
+                                ShaderWarmup.skipped(draw.material(), instanceType);
                                 continue;
                             }
                             pass.setRenderPipeline(pipeline);

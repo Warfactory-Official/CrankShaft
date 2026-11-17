@@ -83,6 +83,18 @@ public enum ContractProgram {
         };
     }
 
+    /**
+     * The representative of the transparencies that {@link #of} and the guest shaders treat alike; their blending is
+     * pipeline state.
+     */
+    static Transparency transparencyClass(Transparency transparency) {
+        return switch (transparency) {
+            case TRANSLUCENT_ALPHA_REPLACE -> Transparency.TRANSLUCENT;
+            case ORDER_INDEPENDENT_ADDITIVE -> Transparency.LIGHTNING;
+            default -> transparency;
+        };
+    }
+
     public static @Nullable ContractProgram byName(String sourceName) {
         for (ContractProgram program : values()) {
             if (program.sourceName.equals(sourceName)) {

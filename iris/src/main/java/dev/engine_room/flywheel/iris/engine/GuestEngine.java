@@ -4,6 +4,7 @@ import dev.engine_room.flywheel.iris.mixin.IrisRenderingPipelineAccessor;
 import dev.engine_room.flywheel.api.backend.BackendManager;
 import dev.engine_room.flywheel.api.backend.RenderContext;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
+import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.BackendRecovery;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
@@ -104,6 +105,8 @@ public class GuestEngine extends EngineImpl {
 
     @Override
     public void render(RenderContext context) {
+        // As EngineImpl: no draw while ShaderWarmup.pending.
+        if (ShaderWarmup.pending()) return;
         IrisRenderingPipeline pipeline = pipeline();
         try {
             if (!preparedForMainPass) {
@@ -116,13 +119,14 @@ public class GuestEngine extends EngineImpl {
             guest.drawOpaque(pipeline);
         } catch (BackendUnavailableException e) {
             BackendRecovery.reject(BackendManager.currentBackend(), e);
-            guest.triggerFallback();
+            ShaderWarmup.fallingBack(guest::triggerFallback);
         } finally {
             GuestSsbos.restore(pipeline);
         }
     }
 
     void renderShadow(RenderContext context, Matrix4fc shadowModelView, Vec3 camera, IrisRenderingPipeline pipeline) {
+        if (ShaderWarmup.pending()) return;
         try {
             prepare(context);
             preparedForMainPass = true;
@@ -144,7 +148,7 @@ public class GuestEngine extends EngineImpl {
             }
         } catch (BackendUnavailableException e) {
             BackendRecovery.reject(BackendManager.currentBackend(), e);
-            guest.triggerFallback();
+            ShaderWarmup.fallingBack(guest::triggerFallback);
         } finally {
             GuestSsbos.restore(pipeline);
         }
@@ -161,7 +165,7 @@ public class GuestEngine extends EngineImpl {
                     translucentShadowBlockEntities);
         } catch (BackendUnavailableException e) {
             BackendRecovery.reject(BackendManager.currentBackend(), e);
-            guest.triggerFallback();
+            ShaderWarmup.fallingBack(guest::triggerFallback);
         } finally {
             GuestSsbos.restore(pipeline);
         }

@@ -1,6 +1,7 @@
 package dev.engine_room.flywheel.backend.vk.shader;
 
 import dev.engine_room.flywheel.api.material.DepthTest;
+import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.material.Transparency;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
 import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
@@ -14,10 +15,11 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 
 import java.nio.LongBuffer;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.Map;
 
-public final class VkGraphicsPipeline {
+public final class VkGraphicsPipeline implements VkMaterialPipeline {
     public static final int COLOR_WRITE_RGBA = VK10.VK_COLOR_COMPONENT_R_BIT | VK10.VK_COLOR_COMPONENT_G_BIT
             | VK10.VK_COLOR_COMPONENT_B_BIT | VK10.VK_COLOR_COMPONENT_A_BIT;
     private static final int INTERNAL_VERTEX_STRIDE = 36;
@@ -25,12 +27,21 @@ public final class VkGraphicsPipeline {
     private static final int PARTICLE_STRIDE = 28;
     private static final int ENTITY_STRIDE = 36;
     private static final int BLOCK_STRIDE = 28;
+    // Prefixes per Dynamic constant.
+    private static final int[] DYNAMIC_STATES = {VK10.VK_DYNAMIC_STATE_VIEWPORT, VK10.VK_DYNAMIC_STATE_SCISSOR,
+            VK10.VK_DYNAMIC_STATE_DEPTH_BIAS, EXTExtendedDynamicState.VK_DYNAMIC_STATE_CULL_MODE_EXT,
+            EXTExtendedDynamicState.VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE_EXT,
+            EXTExtendedDynamicState.VK_DYNAMIC_STATE_DEPTH_COMPARE_OP_EXT,
+            EXTExtendedDynamicState3.VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT,
+            EXTExtendedDynamicState3.VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT,
+            EXTExtendedDynamicState3.VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT};
     private final VkDescriptorLayout layout;
     private final long vertexModule;
     private final long fragmentModule;
     private final long pipeline;
     private final Config config;
-    private final Map<Subpass, Long> subpassPipelines = new IdentityHashMap<>();
+    // By render-pass compatibility identity (null: dynamic rendering), then baked depth state (null: the config's).
+    private final Map<@Nullable Subpass, Map<@Nullable DepthState, Long>> variants = new IdentityHashMap<>();
 
     public VkGraphicsPipeline(VkDescriptorLayout layout, long vertexModule, long fragmentModule, Config config) {
         this.layout = layout;
@@ -138,19 +149,28 @@ public final class VkGraphicsPipeline {
                                                           VkPipelineShaderStageCreateInfo.Buffer stages,
                                                           long renderPass, int subpass) {
         VkPipelineRasterizationStateCreateInfo raster = VkPipelineRasterizationStateCreateInfo.calloc(stack)
-                .sType$Default()
-                .polygonMode(VK10.VK_POLYGON_MODE_FILL)
-                .cullMode(config.cullMode())
-                .frontFace(VK10.VK_FRONT_FACE_CLOCKWISE)
-                .lineWidth(1.0F)
-                .depthBiasEnable(config.depthBiasConstant() != 0.0F || config.depthBiasSlope() != 0.0F)
-                .depthBiasConstantFactor(config.depthBiasConstant())
-                .depthBiasSlopeFactor(config.depthBiasSlope());
+                                                                                              .sType$Default()
+                                                                                              .polygonMode(
+                                                                                                      VK10.VK_POLYGON_MODE_FILL)
+                                                                                              .frontFace(
+                                                                                                      VK10.VK_FRONT_FACE_CLOCKWISE)
+                                                                                              .lineWidth(1.0F);
         VkPipelineDepthStencilStateCreateInfo depth = VkPipelineDepthStencilStateCreateInfo.calloc(stack)
-                .sType$Default()
-                .depthTestEnable(config.depthTest())
-                .depthWriteEnable(config.depthWrite())
-                .depthCompareOp(config.depthCompareOp());
+                                                                                           .sType$Default()
+                                                                                           .depthTestEnable(
+                                                                                                   config.depthTest());
+        if (config.dynamic() == Dynamic.NONE || config.dynamic() == Dynamic.DEPTH_BIAS) {
+            raster.cullMode(config.cullMode());
+            depth.depthWriteEnable(config.depthWrite()).depthCompareOp(config.depthCompareOp());
+        }
+        if (config.dynamic() == Dynamic.NONE) {
+            raster.depthBiasEnable(config.depthBiasConstant() != 0.0F || config.depthBiasSlope() != 0.0F)
+                  .depthBiasConstantFactor(config.depthBiasConstant())
+                  .depthBiasSlopeFactor(config.depthBiasSlope());
+        } else {
+            // Zero factors draw unbiased; core dynamic depth bias replaces a dynamic enable.
+            raster.depthBiasEnable(true);
+        }
 
         VkPipelineRenderingCreateInfoKHR rendering = renderingInfo(stack, config.colorFormats(), config.depthFormat());
         if (config.attachmentLocations() != null) {
@@ -172,7 +192,7 @@ public final class VkGraphicsPipeline {
             .pMultisampleState(multisampleState(stack))
             .pDepthStencilState(depth)
             .pColorBlendState(colorBlendState(stack, config.blends()))
-            .pDynamicState(dynamicState(stack))
+            .pDynamicState(dynamicState(stack, config.dynamic()))
             .layout(layout.pipelineLayout())
             .renderPass(renderPass)
             .subpass(subpass);
@@ -197,7 +217,8 @@ public final class VkGraphicsPipeline {
 
     static void preflight(Config config) {
         int attachments = config.colorFormats().length;
-        requireAttachments(config.colorFormats(), config.blends(), config.depthFormat());
+        requireAttachments(config.colorFormats(), config.blends(), config.depthFormat(),
+                config.dynamic() == Dynamic.MATERIAL_BLEND);
         if (config.attachmentLocations() != null) {
             if (config.attachmentLocations().length != attachments || config.inputAttachmentIndices() == null
                     || config.inputAttachmentIndices().length != attachments) {
@@ -216,6 +237,14 @@ public final class VkGraphicsPipeline {
 
     /** Device limits and format features; {@code VK_FORMAT_UNDEFINED} = unused color slot. */
     public static void requireAttachments(int[] colorFormats, Blend[] blends, int depthFormat) {
+        requireAttachments(colorFormats, blends, depthFormat, false);
+    }
+
+    /**
+     * {@code dynamicBlend}: every attachment may blend whatever its static state.
+     */
+    private static void requireAttachments(int[] colorFormats, Blend[] blends, int depthFormat,
+                                           boolean dynamicBlend) {
         int attachments = colorFormats.length;
         if (blends.length != attachments) {
             throw new IllegalArgumentException("Color formats and blend states differ in length");
@@ -231,7 +260,7 @@ public final class VkGraphicsPipeline {
             }
             if (colorFormats[i] != VK10.VK_FORMAT_UNDEFINED) {
                 int features = VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
-                if (blend.enable()) features |= VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
+                if (dynamicBlend || blend.enable()) features |= VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
                 VkCaps.requireFormat("Color attachment", colorFormats[i], features);
             }
         }
@@ -245,8 +274,19 @@ public final class VkGraphicsPipeline {
     }
 
     public static VkPipelineDynamicStateCreateInfo dynamicState(MemoryStack stack) {
+        return dynamicState(stack, Dynamic.NONE);
+    }
+
+    private static VkPipelineDynamicStateCreateInfo dynamicState(MemoryStack stack, Dynamic dynamic) {
+        int count = switch (dynamic) {
+            case NONE -> 2;
+            case DEPTH_BIAS -> 3;
+            case MATERIAL -> 6;
+            case MATERIAL_BLEND -> DYNAMIC_STATES.length;
+        };
         return VkPipelineDynamicStateCreateInfo.calloc(stack).sType$Default()
-                .pDynamicStates(stack.ints(VK10.VK_DYNAMIC_STATE_VIEWPORT, VK10.VK_DYNAMIC_STATE_SCISSOR));
+                                               .pDynamicStates(
+                                                       stack.mallocInt(count).put(DYNAMIC_STATES, 0, count).flip());
     }
 
     public static VkPipelineMultisampleStateCreateInfo multisampleState(MemoryStack stack) {
@@ -321,13 +361,28 @@ public final class VkGraphicsPipeline {
                 VK10.VK_BLEND_FACTOR_ONE, VK10.VK_BLEND_FACTOR_ZERO, VK10.VK_BLEND_OP_ADD, COLOR_WRITE_RGBA);
     }
 
-    public static Config material(int colorFormat, int depthFormat, Transparency transparency, DepthTest depthTest,
-                                  boolean depthWrite, boolean colorWrite, boolean cull, boolean polygonOffset) {
-        return new Config(new int[]{colorFormat}, new Blend[]{blendFor(transparency, colorWrite)}, true, depthWrite,
-                compareOp(depthTest), Vertex.INTERNAL, cull ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE,
-                depthFormat,
-                polygonOffset ? MaterialRenderState.POLYGON_OFFSET_UNITS : 0.0F,
-                polygonOffset ? MaterialRenderState.polygonOffsetSlope(transparency, depthTest) : 0.0F);
+    /**
+     * One pipeline for every material state of {@code blend}'s class, set through {@link MaterialState#draw};
+     * {@code blend}: {@link #bakedBlend}.
+     */
+    public static Config material(Vertex vertex, int colorFormat, int depthFormat, @Nullable Blend blend) {
+        return new Config(new int[]{colorFormat}, new Blend[]{blend == null ? noColorWrite() : blend}, true, false,
+                VK10.VK_COMPARE_OP_ALWAYS, vertex, VK10.VK_CULL_MODE_NONE, depthFormat, 0.0F, 0.0F, null, null,
+                blend == null ? Dynamic.MATERIAL_BLEND : Dynamic.material());
+    }
+
+    /**
+     * The blend class a {@link #material} pipeline bakes for {@code material}; null where the device sets blend
+     * dynamically. Disabled color writes form one class, and equal blend functions share theirs.
+     */
+    public static @Nullable Blend bakedBlend(Material material) {
+        if (dynamicBlend()) return null;
+        return material.writeMask().color() ? blendFor(material.transparency(), true) : noColorWrite();
+    }
+
+    // Dynamic blend extends the dynamic depth state; without VK_EXT_extended_dynamic_state both are baked.
+    private static boolean dynamicBlend() {
+        return VkCaps.DYNAMIC_COLOR_BLEND_NEGOTIATED && VkCaps.EXTENDED_DYNAMIC_STATE_NEGOTIATED;
     }
 
     private static Blend blendFor(Transparency transparency, boolean colorWrite) {
@@ -367,15 +422,26 @@ public final class VkGraphicsPipeline {
 
     /** Render thread; the original owner retains the modules, layout and every compatible variant. */
     public long subpassHandle(Subpass subpass) {
-        Long handle = subpassPipelines.get(subpass);
+        return variant(subpass, null);
+    }
+
+    @Override
+    public long variant(@Nullable Subpass subpass, @Nullable DepthState depth) {
+        if (subpass == null && depth == null) return pipeline;
+        Map<@Nullable DepthState, Long> byDepth = variants.get(subpass);
+        if (byDepth == null) variants.put(subpass, byDepth = new HashMap<>());
+        Long handle = byDepth.get(depth);
         if (handle == null) {
-            handle = createPipeline(layout, vertexModule, fragmentModule, subpass.config(config),
-                    subpass.renderPass(), subpass.index());
-            subpassPipelines.put(subpass, handle);
+            Config variant = subpass == null ? config : subpass.config(config);
+            handle = createPipeline(layout, vertexModule, fragmentModule,
+                    depth == null ? variant : variant.baked(depth),
+                    subpass == null ? 0L : subpass.renderPass(), subpass == null ? 0 : subpass.index());
+            byDepth.put(depth, handle);
         }
         return handle;
     }
 
+    @Override
     public VkDescriptorLayout layout() {
         return layout;
     }
@@ -384,8 +450,9 @@ public final class VkGraphicsPipeline {
         long p = pipeline;
         long vs = vertexModule;
         long fs = fragmentModule;
-        long[] variants = subpassPipelines.values().stream().mapToLong(Long::longValue).toArray();
-        subpassPipelines.clear();
+        long[] variants = this.variants.values().stream().flatMap(byDepth -> byDepth.values().stream())
+                                       .mapToLong(Long::longValue).toArray();
+        this.variants.clear();
         VkContext.deferDestroy(() -> {
             for (long variant : variants) VK10.vkDestroyPipeline(VkContext.vkDevice(), variant, null);
             VK10.vkDestroyPipeline(VkContext.vkDevice(), p, null);
@@ -413,7 +480,7 @@ public final class VkGraphicsPipeline {
             for (int i = 0; i < blends.length; i++) blends[i] = source.blends()[sourceColorAttachments[i]];
             return new Config(colorFormats, blends, source.depthTest(), source.depthWrite(), source.depthCompareOp(),
                     source.vertex(), source.cullMode(), depthFormat, source.depthBiasConstant(),
-                    source.depthBiasSlope());
+                    source.depthBiasSlope(), null, null, source.dynamic());
         }
     }
 
@@ -421,19 +488,78 @@ public final class VkGraphicsPipeline {
                         int alphaOp, int writeMask) {
     }
 
+    /**
+     * A material's cull mode, depth write and depth compare op, baked into a variant of a {@link Dynamic#DEPTH_BIAS}
+     * pipeline where the device sets none of them dynamically; null otherwise.
+     */
+    public record DepthState(int cullMode, boolean depthWrite, int compareOp) {
+        public static @Nullable DepthState draw(Material material) {
+            return baked(material, material.writeMask().depth());
+        }
+
+        /**
+         * Producers and crumbling write no depth.
+         */
+        public static @Nullable DepthState undepthed(Material material) {
+            return baked(material, false);
+        }
+
+        private static @Nullable DepthState baked(Material material, boolean depthWrite) {
+            if (VkCaps.EXTENDED_DYNAMIC_STATE_NEGOTIATED) return null;
+            return new DepthState(material.backfaceCulling() ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE,
+                    depthWrite, VkGraphicsPipeline.compareOp(material.depthTest()));
+        }
+    }
+
+    /**
+     * Fixed-function state left to the command buffer; the config's own values for it are ignored.
+     */
+    public enum Dynamic {
+        NONE,
+        /**
+         * Depth bias factors, with depth bias enabled. Cull mode, depth write and depth compare op come from a
+         * {@link DepthState} variant.
+         */
+        DEPTH_BIAS,
+        /**
+         * {@link #DEPTH_BIAS} plus cull mode, depth write and depth compare op; depth test stays enabled.
+         */
+        MATERIAL,
+        /**
+         * {@link #MATERIAL} plus color blend enable, equation and write mask.
+         */
+        MATERIAL_BLEND;
+
+        /**
+         * Material pipelines with blend baked: {@link #MATERIAL}, or {@link #DEPTH_BIAS} without
+         * VK_EXT_extended_dynamic_state.
+         */
+        public static Dynamic material() {
+            return VkCaps.EXTENDED_DYNAMIC_STATE_NEGOTIATED ? MATERIAL : DEPTH_BIAS;
+        }
+    }
+
     public record Config(int[] colorFormats, Blend[] blends, boolean depthTest, boolean depthWrite, int depthCompareOp,
                          Vertex vertex, int cullMode, int depthFormat, float depthBiasConstant, float depthBiasSlope,
-                         int @Nullable [] attachmentLocations, int @Nullable [] inputAttachmentIndices) {
+                         int @Nullable [] attachmentLocations, int @Nullable [] inputAttachmentIndices,
+                         Dynamic dynamic) {
         public Config(int[] colorFormats, Blend[] blends, boolean depthTest, boolean depthWrite, int depthCompareOp,
                       Vertex vertex, int cullMode, int depthFormat) {
             this(colorFormats, blends, depthTest, depthWrite, depthCompareOp, vertex, cullMode, depthFormat, 0.0F, 0.0F,
-                    null, null);
+                    null, null, Dynamic.NONE);
         }
 
         public Config(int[] colorFormats, Blend[] blends, boolean depthTest, boolean depthWrite, int depthCompareOp,
                       Vertex vertex, int cullMode, int depthFormat, float depthBiasConstant, float depthBiasSlope) {
             this(colorFormats, blends, depthTest, depthWrite, depthCompareOp, vertex, cullMode, depthFormat,
-                    depthBiasConstant, depthBiasSlope, null, null);
+                    depthBiasConstant, depthBiasSlope, null, null, Dynamic.NONE);
+        }
+
+        public Config(int[] colorFormats, Blend[] blends, boolean depthTest, boolean depthWrite, int depthCompareOp,
+                      Vertex vertex, int cullMode, int depthFormat, float depthBiasConstant, float depthBiasSlope,
+                      int @Nullable [] attachmentLocations, int @Nullable [] inputAttachmentIndices) {
+            this(colorFormats, blends, depthTest, depthWrite, depthCompareOp, vertex, cullMode, depthFormat,
+                    depthBiasConstant, depthBiasSlope, attachmentLocations, inputAttachmentIndices, Dynamic.NONE);
         }
 
         /**
@@ -441,7 +567,120 @@ public final class VkGraphicsPipeline {
          */
         public Config withLocalRead(int[] locations, int[] inputIndices) {
             return new Config(colorFormats, blends, depthTest, depthWrite, depthCompareOp, vertex, cullMode,
-                    depthFormat, depthBiasConstant, depthBiasSlope, locations, inputIndices);
+                    depthFormat, depthBiasConstant, depthBiasSlope, locations, inputIndices, dynamic);
+        }
+
+        public Config withDynamic(Dynamic dynamic) {
+            return new Config(colorFormats, blends, depthTest, depthWrite, depthCompareOp, vertex, cullMode,
+                    depthFormat, depthBiasConstant, depthBiasSlope, attachmentLocations, inputAttachmentIndices,
+                    dynamic);
+        }
+
+        Config baked(DepthState state) {
+            return new Config(colorFormats, blends, depthTest, state.depthWrite(), state.compareOp(), vertex,
+                    state.cullMode(), depthFormat, depthBiasConstant, depthBiasSlope, attachmentLocations,
+                    inputAttachmentIndices, dynamic);
+        }
+    }
+
+    /**
+     * Render thread: the {@link Dynamic#MATERIAL} pipeline bound in one command sequence and the dynamic values recorded
+     * since its bind. A sequence starts with {@link #begin}; each draw binds through {@link #rebind}, then calls the
+     * setter of the pipeline's family, which records every dynamic value when any differs from the last recorded.
+     */
+    public static final class MaterialState {
+        private long pipeline;
+        private boolean recorded;
+        private int cullMode;
+        private boolean depthWrite;
+        private int depthCompareOp;
+        private boolean depthBias;
+        private float depthBiasConstant;
+        private float depthBiasSlope;
+        private @Nullable Transparency transparency;
+        private boolean colorWrite;
+
+        public void begin() {
+            pipeline = 0L;
+        }
+
+        /**
+         * Whether the caller must bind {@code handle}: it is not the pipeline bound since {@link #begin}.
+         */
+        public boolean rebind(long handle) {
+            if (handle == pipeline) return false;
+            pipeline = handle;
+            recorded = false;
+            return true;
+        }
+
+        /**
+         * {@link VkGraphicsPipeline#material} pipelines, bound as their {@link DepthState#draw} variant.
+         */
+        public void draw(VkCommandBuffer cmd, Material material) {
+            Transparency transparency = material.transparency();
+            DepthTest depthTest = material.depthTest();
+            boolean dynamicBlend = dynamicBlend();
+            record(cmd, material.backfaceCulling(), material.writeMask().depth(), depthTest,
+                    material.polygonOffset(), MaterialRenderState.POLYGON_OFFSET_UNITS,
+                    MaterialRenderState.polygonOffsetSlope(transparency, depthTest),
+                    dynamicBlend ? transparency : null, dynamicBlend && material.writeMask().color());
+        }
+
+        /**
+         * Wavelet and insert producers, bound as their {@link DepthState#undepthed} variant.
+         */
+        public void producer(VkCommandBuffer cmd, Material material) {
+            record(cmd, material.backfaceCulling(), false, material.depthTest(), material.polygonOffset(), 10.0F, 1.0F,
+                    null, false);
+        }
+
+        /**
+         * Bound as its {@link DepthState#undepthed} variant.
+         */
+        public void crumbling(VkCommandBuffer cmd, Material material) {
+            record(cmd, material.backfaceCulling(), false, material.depthTest(), true, 10.0F, 1.0F, null, false);
+        }
+
+        // Null transparency: the bound pipeline's blend is static.
+        private void record(VkCommandBuffer cmd, boolean cull, boolean depthWrite, DepthTest depthTest,
+                            boolean depthBias, float depthBiasConstant, float depthBiasSlope,
+                            @Nullable Transparency transparency, boolean colorWrite) {
+            int cullMode = cull ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE;
+            int depthCompareOp = compareOp(depthTest);
+            if (recorded && this.cullMode == cullMode && this.depthWrite == depthWrite
+                    && this.depthCompareOp == depthCompareOp && this.depthBias == depthBias
+                    && this.depthBiasConstant == depthBiasConstant && this.depthBiasSlope == depthBiasSlope
+                    && this.transparency == transparency && this.colorWrite == colorWrite) {
+                return;
+            }
+            recorded = true;
+            this.cullMode = cullMode;
+            this.depthWrite = depthWrite;
+            this.depthCompareOp = depthCompareOp;
+            this.depthBias = depthBias;
+            this.depthBiasConstant = depthBiasConstant;
+            this.depthBiasSlope = depthBiasSlope;
+            this.transparency = transparency;
+            this.colorWrite = colorWrite;
+            if (VkCaps.EXTENDED_DYNAMIC_STATE_NEGOTIATED) {
+                EXTExtendedDynamicState.vkCmdSetCullModeEXT(cmd, cullMode);
+                EXTExtendedDynamicState.vkCmdSetDepthWriteEnableEXT(cmd, depthWrite);
+                EXTExtendedDynamicState.vkCmdSetDepthCompareOpEXT(cmd, depthCompareOp);
+            }
+            VK10.vkCmdSetDepthBias(cmd, depthBias ? depthBiasConstant : 0.0F, 0.0F, depthBias ? depthBiasSlope : 0.0F);
+            if (transparency == null) return;
+            Blend blend = blendFor(transparency, colorWrite);
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                var equation = VkColorBlendEquationEXT.calloc(1, stack);
+                equation.get(0).srcColorBlendFactor(blend.srcColor()).dstColorBlendFactor(blend.dstColor())
+                        .colorBlendOp(blend.colorOp()).srcAlphaBlendFactor(blend.srcAlpha())
+                        .dstAlphaBlendFactor(blend.dstAlpha()).alphaBlendOp(blend.alphaOp());
+                EXTExtendedDynamicState3.vkCmdSetColorBlendEnableEXT(cmd, 0,
+                        stack.ints(blend.enable() ? VK10.VK_TRUE : VK10.VK_FALSE));
+                EXTExtendedDynamicState3.vkCmdSetColorBlendEquationEXT(cmd, 0, equation);
+                EXTExtendedDynamicState3.vkCmdSetColorWriteMaskEXT(cmd, 0, stack.ints(blend.writeMask()));
+            }
         }
     }
 }

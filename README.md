@@ -167,8 +167,8 @@ repositories {
 }
 
 dependencies {
-    implementation("dev.engine_room:crankshaft-neoforge:1.7.0+mc26.2") // NeoForge
-    implementation("dev.engine_room:crankshaft-fabric:1.7.0+mc26.2")   // Fabric
+    implementation("dev.engine_room:crankshaft-neoforge:1.7.1+mc26.2") // NeoForge
+    implementation("dev.engine_room:crankshaft-fabric:1.7.1+mc26.2")   // Fabric
 }
 ```
 

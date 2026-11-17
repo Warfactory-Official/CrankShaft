@@ -33,6 +33,7 @@ import dev.engine_room.flywheel.lib.instance.InstanceTypes;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.FogShaders;
 import dev.engine_room.flywheel.lib.material.Materials;
+import dev.engine_room.flywheel.lib.material.ShaderVariant;
 import dev.engine_room.flywheel.lib.util.RendererReloadCache;
 import dev.engine_room.flywheel.lib.util.ShaderWarmupRegistry;
 import dev.engine_room.flywheel.lib.util.ShadersModHelper;
@@ -43,9 +44,12 @@ import org.lwjgl.vulkan.VK10;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Consumer;
 
 /**
@@ -53,11 +57,19 @@ import java.util.function.Consumer;
  */
 public final class ShaderWarmup {
     private static volatile boolean initialized;
+    private static boolean reloading;
+    private static int fallingBack;
+    private static boolean engaging;
     private static Consumer<Runnable> recovery;
     private static final boolean[] UNEMBEDDED = {false};
     private static final boolean[] EMBEDDED_VARIANTS = {false, true};
     private static final List<WarmHook> HOOKS = new ArrayList<>();
     private static final List<WarmHook> VK_HOOKS = new ArrayList<>();
+    private static final List<Runnable> GUEST_HOOKS = new ArrayList<>();
+    private static Set<ShaderVariant> seededVariants = Set.of();
+    // Each skipped material and instance type classified once per seeding. Render thread.
+    private static final Map<Material, Map<InstanceType<?>, Skip>> SKIPS = new IdentityHashMap<>();
+    private static Set<InstanceType<?>> seededTypes = Set.of();
     #if MC >= 26.3
     private static final List<Runnable> NATIVE_RESOURCES = new ArrayList<>();
     #endif
@@ -65,12 +77,6 @@ public final class ShaderWarmup {
     private static final List<InstanceType<?>> WARM_TYPES = List.of(InstanceTypes.TRANSFORMED, InstanceTypes.POSED,
             InstanceTypes.ORIENTED, InstanceTypes.CLIP_TRANSFORMED, InstanceTypes.UV_TRANSFORMED,
             InstanceTypes.BILLBOARD, InstanceTypes.GLYPH, InstanceTypes.LEASH, InstanceTypes.SHADOW);
-
-    private static final List<InstanceType<?>> STANDARD_TYPES = List.of(InstanceTypes.TRANSFORMED,
-            InstanceTypes.POSED, InstanceTypes.ORIENTED);
-
-    private static final List<InstanceType<?>> MESH_VISUAL_TYPES = List.of(InstanceTypes.TRANSFORMED,
-            InstanceTypes.POSED, InstanceTypes.ORIENTED, InstanceTypes.CLIP_TRANSFORMED);
 
     private ShaderWarmup() {
     }
@@ -94,6 +100,13 @@ public final class ShaderWarmup {
      */
     public static void registerVk(Runnable hook) {
         VK_HOOKS.add(new WarmHook(null, hook));
+    }
+
+    /**
+     * Backend-init registration; prepares a guest backend selected under a shader pack outside resource loading.
+     */
+    public static void registerGuest(Runnable hook) {
+        GUEST_HOOKS.add(hook);
     }
 
     /**
@@ -144,6 +157,70 @@ public final class ShaderWarmup {
         }
     }
 
+    /**
+     * Vanilla's shader apply, which releases every published program, or {@link FlwPrograms#reload}; engines draw
+     * nothing ({@link #pending}) until the loading warm-up ({@link #reloaded}). Render thread.
+     */
+    public static void invalidated() {
+        reloading = true;
+    }
+
+    /**
+     * Resource loading's warm-up finished. Render thread.
+     */
+    public static void reloaded() {
+        reloading = false;
+    }
+
+    /**
+     * Between a resource reload's program release and its warm-up, or a draw-time fallback's engagement and its
+     * warm-up, when a draw would wait for a compile. Render thread.
+     */
+    public static boolean pending() {
+        return reloading || engaging;
+    }
+
+    /**
+     * Runs a draw's backend fallback; the backend it engages warms from the client task queue, off the draw's stack,
+     * and engines draw nothing until then. Render thread.
+     */
+    public static void fallingBack(Runnable fallback) {
+        fallingBack++;
+        try {
+            fallback.run();
+        } finally {
+            fallingBack--;
+        }
+    }
+
+    /**
+     * A backend selected outside resource loading, warmed before its first draw; under a shader pack, through the
+     * {@link #registerGuest} warm-ups. A reload in progress warms its own selection. Render thread.
+     */
+    public static void engaged() {
+        if (!initialized || reloading || !BackendManager.isBackendOn()) return;
+        if (fallingBack == 0) {
+            warmEngaged();
+            return;
+        }
+        engaging = true;
+        Minecraft.getInstance().schedule(() -> {
+            try {
+                if (!reloading && BackendManager.isBackendOn()) warmEngaged();
+            } finally {
+                engaging = false;
+            }
+        });
+    }
+
+    private static void warmEngaged() {
+        recovery.accept(ShadersModHelper.isShaderPackInUse() ? ShaderWarmup::warmGuests : ShaderWarmup::warm);
+    }
+
+    private static void warmGuests() {
+        for (Runnable hook : GUEST_HOOKS) hook.run();
+    }
+
     public static void warm() {
         initialized = true;
         long start = System.nanoTime();
@@ -185,7 +262,7 @@ public final class ShaderWarmup {
         NativeOitWarmup.loadingComplete();
         #endif
         FlwPrograms.LOGGER.info(
-                "pipeline warm-up took {}ms ({} types, {} material variants, {} cached / {} generated sources)",
+                "pipeline warm-up took {}ms ({} types, {} shader variants, {} cached / {} generated sources)",
                 (System.nanoTime() - start) / 1_000_000, InstanceTypeIds.count(), warmMaterials().size(),
                 GeneratedSourceCache.hits - sourceHits, GeneratedSourceCache.misses - sourceMisses);
     }
@@ -203,12 +280,50 @@ public final class ShaderWarmup {
         for (FogShader fog : libStatics(FogShaders.class, FogShader.class)) {
             MaterialShaderIndices.fogIndex(fog);
         }
-        for (InstanceType<?> type : ShaderWarmupRegistry.types()) {
+        List<InstanceType<?>> types = ShaderWarmupRegistry.types();
+        for (InstanceType<?> type : types) {
             InstanceTypeIds.id(type);
         }
+        Set<ShaderVariant> variants = new TreeSet<>(ShaderVariant.ORDER);
         for (Material material : warmMaterials()) {
             MaterialShaderIndices.cutoutIndex(material.cutout());
             MaterialShaderIndices.fogIndex(material.fog());
+            variants.add(ShaderVariant.of(material));
+        }
+        Set<InstanceType<?>> warmTypes = new HashSet<>(WARM_TYPES);
+        warmTypes.addAll(types);
+        seededVariants = variants;
+        seededTypes = warmTypes;
+        SKIPS.clear();
+    }
+
+    /**
+     * A draw skipped because no published program covers it yet: a {@link ShaderWarmupRegistry#misses} miss when its
+     * variant or instance type was not seeded, else a {@link ShaderWarmupRegistry#skips} skip. Render thread; skip
+     * branches only.
+     */
+    public static void skipped(Material material, InstanceType<?> type) {
+        Map<InstanceType<?>, Skip> byType = SKIPS.get(material);
+        if (byType == null) SKIPS.put(material, byType = new IdentityHashMap<>());
+        Skip skip = byType.get(type);
+        if (skip == null) byType.put(type, skip = Skip.of(material, type));
+        if (skip.unregistered() == null) {
+            ShaderWarmupRegistry.recordSkip();
+        } else if (ShaderWarmupRegistry.recordMiss(skip.variant())) {
+            FlwPrograms.LOGGER.warn("Draws skipped until their program builds: {} (instance type {}): {} not "
+                            + "registered in ShaderWarmupRegistry before the last shader warm-up", skip.variant(),
+                    type.vertexShader(), skip.unregistered());
+        }
+    }
+
+    // unregistered: what the seeding lacked, null for a registered variant and type.
+    private record Skip(ShaderVariant variant, @Nullable String unregistered) {
+        static Skip of(Material material, InstanceType<?> type) {
+            ShaderVariant variant = ShaderVariant.of(material);
+            boolean variantSeeded = seededVariants.contains(variant);
+            boolean typeSeeded = seededTypes.contains(type);
+            return new Skip(variant, variantSeeded && typeSeeded ? null : variantSeeded ? "instance type"
+                    : typeSeeded ? "shader variant" : "shader variant and instance type");
         }
     }
 
@@ -242,25 +357,27 @@ public final class ShaderWarmup {
             } else {
                 warmInsertReplays(insertModes, SodiumClassLoadCheck.PRESENT);
             }
-            for (InstanceType<?> type : ShaderWarmupRegistry.types()) {
-                CrumblingPipelines.pipeline(Materials.CRUMBLING, type, false);
-            }
         }
         #if MC >= 26.3
         if (portableCoverage) NativeOitWarmup.declareSelected();
         #endif
         List<Material> materials = warmMaterials();
         for (InstanceType<?> type : ShaderWarmupRegistry.types()) {
+            CrumblingPipelines.pipeline(Materials.CRUMBLING, type, false);
+        }
+        for (InstanceType<?> type : ShaderWarmupRegistry.types()) {
             for (Material material : materials) {
                 for (boolean embedded : new boolean[]{false, true}) {
                     if (OitTransparency.orderIndependent(material)) {
-                        if (insertModes.isEmpty()) OitPipelines.producer(material, type, OitMode.EVALUATE, embedded);
+                        if (insertModes.isEmpty()) {
+                            OitPipelines.producer(material, type, OitMode.EVALUATE, embedded, true);
+                        }
                         for (OitInsertMode mode : insertModes) {
                             RenderPipelineCompiler.feature(ProgramAvailability.insert(mode),
-                                    () -> OitPipelines.instancedMlab(material, type, mode, embedded));
+                                    () -> OitPipelines.instancedMlab(material, type, mode, embedded, true));
                         }
                     } else {
-                        InstancingPipeline.pipelineFor(material, type, embedded);
+                        InstancingPipeline.pipelineFor(material, type, embedded, true);
                     }
                 }
             }
@@ -378,22 +495,26 @@ public final class ShaderWarmup {
         for (Material material : materials) {
             for (boolean embedded : embeddedVariants(material)) {
                 if (OitTransparency.orderIndependent(material)) {
-                    if (insertModes.isEmpty()) OitPipelines.uberProducer(material, OitMode.EVALUATE, embedded);
+                    if (insertModes.isEmpty()) {
+                        OitPipelines.uberProducer(material, OitMode.EVALUATE, embedded, true);
+                    }
                     for (OitInsertMode mode : insertModes) {
                         RenderPipelineCompiler.feature(ProgramAvailability.insert(mode),
-                                () -> OitPipelines.uberMlab(material, mode, embedded));
+                                () -> OitPipelines.uberMlab(material, mode, embedded, true));
                     }
                 } else {
-                    IndirectPipeline.uberPipelineFor(material, embedded);
+                    IndirectPipeline.uberPipelineFor(material, embedded, true);
                 }
             }
         }
-        for (InstanceType<?> type : STANDARD_TYPES) {
+        // Crumbling programs vary by instance type alone; any type's instances may crumble.
+        for (InstanceType<?> type : InstanceTypeIds.snapshot().types()) {
             CrumblingPipelines.pipeline(Materials.CRUMBLING, type, true);
         }
         if (GlCompat.SUPPORTS_TERRAIN_MESH
                 && Backends.GL_MESH_SHADER_ID.equals(Backend.REGISTRY.getIdOrThrow(BackendManager.currentBackend()))) {
-            MeshVisualDrawManager.warmUp(MESH_VISUAL_TYPES, STANDARD_TYPES, materials, insertModes.isEmpty());
+            // Mesh tiers draw every instance type through their own programs.
+            MeshVisualDrawManager.warmUp(InstanceTypeIds.snapshot().types(), materials, insertModes.isEmpty());
         }
         #if MC >= 26.3
         NativeOitWarmup.declareSelected();
@@ -407,6 +528,7 @@ public final class ShaderWarmup {
         List<OitInsertMode> insertModes = insertModes();
         LightSmoothness smoothness = BackendConfig.INSTANCE.lightSmoothness();
         List<Material> materials = warmMaterials();
+        List<InstanceType<?>> types = InstanceTypeIds.snapshot().types();
         Map<Material, boolean[]> embeddings = new IdentityHashMap<>();
         for (Material material : materials) embeddings.put(material, embeddedVariants(material));
         VkOitPipelines oit = programs.oit();
@@ -537,9 +659,8 @@ public final class ShaderWarmup {
             }
         });
         jobs.add(() -> {
-            for (InstanceType<?> type : STANDARD_TYPES) {
-                uber.crumblingPipeline(Materials.CRUMBLING, type, smoothness,
-                        VK10.VK_FORMAT_R8G8B8A8_UNORM, programs.depthFormat());
+            for (InstanceType<?> type : types) {
+                uber.crumblingPipeline(type, smoothness, VK10.VK_FORMAT_R8G8B8A8_UNORM, programs.depthFormat());
             }
         });
         if (VkCaps.MESH_SHADER_NEGOTIATED && ProgramAvailability.allows(ProgramAvailability.Feature.MESH)
@@ -548,11 +669,10 @@ public final class ShaderWarmup {
                 ProgramAvailability.Feature.MESH, () -> {
                     VkMeshVisualPipelines mesh = programs.meshVisual();
                     mesh.builderPipeline();
-                    for (InstanceType<?> type : STANDARD_TYPES) {
-                        mesh.crumblingPipeline(Materials.CRUMBLING, type, VK10.VK_FORMAT_R8G8B8A8_UNORM,
-                                programs.depthFormat());
+                    for (InstanceType<?> type : types) {
+                        mesh.crumblingPipeline(type, VK10.VK_FORMAT_R8G8B8A8_UNORM, programs.depthFormat());
                     }
-                    for (InstanceType<?> type : MESH_VISUAL_TYPES) {
+                    for (InstanceType<?> type : types) {
                         for (Material material : materials) {
                             if (!OitTransparency.orderIndependent(material)) {
                                 mesh.solidPipeline(type, material, false, VK10.VK_FORMAT_R8G8B8A8_UNORM,

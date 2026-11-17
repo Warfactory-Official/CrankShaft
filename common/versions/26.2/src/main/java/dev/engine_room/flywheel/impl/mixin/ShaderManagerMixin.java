@@ -4,6 +4,7 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
 import dev.engine_room.flywheel.backend.compile.MojImportPreprocessor;
+import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.impl.FlwImpl;
 import net.minecraft.client.renderer.ShaderManager;
 import net.minecraft.resources.Identifier;
@@ -13,6 +14,7 @@ import net.minecraft.util.profiling.ProfilerFiller;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.io.IOException;
@@ -49,5 +51,12 @@ abstract class ShaderManagerMixin {
                                       CallbackInfoReturnable<ShaderManager.Configs> _,
                                       @Local Map<Identifier, Resource> files) {
         MojImportPreprocessor.listed(files);
+    }
+
+    @Inject(method = "apply(Lnet/minecraft/client/renderer/ShaderManager$Configs;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V",
+            at = @At("HEAD"))
+    private void flywheel$releasePrograms(CallbackInfo _) {
+        // Clears the device pipeline cache, which holds every published program.
+        ShaderWarmup.invalidated();
     }
 }

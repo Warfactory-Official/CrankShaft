@@ -168,11 +168,9 @@ public final class VkMeshVisualPipelines {
     /**
      * Null until built; builds it.
      */
-    public @Nullable VkMeshPipeline crumblingPipeline(Material crumblingMaterial, InstanceType<?> type,
-                                                      int colorFormat, int depthFormat) {
-        var key = new CrumblingKey(type, FrameUniforms.debugMode(), crumblingMaterial.depthTest(),
-                crumblingMaterial.backfaceCulling(), BackendConfig.INSTANCE.lightSmoothness(), colorFormat,
-                depthFormat);
+    public @Nullable VkMeshPipeline crumblingPipeline(InstanceType<?> type, int colorFormat, int depthFormat) {
+        var key = new CrumblingKey(type, FrameUniforms.debugMode(), BackendConfig.INSTANCE.lightSmoothness(),
+                colorFormat, depthFormat);
         var selection = select(crumbling, key, ProgramGeneration.NONE, VkMeshVisualPipelines::requestCrumbling);
         return selection == null ? null : selection.pipeline();
     }
@@ -202,11 +200,8 @@ public final class VkMeshVisualPipelines {
                         new VkDescriptorLayout.Binding(18, UBO, FRAG), new VkDescriptorLayout.Binding(19, UBO, FRAG),
                         new VkDescriptorLayout.Binding(22, UBO, FRAG));
                 layout = new VkDescriptorLayout(b, PUSH_BYTES, MESH);
-                return new VkMeshPipeline(layout, 0L, mesh, frag,
-                        new int[]{k.colorFormat()}, new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.crumbling()},
-                        VkGraphicsPipeline.compareOp(k.depthTest()),
-                        k.cull() ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE, k.depthFormat(), null, null,
-                        10.0F, 1.0F);
+                return new VkMeshPipeline(layout, 0L, mesh, frag, producerConfig(new int[]{k.colorFormat()},
+                        new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.crumbling()}, k.depthFormat()));
             } catch (Throwable ex) {
                 if (layout != null) {
                     layout.delete();
@@ -249,10 +244,8 @@ public final class VkMeshVisualPipelines {
                 frag = compileFragment(fsGl, "meshvisual_vk_frag"
                         + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug().getSerializedName()));
                 layout = new VkDescriptorLayout(bindings, PUSH_BYTES, TASK | MESH, bindless);
-                VkGraphicsPipeline.Config config = VkGraphicsPipeline.material(key.colorFormat(), key.depthFormat(),
-                        key.transparency(), key.depthTest(), key.depthWrite(), key.colorWrite(), key.cull(),
-                        key.polygonOffset());
-                return new VkMeshPipeline(layout, task, mesh, frag, config);
+                return new VkMeshPipeline(layout, task, mesh, frag, VkGraphicsPipeline.material(
+                        VkGraphicsPipeline.Vertex.NONE, key.colorFormat(), key.depthFormat(), key.blend()));
             } catch (Throwable ex) {
                 if (layout != null) {
                     layout.delete();
@@ -329,10 +322,10 @@ public final class VkMeshVisualPipelines {
                 layout = new VkDescriptorLayout(bindings, PUSH_BYTES, TASK | MESH, bindless);
                 VkMeshPipeline pipeline;
                 if (folded) {
-                    pipeline = new VkMeshPipeline(layout, task, mesh, frag, VkOitPipelines.FOLDED_FORMATS,
-                            VkOitPipelines.foldedBlends(mode), key.compareOp(), key.cullMode(), depthFormat,
-                            VkOitPipelines.foldedLocations(mode), VkOitPipelines.FOLDED_INPUT_INDICES,
-                            key.biasConstant(), key.biasSlope());
+                    pipeline = new VkMeshPipeline(layout, task, mesh, frag,
+                            producerConfig(VkOitPipelines.FOLDED_FORMATS, VkOitPipelines.foldedBlends(mode),
+                                    depthFormat).withLocalRead(VkOitPipelines.foldedLocations(mode),
+                                    VkOitPipelines.FOLDED_INPUT_INDICES));
                 } else {
                     int[] colorFormats = switch (mode) {
                         case DEPTH_RANGE -> new int[]{VkOitPipelines.FMT_INSTANCE_BOUNDS};
@@ -343,8 +336,8 @@ public final class VkMeshVisualPipelines {
                     VkGraphicsPipeline.Blend[] blends = new VkGraphicsPipeline.Blend[colorFormats.length];
                     Arrays.fill(blends,
                             mode == OitMode.DEPTH_RANGE ? VkGraphicsPipeline.max() : VkGraphicsPipeline.additive());
-                    pipeline = new VkMeshPipeline(layout, task, mesh, frag, colorFormats, blends, key.compareOp(),
-                            key.cullMode(), depthFormat, null, null, key.biasConstant(), key.biasSlope());
+                    pipeline = new VkMeshPipeline(layout, task, mesh, frag,
+                            producerConfig(colorFormats, blends, depthFormat));
                 }
                 #if MC >= 26.3
                 for (var subpass : subpasses) pipeline.subpassHandle(subpass);
@@ -402,9 +395,8 @@ public final class VkMeshVisualPipelines {
                 frag = compileFragment(fsGl, "meshvisual_vk_mlab_" + oitMode + (emission ? "_emission" : "")
                         + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug().getSerializedName()));
                 layout = new VkDescriptorLayout(bindings, PUSH_BYTES, TASK | MESH, bindless);
-                VkMeshPipeline pipeline = new VkMeshPipeline(layout, task, mesh, frag, new int[0],
-                        new VkGraphicsPipeline.Blend[0], key.compareOp(), key.cullMode(), mlabKey.depthFormat(), null,
-                        null, key.biasConstant(), key.biasSlope());
+                VkMeshPipeline pipeline = new VkMeshPipeline(layout, task, mesh, frag,
+                        producerConfig(new int[0], new VkGraphicsPipeline.Blend[0], mlabKey.depthFormat()));
                 #if MC >= 26.3
                 for (var subpass : subpasses) pipeline.subpassHandle(subpass);
                 #endif
@@ -420,6 +412,14 @@ public final class VkMeshVisualPipelines {
                 throw t;
             }
         });
+    }
+
+    // No depth writes; depth test, cull and polygon offset from the material through MaterialState.
+    private static VkGraphicsPipeline.Config producerConfig(int[] colorFormats, VkGraphicsPipeline.Blend[] blends,
+                                                            int depthFormat) {
+        return new VkGraphicsPipeline.Config(colorFormats, blends, true, false, VK10.VK_COMPARE_OP_ALWAYS,
+                VkGraphicsPipeline.Vertex.NONE, VK10.VK_CULL_MODE_NONE, depthFormat)
+                .withDynamic(VkGraphicsPipeline.Dynamic.material());
     }
 
     public VkComputePipeline builderPipeline() {
@@ -469,28 +469,10 @@ public final class VkMeshVisualPipelines {
         }
     }
 
-    private record OitKey(MeshKey mesh, LightShader light, DepthTest depthTest, boolean cull, boolean polygonOffset,
-                          DebugMode debug, LightSmoothness smoothness) {
+    private record OitKey(MeshKey mesh, LightShader light, DebugMode debug, LightSmoothness smoothness) {
         static OitKey of(InstanceType<?> type, Material material, boolean embedded) {
-            return new OitKey(MeshKey.of(type, material, embedded), material.light(), material.depthTest(),
-                    material.backfaceCulling(), material.polygonOffset(), FrameUniforms.debugMode(),
+            return new OitKey(MeshKey.of(type, material, embedded), material.light(), FrameUniforms.debugMode(),
                     BackendConfig.INSTANCE.lightSmoothness());
-        }
-
-        int compareOp() {
-            return VkGraphicsPipeline.compareOp(depthTest);
-        }
-
-        int cullMode() {
-            return cull ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE;
-        }
-
-        float biasConstant() {
-            return polygonOffset ? 10.0F : 0.0F;
-        }
-
-        float biasSlope() {
-            return polygonOffset ? 1.0F : 0.0F;
         }
     }
 
@@ -501,20 +483,16 @@ public final class VkMeshVisualPipelines {
     }
 
     private record SolidKey(MeshKey mesh, LightShader light, int colorFormat, int depthFormat,
-                            Transparency transparency, DepthTest depthTest, boolean depthWrite, boolean colorWrite,
-                            boolean cull, boolean polygonOffset, DebugMode debug, LightSmoothness smoothness) {
+                            VkGraphicsPipeline.@Nullable Blend blend, DebugMode debug, LightSmoothness smoothness) {
         static SolidKey of(InstanceType<?> type, Material material, boolean embedded, int colorFormat,
                            int depthFormat) {
             return new SolidKey(MeshKey.of(type, material, embedded), material.light(), colorFormat, depthFormat,
-                    material.transparency(),
-                    material.depthTest(), material.writeMask()
-                                                  .depth(), material.writeMask()
-                                                                    .color(), material.backfaceCulling(),
-                    material.polygonOffset(), FrameUniforms.debugMode(), BackendConfig.INSTANCE.lightSmoothness());
+                    VkGraphicsPipeline.bakedBlend(material), FrameUniforms.debugMode(),
+                    BackendConfig.INSTANCE.lightSmoothness());
         }
     }
 
-    private record CrumblingKey(InstanceType<?> type, DebugMode debug, DepthTest depthTest, boolean cull,
-                                LightSmoothness smoothness, int colorFormat, int depthFormat) {
+    private record CrumblingKey(InstanceType<?> type, DebugMode debug, LightSmoothness smoothness, int colorFormat,
+                                int depthFormat) {
     }
 }

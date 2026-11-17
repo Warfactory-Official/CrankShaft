@@ -27,6 +27,14 @@ abstract class MinecraftMixin extends ReentrantBlockableEventLoop<Runnable> {
             FlwBackend.LOGGER.info(cancelled.getMessage());
         } catch (Throwable e) {
             delayCrash(CrashReport.forThrowable(e, "Warming CrankShaft shaders"));
+        } finally {
+            ShaderWarmup.reloaded();
         }
+    }
+
+    // A failed recovery reload ends without onResourceLoadFinished; engines draw again, compiling on demand.
+    @Inject(method = "abortResourcePackRecovery", at = @At("HEAD"))
+    private void flywheel$endFailedReload(CallbackInfo _) {
+        ShaderWarmup.reloaded();
     }
 }

@@ -235,10 +235,14 @@ public final class GuestShaders {
         LATE
     }
 
+    static boolean capturesLight(ProgramSource source) {
+        return source.getFragmentSource().orElseThrow().contains("flw_captureLight(");
+    }
+
     static Capture capture(ProgramSource source, ProgramKey key, boolean depthWrite, boolean depthTested,
                            String pipeline) {
+        if (!capturesLight(source)) return Capture.EARLY;
         String fragment = source.getFragmentSource().orElseThrow();
-        if (!fragment.contains("flw_captureLight(")) return Capture.EARLY;
         boolean early = EARLY_CAPTURE.matcher(fragment).find();
         if (early && depthWrite && (key.cutout() != CutoutShaders.OFF || fragment.contains("discard"))) {
             if (LATE_CAPTURES.add(pipeline)) {

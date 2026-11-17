@@ -210,6 +210,14 @@ public class LivingEntityVisual<T extends LivingEntity> extends EntityModelVisua
         createComponents();
     }
 
+    /**
+     * Registers the armor layer's shader variants for warm-up. Before the resource-apply warm-up (client
+     * initialization); any thread.
+     */
+    public static void registerWarmupVariants() {
+        InstancedArmorLayer.registerWarmupVariants();
+    }
+
     static Material materialFor(Identifier texture) {
         return EntityModelVisual.materialFor(texture);
     }

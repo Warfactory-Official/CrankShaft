@@ -62,6 +62,11 @@ public final class GlNativeProgramPool {
             return handle;
         }
 
+        public Entry retain() {
+            references++;
+            return this;
+        }
+
         public void release() {
             if (--references == 0) {
                 ENTRIES.remove(key, this);

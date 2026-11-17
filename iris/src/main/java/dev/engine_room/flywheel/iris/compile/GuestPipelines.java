@@ -36,6 +36,7 @@ import dev.engine_room.flywheel.api.instance.InstanceType;
 import dev.engine_room.flywheel.api.material.DepthTest;
 import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.api.material.Transparency;
+import dev.engine_room.flywheel.api.material.WriteMask;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.BackendRecovery;
 import dev.engine_room.flywheel.backend.BackendUnavailableException;
@@ -43,6 +44,7 @@ import dev.engine_room.flywheel.backend.Backends;
 import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.NoiseTextures;
 import dev.engine_room.flywheel.backend.compile.FlwPrograms;
+import dev.engine_room.flywheel.backend.glsl.ShaderSources;
 import dev.engine_room.flywheel.backend.compile.GlAsyncCompiler;
 import dev.engine_room.flywheel.backend.compile.GlCompilationBatch;
 import dev.engine_room.flywheel.backend.compile.IndirectPrograms;
@@ -60,6 +62,7 @@ import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.compile.TerrainOverlayPipelines;
 import dev.engine_room.flywheel.backend.compile.component.InstanceAssemblerComponent;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
+import dev.engine_room.flywheel.backend.engine.CommonCrumbling;
 import dev.engine_room.flywheel.backend.engine.CrumblingPipelines;
 import dev.engine_room.flywheel.backend.engine.OitTransparency;
 import dev.engine_room.flywheel.backend.engine.indirect.IndirectPipeline;
@@ -79,6 +82,7 @@ import dev.engine_room.flywheel.iris.compile.patches.DeferredOitProfile;
 import dev.engine_room.flywheel.iris.compile.patches.OrderedBillboardCapture;
 import dev.engine_room.flywheel.iris.compile.patches.SortedBillboardBlend;
 import dev.engine_room.flywheel.lib.instance.InstanceTypes;
+import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.util.ResourceUtil;
 import dev.engine_room.flywheel.lib.util.ShaderWarmupRegistry;
 import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
@@ -175,6 +179,8 @@ public final class GuestPipelines {
     private static final Map<LinkKey, GuestProgram> STATIC_SHADOW_PROGRAMS = new HashMap<>();
     private static final Map<LinkKey, GlAsyncCompiler.Pending> STATIC_SHADOW_LINKING = new HashMap<>();
     private static @Nullable IrisRenderingPipeline warmed;
+    private static boolean warmedIndirect;
+    private static @Nullable ShaderSources warmedSources;
     private static @Nullable IrisRenderingPipeline glintOwner;
     private static boolean nativeGlint;
     private static int decisionGeneration;
@@ -820,7 +826,7 @@ public final class GuestPipelines {
      * Resource apply/dimension entry; before visual draws.
      */
     public static void warmUp(IrisRenderingPipeline pipeline) {
-        if (warmed == pipeline) return;
+        if (warmed == pipeline && warmedIndirect == indirectTier()) return;
         if (glintOwner != pipeline) {
             glintOwner = pipeline;
             ContractProgramSet contracts = contractSet(pipeline);
@@ -837,15 +843,11 @@ public final class GuestPipelines {
         ShaderWarmup.seedRegistrations();
         if (BackendConfig.INSTANCE.shaderCompilation() == ShaderCompilationMode.ON_DEMAND) {
             track(pipeline);
-            warmed = pipeline;
+            warmed(pipeline, indirectTier());
             return;
         }
         try {
-            boolean indirect = FlwConfig.INSTANCE.backend() != Backends.INSTANCING
-                    && FlwConfig.INSTANCE.backend() != IrisBackends.IRIS_INSTANCING
-                    && GlCompat.SUPPORTS_INDIRECT && IndirectPrograms.allLoaded()
-                    && !BackendRecovery.isRejected(IrisBackends.IRIS_INDIRECT);
-            if (indirect) {
+            if (indirectTier()) {
                 try {
                     warmUpTier(pipeline, true);
                     return;
@@ -865,8 +867,22 @@ public final class GuestPipelines {
                 track(null);
             }
         } finally {
-            if (BackendRecovery.isRejected(BackendManager.currentBackend())) BackendManagerImpl.reselect();
+            if (BackendRecovery.isRejected(BackendManager.currentBackend())) BackendManagerImpl.select();
         }
+    }
+
+    // The configured backend: a pack falls back from the native tiers to the guest tier of the same kind.
+    private static boolean indirectTier() {
+        return FlwConfig.INSTANCE.backend() != Backends.INSTANCING
+                && FlwConfig.INSTANCE.backend() != IrisBackends.IRIS_INSTANCING
+                && GlCompat.SUPPORTS_INDIRECT && IndirectPrograms.allLoaded()
+                && !BackendRecovery.isRejected(IrisBackends.IRIS_INDIRECT);
+    }
+
+    private static void warmed(IrisRenderingPipeline pipeline, boolean indirect) {
+        warmed = pipeline;
+        warmedIndirect = indirect;
+        warmedSources = FlwPrograms.SOURCES;
     }
 
     private static void warmUpTier(IrisRenderingPipeline pipeline, boolean indirect) {
@@ -901,25 +917,35 @@ public final class GuestPipelines {
                     }
                 }
             }
+            // Crumbling takes the draw material's shaders and state, for any instance type on either tier.
+            SimpleMaterial.Builder crumbling = SimpleMaterial.builder();
+            for (InstanceType<?> type : ShaderWarmupRegistry.types()) {
+                for (Material material : materials) {
+                    CommonCrumbling.applyCrumblingProperties(crumbling, material);
+                    RenderPipeline draw = crumblingDescriptor(crumbling, type, indirect);
+                    if (sourceAvailable(pipeline, PROGRAM_KEYS.get(draw))) {
+                        prepare(draw, pipeline, batch, pending, requested);
+                    }
+                }
+            }
             batch.finish(() -> {
             });
         }
         for (RenderPipeline descriptor : requested) {
             if (VERSION_KEYS.containsKey(descriptor)) newest(descriptor);
         }
-        FlwBackend.LOGGER.info("guest pipeline warm-up took {}ms ({} new programs, {} + {} material variants, "
+        FlwBackend.LOGGER.info("guest pipeline warm-up took {}ms ({} new programs, {} + {} shader variants, "
                         + "{} pipeline descriptors)",
                 (System.nanoTime() - start) / 1_000_000, PROGRAMS.size() - before, materials.size(),
                 particles.size(), requested.size());
         if (shadows && FarVisuals.available()) {
             FarStaticShadows.warmUp();
             for (var material : materials) {
-                if (material.writeMask().depth() && !emissive(material)
-                        && sourceAvailable(pipeline, staticShadowKey(material)))
+                if (!emissive(material) && sourceAvailable(pipeline, staticShadowKey(material)))
                     staticShadowProgram(pipeline, material);
             }
         }
-        warmed = pipeline;
+        warmed(pipeline, indirect);
     }
 
     private static boolean materialRole(Material material, PackRole role) {
@@ -943,6 +969,35 @@ public final class GuestPipelines {
                                  boolean indirect, boolean shadows, @Nullable InstanceType<?> type, Material material,
                                  PackRole role) {
         if (!materialRole(material, role) || role.shadow && (!shadows || emissive(material))) return;
+        warmRoleState(pipeline, batch, pending, requested, indirect, type, material, role);
+        RenderPipeline main = indirect ? indirectDescriptor(role, material, null, false)
+                : instancingDescriptor(role, material, type, false);
+        if (!requested.contains(main) || !GuestShaders.capturesLight(resolved(pipeline, main, PROGRAM_KEYS.get(main))
+                .source())) return;
+        // Light capture links one program per depth test and depth write class (GuestShaders.capture), and any
+        // material of the variant may draw any class; the classes' programs dedupe on LinkKey.
+        for (Material state : depthStates(material)) {
+            warmRoleState(pipeline, batch, pending, requested, indirect, type, state, role);
+        }
+    }
+
+    private static List<Material> depthStates(Material material) {
+        List<Material> states = new ArrayList<>(4);
+        for (DepthTest test : new DepthTest[]{DepthTest.LEQUAL, DepthTest.ALWAYS}) {
+            for (boolean depthWrite : new boolean[]{true, false}) {
+                WriteMask mask = material.writeMask().color() ? depthWrite ? WriteMask.COLOR_DEPTH : WriteMask.COLOR
+                        : depthWrite ? WriteMask.DEPTH : null;
+                if (mask != null)
+                    states.add(SimpleMaterial.builder().copyFrom(material).depthTest(test).writeMask(mask));
+            }
+        }
+        return states;
+    }
+
+    private static void warmRoleState(IrisRenderingPipeline pipeline, GlCompilationBatch batch,
+                                      Map<LinkKey, List<RenderPipeline>> pending, Set<RenderPipeline> requested,
+                                      boolean indirect, @Nullable InstanceType<?> type, Material material,
+                                      PackRole role) {
         for (boolean embedded : new boolean[]{false, true}) {
             RenderPipeline draw = indirect ? indirectDescriptor(role, material, null, embedded)
                     : instancingDescriptor(role, material, type, embedded);
@@ -1010,6 +1065,17 @@ public final class GuestPipelines {
             PROGRAMS.put(resolved.key(), program);
             for (RenderPipeline output : outputs) COMPILED.put(output, registerCompiled(output, program));
         });
+    }
+
+    /**
+     * The tier of a guest backend selected outside resource loading; resources reloaded while the backend was off left
+     * the pack programs on superseded sources.
+     */
+    public static void warmSelected() {
+        if (Iris.getPipelineManager().getPipelineNullable() instanceof IrisRenderingPipeline pipeline) {
+            if (warmedSources != FlwPrograms.SOURCES) track(null);
+            warmUp(pipeline);
+        }
     }
 
     public static void warmCurrent() {

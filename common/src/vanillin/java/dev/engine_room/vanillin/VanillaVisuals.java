@@ -737,6 +737,8 @@ public class VanillaVisuals {
         builder(EntityTypes.EXPERIENCE_ORB)
                 .factory(ExperienceOrbVisual::new)
                 .apply(STABLE);
+        ExperienceOrbVisual.registerWarmupVariant();
+        LivingEntityVisual.registerWarmupVariants();
 
         builder(EntityTypes.FALLING_BLOCK)
                 .factory(FallingBlockVisual::new)

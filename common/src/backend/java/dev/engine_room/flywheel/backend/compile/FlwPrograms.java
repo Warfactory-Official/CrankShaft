@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.backend.compile;
 import dev.engine_room.flywheel.api.Flywheel;
 import dev.engine_room.flywheel.backend.BackendRecovery;
 import dev.engine_room.flywheel.backend.NoiseTextures;
+import dev.engine_room.flywheel.backend.engine.indirect.MeshVisualDrawManager;
 import dev.engine_room.flywheel.backend.glsl.ShaderSources;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.VkPipelineCaches;
@@ -23,7 +24,9 @@ public final class FlwPrograms {
     }
 
     public static void reload(ResourceManager manager) {
+        ShaderWarmup.invalidated();
         RenderPipelineCompiler.reset();
+        MeshVisualDrawManager.reset();
         TerrainOverlayPipelines.clear();
         BackendRecovery.beginReload();
         ProgramAvailability.beginReload();

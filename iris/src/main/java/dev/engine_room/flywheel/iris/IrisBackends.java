@@ -94,6 +94,7 @@ public final class IrisBackends {
             if (CompatMod.VOXY.isLoaded) VoxyStaticVisuals.registerPack(new FarStaticVoxyProgram.Provider());
             #endif
             ShaderWarmup.register(IrisWarmup::warm);
+            ShaderWarmup.registerGuest(IrisWarmup::selected);
             GuestTerrainGate.setShadowPass(IrisShadow::active);
             GuestTerrainGate.setPackInUse(IrisGate::isPackInUse);
             GuestTerrainGate.setShadowResolution(IrisShadow::resolution);
@@ -129,6 +130,10 @@ public final class IrisBackends {
     private static final class IrisWarmup {
         static void warm() {
             if (IrisGate.isPackInUse()) GuestPipelines.warmCurrent();
+        }
+
+        static void selected() {
+            if (IrisGate.isPackInUse()) GuestPipelines.warmSelected();
         }
     }
 }

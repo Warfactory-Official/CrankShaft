@@ -14,6 +14,7 @@ import dev.engine_room.flywheel.backend.vk.VkCmd;
 import dev.engine_room.flywheel.backend.vk.VkContext;
 import dev.engine_room.flywheel.backend.vk.buffer.VkBuffer;
 import dev.engine_room.flywheel.backend.vk.shader.VkComputePipeline;
+import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline.DepthState;
 import dev.engine_room.flywheel.backend.vk.shader.VkMeshPipeline;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import net.minecraft.client.Minecraft;
@@ -60,7 +61,9 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         }
         int start = run.start();
         for (int i = run.start(); i < run.end(); i++) {
-            if (coverage.covers(draw(i).required())) continue;
+            IndirectDraw draw = draw(i);
+            if (coverage.covers(draw.required())) continue;
+            ShaderWarmup.skipped(draw.material(), draw.instanceType());
             if (start < i) drawMeshTasksIndirect(cmd, pipeline, in, start, i);
             start = i + 1;
         }
@@ -186,20 +189,20 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         long pyramidSampler = VkContext.sampler(RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
 
         boolean bindless = VkPrograms.bindlessTexturesEnabled();
-        VkMeshPipeline lastPipeline = null;
+        materialState.begin();
 
         for (MeshDrawRun multiDraw : meshMultiDraws) {
             Material material = multiDraw.material();
             var selection = meshVisualPipelines().solidPipeline(multiDraw.type(), material, multiDraw.embedded(),
                     COLOR_FORMAT, programs.depthFormat());
             if (selection == null) {
+                skipped(multiDraw.start(), multiDraw.end());
                 continue;
             }
             VkMeshPipeline pipeline = selection.pipeline();
-            if (pipeline != lastPipeline) {
-                bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
-                lastPipeline = pipeline;
-            }
+            long handle = pipeline.variant(null, DepthState.draw(material));
+            if (materialState.rebind(handle)) bindGraphicsPipeline(cmd, handle, pipeline.layout());
+            materialState.draw(cmd, material);
             if (!bindless) {
                 writeAtlasTrio(textureManager, material.texture(), VkContext.sampler(MaterialSamplers.get(material)),
                         overlayView, overlaySampler, lightmapView);
@@ -231,19 +234,19 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         long pyramidSampler = VkContext.sampler(RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
         boolean needsColor = mode != OitMode.DEPTH_RANGE;
         boolean bindless = VkPrograms.bindlessTexturesEnabled();
-        VkMeshPipeline lastPipeline = null;
+        materialState.begin();
 
         for (MeshDrawRun multiDraw : draws) {
             var selection = meshVisualPipelines().oitPipeline(multiDraw.type(), multiDraw.material(),
                     multiDraw.embedded(), mode, programs.depthFormat(), folded);
             if (selection == null) {
+                skipped(multiDraw.start(), multiDraw.end());
                 continue;
             }
             VkMeshPipeline pipeline = selection.pipeline();
-            if (pipeline != lastPipeline) {
-                bindGraphicsPipeline(cmd, oitPipeline(pipeline), pipeline.layout());
-                lastPipeline = pipeline;
-            }
+            long handle = oitPipeline(pipeline, DepthState.undepthed(multiDraw.material()));
+            if (materialState.rebind(handle)) bindGraphicsPipeline(cmd, handle, pipeline.layout());
+            materialState.producer(cmd, multiDraw.material());
             writeMeshVisualCommon(fs, in, pyramidSampler);
             writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms()).uniform(22, f.renderOriginSlice());
             if (needsColor) {
@@ -282,19 +285,19 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         FrameSet fs = frame();
         long pyramidSampler = VkContext.sampler(RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
         boolean bindless = VkPrograms.bindlessTexturesEnabled();
-        VkMeshPipeline lastPipeline = null;
+        materialState.begin();
 
         for (MeshDrawRun multiDraw : draws) {
             var selection = meshVisualPipelines().mlabPipeline(multiDraw.type(), multiDraw.material(),
                     multiDraw.embedded(), oitMode, programs.depthFormat());
             if (selection == null) {
+                skipped(multiDraw.start(), multiDraw.end());
                 continue;
             }
             VkMeshPipeline pipeline = selection.pipeline();
-            if (pipeline != lastPipeline) {
-                bindGraphicsPipeline(cmd, oitPipeline(pipeline), pipeline.layout());
-                lastPipeline = pipeline;
-            }
+            long handle = oitPipeline(pipeline, DepthState.undepthed(multiDraw.material()));
+            if (materialState.rebind(handle)) bindGraphicsPipeline(cmd, handle, pipeline.layout());
+            materialState.producer(cmd, multiDraw.material());
             writeMeshVisualCommon(fs, in, pyramidSampler);
             writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms());
             Material material = multiDraw.material();
@@ -323,12 +326,15 @@ public final class VkMeshVisualDrawManager extends VkIndirectDrawManager {
         if (triCount == 0) {
             return true;
         }
-        VkMeshPipeline pipeline = meshVisualPipelines().crumblingPipeline(crumblingMaterial, instanceType, COLOR_FORMAT,
+        VkMeshPipeline pipeline = meshVisualPipelines().crumblingPipeline(instanceType, COLOR_FORMAT,
                 programs.depthFormat());
         if (pipeline == null) {
+            ShaderWarmup.skipped(draw.material(), instanceType);
             return true;
         }
-        VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+        long handle = pipeline.variant(null, DepthState.undepthed(crumblingMaterial));
+        if (materialState.rebind(handle)) VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, handle);
+        materialState.crumbling(cmd, crumblingMaterial);
 
         Material material = draw.material();
         writer.storage(1, cf.objectBuffer());

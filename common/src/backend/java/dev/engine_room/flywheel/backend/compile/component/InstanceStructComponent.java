@@ -39,12 +39,20 @@ public class InstanceStructComponent implements SourceComponent {
      * {@code shader}, one of the type's own shaders, selecting the struct's renamed members by their declared names.
      */
     public static SourceComponent typeShader(InstanceType<?> type, SourceComponent shader) {
-        if (type.layout().elements().stream().noneMatch(element -> element.name().equals(SELECTED_AS_METHOD))) {
-            return shader;
-        }
-        String source = METHOD_NAME_SELECTION.matcher(shader.source())
-                                             .replaceAll(".$1" + RENAMED_PREFIX + SELECTED_AS_METHOD);
-        return new RenamedSelections(shader.name(), source, shader.included());
+        if (!renamesSelections(type.layout())) return shader;
+        return new RenamedSelections(shader.name(), selectRenamed(type.layout(), shader.source()), shader.included());
+    }
+
+    /**
+     * {@code source} selecting {@code layout}'s renamed members by their declared names.
+     */
+    static String selectRenamed(Layout layout, String source) {
+        if (!renamesSelections(layout)) return source;
+        return METHOD_NAME_SELECTION.matcher(source).replaceAll(".$1" + RENAMED_PREFIX + SELECTED_AS_METHOD);
+    }
+
+    private static boolean renamesSelections(Layout layout) {
+        return layout.elements().stream().anyMatch(element -> element.name().equals(SELECTED_AS_METHOD));
     }
 
     @Override

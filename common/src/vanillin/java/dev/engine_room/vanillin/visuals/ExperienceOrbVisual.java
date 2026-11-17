@@ -17,6 +17,7 @@ import dev.engine_room.flywheel.lib.model.QuadMesh;
 import dev.engine_room.flywheel.lib.model.SingleMeshModel;
 import dev.engine_room.flywheel.lib.util.OverlayTexture;
 import dev.engine_room.flywheel.lib.util.RendererReloadCache;
+import dev.engine_room.flywheel.lib.util.ShaderWarmupRegistry;
 import dev.engine_room.flywheel.lib.visual.AbstractEntityVisual;
 import dev.engine_room.flywheel.lib.visual.SimpleDynamicVisual;
 import net.minecraft.core.BlockPos;
@@ -55,9 +56,20 @@ public class ExperienceOrbVisual extends AbstractEntityVisual<ExperienceOrb> imp
         animate(partialTick);
     }
 
+    /**
+     * Registers the orb material's variant, which {@link #MODELS} builds on first use. Before the resource-apply
+     * warm-up (client initialization); any thread.
+     */
+    public static void registerWarmupVariant() {
+        ShaderWarmupRegistry.register(material().variant());
+    }
+
     private static Material material(Identifier texture) {
+        return material().texture(texture).build();
+    }
+
+    private static SimpleMaterial.Builder material() {
         return SimpleMaterial.builder()
-                             .texture(texture)
                              // Flat, lightmap-only: a camera-facing sprite has no meaningful surface normal, so directional (cardinal) shading would flicker as the camera turns.
                              .light(LightShaders.FLAT)
                              .cardinalLightingMode(CardinalLightingMode.OFF)
@@ -65,8 +77,7 @@ public class ExperienceOrbVisual extends AbstractEntityVisual<ExperienceOrb> imp
                              .transparency(Transparency.TRANSLUCENT)
                              .cutout(CutoutShaders.ONE_TENTH)
                              .backfaceCulling(false)
-                             .mipmap(false)
-                             .build();
+                             .mipmap(false);
     }
 
     @Override

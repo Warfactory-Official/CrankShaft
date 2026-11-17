@@ -30,7 +30,8 @@ record ProgramKey(PackRole role, boolean indirect, @Nullable InstanceType<?> typ
                          boolean embedded, boolean crumbling, int typeGen) {
         return new ProgramKey(role, indirect, type, material.shaders().vertexSource(),
                 crumbling ? AlphaTests.OFF : cutoutAlphaTest(material.cutout()), embedded, crumbling, typeGen,
-                material.transparency(), material.cutout(), material.shaders().fragmentSource(),
+                ContractProgram.transparencyClass(material.transparency()), material.cutout(),
+                material.shaders().fragmentSource(),
                 material.light().source(),
                 BackendConfig.INSTANCE.lightSmoothness(), null, material.fog().source(), !material.useLight(),
                 GuestShaders.glslVersion(), !IrisRuntime.EXPERIMENTAL && !indirect && GlCompat.USE_INSTANCING_SELECTOR,

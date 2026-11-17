@@ -10,6 +10,7 @@
     "LevelRendererSolidPassMixin",
     "OitRenderPassProviderMixin",
     "RenderSystemNativeOitMixin",
+    "ShaderManagerMixin",
     "VoxyStaticAsyncNodesMixin",
     "VoxyStaticGeometryMixin",
     "VoxyStaticGeometryManagerMixin",

@@ -35,8 +35,10 @@ import static dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout.
 
 /**
  * The uber instance draw pipelines (opaque, the wavelet OIT producers + folded twins, insert producers, crumbling).
- * Type/cutout/fog/embedded are RUNTIME-dispatched, so only light + material shaders + fixed-function state (+ the
- * {@link RenderPassShaders#readsEmbedded} variant) key a pipeline, per {@link ProgramGeneration}. Draws select the
+ * Type/cutout/fog/embedded are RUNTIME-dispatched and material fixed-function state is dynamic
+ * ({@link VkGraphicsPipeline.MaterialState}), so only light + material shaders (+ the
+ * {@link RenderPassShaders#readsEmbedded} variant, + the {@link VkGraphicsPipeline#bakedBlend} class of draw pipelines)
+ * key a pipeline, per {@link ProgramGeneration}. Draws select the
  * newest built generation; the current one builds through {@link VkAsyncBuilds} from GLSL assembled on the render
  * thread.
  */
@@ -243,10 +245,7 @@ public final class VkUberPipelines {
     public @Nullable Selection drawPipeline(Material material, boolean embedded, LightSmoothness smoothness,
                                             int colorFormat, int depthFormat) {
         var key = new UberDrawKey(material.shaders(), material.light(), smoothness, FrameUniforms.debugMode(),
-                colorFormat, depthFormat,
-                material.transparency(), material.depthTest(), material.writeMask().depth(),
-                material.writeMask().color(),
-                material.backfaceCulling(), material.polygonOffset(), embedded);
+                colorFormat, depthFormat, VkGraphicsPipeline.bakedBlend(material), embedded);
         return select(draws, key, ProgramGeneration.current(), this::requestDraw);
     }
 
@@ -272,9 +271,8 @@ public final class VkUberPipelines {
                     "flw_indirect_uber" + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug()
                                                                                               .getSerializedName()),
                     VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
-            var config = VkGraphicsPipeline.material(key.colorFormat(), key.depthFormat(), key.transparency(),
-                    key.depthTest(),
-                    key.depthWrite(), key.colorWrite(), key.cull(), key.polygonOffset());
+            var config = VkGraphicsPipeline.material(VkGraphicsPipeline.Vertex.INTERNAL, key.colorFormat(),
+                    key.depthFormat(), key.blend());
             layout = new VkDescriptorLayout(withLineFrame(drawBindings(true, bindless, key.light()),
                     key.materialShaders()), 0, 0, bindless);
             return graphicsPipeline(layout, vs, fs, config, capture.drawIndex());
@@ -294,7 +292,6 @@ public final class VkUberPipelines {
     public @Nullable Selection oitProducerPipeline(Material material, boolean embedded, LightSmoothness smoothness,
                                                    OitMode mode, boolean folded) {
         var key = new UberOitKey(material.shaders(), material.light(), smoothness, FrameUniforms.debugMode(),
-                material.depthTest(), material.backfaceCulling(), material.polygonOffset(),
                 OitTransparency.additive(material), embedded, VkPrograms.get().localRead());
         var entry = oits.computeIfAbsent(key, _ -> new ProgramVersions<>(VkAsyncBuilds.GROUP));
         var group = entry.select(ProgramGeneration.current(), key, this::requestOitProducers);
@@ -365,14 +362,9 @@ public final class VkUberPipelines {
                             + (key.debug() == DebugMode.OFF ? "" : "_debug_" + key.debug()
                                                                                   .getSerializedName()),
                     VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
-            VkGraphicsPipeline.Config base = producer.folded() ? VkOitPipelines.foldedProducerConfig(
-                    producer.mode(), depthFormat) : VkOitPipelines.instanceProducerConfig(producer.mode(), depthFormat);
-            var config = new VkGraphicsPipeline.Config(base.colorFormats(), base.blends(), base.depthTest(),
-                    base.depthWrite(),
-                    VkGraphicsPipeline.compareOp(key.depthTest()), base.vertex(),
-                    key.cull() ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE, base.depthFormat(),
-                    key.polygonOffset() ? 10.0F : 0.0F, key.polygonOffset() ? 1.0F : 0.0F,
-                    base.attachmentLocations(), base.inputAttachmentIndices());
+            var config = (producer.folded() ? VkOitPipelines.foldedProducerConfig(producer.mode(), depthFormat)
+                    : VkOitPipelines.instanceProducerConfig(producer.mode(), depthFormat))
+                    .withDynamic(VkGraphicsPipeline.Dynamic.material());
             layout = new VkDescriptorLayout(withLineFrame(oitProducerBindings(producer.mode(), true,
                     producer.folded(), bindless, key.light()), key.materialShaders()), 0, 0, bindless);
             VkGraphicsPipeline pipeline = graphicsPipeline(layout, vs, fs, config, capture.drawIndex());
@@ -395,7 +387,6 @@ public final class VkUberPipelines {
     public @Nullable Selection mlabProducerPipeline(OitInsertMode oitMode, Material material, boolean embedded,
                                                     LightSmoothness smoothness) {
         var key = new UberMlabKey(oitMode, material.shaders(), material.light(), smoothness, FrameUniforms.debugMode(),
-                material.depthTest(), material.backfaceCulling(), material.polygonOffset(),
                 OitTransparency.additive(material), embedded);
         return select(mlabs, key, ProgramGeneration.current(), this::requestMlabProducer);
     }
@@ -431,10 +422,8 @@ public final class VkUberPipelines {
                                                                                   .getSerializedName()),
                     VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
             var config = new VkGraphicsPipeline.Config(VkOitPipelines.MLAB_NO_COLOR, VkOitPipelines.MLAB_NO_BLEND, true,
-                    false,
-                    VkGraphicsPipeline.compareOp(key.depthTest()), VkGraphicsPipeline.Vertex.INTERNAL,
-                    key.cull() ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE, depthFormat,
-                    key.polygonOffset() ? 10.0F : 0.0F, key.polygonOffset() ? 1.0F : 0.0F);
+                    false, VK10.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.INTERNAL, VK10.VK_CULL_MODE_NONE,
+                    depthFormat).withDynamic(VkGraphicsPipeline.Dynamic.material());
             layout = new VkDescriptorLayout(withLineFrame(mlabProducerBindings(bindless, key.oitMode(), key.light()),
                     key.materialShaders()), 0, 0, bindless);
             VkGraphicsPipeline pipeline = graphicsPipeline(layout, vs, fs, config, capture.drawIndex());
@@ -454,12 +443,10 @@ public final class VkUberPipelines {
     /**
      * Null until built; builds it.
      */
-    public @Nullable VkGraphicsPipeline crumblingPipeline(Material crumblingMaterial, InstanceType<?> type,
-                                                          LightSmoothness smoothness, int colorFormat,
-                                                          int depthFormat) {
+    public @Nullable VkGraphicsPipeline crumblingPipeline(InstanceType<?> type, LightSmoothness smoothness,
+                                                          int colorFormat, int depthFormat) {
         var selection = select(crumblings, new CrumblingKey(type, smoothness, FrameUniforms.debugMode(), colorFormat,
-                        depthFormat, crumblingMaterial.depthTest(), crumblingMaterial.backfaceCulling()),
-                ProgramGeneration.NONE, this::requestCrumbling);
+                depthFormat), ProgramGeneration.NONE, this::requestCrumbling);
         return selection == null ? null : selection.pipeline();
     }
 
@@ -480,9 +467,9 @@ public final class VkUberPipelines {
             fs = VkShaderCompiler.compileModule("crumbling_frag",
                     VkShaderTransform.toVulkan(fsGl, VkShaderTransform.Stage.FRAGMENT), VkShaderCompiler.KIND_FRAGMENT);
             var config = new VkGraphicsPipeline.Config(new int[]{key.colorFormat()},
-                    new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.crumbling()},
-                    true, false, VkGraphicsPipeline.compareOp(key.depthTest()), VkGraphicsPipeline.Vertex.INTERNAL,
-                    key.cull() ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE, key.depthFormat(), 10.0F, 1.0F);
+                    new VkGraphicsPipeline.Blend[]{VkGraphicsPipeline.crumbling()}, true, false,
+                    VK10.VK_COMPARE_OP_ALWAYS, VkGraphicsPipeline.Vertex.INTERNAL, VK10.VK_CULL_MODE_NONE,
+                    key.depthFormat()).withDynamic(VkGraphicsPipeline.Dynamic.material());
             layout = new VkDescriptorLayout(crumblingBindings(), 0, 0);
             return new VkGraphicsPipeline(layout, vs, fs, config);
         } catch (Throwable t) {
@@ -509,27 +496,22 @@ public final class VkUberPipelines {
     }
 
     private record UberDrawKey(MaterialShaders materialShaders, LightShader light, LightSmoothness smoothness,
-                               DebugMode debug, int colorFormat, int depthFormat, Transparency transparency,
-                               DepthTest depthTest,
-                               boolean depthWrite, boolean colorWrite, boolean cull, boolean polygonOffset,
-                               boolean embedded) {
+                               DebugMode debug, int colorFormat, int depthFormat,
+                               VkGraphicsPipeline.@Nullable Blend blend, boolean embedded) {
     }
 
     private record UberOitKey(MaterialShaders materialShaders, LightShader light, LightSmoothness smoothness,
-                              DebugMode debug, DepthTest depthTest, boolean cull, boolean polygonOffset,
-                              boolean additive, boolean embedded, boolean localRead) {
+                              DebugMode debug, boolean additive, boolean embedded, boolean localRead) {
     }
 
     private record UberOitProducer(UberOitKey key, OitMode mode, boolean folded, boolean emission) {
     }
 
     private record UberMlabKey(OitInsertMode oitMode, MaterialShaders materialShaders, LightShader light,
-                               LightSmoothness smoothness,
-                               DebugMode debug, DepthTest depthTest, boolean cull, boolean polygonOffset,
-                               boolean emission, boolean embedded) {
+                               LightSmoothness smoothness, DebugMode debug, boolean emission, boolean embedded) {
     }
 
     private record CrumblingKey(InstanceType<?> instanceType, LightSmoothness smoothness, DebugMode debug,
-                                int colorFormat, int depthFormat, DepthTest depthTest, boolean cull) {
+                                int colorFormat, int depthFormat) {
     }
 }

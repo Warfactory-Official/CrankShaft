@@ -46,6 +46,8 @@ public final class RenderPipelineCompiler {
     private static final Map<RenderPipeline, Map<String, Uniform>> UNIFORMS = new IdentityHashMap<>();
     private static final Map<RenderPipeline, GlAsyncCompiler.Pending> PENDING = new IdentityHashMap<>();
     private static final List<RenderPipeline> RELEASED = new ArrayList<>();
+    private static final Map<RenderPipeline, List<RenderPipeline>> DERIVATIONS = new IdentityHashMap<>();
+    private static final Map<RenderPipeline, RenderPipeline> DERIVED_BASES = new IdentityHashMap<>();
     private static final NativeResourceSource NATIVE_DEPTH_SOURCE = new NativeResourceSource(true);
     private static final NativeResourceSource NATIVE_COLOR_SOURCE = new NativeResourceSource(false);
 
@@ -130,23 +132,61 @@ public final class RenderPipelineCompiler {
         }
     }
 
+    /**
+     * Publishes {@code variant}, which differs from {@code base} only in fixed-function state, on base's linked
+     * program without compiling: at once when base is ready and {@code now}, else when base publishes or, base being
+     * ready, at the next {@link #poll}. Render thread, outside any render pass when {@code now}. {@code base}: a GL pipeline compiled by {@link #request} or {@link #warm}, whose
+     * program the native pool leases.
+     */
+    static void derive(RenderPipeline base, RenderPipeline variant, boolean now) {
+        if (now && ready(base)) {
+            publishDerived(base, variant);
+            return;
+        }
+        DERIVATIONS.computeIfAbsent(base, _ -> new ArrayList<>()).add(variant);
+        DERIVED_BASES.put(variant, base);
+    }
+
+    private static void publishDerived(RenderPipeline base, RenderPipeline variant) {
+        var program = (ProgramLease) ((GlRenderPipeline) PIPELINES.get(base).backendRenderPipeline()).program();
+        publish(variant, SOURCES.get(base), program.entry.retain());
+    }
+
+    private static void publishDerivations(RenderPipeline base) {
+        List<RenderPipeline> variants = DERIVATIONS.remove(base);
+        if (variants == null) return;
+        for (RenderPipeline variant : variants) {
+            DERIVED_BASES.remove(variant);
+            publishDerived(base, variant);
+        }
+    }
+
     public static boolean ready(RenderPipeline pipeline) {
         FrontendRenderPipeline compiled = PIPELINES.get(pipeline);
         return compiled != null && !compiled.isClosed();
     }
 
     /**
-     * Building in the background or declared in the running {@link #warm}.
+     * Building in the background, declared in the running {@link #warm}, or awaiting {@link #derive} publication.
      */
     public static boolean pending(RenderPipeline pipeline) {
-        return PENDING.containsKey(pipeline) || collecting != null && collecting.containsKey(pipeline);
+        return PENDING.containsKey(pipeline) || DERIVED_BASES.containsKey(pipeline)
+                || collecting != null && collecting.containsKey(pipeline);
     }
 
     /**
-     * A superseded pipeline: cancelled while building, otherwise destroyed at the next {@link #poll}.
+     * A superseded pipeline: cancelled while building or awaiting derivation, otherwise destroyed at the next
+     * {@link #poll}.
      */
     public static void release(RenderPipeline pipeline) {
-        if (!cancelPending(pipeline)) RELEASED.add(pipeline);
+        RenderPipeline base = DERIVED_BASES.remove(pipeline);
+        if (base != null) {
+            List<RenderPipeline> variants = DERIVATIONS.get(base);
+            variants.remove(pipeline);
+            if (variants.isEmpty()) DERIVATIONS.remove(base);
+        } else if (!cancelPending(pipeline)) {
+            RELEASED.add(pipeline);
+        }
     }
 
     /**
@@ -170,6 +210,22 @@ public final class RenderPipelineCompiler {
         }
         GlNativeProgramRequests.poll();
         GlAsyncCompiler.poll();
+        pollDerivations();
+    }
+
+    // Bases that are neither ready nor pending failed, were released or lost to a cache reset.
+    private static void pollDerivations() {
+        for (var iterator = DERIVATIONS.entrySet().iterator(); iterator.hasNext(); ) {
+            var derivation = iterator.next();
+            RenderPipeline base = derivation.getKey();
+            if (ready(base)) {
+                for (RenderPipeline variant : derivation.getValue()) publishDerived(base, variant);
+            } else if (pending(base)) {
+                continue;
+            }
+            derivation.getValue().forEach(DERIVED_BASES::remove);
+            iterator.remove();
+        }
     }
 
     private static boolean cancelPending(RenderPipeline pipeline) {
@@ -409,6 +465,7 @@ public final class RenderPipelineCompiler {
         PIPELINES.put(pipeline, compiled);
         SOURCES.put(pipeline, source);
         UNIFORMS.put(pipeline, uniforms);
+        publishDerivations(pipeline);
     }
 
     public static CompiledRenderPipeline get(RenderPipeline pipeline) {
@@ -477,6 +534,8 @@ public final class RenderPipelineCompiler {
         PENDING.values().forEach(GlAsyncCompiler.Pending::cancel);
         PENDING.clear();
         RELEASED.clear();
+        DERIVATIONS.clear();
+        DERIVED_BASES.clear();
         PIPELINES.values().forEach(FrontendRenderPipeline::close);
         PIPELINES.keySet().forEach(UNIFORMS::remove);
         PIPELINES.clear();

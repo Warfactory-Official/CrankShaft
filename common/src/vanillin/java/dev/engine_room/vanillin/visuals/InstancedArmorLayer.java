@@ -9,6 +9,7 @@ import dev.engine_room.flywheel.api.model.Model;
 import dev.engine_room.flywheel.impl.compat.EntityFeatureCompat;
 import dev.engine_room.flywheel.lib.material.CutoutShaders;
 import dev.engine_room.flywheel.lib.material.Materials;
+import dev.engine_room.flywheel.lib.material.ShaderVariant;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import dev.engine_room.flywheel.lib.model.PackIdentity;
@@ -17,6 +18,7 @@ import dev.engine_room.flywheel.lib.model.part.InstanceTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTree;
 import dev.engine_room.flywheel.lib.model.part.ModelTrees;
 import dev.engine_room.flywheel.lib.util.ItemFoil;
+import dev.engine_room.flywheel.lib.util.ShaderWarmupRegistry;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.geom.ModelLayerLocation;
 import net.minecraft.client.renderer.Sheets;
@@ -81,6 +83,13 @@ final class InstancedArmorLayer {
     private final float[] bodyRest;
     private final Slot[] slots;
     private boolean hidden;
+
+    static void registerWarmupVariants() {
+        ShaderWarmupRegistry.register(ShaderVariant.of(GLINT_ARMOR));
+        #if MC < 26.3
+        ShaderWarmupRegistry.register(ShaderVariant.of(TRIM_MATERIAL));
+        #endif
+    }
 
     InstancedArmorLayer(InstancerProvider provider, EquipmentAssetManager assets,
                         ArmorModelSet<ModelLayerLocation> layers, boolean baby, Map<String, Integer> boneIndex,

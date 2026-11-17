@@ -15,11 +15,10 @@ import dev.engine_room.flywheel.api.material.Material;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.InternalVertex;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
-import dev.engine_room.flywheel.backend.compile.PipelineVersions;
 import dev.engine_room.flywheel.backend.compile.ProgramGeneration;
-import dev.engine_room.flywheel.backend.compile.ProgramVersions;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
+import dev.engine_room.flywheel.backend.compile.StatePipelines;
 import dev.engine_room.flywheel.backend.engine.instancing.InstancingDrawSelector;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
@@ -57,30 +56,22 @@ public final class CrumblingPipelines {
             yield RenderPassShaders.crumblingFragment(fk.indirect(), fk.smoothness(), fk.debug());
         }
     };
-    private static final Map<Key, ProgramVersions<RenderPipeline>> PIPELINES = new HashMap<>();
+    private static final StatePipelines<Key, State> PIPELINES = new StatePipelines<>(
+            (key, state, _) -> new RenderPipeline[]{build(key, state)},
+            (_, pipeline) -> RenderPipelineCompiler.request(pipeline, SHADER_SOURCE, null));
 
     private CrumblingPipelines() {
     }
 
     /**
-     * Null until published; requests it.
+     * Null until published; requests it. Outside any render pass ({@link StatePipelines#select} prepare).
      */
     public static @Nullable RenderPipeline pipeline(Material crumblingMaterial, InstanceType<?> instanceType,
                                                     boolean indirect) {
-        Key key = new Key(instanceType, indirect, BackendConfig.INSTANCE.lightSmoothness(), FrameUniforms.debugMode(),
-                crumblingMaterial.depthTest(), crumblingMaterial.backfaceCulling());
-        return PIPELINES.computeIfAbsent(key, _ -> new ProgramVersions<>(PipelineVersions.PIPELINE))
-                        .select(ProgramGeneration.NONE, key, CrumblingPipelines::request);
-    }
-
-    private static RenderPipeline request(Key key) {
-        TYPE_BY_VERTEX_ID.putIfAbsent(vertexId(key.instanceType(), key.indirect(), key.debug() != DebugMode.OFF),
-                key.instanceType());
-        FRAGMENT_KEY.putIfAbsent(fragmentId(key.indirect(), key.smoothness(), key.debug()),
-                new FragmentKey(key.indirect(), key.smoothness(), key.debug()));
-        RenderPipeline pipeline = build(key);
-        RenderPipelineCompiler.request(pipeline, SHADER_SOURCE, null);
-        return pipeline;
+        Key key = new Key(instanceType, indirect, BackendConfig.INSTANCE.lightSmoothness(), FrameUniforms.debugMode());
+        var group = PIPELINES.select(key, new State(crumblingMaterial.depthTest(),
+                crumblingMaterial.backfaceCulling()), ProgramGeneration.NONE, true);
+        return group == null ? null : group[0];
     }
 
     private static Identifier vertexId(InstanceType<?> instanceType, boolean indirect, boolean debug) {
@@ -95,11 +86,16 @@ public final class CrumblingPipelines {
                 + (debug == DebugMode.OFF ? "" : "__debug_" + debug.getSerializedName()));
     }
 
-    private static RenderPipeline build(Key key) {
-        return stateBuilder(key.depthTest(), key.cull(), key.indirect())
-                .withLocation(ResourceUtil.rl("pipeline/crumbling/" + key.cacheName()))
-                .withVertexShader(vertexId(key.instanceType(), key.indirect(), key.debug() != DebugMode.OFF))
-                .withFragmentShader(fragmentId(key.indirect(), key.smoothness(), key.debug()))
+    private static RenderPipeline build(Key key, State state) {
+        Identifier vertex = vertexId(key.instanceType(), key.indirect(), key.debug() != DebugMode.OFF);
+        Identifier fragment = fragmentId(key.indirect(), key.smoothness(), key.debug());
+        TYPE_BY_VERTEX_ID.putIfAbsent(vertex, key.instanceType());
+        FRAGMENT_KEY.putIfAbsent(fragment, new FragmentKey(key.indirect(), key.smoothness(), key.debug()));
+        return stateBuilder(state.depthTest(), state.cull(), key.indirect())
+                .withLocation(ResourceUtil.rl("pipeline/crumbling/" + key.cacheName() + "_"
+                        + state.depthTest().name().toLowerCase(Locale.ROOT) + (state.cull() ? "_cull" : "")))
+                .withVertexShader(vertex)
+                .withFragmentShader(fragment)
                 .build();
     }
 
@@ -147,22 +143,20 @@ public final class CrumblingPipelines {
     private record FragmentKey(boolean indirect, LightSmoothness smoothness, DebugMode debug) {
     }
 
+    private record State(DepthTest depthTest, boolean cull) {
+    }
+
     private record Key(InstanceType<?> instanceType, boolean indirect, LightSmoothness smoothness,
-                       DebugMode debug, DepthTest depthTest, boolean cull) {
+                       DebugMode debug) {
         String cacheName() {
             StringBuilder sb = new StringBuilder();
             sb.append(indirect ? "ind_" : "ins_")
               .append(ResourceUtil.toDebugFileNameNoExtension(instanceType.vertexShader()))
               .append('_')
-              .append(smoothness.getSerializedName())
-              .append('_')
-              .append(depthTest.name());
+              .append(smoothness.getSerializedName());
             if (debug != DebugMode.OFF) {
                 sb.append("_debug_")
                   .append(debug.getSerializedName());
-            }
-            if (cull) {
-                sb.append("_cull");
             }
             return sb.toString()
                      .toLowerCase(Locale.ROOT);

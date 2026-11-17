@@ -129,6 +129,15 @@ public final class Materials {
                                                                     .cutout(CutoutShaders.ONE_TENTH)
                                                                     .mipmap(false)
                                                                     .build();
+    // Vanilla shadows use a view offset; polygon offset stands in for it.
+    public static final Material SHADOW = SimpleMaterial.builder()
+                                                        .texture(Identifier.withDefaultNamespace(
+                                                                "textures/misc/shadow.png"))
+                                                        .mipmap(false)
+                                                        .polygonOffset(true)
+                                                        .transparency(Transparency.TRANSLUCENT)
+                                                        .writeMask(WriteMask.COLOR)
+                                                        .build();
     private static final Identifier ENCHANTED_GLINT_ITEM = ItemFeatureRenderer.ENCHANTED_GLINT_ITEM;
     public static final Material GLINT = SimpleMaterial.builder()
                                                        .texture(ENCHANTED_GLINT_ITEM)

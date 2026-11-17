@@ -378,6 +378,13 @@ public class SimpleMaterial implements Material {
             return ambientOcclusion;
         }
 
+        /**
+         * This builder's {@link ShaderVariant}.
+         */
+        public ShaderVariant variant() {
+            return ShaderVariant.of(this);
+        }
+
         public SimpleMaterial build() {
             SimpleMaterial material = new SimpleMaterial(this);
             // Port: collect downstream shader variants without retaining temporary materials.

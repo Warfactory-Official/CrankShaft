@@ -45,6 +45,7 @@ import org.lwjgl.system.MemoryStack;
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.IntConsumer;
 
 public final class MeshVisualDrawManager extends IndirectDrawManager {
@@ -62,12 +63,15 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
     private static final int SSBO_MESH_VERTICES = 13;
     private static final int SSBO_MESH_INDICES = 14;
     private static final int SSBO_MESHLET_BOUNDS = 16;
-    private final Map<MeshProgramKey, ProgramVersions<GlProgramBuild>> meshPrograms = new HashMap<>();
-    private final Map<CrumblingProgramKey, ProgramVersions<GlProgramBuild>> crumblingPrograms = new HashMap<>();
-    private final Map<OitProgramKey, ProgramVersions<@Nullable GlProgramBuild[]>> oitPrograms = new HashMap<>();
-    private int commandBuilderProgram = -1;
-    private int commandBuilderDrawCountLoc = -1;
-    private int commandBuilderWriteOffsetLoc = -1;
+    // Shared by every draw manager: the warm-up links them, draws request later generations.
+    private static final Map<MeshProgramKey, ProgramVersions<GlProgramBuild>> MESH_PROGRAMS = new HashMap<>();
+    private static final Map<CrumblingProgramKey, ProgramVersions<GlProgramBuild>> CRUMBLING_PROGRAMS =
+            new HashMap<>();
+    private static final Map<OitProgramKey, ProgramVersions<@Nullable GlProgramBuild[]>> OIT_PROGRAMS =
+            new HashMap<>();
+    private static int commandBuilderProgram = -1;
+    private static int commandBuilderDrawCountLoc = -1;
+    private static int commandBuilderWriteOffsetLoc = -1;
     private int commandBuffer = 0;
     private int commandBufferCapacity = 0; // in commands
     private int builtDraws = 0;
@@ -238,61 +242,83 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         return program;
     }
 
-    public static void warmUp(List<InstanceType<?>> types, List<InstanceType<?>> crumblingTypes,
-                              List<Material> materials, boolean wavelet) {
-        deleteWarm(buildCommandBuilder());
-        for (InstanceType<?> type : crumblingTypes) {
-            linkAndDelete(crumblingStages(CrumblingProgramKey.of(type, DebugMode.OFF)));
-        }
-        Set<MeshProgramKey> solidDone = new HashSet<>();
-        Set<MeshProgramKey> oitDone = new HashSet<>();
-        for (InstanceType<?> type : types) {
-            for (Material material : materials) {
-                MeshProgramKey key = MeshProgramKey.of(type, material, false, DebugMode.OFF);
-                if (!OitTransparency.orderIndependent(material)) {
-                    if (solidDone.add(key)) {
-                        linkAndDelete(meshStages(key));
-                    }
-                } else if (wavelet && oitDone.add(key)) {
-                    for (OitMode mode : OitMode.values()) {
-                        if (mode != OitMode.OFF) {
-                            linkAndDelete(oitStages(key, mode, false));
+    /**
+     * Links, before returning, the programs draws and crumbling of these types and materials select, replacing the
+     * previous warm-up's. Render thread.
+     */
+    public static void warmUp(List<InstanceType<?>> types, List<Material> materials, boolean wavelet) {
+        reset();
+        ensureCommandBuilder();
+        Map<CrumblingProgramKey, GlProgramBuild> crumbling = new LinkedHashMap<>();
+        Map<MeshProgramKey, GlProgramBuild> solid = new LinkedHashMap<>();
+        Map<OitProgramKey, GlProgramBuild[]> oit = new LinkedHashMap<>();
+        try (GlCompilationBatch batch = new GlCompilationBatch()) {
+            for (InstanceType<?> type : types) {
+                var key = CrumblingProgramKey.of(type, DebugMode.OFF);
+                crumbling.put(key, link(batch, crumblingStages(key), MeshVisualDrawManager::crumblingSetup));
+            }
+            for (InstanceType<?> type : types) {
+                for (Material material : materials) {
+                    MeshProgramKey key = MeshProgramKey.of(type, material, false, DebugMode.OFF);
+                    if (!OitTransparency.orderIndependent(material)) {
+                        if (!solid.containsKey(key)) {
+                            solid.put(key, link(batch, meshStages(key), MeshVisualDrawManager::meshSetup));
+                        }
+                    } else if (wavelet) {
+                        var oitKey = new OitProgramKey(key, OitTransparency.additive(material));
+                        if (!oit.containsKey(oitKey)) {
+                            oit.put(oitKey, oitPrograms(oitKey,
+                                    stages -> link(batch, stages, MeshVisualDrawManager::oitSetup)));
                         }
                     }
                 }
             }
+            batch.finish(() -> {
+            });
+        } catch (GlCompilationBatch.Failure failure) {
+            throw new ProgramAvailability.Failure(ProgramAvailability.Feature.MESH, failure);
         }
+        ProgramGeneration generation = ProgramGeneration.current().materials();
+        crumbling.forEach((key, build) -> CRUMBLING_PROGRAMS.computeIfAbsent(key,
+                _ -> new ProgramVersions<>(GlProgramBuild.TRACKER)).select(ProgramGeneration.NONE, key, _ -> build));
+        solid.forEach((key, build) -> MESH_PROGRAMS.computeIfAbsent(key,
+                _ -> new ProgramVersions<>(GlProgramBuild.TRACKER)).select(generation, key, _ -> build));
+        oit.forEach((key, group) -> OIT_PROGRAMS.computeIfAbsent(key,
+                _ -> new ProgramVersions<>(GlProgramBuild.GROUP)).select(generation, key, _ -> group));
     }
 
-    // Warms the driver's shader cache.
-    private static void linkAndDelete(Stages stages) {
-        int[] shaders = new int[stages.types().length];
-        boolean compiled = true;
-        for (int i = 0; i < shaders.length; i++) {
-            shaders[i] = MeshGlPrograms.compileShader("meshvisual", stages.types()[i], stages.stageLabels()[i],
-                    stages.sources()[i]);
-            compiled &= shaders[i] != 0;
-        }
-        if (compiled) deleteWarm(MeshGlPrograms.linkProgram("meshvisual", stages.label(), shaders));
-        for (int shader : shaders) {
-            if (shader != 0) GL20C.glDeleteShader(shader);
-        }
+    /**
+     * Releases every program and the command builder: on a resource reload, which replaces their sources, and when GL
+     * mesh stops being the engaged backend. Render thread.
+     */
+    public static void reset() {
+        MESH_PROGRAMS.values().forEach(ProgramVersions::release);
+        MESH_PROGRAMS.clear();
+        CRUMBLING_PROGRAMS.values().forEach(ProgramVersions::release);
+        CRUMBLING_PROGRAMS.clear();
+        OIT_PROGRAMS.values().forEach(ProgramVersions::release);
+        OIT_PROGRAMS.clear();
+        if (commandBuilderProgram > 0) GL20C.glDeleteProgram(commandBuilderProgram);
+        commandBuilderProgram = -1;
+    }
+
+    private static GlProgramBuild link(GlCompilationBatch batch, Stages stages, IntConsumer setup) {
+        return GlProgramBuild.link(batch, stages.label(), stages.types(), driverSources(stages),
+                stages.stageLabels(), setup);
     }
 
     private static GlProgramBuild request(Stages stages, IntConsumer setup) {
+        return GlProgramBuild.request(stages.label(), stages.types(), driverSources(stages), stages.stageLabels(),
+                ProgramAvailability.Feature.MESH, setup);
+    }
+
+    private static String[] driverSources(Stages stages) {
         String[] sources = new String[stages.types().length];
         for (int i = 0; i < sources.length; i++) {
             sources[i] = MeshGlPrograms.driverSource("meshvisual", stages.types()[i], stages.stageLabels()[i],
                     stages.sources()[i]);
         }
-        return GlProgramBuild.request(stages.label(), stages.types(), sources, stages.stageLabels(),
-                ProgramAvailability.Feature.MESH, setup);
-    }
-
-    private static void deleteWarm(int program) {
-        if (program != 0) {
-            GL20C.glDeleteProgram(program);
-        }
+        return sources;
     }
 
     private static void setupOpaqueState() {
@@ -438,10 +464,11 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
             for (var run : meshMultiDraws) {
                 Material material = run.material();
                 var key = MeshProgramKey.of(run.type(), material, run.embedded(), FrameUniforms.debugMode());
-                var versions = meshPrograms.computeIfAbsent(key, _ -> new ProgramVersions<>(GlProgramBuild.TRACKER));
+                var versions = MESH_PROGRAMS.computeIfAbsent(key, _ -> new ProgramVersions<>(GlProgramBuild.TRACKER));
                 GlProgramBuild build = versions.select(ProgramGeneration.current().materials(), key,
                         MeshVisualDrawManager::requestMeshProgram);
                 if (build == null) {
+                    skipped(run.start(), run.end());
                     continue;
                 }
                 int program = build.handle();
@@ -555,10 +582,11 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         for (var run : additive ? meshOitAdditiveMultiDraws : meshOitMultiDraws) {
             var key = new OitProgramKey(MeshProgramKey.of(run.type(), run.material(), run.embedded(),
                     FrameUniforms.debugMode()), additive);
-            var versions = oitPrograms.computeIfAbsent(key, _ -> new ProgramVersions<>(GlProgramBuild.GROUP));
+            var versions = OIT_PROGRAMS.computeIfAbsent(key, _ -> new ProgramVersions<>(GlProgramBuild.GROUP));
             GlProgramBuild[] group = versions.select(ProgramGeneration.current().materials(), key,
                     MeshVisualDrawManager::requestOitPrograms);
             if (group == null) {
+                skipped(run.start(), run.end());
                 continue;
             }
             int program = group[additive ? 0 : mode.ordinal() - 1].handle();
@@ -649,10 +677,17 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
                 InstanceType<?> instanceType = groupEntry.getKey()
                                                          .instanceType();
                 var key = CrumblingProgramKey.of(instanceType, FrameUniforms.debugMode());
-                GlProgramBuild build = crumblingPrograms.computeIfAbsent(key,
+                GlProgramBuild build = CRUMBLING_PROGRAMS.computeIfAbsent(key,
                         _ -> new ProgramVersions<>(GlProgramBuild.TRACKER)).select(ProgramGeneration.NONE, key,
                         MeshVisualDrawManager::requestCrumblingProgram);
                 if (build == null) {
+                    for (var progress : groupEntry.getValue().values()) {
+                        for (var pair : progress) {
+                            for (IndirectDraw draw : pair.getFirst().draws()) {
+                                if (!draw.mesh().isInvalid()) ShaderWarmup.skipped(draw.material(), instanceType);
+                            }
+                        }
+                    }
                     continue;
                 }
                 int program = build.handle();
@@ -721,7 +756,9 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
         }
         int start = run.start();
         for (int i = run.start(); i < run.end(); i++) {
-            if (coverage.covers(draw(i).required())) continue;
+            IndirectDraw draw = draw(i);
+            if (coverage.covers(draw.required())) continue;
+            ShaderWarmup.skipped(draw.material(), draw.instanceType());
             if (start < i) drawMeshTasks(start, i, baseDrawLoc);
             start = i + 1;
         }
@@ -745,20 +782,19 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
     }
 
     private static @Nullable GlProgramBuild[] requestOitPrograms(OitProgramKey key) {
-        if (key.emission()) {
-            return new GlProgramBuild[]{request(oitStages(key.key(), OitMode.EVALUATE, true),
-                    MeshVisualDrawManager::oitSetup)};
-        }
+        return oitPrograms(key, stages -> request(stages, MeshVisualDrawManager::oitSetup));
+    }
+
+    private static GlProgramBuild[] oitPrograms(OitProgramKey key, Function<Stages, GlProgramBuild> build) {
+        if (key.emission()) return new GlProgramBuild[]{build.apply(oitStages(key.key(), OitMode.EVALUATE, true))};
         GlProgramBuild[] group = new GlProgramBuild[OitMode.values().length - 1];
         for (OitMode mode : OitMode.values()) {
-            if (mode != OitMode.OFF) {
-                group[mode.ordinal() - 1] = request(oitStages(key.key(), mode, false), MeshVisualDrawManager::oitSetup);
-            }
+            if (mode != OitMode.OFF) group[mode.ordinal() - 1] = build.apply(oitStages(key.key(), mode, false));
         }
         return group;
     }
 
-    private int ensureCommandBuilder() {
+    private static int ensureCommandBuilder() {
         if (commandBuilderProgram != -1) {
             return commandBuilderProgram;
         }
@@ -863,16 +899,6 @@ public final class MeshVisualDrawManager extends IndirectDrawManager {
     @Override
     public void delete() {
         super.delete();
-        meshPrograms.values().forEach(ProgramVersions::release);
-        meshPrograms.clear();
-        crumblingPrograms.values().forEach(ProgramVersions::release);
-        crumblingPrograms.clear();
-        oitPrograms.values().forEach(ProgramVersions::release);
-        oitPrograms.clear();
-        if (commandBuilderProgram > 0) {
-            GL20C.glDeleteProgram(commandBuilderProgram);
-        }
-        commandBuilderProgram = -1;
         if (commandBuffer != 0) {
             GL15C.glDeleteBuffers(commandBuffer);
             FlwMemoryTracker._freeGpuMemory((long) commandBufferCapacity * MESH_TASK_COMMAND_STRIDE);

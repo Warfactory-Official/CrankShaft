@@ -28,6 +28,7 @@ import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.compile.PipelineVersions;
 import dev.engine_room.flywheel.backend.compile.ProgramGeneration;
 import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
+import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.NativeOitReplay;
 import dev.engine_room.flywheel.backend.engine.embed.Environment;
@@ -103,6 +104,8 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     private final Map<InstanceType<?>, IndirectCullingGroup<?>> cullingGroups = new HashMap<>();
     private final List<IndirectCullingGroup<?>> frameGroups = new ArrayList<>();
     private final List<IndirectDraw> allDraws = new ArrayList<>();
+    // A crumbling frame's pipelines, selected outside its pass.
+    private final Map<IndirectDraw, @Nullable RenderPipeline> crumblingPipelines = new IdentityHashMap<>();
     protected final List<UberDraw> uberMultiDraws = new ArrayList<>();
     protected final List<UberDraw> uberOitMultiDraws = new ArrayList<>();
     protected final List<UberDraw> uberOitAdditiveMultiDraws = new ArrayList<>();
@@ -621,6 +624,10 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         return allDraws.get(index);
     }
 
+    void skipped(int start, int end) {
+        IndirectDraw.skipped(allDraws, start, end);
+    }
+
     int cullTypes() {
         return cullTypes;
     }
@@ -655,7 +662,8 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         }
         drawBarrier();
         submitUberBatches(pass, batches,
-                batch -> OitPipelines.uberProducer(batch.material(), mode, batch.embedded()), f.textureManager());
+                batch -> OitPipelines.uberProducer(batch.material(), mode, batch.embedded(), false),
+                f.textureManager());
     }
 
     void submitOitInsertProducerGeometry(RenderPass pass, OitInsertMode mode, OitFrame f, boolean additive) {
@@ -670,7 +678,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         }
         drawBarrier();
         submitUberBatches(pass, batches,
-                batch -> OitPipelines.uberMlab(batch.material(), mode, batch.embedded()), f.textureManager());
+                batch -> OitPipelines.uberMlab(batch.material(), mode, batch.embedded(), false), f.textureManager());
     }
 
     protected void submitPass2IfPending() {
@@ -713,22 +721,25 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
      * The newest published uber pipeline, null before the first: the batch skips the frame.
      */
     protected @Nullable RenderPipeline uberPipelineFor(Material material, boolean embedded) {
-        return IndirectPipeline.uberPipelineFor(material, embedded);
+        return IndirectPipeline.uberPipelineFor(material, embedded, false);
     }
 
     /**
-     * Requests a new draw's pipelines ahead of its first frame.
+     * Requests a new draw's pipelines ahead of its first frame, outside any render pass.
      */
     protected void warmUp(Material material, boolean embedded) {
         if (OitTransparency.orderIndependent(material)) {
             OitInsertMode mode = OitConfig.resolveInsertMode();
-            if (mode == null) OitPipelines.uberProducer(material, OitMode.EVALUATE, embedded);
-            else OitPipelines.uberMlab(material, mode, embedded);
+            if (mode == null) OitPipelines.uberProducer(material, OitMode.EVALUATE, embedded, true);
+            else OitPipelines.uberMlab(material, mode, embedded, true);
         } else {
-            uberPipelineFor(material, embedded);
+            IndirectPipeline.uberPipelineFor(material, embedded, true);
         }
     }
 
+    /**
+     * Outside any render pass.
+     */
     protected @Nullable RenderPipeline crumblingPipelineFor(Material crumblingMaterial, InstanceType<?> type) {
         return CrumblingPipelines.pipeline(crumblingMaterial, type, true);
     }
@@ -812,6 +823,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         for (var batch : batches) {
             RenderPipeline pipeline = pipelineFor.apply(batch);
             if (pipeline == null) {
+                skipped(batch.start(), batch.end());
                 continue;
             }
             ProgramGeneration coverage = coverage(batch, pipeline).culledBy(cullTypes);
@@ -836,6 +848,7 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             for (int i = batch.start(); i < batch.end(); i++) {
                 IndirectDraw draw = allDraws.get(i);
                 if (partial && !coverage.covers(draw.required())) {
+                    ShaderWarmup.skipped(draw.material(), draw.instanceType());
                     runStart = i + 1;
                     continue;
                 }
@@ -1039,6 +1052,19 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         GpuTextureView lightmapView = mc.gameRenderer.lightmap();
 
         var crumblingMaterial = SimpleMaterial.builder();
+        crumblingPipelines.clear();
+        for (var groupEntry : byType.entrySet()) {
+            for (var pairs : groupEntry.getValue().values()) {
+                for (var pair : pairs) {
+                    for (IndirectDraw draw : pair.getFirst().draws()) {
+                        if (crumblingPipelines.containsKey(draw)) continue;
+                        CommonCrumbling.applyCrumblingProperties(crumblingMaterial, draw.material());
+                        crumblingPipelines.put(draw,
+                                crumblingPipelineFor(crumblingMaterial, groupEntry.getKey().instanceType()));
+                    }
+                }
+            }
+        }
         var block = MemoryBlock.malloc(IndirectBuffers.DRAW_COMMAND_STRIDE);
 
         GlCompat.pushDebugGroup("flywheel:gl/crumbling");
@@ -1081,8 +1107,9 @@ public class IndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                             }
                             // Transform the material to be suited for crumbling.
                             CommonCrumbling.applyCrumblingProperties(crumblingMaterial, draw.material());
-                            RenderPipeline pipeline = crumblingPipelineFor(crumblingMaterial, instanceType);
+                            RenderPipeline pipeline = crumblingPipelines.get(draw);
                             if (pipeline == null) {
+                                ShaderWarmup.skipped(draw.material(), instanceType);
                                 continue;
                             }
                             pass.setRenderPipeline(pipeline);

@@ -12,25 +12,28 @@ import java.util.List;
 
 public final class UberCullComponent implements SourceComponent {
     private final List<SourceComponent> included = new ArrayList<>();
-    private final int typeCount;
+    private final int[] cases;
 
     public UberCullComponent(List<InstanceType<?>> types, ShaderSources sources) {
-        typeCount = types.size();
+        cases = TypeCases.of(types, InstanceType::cullShader);
         included.add(new Raw(ResourceUtil.rl("uber_instance_buffer").toString(),
                 "layout(std430, binding = " + BufferBindings.INSTANCE + ") restrict readonly buffer InstanceBuffer {\n"
                         + "    uint _flw_instances[];\n"
                         + "};\n"));
+        var scoped = new InstanceScopedSources("flw_transformBoundingSphere");
         for (int i = 0; i < types.size(); i++) {
+            if (cases[i] != i) continue;
             InstanceType<?> type = types.get(i);
-            included.add(new InstanceStructComponent(type, "FlwInstance_" + i));
-            included.add(new NamespacedCull(InstanceStructComponent.typeShader(type, sources.get(type.cullShader())), i));
+            var struct = new InstanceStructComponent(type, "FlwInstance_" + i);
+            included.add(struct);
+            included.add(scoped.typeShader(sources.get(type.cullShader()), type.layout(), struct, i));
             included.add(new SsboInstanceComponent(type, i));
         }
     }
 
     @Override
     public String name() {
-        return ResourceUtil.rl("uber_cull").toString() + "/" + typeCount;
+        return ResourceUtil.rl("uber_cull").toString() + "/" + cases.length;
     }
 
     @Override
@@ -43,39 +46,11 @@ public final class UberCullComponent implements SourceComponent {
         var sb = new StringBuilder();
         sb.append(
                 "void _flw_transformBoundingSphereUber(uint typeId, uint objectUint, inout vec3 center, inout float radius) {\n");
-        sb.append("    switch (typeId) {\n");
-        for (int i = 0; i < typeCount; i++) {
-            sb.append("    case ").append(i).append("u: {\n");
-            sb.append("        FlwInstance_").append(i).append(" instance = _flw_unpackInstance_").append(i)
-              .append("(objectUint);\n");
-            sb.append("        flw_transformBoundingSphere_").append(i).append("(instance, center, radius);\n");
-            sb.append("        break;\n");
-            sb.append("    }\n");
-        }
-        sb.append("    }\n");
+        TypeCases.appendSwitch(sb, cases, (_, typeCase) -> "        FlwInstance_" + typeCase
+                + " instance = _flw_unpackInstance_" + typeCase + "(objectUint);\n        flw_transformBoundingSphere_"
+                + typeCase + "(instance, center, radius);\n");
         sb.append("}\n");
         return sb.toString();
-    }
-
-    private record NamespacedCull(SourceComponent file, int index) implements SourceComponent {
-        @Override
-        public String name() {
-            return file.name() + "#" + index;
-        }
-
-        @Override
-        public Collection<? extends SourceComponent> included() {
-            return file.included();
-        }
-
-        @Override
-        public String source() {
-            return "#define FlwInstance FlwInstance_" + index + "\n"
-                    + "#define flw_transformBoundingSphere flw_transformBoundingSphere_" + index + "\n"
-                    + file.source()
-                    + "\n#undef FlwInstance\n"
-                    + "#undef flw_transformBoundingSphere\n";
-        }
     }
 
     private record Raw(String name, String source) implements SourceComponent {

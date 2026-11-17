@@ -20,6 +20,7 @@ import dev.engine_room.flywheel.backend.compile.OitInsertMode;
 import dev.engine_room.flywheel.backend.compile.OitMode;
 import dev.engine_room.flywheel.backend.compile.ProgramAvailability;
 import dev.engine_room.flywheel.backend.compile.ProgramGeneration;
+import dev.engine_room.flywheel.backend.compile.ShaderWarmup;
 import dev.engine_room.flywheel.backend.compile.VkPrograms;
 import dev.engine_room.flywheel.backend.engine.*;
 import dev.engine_room.flywheel.backend.engine.embed.EnvironmentStorage;
@@ -35,7 +36,8 @@ import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorLayout;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkDescriptorWriter;
 import dev.engine_room.flywheel.backend.vk.shader.VkComputePipeline;
 import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline;
-import dev.engine_room.flywheel.backend.vk.shader.VkMeshPipeline;
+import dev.engine_room.flywheel.backend.vk.shader.VkGraphicsPipeline.DepthState;
+import dev.engine_room.flywheel.backend.vk.shader.VkMaterialPipeline;
 import dev.engine_room.flywheel.lib.material.SimpleMaterial;
 import dev.engine_room.flywheel.lib.material.StandardMaterialShaders;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -85,6 +87,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
     final VkBuffer zeroBuffer = new VkBuffer(VK10.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, ZERO_BYTES);
     final VkDescriptorWriter writer = new VkDescriptorWriter();
     final VkOitRenderer oit = new VkOitRenderer(this);
+    final VkGraphicsPipeline.MaterialState materialState = new VkGraphicsPipeline.MaterialState();
     final Matrix4f renderModelView = new Matrix4f();
     private final Map<InstanceType<?>, Group<?>> groups = new HashMap<>();
     private final List<Group<?>> frameGroups = new ArrayList<>();
@@ -153,19 +156,15 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                 (long) batch.start() * DRAW_COMMAND_STRIDE, batch.end() - batch.start(), DRAW_COMMAND_STRIDE);
     }
 
-    static long oitPipeline(VkGraphicsPipeline pipeline) {
-        #if MC >= 26.3
-        return VkNativeOitPass.enginePipeline(pipeline);
-        #else
-        return pipeline.handle();
-        #endif
+    static long oitPipeline(VkMaterialPipeline pipeline) {
+        return oitPipeline(pipeline, null);
     }
 
-    static long oitPipeline(VkMeshPipeline pipeline) {
+    static long oitPipeline(VkMaterialPipeline pipeline, @Nullable DepthState depth) {
         #if MC >= 26.3
-        return VkNativeOitPass.enginePipeline(pipeline);
+        return VkNativeOitPass.enginePipeline(pipeline, depth);
         #else
-        return pipeline.handle();
+        return pipeline.variant(null, depth);
         #endif
     }
 
@@ -183,7 +182,9 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         }
         int start = batch.start();
         for (int i = batch.start(); i < batch.end(); i++) {
-            if (coverage.covers(allDraws.get(i).required())) continue;
+            IndirectDraw draw = allDraws.get(i);
+            if (coverage.covers(draw.required())) continue;
+            ShaderWarmup.skipped(draw.material(), draw.instanceType());
             if (start < i) submitUberRange(cmd, drawBuffer, start, i, layout);
             start = i + 1;
         }
@@ -868,19 +869,19 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         var smoothness = BackendConfig.INSTANCE.lightSmoothness();
         boolean needsColor = mode != OitMode.DEPTH_RANGE;
         boolean bindless = VkPrograms.bindlessTexturesEnabled();
-        VkGraphicsPipeline lastPipeline = null;
+        materialState.begin();
         for (UberDraw multiDraw : draws) {
             Material material = multiDraw.material();
             var selection = programs.uber().oitProducerPipeline(material, multiDraw.embedded(), smoothness, mode,
                     folded);
             if (selection == null) {
+                skipped(multiDraw.start(), multiDraw.end());
                 continue;
             }
             VkGraphicsPipeline pipeline = selection.pipeline();
-            if (pipeline != lastPipeline) {
-                bindGraphicsPipeline(cmd, oitPipeline(pipeline), pipeline.layout());
-                lastPipeline = pipeline;
-            }
+            long handle = oitPipeline(pipeline, DepthState.undepthed(material));
+            if (materialState.rebind(handle)) bindGraphicsPipeline(cmd, handle, pipeline.layout());
+            materialState.producer(cmd, material);
             writeUberCommon(fs, fs.indexTable, fs.draw, multiDraw.start());
             writeLineFrame(fs, material);
             writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms()).uniform(22, f.renderOriginSlice());
@@ -912,19 +913,19 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         FrameSet fs = frame();
         var smoothness = BackendConfig.INSTANCE.lightSmoothness();
         boolean bindless = VkPrograms.bindlessTexturesEnabled();
-        VkGraphicsPipeline lastPipeline = null;
+        materialState.begin();
         for (UberDraw multiDraw : draws) {
             Material material = multiDraw.material();
             var selection = programs.uber().mlabProducerPipeline(oitMode, material, multiDraw.embedded(),
                     smoothness);
             if (selection == null) {
+                skipped(multiDraw.start(), multiDraw.end());
                 continue;
             }
             VkGraphicsPipeline pipeline = selection.pipeline();
-            if (pipeline != lastPipeline) {
-                bindGraphicsPipeline(cmd, oitPipeline(pipeline), pipeline.layout());
-                lastPipeline = pipeline;
-            }
+            long handle = oitPipeline(pipeline, DepthState.undepthed(material));
+            if (materialState.rebind(handle)) bindGraphicsPipeline(cmd, handle, pipeline.layout());
+            materialState.producer(cmd, material);
             writeUberCommon(fs, fs.indexTable, fs.draw, multiDraw.start());
             writeLineFrame(fs, material);
             writer.uniform(16, f.projection()).uniform(17, f.dynamicTransforms());
@@ -961,19 +962,19 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         VkBuffer drawBuffer = pass2 ? fs.draw2 : fs.draw;
         var smoothness = BackendConfig.INSTANCE.lightSmoothness();
         boolean bindless = VkPrograms.bindlessTexturesEnabled();
-        VkGraphicsPipeline lastPipeline = null;
+        materialState.begin();
         for (UberDraw multiDraw : uberMultiDraws) {
             Material material = multiDraw.material();
             var selection = programs.uber().drawPipeline(material, multiDraw.embedded(), smoothness, COLOR_FORMAT,
                     programs.depthFormat());
             if (selection == null) {
+                skipped(multiDraw.start(), multiDraw.end());
                 continue;
             }
             VkGraphicsPipeline pipeline = selection.pipeline();
-            if (pipeline != lastPipeline) {
-                bindGraphicsPipeline(cmd, pipeline.handle(), pipeline.layout());
-                lastPipeline = pipeline;
-            }
+            long handle = pipeline.variant(null, DepthState.draw(material));
+            if (materialState.rebind(handle)) bindGraphicsPipeline(cmd, handle, pipeline.layout());
+            materialState.draw(cmd, material);
 
             if (!bindless) {
                 writeAtlasTrio(textureManager, material.texture(), VkContext.sampler(MaterialSamplers.get(material)),
@@ -1043,6 +1044,10 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
         FrameSet fs = frame();
 
         TextureManager tm = mc.getTextureManager();
+        // A crack texture's first lookup uploads it, which a render pass cannot record.
+        for (var progress : byType.values()) {
+            for (int stage : progress.keySet()) tm.getTexture(ModelBakery.BREAKING_LOCATIONS.get(stage));
+        }
         long atlasSampler = VkContext.sampler(RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR, true));
         long loSampler = VkContext.sampler(RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
         long crackSampler = VkContext.sampler(RenderSystem.getSamplerCache().getRepeat(FilterMode.NEAREST));
@@ -1065,6 +1070,7 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
             VkCmd.bindVertexBuffer(cmd, vertexVk);
 
             VkContext.pushLabel(cmd, "flywheel:vk/crumbling");
+            materialState.begin();
             VkBuffer objectBuffer = objectStorage.objectBuffer();
             CrumblingFrame cf = new CrumblingFrame(fs, objectBuffer, tm, crackSampler, overlayView, lightmapView,
                     loSampler, projection, dynamicTransforms, fog, lights, renderOriginSlice, vertexVk, indexVk);
@@ -1089,12 +1095,17 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
                                     crackView)) {
                                 continue;
                             }
-                            VkGraphicsPipeline pipeline = programs.uber().crumblingPipeline(crumblingMaterial,
-                                    instanceType, smoothness, COLOR_FORMAT, programs.depthFormat());
+                            VkGraphicsPipeline pipeline = programs.uber().crumblingPipeline(instanceType,
+                                    smoothness, COLOR_FORMAT, programs.depthFormat());
                             if (pipeline == null) {
+                                ShaderWarmup.skipped(draw.material(), instanceType);
                                 continue;
                             }
-                            VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+                            long handle = pipeline.variant(null, DepthState.undepthed(crumblingMaterial));
+                            if (materialState.rebind(handle)) {
+                                VK10.vkCmdBindPipeline(cmd, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, handle);
+                            }
+                            materialState.crumbling(cmd, crumblingMaterial);
 
                             writer.storage(1, objectBuffer);
                             writeLight(fs);
@@ -1172,6 +1183,10 @@ public class VkIndirectDrawManager extends DrawManager<IndirectInstancer<?>> {
 
     IndirectDraw draw(int index) {
         return allDraws.get(index);
+    }
+
+    void skipped(int start, int end) {
+        IndirectDraw.skipped(allDraws, start, end);
     }
 
     int cullTypes() {

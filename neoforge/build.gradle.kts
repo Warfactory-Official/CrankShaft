@@ -93,8 +93,8 @@ dependencies {
     // Shared accessor generation resolves the optional Voxy water target against its pinned class layout.
     compileOnly("maven.modrinth:voxy:$voxyCompileVersion") { isTransitive = false }
     compileOnly("maven.modrinth:lambdynamiclights:$lambDynLightsVersion") { isTransitive = false }
-    compileOnly("maven.modrinth:polytone:$polytoneCompileVersion") { isTransitive = false }
-    compileOnly(nestedModLibraries("maven.modrinth:polytone:$polytoneCompileVersion", "codecui"))
+    compileOnly("maven.modrinth:polytone:$polytoneNeoforgeCompileVersion") { isTransitive = false }
+    compileOnly(nestedModLibraries("maven.modrinth:polytone:$polytoneNeoforgeCompileVersion", "codecui"))
     compileOnly(nestedModLibraries("maven.modrinth:lambdynamiclights:$lambDynLightsVersion",
         "lambdynamiclights-api", "spruceui", "yumi-mc-foundation"))
 

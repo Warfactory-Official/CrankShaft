@@ -25,6 +25,7 @@ val Project.lambDynLightsVersion: String get() = stringProp("lambdynamiclights_v
 val Project.etfVersion: String get() = stringProp("entity_texture_features_version")
 val Project.emfVersion: String get() = stringProp("entity_model_features_version")
 val Project.polytoneCompileVersion: String get() = stringProp("polytone_compile_version")
+val Project.polytoneNeoforgeCompileVersion: String get() = stringProp("polytone_neoforge_compile_version")
 val Project.modVersion: String get() = stringProp("mod_version")
 val Project.tenonVersion: String get() = stringProp("tenon_version")
 
@@ -50,7 +51,10 @@ fun Project.neoforgeSodiumImplementation(): FileCollection {
 fun Project.nestedModLibraries(notation: String, vararg names: String): FileCollection {
     val reference = configurations.detachedConfiguration(dependencies.create(notation)).apply { isTransitive = false }
     return files(provider {
-        zipTree(reference.singleFile).matching { names.forEach { include("META-INF/jars/$it-*.jar") } }.files
+        // Fabric nests under META-INF/jars, NeoForge under META-INF/jarjar.
+        zipTree(reference.singleFile).matching {
+            names.forEach { include("META-INF/jars/$it-*.jar", "META-INF/jarjar/$it-*.jar") }
+        }.files
     })
 }
 

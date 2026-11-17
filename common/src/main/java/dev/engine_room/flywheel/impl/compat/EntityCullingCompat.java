@@ -1,7 +1,7 @@
 package dev.engine_room.flywheel.impl.compat;
 
 import dev.tr7zw.entityculling.EntityCullingModBase;
-import dev.tr7zw.entityculling.NMSCullingHelper;
+import dev.tr7zw.entityculling.util.NMSCullingHelper;
 import net.minecraft.world.entity.Entity;
 
 /**

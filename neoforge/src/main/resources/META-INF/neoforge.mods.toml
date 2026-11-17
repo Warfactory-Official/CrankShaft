@@ -54,5 +54,5 @@ side = "CLIENT"
 [[dependencies.crankshaft]]
 modId = "entityculling"
 type = "optional"
-versionRange = "[1.11.2,)"
+versionRange = "[1.12.0,)"
 side = "CLIENT"

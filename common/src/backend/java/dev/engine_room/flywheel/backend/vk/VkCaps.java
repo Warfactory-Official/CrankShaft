@@ -39,6 +39,11 @@ public final class VkCaps {
     public static boolean BINDLESS_TEXTURES_SUPPORTED;
     public static boolean FRAGMENT_SHADER_INTERLOCK_SUPPORTED;
     public static boolean DYNAMIC_RENDERING_LOCAL_READ_SUPPORTED;
+    public static boolean EXTENDED_DYNAMIC_STATE_SUPPORTED;
+    /**
+     * {@code VK_EXT_extended_dynamic_state3} color blend enable, equation and write mask, all three.
+     */
+    public static boolean DYNAMIC_COLOR_BLEND_SUPPORTED;
     public static boolean DRAW_INDIRECT_FIRST_INSTANCE_NEGOTIATED;
     public static boolean DRAW_INDIRECT_COUNT_NEGOTIATED;
     public static boolean BUFFER_DEVICE_ADDRESS_NEGOTIATED;
@@ -53,6 +58,8 @@ public final class VkCaps {
     public static boolean BINDLESS_TEXTURES_NEGOTIATED;
     public static boolean FRAGMENT_SHADER_INTERLOCK_NEGOTIATED;
     public static boolean DYNAMIC_RENDERING_LOCAL_READ_NEGOTIATED;
+    public static boolean EXTENDED_DYNAMIC_STATE_NEGOTIATED;
+    public static boolean DYNAMIC_COLOR_BLEND_NEGOTIATED;
     public static boolean GPU_INSTANCE_CULL;
     public static boolean MULTI_MIP_HIZ;
     public static boolean SINGLE_MIP_HIZ;

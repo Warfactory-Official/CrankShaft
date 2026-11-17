@@ -12,15 +12,14 @@ import com.mojang.renderpearl.api.pipeline.UniformType;
 import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.InternalVertex;
-import dev.engine_room.flywheel.backend.MaterialShaderIndices;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
-import dev.engine_room.flywheel.backend.compile.PipelineVersions;
 import dev.engine_room.flywheel.backend.compile.ProgramGeneration;
-import dev.engine_room.flywheel.backend.compile.ProgramVersions;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
+import dev.engine_room.flywheel.backend.compile.StatePipelines;
 import dev.engine_room.flywheel.backend.compile.core.Compilation;
+import dev.engine_room.flywheel.backend.engine.DrawState;
 import dev.engine_room.flywheel.backend.engine.MaterialRenderState;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
@@ -32,7 +31,6 @@ import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -54,56 +52,40 @@ public final class IndirectPipeline {
                                      .andThen(farExtra(fa.bake(), fa.surface())));
         }
     };
-    private static final Map<UberKey, ProgramVersions<RenderPipeline>> UBER = new HashMap<>();
-    private static final Map<UberKey, ProgramVersions<@Nullable RenderPipeline[]>> FAR_UBER = new HashMap<>();
+    private static final StatePipelines<UberKey, DrawState> UBER = new StatePipelines<>(
+            (key, state, generation) -> new RenderPipeline[]{buildUber(key, state, generation)},
+            (_, pipeline) -> request(pipeline));
+    private static final StatePipelines<UberKey, DrawState> FAR_UBER = new StatePipelines<>(
+            (key, state, generation) -> new RenderPipeline[]{buildUber(key, state, generation),
+                    buildUber(key.bakeKey(), state, generation)}, (_, pipeline) -> request(pipeline));
 
     private IndirectPipeline() {
     }
 
     /**
-     * The newest published uber pipeline of the material's shaders and state, null before the first; requests the
-     * current generation's. {@code embedded}: the {@link RenderPassShaders#readsEmbedded} variant of an embedded run.
+     * The uber pipeline of the material's shaders and state from the newest published generation, null before the
+     * first; requests the current generation's. {@code embedded}: the {@link RenderPassShaders#readsEmbedded} variant
+     * of an embedded run; {@code prepare}: as {@link StatePipelines#select}.
      */
-    public static @Nullable RenderPipeline uberPipelineFor(Material material, boolean embedded) {
-        return uberPipelineFor(material, embedded, false, false, false);
+    public static @Nullable RenderPipeline uberPipelineFor(Material material, boolean embedded, boolean prepare) {
+        var key = new UberKey(material.light(), material.shaders(), BackendConfig.INSTANCE.lightSmoothness(),
+                FrameUniforms.debugMode(), embedded, false, false, false);
+        var group = UBER.select(key, DrawState.of(material), ProgramGeneration.current(), prepare);
+        return group == null ? null : group[0];
     }
 
     /**
      * Far draw and rest-pose bake programs publish together; null until their first shared generation is ready.
+     * Outside any render pass.
      */
     public static @Nullable RenderPipeline @Nullable [] farPipelinesFor(Material material, boolean surface) {
         var key = new UberKey(material.light(), material.shaders(), BackendConfig.INSTANCE.lightSmoothness(),
-                FrameUniforms.debugMode(), material.transparency(), material.depthTest(),
-                material.writeMask().depth(), material.writeMask().color(), material.backfaceCulling(),
-                material.polygonOffset(), false, true, false, surface);
-        return PipelineVersions.selectGroup(FAR_UBER, key, ProgramGeneration.current(), draw -> {
-            var bake = new UberKey(draw.light(), draw.materialShaders(), draw.smoothness(), draw.debug(),
-                    draw.transparency(), draw.depthTest(), draw.depthWrite(), draw.colorWrite(), draw.cull(),
-                    draw.polygonOffset(), false, true, true, false);
-            return new RenderPipeline[]{requestUber(draw), requestUber(bake)};
-        });
+                FrameUniforms.debugMode(), false, true, false, surface);
+        return FAR_UBER.select(key, DrawState.of(material), ProgramGeneration.current(), true);
     }
 
-    private static @Nullable RenderPipeline uberPipelineFor(Material material, boolean embedded, boolean far,
-                                                            boolean bake, boolean surface) {
-        UberKey key = new UberKey(material.light(), material.shaders(), BackendConfig.INSTANCE.lightSmoothness(),
-                FrameUniforms.debugMode(), material.transparency(), material.depthTest(),
-                material.writeMask().depth(), material.writeMask().color(), material.backfaceCulling(),
-                material.polygonOffset(), embedded, far, bake, surface);
-        return PipelineVersions.select(UBER, key, ProgramGeneration.current(), IndirectPipeline::requestUber);
-    }
-
-    private static RenderPipeline requestUber(UberKey key) {
-        boolean debug = key.debug() != DebugMode.OFF;
-        VERTEX_ASSEMBLY.putIfAbsent(uberVertexId(key.materialShaders(), debug, key.embedded(), key.far(), key.bake()),
-                new VertexAssembly(key.materialShaders(), debug, key.embedded(), key.far(), key.bake(), false));
-        FRAGMENT_ASSEMBLY.putIfAbsent(uberFragmentId(key.light(), key.materialShaders(), key.smoothness(), key.debug(),
-                        key.embedded(), key.bake(), key.surface()),
-                new FragmentAssembly(key.light(), key.materialShaders(), key.smoothness(), key.debug(),
-                        key.embedded(), key.bake(), key.surface()));
-        RenderPipeline pipeline = buildUber(key);
+    private static void request(RenderPipeline pipeline) {
         RenderPipelineCompiler.request(pipeline, SHADER_SOURCE, null);
-        return pipeline;
     }
 
     private static Consumer<Compilation> embeddedExtra(boolean embedded) {
@@ -116,36 +98,41 @@ public final class IndirectPipeline {
     }
 
     private static Identifier uberVertexId(MaterialShaders materialShaders, boolean debug, boolean embedded,
-                                           boolean far, boolean bake) {
+                                           boolean far, boolean bake, ProgramGeneration generation) {
         return ResourceUtil.rl("codegen/indirect/uber/" + (embedded ? "embedded/" : "")
-                + (bake ? "far_bake/" : far ? "far/" : "") + "g"
-                + InstanceTypeIds.snapshot().types().size()
+                + (bake ? "far_bake/" : far ? "far/" : "") + "g" + generation.types()
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(materialShaders.vertexSource())
                 + (debug ? "__debug" : ""));
     }
 
     private static Identifier uberFragmentId(LightShader light, MaterialShaders materialShaders,
                                              LightSmoothness smoothness, DebugMode debug, boolean embedded,
-                                             boolean bake, boolean surface) {
+                                             boolean bake, boolean surface, ProgramGeneration generation) {
         return ResourceUtil.rl("codegen/indirect_frag/uber/" + (embedded ? "embedded/" : "")
-                + (bake ? "far_bake/" : surface ? "far_surface/" : "") + "g"
-                + MaterialShaderIndices.cutoutSources().all().size()
-                + "_" + MaterialShaderIndices.fogSources().all().size()
+                + (bake ? "far_bake/" : surface ? "far_surface/" : "") + "g" + generation.cutouts()
+                + "_" + generation.fogs()
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(light.source())
                 + "__" + ResourceUtil.toDebugFileNameNoExtension(materialShaders.fragmentSource())
                 + "__" + smoothness.getSerializedName()
                 + (debug == DebugMode.OFF ? "" : "__debug_" + debug.getSerializedName()));
     }
 
-    private static RenderPipeline buildUber(UberKey key) {
-        var builder = stateBuilder(key.transparency(), key.depthTest(), key.depthWrite(), key.colorWrite(), key.cull(),
-                key.polygonOffset(), GlCompat.SUPPORTS_BINDLESS_TEXTURES)
-                .withLocation(ResourceUtil.rl("pipeline/indirect/uber_" + key.uberCacheName()))
-                .withVertexShader(uberVertexId(key.materialShaders(), key.debug() != DebugMode.OFF, key.embedded(),
-                        key.far(), key.bake()))
-                .withFragmentShader(uberFragmentId(key.light(), key.materialShaders(), key.smoothness(), key.debug(),
-                        key.embedded(), key.bake(), key.surface()));
-        return builder.build();
+    private static RenderPipeline buildUber(UberKey key, DrawState state, ProgramGeneration generation) {
+        boolean debug = key.debug() != DebugMode.OFF;
+        Identifier vertex = uberVertexId(key.materialShaders(), debug, key.embedded(), key.far(), key.bake(),
+                generation);
+        Identifier fragment = uberFragmentId(key.light(), key.materialShaders(), key.smoothness(), key.debug(),
+                key.embedded(), key.bake(), key.surface(), generation);
+        VERTEX_ASSEMBLY.putIfAbsent(vertex,
+                new VertexAssembly(key.materialShaders(), debug, key.embedded(), key.far(), key.bake(), false));
+        FRAGMENT_ASSEMBLY.putIfAbsent(fragment, new FragmentAssembly(key.light(), key.materialShaders(),
+                key.smoothness(), key.debug(), key.embedded(), key.bake(), key.surface()));
+        return stateBuilder(state.transparency(), state.depthTest(), state.depthWrite(), state.colorWrite(),
+                state.cull(), state.polygonOffset(), GlCompat.SUPPORTS_BINDLESS_TEXTURES)
+                .withLocation(ResourceUtil.rl("pipeline/indirect/uber_" + key.cacheName() + state.cacheName()))
+                .withVertexShader(vertex)
+                .withFragmentShader(fragment)
+                .build();
     }
 
     /**
@@ -213,20 +200,19 @@ public final class IndirectPipeline {
     }
 
     private record UberKey(LightShader light, MaterialShaders materialShaders, LightSmoothness smoothness,
-                           DebugMode debug, Transparency transparency, DepthTest depthTest, boolean depthWrite,
-                           boolean colorWrite, boolean cull, boolean polygonOffset, boolean embedded,
-                           boolean far, boolean bake, boolean surface) {
-        String uberCacheName() {
+                           DebugMode debug, boolean embedded, boolean far, boolean bake, boolean surface) {
+        UberKey bakeKey() {
+            return new UberKey(light, materialShaders, smoothness, debug, false, true, true, false);
+        }
+
+        String cacheName() {
             return ResourceUtil.toDebugFileNameNoExtension(light.source())
                     + "_" + ResourceUtil.toDebugFileNameNoExtension(materialShaders.vertexSource())
                     + "_" + ResourceUtil.toDebugFileNameNoExtension(materialShaders.fragmentSource())
                     + "_" + smoothness.getSerializedName()
                     + (debug == DebugMode.OFF ? "" : "_debug_" + debug.getSerializedName())
-                    + "_" + transparency.name().toLowerCase(Locale.ROOT)
-                    + "_" + depthTest.name().toLowerCase(Locale.ROOT)
-                    + (depthWrite ? "_dw" : "") + (colorWrite ? "" : "_nc")
-                    + (cull ? "_cull" : "") + (polygonOffset ? "_po" : "") + (embedded ? "_embedded" : "")
-                    + (bake ? "_far_bake" : far ? "_far" : "") + (surface ? "_surface" : "");
+                    + (embedded ? "_embedded" : "") + (bake ? "_far_bake" : far ? "_far" : "")
+                    + (surface ? "_surface" : "");
         }
     }
 }

@@ -3,6 +3,7 @@ package dev.engine_room.flywheel.backend.vk;
 import com.mojang.renderpearl.backend.vulkan.VulkanPhysicalDevice;
 import com.mojang.renderpearl.backend.vulkan.init.VulkanFeature;
 import com.mojang.renderpearl.backend.vulkan.init.VulkanPNextStruct;
+import dev.engine_room.flywheel.backend.FlwBackend;
 import dev.engine_room.flywheel.backend.vk.descriptor.VkBindlessTable;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
@@ -13,7 +14,9 @@ import org.lwjgl.util.vma.Vma;
 import org.lwjgl.util.vma.VmaAllocatorCreateInfo;
 import org.lwjgl.vulkan.*;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.Set;
 
 #if MC >= 26.3
@@ -35,6 +38,9 @@ public final class VkDeviceNegotiation {
     private static boolean deviceFaultSupported;
     private static boolean vendorBinarySupported;
     private static boolean crashDiagSupported;
+    private static boolean colorBlendEnableSupported;
+    private static boolean colorBlendEquationSupported;
+    private static boolean colorWriteMaskSupported;
     private static int robustUniformDescriptorSize;
     private static int robustUniformTexelDescriptorSize;
     private static int robustStorageDescriptorSize;
@@ -80,6 +86,12 @@ public final class VkDeviceNegotiation {
                     stack).sType$Default();
             VkPhysicalDeviceDiagnosticsConfigFeaturesNV diagFeatures = VkPhysicalDeviceDiagnosticsConfigFeaturesNV.calloc(
                     stack).sType$Default();
+            VkPhysicalDeviceExtendedDynamicStateFeaturesEXT edsFeatures =
+                    VkPhysicalDeviceExtendedDynamicStateFeaturesEXT.calloc(stack).sType$Default();
+            VkPhysicalDeviceExtendedDynamicState3FeaturesEXT eds3Features =
+                    VkPhysicalDeviceExtendedDynamicState3FeaturesEXT.calloc(stack).sType$Default();
+            edsFeatures.pNext(eds3Features.address());
+            diagFeatures.pNext(edsFeatures.address());
             repFeatures.pNext(diagFeatures.address());
             sgFeatures.pNext(repFeatures.address());
             meshFeatures.pNext(sgFeatures.address());
@@ -133,6 +145,16 @@ public final class VkDeviceNegotiation {
                     && features12.descriptorBindingSampledImageUpdateAfterBind()
                     && features12.descriptorBindingPartiallyBound()
                     && features12.descriptorBindingUpdateUnusedWhilePending();
+            VkCaps.EXTENDED_DYNAMIC_STATE_SUPPORTED = edsFeatures.extendedDynamicState()
+                    && physicalDevice.hasDeviceExtension(
+                    EXTExtendedDynamicState.VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
+            boolean eds3 = physicalDevice.hasDeviceExtension(
+                    EXTExtendedDynamicState3.VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
+            colorBlendEnableSupported = eds3 && eds3Features.extendedDynamicState3ColorBlendEnable();
+            colorBlendEquationSupported = eds3 && eds3Features.extendedDynamicState3ColorBlendEquation();
+            colorWriteMaskSupported = eds3 && eds3Features.extendedDynamicState3ColorWriteMask();
+            VkCaps.DYNAMIC_COLOR_BLEND_SUPPORTED = colorBlendEnableSupported && colorBlendEquationSupported
+                    && colorWriteMaskSupported;
         }
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -234,6 +256,12 @@ public final class VkDeviceNegotiation {
         if (VkCaps.FRAGMENT_SHADER_INTERLOCK_SUPPORTED) {
             deviceExtensions.add(EXTFragmentShaderInterlock.VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
         }
+        if (VkCaps.EXTENDED_DYNAMIC_STATE_SUPPORTED) {
+            deviceExtensions.add(EXTExtendedDynamicState.VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
+        }
+        if (VkCaps.DYNAMIC_COLOR_BLEND_SUPPORTED) {
+            deviceExtensions.add(EXTExtendedDynamicState3.VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
+        }
         if (VkCaps.MESH_SHADER_SUPPORTED) {
             deviceExtensions.add(EXTMeshShader.VK_EXT_MESH_SHADER_EXTENSION_NAME);
             deviceExtensions.add(EXTSubgroupSizeControl.VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
@@ -286,6 +314,12 @@ public final class VkDeviceNegotiation {
         boolean representativeTest = meshShader && VkCaps.REPRESENTATIVE_FRAGMENT_TEST_SUPPORTED
                 && nameChainContainsExtension(createInfo,
                 NVRepresentativeFragmentTest.VK_NV_REPRESENTATIVE_FRAGMENT_TEST_EXTENSION_NAME);
+        boolean extendedDynamicState = VkCaps.EXTENDED_DYNAMIC_STATE_SUPPORTED
+                && nameChainContainsExtension(createInfo,
+                EXTExtendedDynamicState.VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
+        boolean dynamicColorBlend = VkCaps.DYNAMIC_COLOR_BLEND_SUPPORTED
+                && nameChainContainsExtension(createInfo,
+                EXTExtendedDynamicState3.VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             if (deviceFault) {
                 chain(createInfo, VkPhysicalDeviceFaultFeaturesEXT.calloc(stack).sType$Default()
@@ -315,6 +349,19 @@ public final class VkDeviceNegotiation {
                                                                                             true));
             }
             if (VkCaps.BINDLESS_TEXTURES_SUPPORTED) enableBindlessFeatures(createInfo, stack);
+            if (extendedDynamicState) {
+                chain(createInfo, VkPhysicalDeviceExtendedDynamicStateFeaturesEXT.calloc(stack).sType$Default()
+                                                                                 .extendedDynamicState(true));
+            }
+            if (dynamicColorBlend) {
+                chain(createInfo, VkPhysicalDeviceExtendedDynamicState3FeaturesEXT.calloc(stack).sType$Default()
+                                                                                  .extendedDynamicState3ColorBlendEnable(
+                                                                                          true)
+                                                                                  .extendedDynamicState3ColorBlendEquation(
+                                                                                          true)
+                                                                                  .extendedDynamicState3ColorWriteMask(
+                                                                                          true));
+            }
             if (meshShader) {
                 chain(createInfo, VkPhysicalDeviceMeshShaderFeaturesEXT.calloc(stack).sType$Default().taskShader(true)
                                                                        .meshShader(true));
@@ -393,6 +440,36 @@ public final class VkDeviceNegotiation {
                 VkPhysicalDeviceVulkan12Features.DESCRIPTORBINDINGPARTIALLYBOUND)
                 && enabled(createInfo, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
                 VkPhysicalDeviceVulkan12Features.DESCRIPTORBINDINGUPDATEUNUSEDWHILEPENDING);
+        VkCaps.EXTENDED_DYNAMIC_STATE_NEGOTIATED = success && VkCaps.EXTENDED_DYNAMIC_STATE_SUPPORTED
+                && enabled(createInfo,
+                EXTExtendedDynamicState.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
+                VkPhysicalDeviceExtendedDynamicStateFeaturesEXT.EXTENDEDDYNAMICSTATE);
+        int eds3 = EXTExtendedDynamicState3.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT;
+        List<String> missingBlend = new ArrayList<>(3);
+        if (!(success && colorBlendEnableSupported && enabled(createInfo, eds3,
+                VkPhysicalDeviceExtendedDynamicState3FeaturesEXT.EXTENDEDDYNAMICSTATE3COLORBLENDENABLE))) {
+            missingBlend.add("extendedDynamicState3ColorBlendEnable");
+        }
+        if (!(success && colorBlendEquationSupported && enabled(createInfo, eds3,
+                VkPhysicalDeviceExtendedDynamicState3FeaturesEXT.EXTENDEDDYNAMICSTATE3COLORBLENDEQUATION))) {
+            missingBlend.add("extendedDynamicState3ColorBlendEquation");
+        }
+        if (!(success && colorWriteMaskSupported && enabled(createInfo, eds3,
+                VkPhysicalDeviceExtendedDynamicState3FeaturesEXT.EXTENDEDDYNAMICSTATE3COLORWRITEMASK))) {
+            missingBlend.add("extendedDynamicState3ColorWriteMask");
+        }
+        VkCaps.DYNAMIC_COLOR_BLEND_NEGOTIATED = missingBlend.isEmpty();
+        if (success) {
+            if (!VkCaps.EXTENDED_DYNAMIC_STATE_NEGOTIATED) {
+                FlwBackend.LOGGER.info("Vulkan material blend: baked per blend class, depth state per pipeline "
+                        + "variant (missing VK_EXT_extended_dynamic_state)");
+            } else if (missingBlend.isEmpty()) {
+                FlwBackend.LOGGER.info("Vulkan material blend: dynamic (VK_EXT_extended_dynamic_state3)");
+            } else {
+                FlwBackend.LOGGER.info("Vulkan material blend: baked per blend class (missing {})",
+                        String.join(", ", missingBlend));
+            }
+        }
         VkCaps.DEVICE_FAULT_NEGOTIATED = success && deviceFaultSupported
                 && enabled(createInfo, EXTDeviceFault.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT,
                 VkPhysicalDeviceFaultFeaturesEXT.DEVICEFAULT);

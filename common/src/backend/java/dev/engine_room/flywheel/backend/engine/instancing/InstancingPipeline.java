@@ -14,12 +14,12 @@ import dev.engine_room.flywheel.api.material.*;
 import dev.engine_room.flywheel.backend.BackendConfig;
 import dev.engine_room.flywheel.backend.InternalVertex;
 import dev.engine_room.flywheel.backend.compile.LightSmoothness;
-import dev.engine_room.flywheel.backend.compile.PipelineVersions;
 import dev.engine_room.flywheel.backend.compile.ProgramGeneration;
-import dev.engine_room.flywheel.backend.compile.ProgramVersions;
 import dev.engine_room.flywheel.backend.compile.RenderPassShaders;
 import dev.engine_room.flywheel.backend.compile.RenderPipelineCompiler;
 import dev.engine_room.flywheel.backend.compile.ShaderAssembly;
+import dev.engine_room.flywheel.backend.compile.StatePipelines;
+import dev.engine_room.flywheel.backend.engine.DrawState;
 import dev.engine_room.flywheel.backend.engine.MaterialRenderState;
 import dev.engine_room.flywheel.backend.engine.uniform.DebugMode;
 import dev.engine_room.flywheel.backend.engine.uniform.FrameUniforms;
@@ -55,36 +55,23 @@ public final class InstancingPipeline {
                     fa.debug(), fa.embedded() ? RenderPassShaders.EMBEDDED : ShaderAssembly.NO_EXTRA);
         }
     };
-    private static final Map<PipelineKey, ProgramVersions<RenderPipeline>> PIPELINES = new HashMap<>();
+    private static final StatePipelines<PipelineKey, DrawState> PIPELINES = new StatePipelines<>(
+            (key, state, _) -> new RenderPipeline[]{build(key, state)},
+            (_, pipeline) -> RenderPipelineCompiler.request(pipeline, SHADER_SOURCE, null));
 
     private InstancingPipeline() {
     }
 
     /**
-     * Null until published; requests it.
+     * Null until published; requests it. {@code prepare}: as {@link StatePipelines#select}.
      */
     public static @Nullable RenderPipeline pipelineFor(Material material, InstanceType<?> instanceType,
-                                                       boolean embedded) {
+                                                       boolean embedded, boolean prepare) {
         PipelineKey key = new PipelineKey(instanceType, material.light(), material.shaders(),
                 BackendConfig.INSTANCE.lightSmoothness(), material.cutout(), material.fog(), FrameUniforms.debugMode(),
-                material.transparency(), material.depthTest(), material.writeMask().depth(),
-                material.writeMask().color(), material.backfaceCulling(), material.polygonOffset(), embedded,
-                embedded && RenderPassShaders.readsEmbedded(material));
-        return PIPELINES.computeIfAbsent(key, _ -> new ProgramVersions<>(PipelineVersions.PIPELINE))
-                        .select(ProgramGeneration.NONE, key, InstancingPipeline::request);
-    }
-
-    private static RenderPipeline request(PipelineKey key) {
-        boolean debug = key.debug() != DebugMode.OFF;
-        VERTEX_ASSEMBLY.putIfAbsent(vertexId(key.instanceType(), key.embedded(), key.materialShaders(), debug),
-                new VertexAssembly(key.instanceType(), key.materialShaders(), debug));
-        FRAGMENT_ASSEMBLY.putIfAbsent(fragmentId(key.light(), key.materialShaders(), key.smoothness(), key.cutout(),
-                        key.fog(), key.debug(), key.embeddedFragment()),
-                new FragmentAssembly(key.light(), key.materialShaders(), key.smoothness(), key.cutout(), key.fog(),
-                        key.debug(), key.embeddedFragment()));
-        RenderPipeline pipeline = build(key);
-        RenderPipelineCompiler.request(pipeline, SHADER_SOURCE, null);
-        return pipeline;
+                embedded, embedded && RenderPassShaders.readsEmbedded(material));
+        var group = PIPELINES.select(key, DrawState.of(material), ProgramGeneration.NONE, prepare);
+        return group == null ? null : group[0];
     }
 
     private static Identifier vertexId(InstanceType<?> instanceType, boolean embedded, MaterialShaders materialShaders,
@@ -106,14 +93,19 @@ public final class InstancingPipeline {
                 + (debug == DebugMode.OFF ? "" : "__debug_" + debug.getSerializedName()));
     }
 
-    private static RenderPipeline build(PipelineKey key) {
-        var builder = stateBuilder(key.transparency(), key.depthTest(), key.depthWrite(), key.colorWrite(), key.cull(),
-                key.polygonOffset(), key.embedded())
-                .withLocation(ResourceUtil.rl("pipeline/instanced/" + key.cacheName()))
-                .withVertexShader(vertexId(key.instanceType(), key.embedded(), key.materialShaders(),
-                        key.debug() != DebugMode.OFF))
-                .withFragmentShader(fragmentId(key.light(), key.materialShaders(), key.smoothness(), key.cutout(),
-                        key.fog(), key.debug(), key.embeddedFragment()));
+    private static RenderPipeline build(PipelineKey key, DrawState state) {
+        boolean debug = key.debug() != DebugMode.OFF;
+        Identifier vertex = vertexId(key.instanceType(), key.embedded(), key.materialShaders(), debug);
+        Identifier fragment = fragmentId(key.light(), key.materialShaders(), key.smoothness(), key.cutout(), key.fog(),
+                key.debug(), key.embeddedFragment());
+        VERTEX_ASSEMBLY.putIfAbsent(vertex, new VertexAssembly(key.instanceType(), key.materialShaders(), debug));
+        FRAGMENT_ASSEMBLY.putIfAbsent(fragment, new FragmentAssembly(key.light(), key.materialShaders(),
+                key.smoothness(), key.cutout(), key.fog(), key.debug(), key.embeddedFragment()));
+        var builder = stateBuilder(state.transparency(), state.depthTest(), state.depthWrite(), state.colorWrite(),
+                state.cull(), state.polygonOffset(), key.embedded())
+                .withLocation(ResourceUtil.rl("pipeline/instanced/" + key.cacheName() + state.cacheName()))
+                .withVertexShader(vertex)
+                .withFragmentShader(fragment);
         if (key.materialShaders().vertexSource().equals(StandardMaterialShaders.LINE.vertexSource()))
             builder.withBindGroupLayout(BindGroupLayout.builder()
                                                        .withUniform("_FlwLineFrameUniforms", UniformType.UNIFORM_BUFFER)
@@ -195,8 +187,6 @@ public final class InstancingPipeline {
 
     private record PipelineKey(InstanceType<?> instanceType, LightShader light, MaterialShaders materialShaders,
                                LightSmoothness smoothness, CutoutShader cutout, FogShader fog, DebugMode debug,
-                               Transparency transparency, DepthTest depthTest,
-                               boolean depthWrite, boolean colorWrite, boolean cull, boolean polygonOffset,
                                boolean embedded, boolean embeddedFragment) {
         String cacheName() {
             StringBuilder sb = new StringBuilder();
@@ -212,26 +202,10 @@ public final class InstancingPipeline {
               .append('_')
               .append(ResourceUtil.toDebugFileNameNoExtension(fog.source()))
               .append('_')
-              .append(smoothness.getSerializedName())
-              .append('_')
-              .append(transparency.name())
-              .append('_')
-              .append(depthTest.name());
+              .append(smoothness.getSerializedName());
             if (debug != DebugMode.OFF) {
                 sb.append("_debug_")
                   .append(debug.getSerializedName());
-            }
-            if (depthWrite) {
-                sb.append("_dw");
-            }
-            if (!colorWrite) {
-                sb.append("_nocw");
-            }
-            if (cull) {
-                sb.append("_cull");
-            }
-            if (polygonOffset) {
-                sb.append("_po");
             }
             if (embedded) {
                 sb.append(embeddedFragment ? "_embedfrag" : "_embed");

@@ -83,6 +83,7 @@ public final class RenderPassShaders {
     private static final Identifier FAR = ResourceUtil.rl("internal/far/far.glsl");
     private static final Identifier FAR_IMPOSTOR_VERTEX = ResourceUtil.rl("internal/far/impostor.vert");
     private static final Identifier FAR_IMPOSTOR_FRAGMENT = ResourceUtil.rl("internal/far/impostor.frag");
+    private static final Identifier FAR_LAYER_CAPTURE = ResourceUtil.rl("internal/far/layer_capture.glsl");
     private static final Identifier MATERIAL = ResourceUtil.rl("internal/material.glsl");
     static final Identifier RENDER_ORIGIN = ResourceUtil.rl("internal/render_origin.glsl");
     private static final Identifier PACKED_MATERIAL = ResourceUtil.rl("internal/packed_material.glsl");
@@ -961,6 +962,10 @@ public final class RenderPassShaders {
                                                                                                      "_FLW_FAR_LAYER_CAPTURE");
                                                                                              ctx.define(
                                                                                                      "_FLW_FAR_NO_ROWS");
+                                                                                             ShaderAssembly.appendComponents(
+                                                                                                     ctx,
+                                                                                                     List.of(FlwPrograms.SOURCES.get(
+                                                                                                             FAR_LAYER_CAPTURE)));
                                                                                          }));
     }
 
